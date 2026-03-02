@@ -10,6 +10,7 @@ directed graphs.
 | [Getting Started](docs/GETTING-STARTED.md) | Installation, first pipeline run, provider selection, common gotchas |
 | [DOT Authoring Guide](docs/DOT-AUTHORING-GUIDE.md) | How to design effective pipelines -- patterns, attributes, fidelity, stylesheets |
 | [DOT Syntax Reference](docs/DOT-SYNTAX.md) | Quick reference tables and copy-paste patterns |
+| [Routing Reference](docs/ROUTING-REFERENCE.md) | Edge selection algorithm, `report_outcome` tool, condition expressions, common pitfalls |
 | [App Integration Guide](docs/APP-INTEGRATION-GUIDE.md) | Using pipelines from Python applications (DirectProvider vs AmplifierSession) |
 
 ## Quick Start

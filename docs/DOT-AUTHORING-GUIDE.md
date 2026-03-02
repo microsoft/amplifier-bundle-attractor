@@ -91,9 +91,22 @@ gate -> deploy [condition="outcome=success && context.tests_passed=true"]
 ```
 
 Keys available in conditions:
-- `outcome` -- the node's status: `success`, `fail`, `partial_success`, `retry`
-- `preferred_label` -- the outcome's suggested edge label
-- `context.<key>` -- any value in the pipeline context
+- `outcome` -- resolves to `preferred_label` if set by the agent via `report_outcome`, otherwise falls back to the raw status value (`success`, `fail`, etc.)
+- `preferred_label` -- the custom routing label set via `report_outcome` (null if not set)
+- `context.<key>` -- any value in the pipeline context (set via `context_updates` in `report_outcome`)
+
+**Dynamic routing with `report_outcome`:** Nodes that make routing decisions
+(review gates, test runners) should call the `report_outcome` tool with a
+`preferred_label` that matches their outgoing edge conditions. For example,
+a review node with edges `condition="outcome=pass"` and `condition="outcome=retry"`
+should call `report_outcome(status="success", preferred_label="pass")` or
+`report_outcome(status="fail", preferred_label="retry")`.
+
+> **Recommended pattern:** Use `condition="outcome!=retry"` instead of
+> `condition="outcome=pass"` for forward edges. This is resilient to agents
+> that return `status="success"` without setting `preferred_label`.
+> See [ROUTING-REFERENCE.md](ROUTING-REFERENCE.md) for the full routing
+> system documentation, including edge selection algorithm details and pitfalls.
 
 ### Retry with Fallback
 

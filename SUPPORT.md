@@ -1,11 +1,20 @@
 # Support
 
-## How to file issues and get help
+## No Support Available
 
-This project uses GitHub Issues to track bugs and feature requests. Please search the existing issues before filing new issues to avoid duplicates.
+**This is currently a small experimental exploration project. No support is provided.**
 
-For help and questions about using this project, please open a GitHub issue.
+- **No issue tracking**
+- **No feedback channels**
+- **No assistance available**
+- **Use at your own risk**
+
+## Project Status
+
+**⚠️ EXPERIMENTAL EXPLORATION**
+
+This is experimental software shared openly but without any support infrastructure. See [README.md](README.md) for project details and warnings about using permissive AI tools.
 
 ## Microsoft Support Policy
 
-Support for this project is limited to the resources listed above.
+This experimental project is not covered by any Microsoft support plans or services.

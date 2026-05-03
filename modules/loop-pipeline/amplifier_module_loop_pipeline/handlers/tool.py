@@ -37,6 +37,7 @@ from typing import Any
 from ..context import PipelineContext
 from ..graph import Graph, Node
 from ..outcome import Outcome, StageStatus
+from ..substitution import substitute_context
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +70,13 @@ class ToolHandler:
                 failure_reason="No tool_command specified on node",
             )
 
-        # Expand $variable tokens from pipeline context in the tool_command.
-        # This mirrors the codergen handler's prompt expansion: plain context
-        # keys (no "." in name) are expanded as $param tokens.
+        # M5 (R12): Expand $variable and ${variable} tokens from pipeline context.
+        # Drops the old "." guard — dotted keys (e.g. ${tool.output}) now
+        # resolve correctly when their producer succeeded.  Missing keys are
+        # left as literal tokens; failed-key detection was already handled
+        # by the engine's eager pre-execution scan (M2) before this handler ran.
         snapshot = context.snapshot()
-        for key, value in snapshot.items():
-            if "." not in str(key) and value is not None:
-                command = command.replace(f"${key}", str(value))
+        command = substitute_context(command, snapshot)
 
         # Write command to logs
         stage_dir = os.path.join(logs_root, node.id)

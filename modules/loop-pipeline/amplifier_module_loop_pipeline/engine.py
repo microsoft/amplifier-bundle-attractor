@@ -25,6 +25,7 @@ from .context import PipelineContext
 from .edge_selection import select_all_matching_edges, select_edge
 from .graph import Graph, Node
 from .handlers import HandlerRegistry
+from .node_outputs import SUBSTITUTABLE_ATTRS, build_output_table
 from .outcome import Outcome, StageStatus
 from .pipeline_events import (
     PIPELINE_CHECKPOINT,
@@ -33,10 +34,13 @@ from .pipeline_events import (
     PIPELINE_ERROR,
     PIPELINE_GOAL_GATE_CHECK,
     PIPELINE_NODE_COMPLETE,
+    PIPELINE_NODE_CONTRACT_VIOLATION,
+    PIPELINE_NODE_SKIPPED,
     PIPELINE_NODE_START,
     PIPELINE_START,
 )
 from .retry import RetryPolicy, execute_with_retry
+from .substitution import extract_refs
 
 logger = logging.getLogger(__name__)
 
@@ -73,10 +77,20 @@ class PipelineEngine:
         self.node_outcomes: dict[str, Outcome] = {}
         self.completed_nodes: list[str] = []
         self.iteration_count: int = 0
-        self._node_execution_counts: dict[str, int] = {}   # per-node execution count (graph-level visits)
+        self._node_execution_counts: dict[
+            str, int
+        ] = {}  # per-node execution count (graph-level visits)
         self._fidelity_degraded_hop: bool = False
         self._checkpoint_path = os.path.join(logs_root, "checkpoint.json")
         self.artifact_store = ArtifactStore(base_dir=logs_root)
+
+        # M1/M2 (R12): Output table + failed-outputs propagation table.
+        # _output_table maps node_id → set of context keys the node is contracted
+        # to produce; built once at graph-load from outputs= attrs + inference.
+        # failed_outputs maps context-key → producing-node-id for all keys that
+        # came from a failed or skipped predecessor.  Cleared on retry (CR-3).
+        self._output_table: dict[str, frozenset[str]] = build_output_table(graph)
+        self.failed_outputs: dict[str, str] = {}
 
     def _check_cancelled(self) -> bool:
         """Check if cancellation has been requested via the cancel event."""
@@ -213,13 +227,18 @@ class PipelineEngine:
                     and goal_gate_retries < self._MAX_GOAL_GATE_RETRIES
                 ):
                     retry_node_id = gate_result.suggested_next_ids[0]
-                    current_node = self.graph.nodes[retry_node_id]
                     goal_gate_retries += 1
                     logger.info(
                         "Goal gate unsatisfied, retrying from '%s' (attempt %d)",
                         retry_node_id,
                         goal_gate_retries,
                     )
+                    # CR-3 (R12): Reset per-run state so skip-propagation from
+                    # attempt N does not block the retried nodes in attempt N+1.
+                    self.completed_nodes.clear()
+                    self.node_outcomes.clear()
+                    self.failed_outputs.clear()
+                    current_node = self.graph.nodes[retry_node_id]
                     continue
 
                 # No retry target or retries exhausted — fail
@@ -254,6 +273,81 @@ class PipelineEngine:
                     return fail_outcome
                 current_node = self.graph.nodes[edge.to_node]
                 continue
+
+            # M2/M3/M4: Eager reference scan — skip if a predecessor failed.
+            # Must run BEFORE the handler is invoked so handlers never see
+            # missing-because-failed inputs.
+            skip_outcome = await self._check_node_skip(current_node)
+            if skip_outcome is not None:
+                # Record the skip, populate failed_outputs, and emit events.
+                self.completed_nodes.append(current_node.id)
+                self.node_outcomes[current_node.id] = skip_outcome
+                self._populate_failed_outputs(current_node.id)
+
+                node_duration_ms = 0.0
+                self._write_node_status(current_node.id, skip_outcome, node_duration_ms)
+                await self._emit(
+                    PIPELINE_NODE_COMPLETE,
+                    {
+                        "node_id": current_node.id,
+                        "status": skip_outcome.status.value,
+                        "duration_ms": node_duration_ms,
+                        "notes": skip_outcome.notes,
+                        "failure_reason": skip_outcome.failure_reason,
+                        "session_id": None,
+                        "execution_index": self._node_execution_counts.get(
+                            current_node.id, 0
+                        ),
+                    },
+                )
+                self._save_checkpoint(current_node.id)
+                await self._emit(
+                    PIPELINE_CHECKPOINT,
+                    {
+                        "node_id": current_node.id,
+                        "checkpoint_path": self._checkpoint_path,
+                    },
+                )
+
+                # Route the skipped node: treat SKIPPED like FAIL for edge
+                # selection (conditions matching "outcome=skipped" or
+                # "outcome=fail" win; unconditional edges may still apply).
+                # M4: For runs_on=failure nodes that were skipped because
+                # nothing failed, use a synthetic FAIL-shaped outcome to
+                # keep routing predictable.
+                routing_outcome = Outcome(
+                    status=StageStatus.FAIL,
+                    failure_reason=skip_outcome.failure_reason,
+                    notes=skip_outcome.notes,
+                )
+                edge = select_edge(
+                    current_node.id, routing_outcome, self.context, self.graph
+                )
+                if edge is None:
+                    retry_node = self._resolve_failure_retry_target(current_node)
+                    if (
+                        retry_node is not None
+                        and failure_routing_retries < self._MAX_GOAL_GATE_RETRIES
+                    ):
+                        failure_routing_retries += 1
+                        current_node = retry_node
+                        continue
+                    fail_outcome = Outcome(
+                        status=StageStatus.FAIL,
+                        failure_reason=(
+                            f"No matching edge from skipped node '{current_node.id}'"
+                        ),
+                    )
+                    await self._emit_complete(fail_outcome, pipeline_start_time)
+                    return fail_outcome
+                current_node = self.graph.nodes[edge.to_node]
+                continue
+
+            # M4: For runs_on=always or runs_on=failure nodes, resolve
+            # missing context references to empty string before the handler.
+            runs_on = self._get_runs_on(current_node)
+            if runs_on in ("always", "failure"):
+                self._resolve_missing_as_empty(current_node)
 
             # Step 2: Execute node handler with retry policy
             handler = self.handler_registry.get(current_node)
@@ -411,12 +505,24 @@ class PipelineEngine:
                 },
             )
 
+            # M2 (R12): If the node failed or was skipped, add its declared
+            # outputs to failed_outputs so downstream nodes can be skipped.
+            # (SKIPPED outcomes from the engine skip-check are handled inline
+            # above; this path covers genuine handler-side FAILures.)
+            if outcome.status == StageStatus.FAIL:
+                self._populate_failed_outputs(current_node.id)
+
             # Step 4: Apply context updates from outcome
             if outcome.context_updates:
                 self.context.update(outcome.context_updates)
             self.context.set("outcome", outcome.status.value)
             if outcome.preferred_label:
                 self.context.set("preferred_label", outcome.preferred_label)
+
+            # M3 (R12): Post-success contract violation audit — verify that
+            # all declared outputs= keys were actually written to context.
+            if outcome.is_success:
+                await self._check_contract_violation(current_node.id, outcome)
 
             # Step 4b: Save checkpoint after each node
             self._save_checkpoint(current_node.id)
@@ -524,6 +630,7 @@ class PipelineEngine:
                 # Reset engine state for clean re-execution
                 self.completed_nodes.clear()
                 self.node_outcomes.clear()
+                self.failed_outputs.clear()  # M2 R12: clear skip-propagation table
                 goal_gate_retries = 0
                 failure_routing_retries = 0
 
@@ -1027,6 +1134,224 @@ class PipelineEngine:
         if target_id and target_id in self.graph.nodes:
             return self.graph.nodes[target_id]
         return None
+
+    # -- R12 M1-M4 helpers ---------------------------------------------------
+
+    def _get_runs_on(self, node: Node) -> str:
+        """Return the node's ``runs_on`` axis value.
+
+        M4: Determines whether the node executes based on upstream state.
+
+        Returns:
+            One of ``"success"`` (default), ``"always"``, or ``"failure"``.
+        """
+        raw = node.attrs.get("runs_on", "success") or "success"
+        val = str(raw).strip().lower()
+        if val in ("always", "failure"):
+            return val
+        return "success"
+
+    def _extract_node_refs(self, node: Node) -> set[str]:
+        """Extract all context key references from a node's substitutable attrs.
+
+        M2: Scans ``tool_command``, ``prompt``, ``description``, and
+        ``tool_env`` for ``${key}`` and ``$key`` tokens.  The list of
+        scanned attributes is declared in :data:`SUBSTITUTABLE_ATTRS` and
+        is the single authoritative registry — adding a new substitutable
+        attribute is a one-line addition there.
+
+        Args:
+            node: The node whose attributes are scanned.
+
+        Returns:
+            Set of context key names referenced by the node.
+        """
+        refs: set[str] = set()
+        for attr_name in SUBSTITUTABLE_ATTRS:
+            val = node.attrs.get(attr_name, "") or node.prompt or ""
+            if attr_name == "prompt":
+                val = node.prompt or node.attrs.get("prompt", "") or ""
+            else:
+                val = node.attrs.get(attr_name, "") or ""
+            if val:
+                refs.update(extract_refs(str(val)))
+        return refs
+
+    async def _check_node_skip(self, node: Node) -> Outcome | None:
+        """Pre-execution skip check (M2/M3/M4).
+
+        Before invoking a handler, scans the node's substitutable attributes
+        for context key references.  If any referenced key is in
+        :attr:`failed_outputs`, the node is SKIPPED and a
+        ``PIPELINE_NODE_SKIPPED`` event is emitted.
+
+        For nodes with ``runs_on=always`` or ``runs_on=failure``, the skip
+        logic is bypassed: missing references resolve to empty string rather
+        than causing a skip (M4).
+
+        For ``runs_on=failure`` nodes: execute only if ``failed_outputs`` is
+        non-empty (i.e. at least one predecessor failed somewhere in the
+        pipeline); skip otherwise.
+
+        Args:
+            node: The node about to execute.
+
+        Returns:
+            A SKIPPED ``Outcome`` if the node should be skipped, else ``None``.
+        """
+        runs_on = self._get_runs_on(node)
+
+        if runs_on == "always":
+            # Always execute; missing references resolve to empty string.
+            return None
+
+        if runs_on == "failure":
+            # Execute only when something upstream has failed.
+            if not self.failed_outputs:
+                # Nothing has failed — skip this failure-cleanup node.
+                skip_outcome = Outcome(
+                    status=StageStatus.SKIPPED,
+                    notes=(
+                        f"Node '{node.id}' runs_on=failure but no predecessors failed"
+                    ),
+                    failure_reason="no_predecessor_failure",
+                )
+                await self._emit(
+                    PIPELINE_NODE_SKIPPED,
+                    {
+                        "node_id": node.id,
+                        "cause": "no_predecessor_failure",
+                        "references": [],
+                        "missing_keys": [],
+                        "failure_mode": "predecessor_failed",
+                        "failure_mode_taxonomy_version": 1,
+                    },
+                )
+                return skip_outcome
+            # Something failed — run this node, resolving missing refs to "".
+            return None
+
+        # runs_on == "success" (default): skip if any referenced key is failed.
+        refs = self._extract_node_refs(node)
+        failed_refs: list[dict[str, str]] = []
+        for key in refs:
+            if key in self.failed_outputs:
+                failed_refs.append(
+                    {"key": key, "producer_node_id": self.failed_outputs[key]}
+                )
+
+        if not failed_refs:
+            return None  # No failed references — proceed normally.
+
+        missing_keys = [r["key"] for r in failed_refs]
+        skip_outcome = Outcome(
+            status=StageStatus.SKIPPED,
+            notes=(
+                f"Node '{node.id}' skipped: predecessor(s) failed for keys "
+                f"{missing_keys}"
+            ),
+            failure_reason="predecessor_failed",
+        )
+        await self._emit(
+            PIPELINE_NODE_SKIPPED,
+            {
+                "node_id": node.id,
+                "cause": "predecessor_failed",
+                "references": failed_refs,
+                "missing_keys": missing_keys,
+                "failure_mode": "predecessor_failed",
+                "failure_mode_taxonomy_version": 1,
+            },
+        )
+        logger.info(
+            "Node '%s' SKIPPED — predecessor failed for keys: %s",
+            node.id,
+            missing_keys,
+        )
+        return skip_outcome
+
+    def _populate_failed_outputs(self, node_id: str) -> None:
+        """Add a failed/skipped node's declared outputs to :attr:`failed_outputs`.
+
+        M2: When a node ends in FAIL or SKIPPED, all context keys it was
+        contracted to produce are marked as failed.  Downstream nodes that
+        reference those keys will be caught by the eager scan and skipped
+        (transitive skip propagation).
+
+        Args:
+            node_id: ID of the failed/skipped node.
+        """
+        outputs = self._output_table.get(node_id, frozenset())
+        for key in outputs:
+            if key not in self.failed_outputs:
+                self.failed_outputs[key] = node_id
+
+    async def _check_contract_violation(self, node_id: str, outcome: Outcome) -> None:
+        """Post-success contract violation audit (M3).
+
+        After a node succeeds, compare its declared ``outputs=`` set against
+        the keys it actually wrote to context (via ``outcome.context_updates``).
+        If any declared output is missing, emit a
+        ``PIPELINE_NODE_CONTRACT_VIOLATION`` event.
+
+        This is a diagnostic signal, not a hard error: the node's outcome is
+        not changed.  The information is available in ``events.jsonl`` for
+        author debugging.
+
+        Args:
+            node_id: The producer node's ID.
+            outcome: The node's SUCCESS outcome.
+        """
+        declared = self._output_table.get(node_id, frozenset())
+        if not declared:
+            return  # No declared outputs → nothing to check.
+
+        emitted = (
+            set(outcome.context_updates.keys()) if outcome.context_updates else set()
+        )
+        missing = declared - emitted
+
+        if not missing:
+            return  # All declared outputs were emitted ✓
+
+        await self._emit(
+            PIPELINE_NODE_CONTRACT_VIOLATION,
+            {
+                "node_id": node_id,
+                "declared": sorted(declared),
+                "emitted": sorted(emitted),
+                "missing": sorted(missing),
+                "failure_mode": "software",
+                "failure_mode_taxonomy_version": 1,
+            },
+        )
+        logger.warning(
+            "Node '%s' succeeded but declared outputs %s were not emitted "
+            "(emitted: %s)",
+            node_id,
+            sorted(missing),
+            sorted(emitted),
+        )
+
+    def _resolve_missing_as_empty(self, node: Node) -> None:
+        """Resolve missing ``${key}`` references to empty string (M4).
+
+        For nodes with ``runs_on=always`` or ``runs_on=failure``, missing
+        context keys are pre-populated with empty string so that
+        substitution in the handler produces ``""`` rather than a literal
+        ``${key}`` token.
+
+        This is done by injecting empty-string values for any referenced key
+        that is not currently in context.  The injection is temporary: context
+        values set here will be overwritten if a successor produces the key.
+
+        Args:
+            node: The node whose missing refs should resolve to empty string.
+        """
+        refs = self._extract_node_refs(node)
+        for key in refs:
+            if self.context.get(key) is None:
+                self.context.set(key, "")
 
     # -- Event helpers -------------------------------------------------------
 

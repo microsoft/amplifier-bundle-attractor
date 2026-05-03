@@ -74,3 +74,31 @@ PROVIDER_ERROR: str = "provider:error"
 # ---------------------------------------------------------------------------
 PIPELINE_SUBGRAPH_START: str = "pipeline:subgraph_start"
 PIPELINE_SUBGRAPH_COMPLETE: str = "pipeline:subgraph_complete"
+
+# ---------------------------------------------------------------------------
+# R12 M3: Node failure propagation (skip + contract violation)
+# ---------------------------------------------------------------------------
+
+#: Emitted when the engine skips a node because at least one of its
+#: referenced context keys was produced by a failed/skipped predecessor.
+#:
+#: Payload fields:
+#:   node_id                     — ID of the skipped node
+#:   cause                       — always "predecessor_failed"
+#:   references                  — list of {key, producer_node_id} dicts
+#:   missing_keys                — list of key names that were missing
+#:   failure_mode                — always "predecessor_failed" (D1 taxonomy)
+#:   failure_mode_taxonomy_version — always 1 (CR-4)
+PIPELINE_NODE_SKIPPED: str = "PIPELINE_NODE_SKIPPED"
+
+#: Emitted when a producer node succeeded but did not emit all of its
+#: declared ``outputs=`` keys (pipeline-author contract violation).
+#:
+#: Payload fields:
+#:   node_id                     — ID of the producer node
+#:   declared                    — list of declared output keys
+#:   emitted                     — list of keys actually written to context
+#:   missing                     — list of declared keys that were not emitted
+#:   failure_mode                — always "software" (D1 taxonomy)
+#:   failure_mode_taxonomy_version — always 1 (CR-4)
+PIPELINE_NODE_CONTRACT_VIOLATION: str = "PIPELINE_NODE_CONTRACT_VIOLATION"

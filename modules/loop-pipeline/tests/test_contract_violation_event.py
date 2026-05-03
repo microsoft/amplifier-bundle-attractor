@@ -180,3 +180,43 @@ async def test_contract_violation_payload_structure(tmp_path):
     # Check values
     assert set(evt["missing"]) == {"missing_key_1", "missing_key_2"}
     assert "tool.output" in evt["emitted"]
+
+
+@pytest.mark.asyncio
+async def test_no_contract_violation_for_tool_with_empty_stdout(tmp_path):
+    """Fix 4 (R12 R12.5): A tool node with empty stdout must NOT trigger a
+    false-positive PIPELINE_NODE_CONTRACT_VIOLATION.
+
+    HANDLER_INFERRED_OUTPUTS["tool"] declares both tool.output and
+    tool.last_line. Before the fix, tool.last_line was only emitted when
+    stdout was non-empty — silent stdout produced a declared-but-not-emitted
+    gap, which _audit_contract_violation flagged as a violation.
+
+    After the fix, tool.last_line is always emitted (as "" on empty stdout),
+    so the contract holds and no violation event should fire.
+
+    Mirrors the wait.human discipline fix (R12 commit 7473521).
+    """
+    hooks = EventCapture()
+    engine = _make_engine(
+        """
+        digraph {
+            start [shape=Mdiamond]
+            silent [shape=parallelogram,
+                    tool_command="true"]
+            exit [shape=Msquare]
+            start -> silent -> exit
+        }
+        """,
+        logs_root=str(tmp_path),
+        hooks=hooks,
+    )
+    await engine.run()
+
+    assert engine.node_outcomes["silent"].status == StageStatus.SUCCESS
+
+    # The critical assertion: no false-positive contract violation
+    violations = hooks.events_of_type(PIPELINE_NODE_CONTRACT_VIOLATION)
+    assert len(violations) == 0, (
+        f"Empty-stdout tool should NOT produce a CONTRACT_VIOLATION; got: {violations}"
+    )

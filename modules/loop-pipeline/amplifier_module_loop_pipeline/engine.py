@@ -453,6 +453,20 @@ class PipelineEngine:
                 )
 
             # continue_on_fail: override FAIL to SUCCESS for routing, log the failure
+            #
+            # NOTE — continue_on_fail and runs_on are NOT orthogonal:
+            # - continue_on_fail (per-predecessor-node override) flips FAIL→SUCCESS
+            #   BEFORE _populate_failed_outputs runs (see the FAIL check at
+            #   engine.py:512 which tests the already-overridden outcome).
+            # - runs_on=failure (per-cleanup-node gate) checks the failed_outputs
+            #   table populated by _populate_failed_outputs.
+            # - A predecessor with continue_on_fail=true that "fails" will appear
+            #   SUCCESSFUL to a runs_on=failure cleanup node — the cleanup will NOT
+            #   trigger.
+            # - This is intentional: continue_on_fail says "treat this as success;
+            #   do not surface a failure to the rest of the graph." A cleanup that
+            #   wants to fire on the original failure should use runs_on=always
+            #   instead of runs_on=failure.
             if (
                 current_node.attrs.get("continue_on_fail") == "true"
                 and outcome.status == StageStatus.FAIL
@@ -1144,6 +1158,18 @@ class PipelineEngine:
 
         Returns:
             One of ``"success"`` (default), ``"always"``, or ``"failure"``.
+
+        Interaction with ``continue_on_fail``:
+            ``continue_on_fail`` and ``runs_on`` are NOT orthogonal. A
+            predecessor node with ``continue_on_fail=true`` that fails at
+            runtime has its outcome flipped FAIL→SUCCESS *before*
+            ``_populate_failed_outputs`` runs. This means the failure signal
+            is swallowed: a downstream ``runs_on=failure`` cleanup node will
+            NOT trigger, because the failed-outputs table is never populated
+            for that predecessor. Use ``runs_on=always`` on the cleanup node
+            if you want it to fire regardless of whether the predecessor used
+            ``continue_on_fail``. See also the comment block at the
+            ``continue_on_fail`` override site in ``run()``.
         """
         raw = node.attrs.get("runs_on", "success") or "success"
         val = str(raw).strip().lower()
@@ -1168,7 +1194,6 @@ class PipelineEngine:
         """
         refs: set[str] = set()
         for attr_name in SUBSTITUTABLE_ATTRS:
-            val = node.attrs.get(attr_name, "") or node.prompt or ""
             if attr_name == "prompt":
                 val = node.prompt or node.attrs.get("prompt", "") or ""
             else:
@@ -1223,7 +1248,13 @@ class PipelineEngine:
                         "cause": "no_predecessor_failure",
                         "references": [],
                         "missing_keys": [],
-                        "failure_mode": "predecessor_failed",
+                        # failure_mode is intentionally None here: this skip
+                        # is the *absence* of a failure (the happy path ran
+                        # clean). Emitting "predecessor_failed" when no
+                        # predecessor failed produces false-positive hits for
+                        # dashboard filters and reality-check queries on
+                        # failure_mode=predecessor_failed.
+                        "failure_mode": None,
                         "failure_mode_taxonomy_version": 1,
                     },
                 )

@@ -20,7 +20,7 @@ Tests:
 - test_tool_env_combined_with_parse_json: tool_env and parse_json can be used together
 - test_last_line_set_in_context: last stdout line → context["tool.last_line"]
 - test_last_line_ignores_trailing_newlines: blank trailing lines are skipped
-- test_last_line_absent_when_stdout_empty: empty stdout → no tool.last_line key
+- test_last_line_absent_when_stdout_empty: empty stdout → tool.last_line="" (Fix 4: always emitted)
 """
 
 from __future__ import annotations
@@ -362,10 +362,15 @@ class TestToolLastLine:
 
     @pytest.mark.asyncio
     async def test_last_line_absent_when_stdout_empty(self, tmp_path):
-        """When stdout is empty, tool.last_line is not set in context.
+        """Fix 4 (R12 R12.5): When stdout is empty, tool.last_line is set to "".
 
-        A tool with no output should leave context["tool.last_line"] unset
-        (or unchanged from any prior value), not set to an empty string.
+        Previously this test asserted tool.last_line was absent (None) for empty
+        stdout. The R12 R12.5 fix changes tool.py to ALWAYS emit tool.last_line —
+        using "" when stdout is empty — so the declared inferred contract in
+        HANDLER_INFERRED_OUTPUTS["tool"] always holds, preventing false-positive
+        PIPELINE_NODE_CONTRACT_VIOLATION events on empty-stdout tools.
+
+        See: zen-architect review concern #1 (significant), R12 R12.5 fix list.
         """
         ctx = _make_context()
         node = Node(
@@ -376,9 +381,11 @@ class TestToolLastLine:
         outcome = await handler.execute(node, ctx, _make_graph(), str(tmp_path))
 
         assert outcome.status == StageStatus.SUCCESS
-        # tool.last_line should NOT be set for empty stdout
+        # tool.last_line MUST be set (to "") even when stdout is empty —
+        # the inferred contract requires it, and "" is semantically correct
+        # (no routing label was produced).
         last_line = ctx.get("tool.last_line")
-        assert last_line is None, (
-            f"Expected context['tool.last_line'] to be absent for empty stdout, "
+        assert last_line == "", (
+            f"Expected context['tool.last_line'] to be '' for empty stdout, "
             f"got {last_line!r}"
         )

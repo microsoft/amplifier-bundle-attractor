@@ -172,17 +172,24 @@ class ToolHandler:
             # This avoids polluting outcome.preferred_label, which would break
             # condition="outcome=success" routing on tool nodes whose output is
             # not a routing label.
+            # Always emit tool.last_line so the inferred output contract in
+            # HANDLER_INFERRED_OUTPUTS["tool"] holds even when stdout is empty.
+            # Empty stdout → tool.last_line = "". Downstream edge conditions
+            # that gate on a non-empty value will simply not match, which is
+            # the correct behaviour (no routing label was produced).
+            # Rationale: option (a) from the zen-architect review — emit "" on
+            # empty stdout rather than silently omitting the key and triggering
+            # a false-positive PIPELINE_NODE_CONTRACT_VIOLATION.
             last_line = next(
                 (
                     line.strip()
                     for line in reversed(stdout_text.splitlines())
                     if line.strip()
                 ),
-                None,
+                "",
             )
-            if last_line:
-                context.set("tool.last_line", last_line)
-                context_updates["tool.last_line"] = last_line
+            context.set("tool.last_line", last_line)
+            context_updates["tool.last_line"] = last_line
 
             return Outcome(
                 status=StageStatus.SUCCESS,

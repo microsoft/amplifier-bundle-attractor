@@ -267,3 +267,101 @@ async def test_runs_on_always_genuine_failures_not_masked(tmp_path):
     assert engine.node_outcomes["cleanup"].status == StageStatus.FAIL, (
         "runs_on=always should not mask genuine failures in the node itself"
     )
+
+
+@pytest.mark.asyncio
+async def test_runs_on_failure_skipped_event_has_no_failure_mode(tmp_path):
+    """Fix 1 (R12 R12.5): PIPELINE_NODE_SKIPPED for runs_on=failure happy-path
+    skip carries failure_mode=None, NOT 'predecessor_failed'.
+
+    When no predecessor failed the skip is the *absence* of failure.
+    Emitting failure_mode='predecessor_failed' produces false-positive hits in
+    dashboard filters and reality-check queries on that field.
+    """
+    hooks = EventCapture()
+    engine = _make_engine(
+        """
+        digraph {
+            start [shape=Mdiamond]
+            work [shape=parallelogram, tool_command="echo ok",
+                  outputs="resource.handle"]
+            on_fail [shape=parallelogram,
+                     tool_command="echo should not run",
+                     runs_on=failure]
+            exit [shape=Msquare]
+            start -> work -> on_fail -> exit
+        }
+        """,
+        logs_root=str(tmp_path),
+        hooks=hooks,
+    )
+    await engine.run()
+
+    assert engine.node_outcomes["work"].status == StageStatus.SUCCESS
+    assert engine.node_outcomes["on_fail"].status == StageStatus.SKIPPED
+
+    skipped_events = hooks.events_of_type(PIPELINE_NODE_SKIPPED)
+    on_fail_skip = next(
+        (e for e in skipped_events if e.get("node_id") == "on_fail"), None
+    )
+    assert on_fail_skip is not None, (
+        "Expected a PIPELINE_NODE_SKIPPED event for on_fail"
+    )
+    assert on_fail_skip["cause"] == "no_predecessor_failure"
+    # The critical assertion: failure_mode must be None, not "predecessor_failed"
+    assert on_fail_skip.get("failure_mode") is None, (
+        f"failure_mode should be None for no_predecessor_failure skip, "
+        f"got {on_fail_skip.get('failure_mode')!r}"
+    )
+    # taxonomy_version still ships per CR-4
+    assert on_fail_skip.get("failure_mode_taxonomy_version") == 1
+
+
+@pytest.mark.asyncio
+async def test_continue_on_fail_swallows_failure_signal_for_runs_on_failure(tmp_path):
+    """Fix 5 (R12 R12.5): continue_on_fail × runs_on=failure interaction.
+
+    A predecessor with continue_on_fail=true that fails at runtime has its
+    outcome flipped FAIL→SUCCESS BEFORE _populate_failed_outputs runs.
+    A downstream runs_on=failure cleanup node therefore does NOT trigger,
+    because the failed_outputs table is never populated for that predecessor.
+
+    Pipeline authors who want a cleanup to fire regardless should use
+    runs_on=always instead of runs_on=failure.
+    """
+    hooks = EventCapture()
+    engine = _make_engine(
+        """
+        digraph {
+            start [shape=Mdiamond]
+            work [shape=parallelogram, tool_command="exit 1",
+                  outputs="k", continue_on_fail="true"]
+            on_fail [shape=parallelogram,
+                     tool_command="echo failure cleanup",
+                     runs_on=failure]
+            exit [shape=Msquare]
+            start -> work -> on_fail -> exit
+        }
+        """,
+        logs_root=str(tmp_path),
+        hooks=hooks,
+    )
+    await engine.run()
+
+    # work "failed" but continue_on_fail flipped it to SUCCESS
+    assert engine.node_outcomes["work"].status == StageStatus.SUCCESS
+
+    # on_fail (runs_on=failure) should be SKIPPED — continue_on_fail swallowed
+    # the failure signal before failed_outputs was populated
+    assert "on_fail" in engine.node_outcomes
+    assert engine.node_outcomes["on_fail"].status == StageStatus.SKIPPED, (
+        "runs_on=failure cleanup should be SKIPPED when predecessor used "
+        "continue_on_fail=true (failure signal swallowed)"
+    )
+
+    skipped_events = hooks.events_of_type(PIPELINE_NODE_SKIPPED)
+    on_fail_skip = next(
+        (e for e in skipped_events if e.get("node_id") == "on_fail"), None
+    )
+    assert on_fail_skip is not None
+    assert on_fail_skip["cause"] == "no_predecessor_failure"

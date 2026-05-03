@@ -40,8 +40,17 @@ from .graph import Graph
 HANDLER_INFERRED_OUTPUTS: dict[str, frozenset[str]] = {
     # tool handler (shape=parallelogram or type=tool)
     "tool": frozenset({"tool.output", "tool.last_line"}),
-    # human gate handler (shape=hexagon or type=wait.human)
-    "wait.human": frozenset({"human.input", "human.choice"}),
+    # human gate handler (shape=hexagon or type=wait.human):
+    #   wait.human is intentionally absent from inference. The actual
+    #   handler emits a runtime-dependent set: always {human.gate.label,
+    #   last_response, last_stage}, plus EITHER human.gate.selected (in
+    #   selection mode) OR human.gate.text (in text-input mode). A
+    #   static inference produces false-positive PIPELINE_NODE_CONTRACT_VIOLATION
+    #   events for the mode-specific key. R12 R12.5 fix: drop the
+    #   inferred set; pipeline authors who want contract checking on a
+    #   human-gate node should declare `outputs="..."` explicitly. The
+    #   M2 eager-scan substitution path is unaffected — it consumes the
+    #   actual emitted context, not the inferred set.
     # parallel handler: branch keys are dynamic — see build_output_table()
     # all other handlers: empty
 }

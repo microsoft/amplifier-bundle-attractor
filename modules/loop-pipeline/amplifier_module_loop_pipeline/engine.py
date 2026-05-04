@@ -516,6 +516,10 @@ class PipelineEngine:
                     "failure_reason": outcome.failure_reason,
                     "session_id": outcome.session_id,
                     "execution_index": execution_index,  # NEW — graph-level visit count
+                    # Issue 10: structured tool-invocation failure payload.
+                    # Populated by ToolHandler on failure; None on success or for
+                    # non-tool nodes.  Consumers check for None before reading.
+                    "failed_step": outcome.failed_step,
                 },
             )
 
@@ -994,6 +998,9 @@ class PipelineEngine:
             "notes": outcome.notes,
             "failure_reason": outcome.failure_reason,
             "session_id": outcome.session_id,
+            # Issue 10: structured tool-invocation failure payload.
+            # Populated by ToolHandler on failure; None/absent on success.
+            "failed_step": outcome.failed_step,
         }
         status_path = os.path.join(node_dir, "status.json")
         with open(status_path, "w") as f:

@@ -45,6 +45,20 @@ class Outcome:
     session_id: str | None = (
         None  # child Amplifier session ID (if executed via AmplifierBackend)
     )
+    #: Issue 10 / analog of WS-4 Sub-fix C: structured tool-invocation payload
+    #: populated by ToolHandler on failure so the dashboard can display the
+    #: command and output instead of the "command lost on failure" placeholder.
+    #:
+    #: Shape:
+    #:   command    — resolved shell command (capped at 500 chars)
+    #:   exit_code  — subprocess return code
+    #:   duration_s — wall-clock seconds from process start to communicate()
+    #:   stdout_tail — last ≤2 KiB of stdout; empty string, NOT None
+    #:   stderr_tail — last ≤2 KiB of stderr; empty string, NOT None
+    #:
+    #: Optional key added by the 8 KiB truncation pass:
+    #:   verification_gap.log_filtered — True when payload was truncated
+    failed_step: dict[str, Any] | None = None
 
     @property
     def is_success(self) -> bool:

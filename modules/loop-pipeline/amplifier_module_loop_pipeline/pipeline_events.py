@@ -19,6 +19,27 @@ PIPELINE_COMPLETE: str = "pipeline:complete"
 # Node lifecycle
 # ---------------------------------------------------------------------------
 PIPELINE_NODE_START: str = "pipeline:node_start"
+
+#: Emitted when a node finishes execution (success or failure).
+#:
+#: Payload fields (always present):
+#:   node_id          — ID of the node
+#:   status           — StageStatus value string ("success", "fail", etc.)
+#:   duration_ms      — wall-clock milliseconds for the handler
+#:   notes            — optional human-readable notes from the handler
+#:   failure_reason   — optional short failure description string
+#:   session_id       — optional child Amplifier session ID (backend nodes)
+#:   execution_index  — graph-level visit count for this node
+#:
+#: Issue 10 / analog of WS-4 Sub-fix C — field added for tool-node failures:
+#:   failed_step      — structured tool-invocation payload (None for success
+#:                      or non-tool nodes).  Shape when present:
+#:     command        — resolved shell command (≤500 chars)
+#:     exit_code      — subprocess return code
+#:     duration_s     — wall-clock seconds for the subprocess
+#:     stdout_tail    — stdout output (empty string when stdout was empty)
+#:     stderr_tail    — stderr output (empty string when stderr was empty)
+#:     verification_gap.log_filtered — True when 8 KiB cap truncated the payload
 PIPELINE_NODE_COMPLETE: str = "pipeline:node_complete"
 
 # ---------------------------------------------------------------------------

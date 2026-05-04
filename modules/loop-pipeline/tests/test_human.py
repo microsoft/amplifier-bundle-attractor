@@ -1191,3 +1191,179 @@ class TestHumanGateLastResponsePropagation:
         assert outcome.context_updates["last_stage"] == "review"
         # Existing keys still present (no regression)
         assert outcome.context_updates["human.gate.selected"] == "Approve"
+
+
+class TestHumanGatePromptSubstitution:
+    """HUMAN-SUB-001: prompt=$variable is expanded via context before presenting to human.
+
+    The DOT parser stores the ``prompt`` attribute as a first-class ``node.prompt``
+    field (it pops "prompt" from attrs).  The handler must read ``node.prompt`` and
+    expand any ``$variable`` tokens before building the Question — otherwise the user
+    sees the raw token (or, because ``node.attrs.get("prompt")`` returns None, the
+    fallback ``node.label``).
+
+    Issue 14 regression test.
+    """
+
+    @pytest.mark.asyncio
+    async def test_node_prompt_field_substituted_with_context_variable(self):
+        """Choice-gate: prompt stored in node.prompt (not attrs) is expanded.
+
+        Simulates how the DOT parser creates nodes: ``prompt`` is a first-class
+        field, NOT inside ``attrs``.  The handler must use ``node.prompt`` and
+        expand ``$gate_topic`` from context.
+        """
+        gate_question = (
+            "GATE 1: DECOMPOSABILITY\n\nCan the problem be broken into units?"
+        )
+
+        graph = Graph(
+            name="conversational_gate",
+            nodes={
+                "ask": Node(
+                    id="ask",
+                    shape="hexagon",
+                    label="Ask Human",
+                    # DOT-parsed nodes have prompt as first-class field, NOT in attrs
+                    prompt="$gate_topic",
+                    attrs={},  # attrs does NOT have "prompt"
+                ),
+                "eval": Node(id="eval", shape="box"),
+            },
+            edges=[Edge(from_node="ask", to_node="eval", label="continue")],
+        )
+
+        context = PipelineContext()
+        context.set("gate_topic", gate_question)
+
+        captured_questions: list[Question] = []
+
+        class CapturingInterviewer:
+            def ask(self, question: Question) -> Answer:
+                raise AssertionError("ask() must NOT be called; use async_ask")
+
+            def ask_multiple(self, questions: list[Question]) -> list[Answer]:
+                raise AssertionError("ask_multiple() must NOT be called")
+
+            def inform(self, message: str) -> None:
+                pass
+
+            async def async_ask(self, question: Question) -> Answer:
+                captured_questions.append(question)
+                return Answer(
+                    value="continue",
+                    selected_option=Option(key="continue", label="continue"),
+                )
+
+        handler = HumanGateHandler(interviewer=CapturingInterviewer())
+        await handler.execute(graph.nodes["ask"], context, graph, "/tmp")
+
+        assert len(captured_questions) == 1
+        captured = captured_questions[0]
+        # The prompt MUST be the expanded gate_topic, NOT "Ask Human" (the label)
+        # and NOT the literal "$gate_topic" token.
+        assert captured.text == gate_question, (
+            f"Expected expanded gate_topic in prompt, got: {captured.text!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_freeform_node_prompt_field_substituted_with_context_variable(self):
+        """Freeform gate: prompt stored in node.prompt (not attrs) is expanded.
+
+        Same regression as above but for the freeform (mode=freeform) path.
+        """
+        gate_question = (
+            "GATE 1: DECOMPOSABILITY\n\nDescribe your project's decomposability."
+        )
+
+        graph = Graph(
+            name="conversational_gate",
+            nodes={
+                "ask": Node(
+                    id="ask",
+                    shape="hexagon",
+                    label="Ask Human",
+                    prompt="$gate_topic",
+                    attrs={"mode": "freeform"},
+                ),
+                "eval": Node(id="eval", shape="box"),
+            },
+            edges=[Edge(from_node="ask", to_node="eval")],
+        )
+
+        context = PipelineContext()
+        context.set("gate_topic", gate_question)
+
+        captured_questions: list[Question] = []
+
+        class CapturingInterviewer:
+            def ask(self, question: Question) -> Answer:
+                raise AssertionError("ask() must NOT be called; use async_ask")
+
+            def ask_multiple(self, questions: list[Question]) -> list[Answer]:
+                raise AssertionError("ask_multiple() must NOT be called")
+
+            def inform(self, message: str) -> None:
+                pass
+
+            async def async_ask(self, question: Question) -> Answer:
+                captured_questions.append(question)
+                return Answer(value="user typed some text", text="user typed some text")
+
+        handler = HumanGateHandler(interviewer=CapturingInterviewer())
+        await handler.execute(graph.nodes["ask"], context, graph, "/tmp")
+
+        assert len(captured_questions) == 1
+        captured = captured_questions[0]
+        assert captured.text == gate_question, (
+            f"Expected expanded gate_topic in freeform prompt, got: {captured.text!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_prompt_in_attrs_still_works_for_legacy_nodes(self):
+        """Regression: nodes with prompt in attrs (not node.prompt) still work.
+
+        Legacy callers and tests that construct nodes with ``attrs={"prompt": ...}``
+        (rather than ``prompt=`` as a first-class field) must continue to work.
+        """
+        explicit_prompt = "Do you approve this code?"
+
+        graph = Graph(
+            name="test",
+            nodes={
+                "gate": Node(
+                    id="gate",
+                    shape="hexagon",
+                    label="Approve changes?",
+                    # Legacy construction: prompt inside attrs, not node.prompt
+                    attrs={"prompt": explicit_prompt},
+                ),
+                "next": Node(id="next", shape="box"),
+            },
+            edges=[Edge(from_node="gate", to_node="next", label="ok")],
+        )
+        context = PipelineContext()
+
+        captured_questions: list[Question] = []
+
+        class CapturingInterviewer:
+            def ask(self, question: Question) -> Answer:
+                raise AssertionError("ask() must NOT be called; use async_ask")
+
+            def ask_multiple(self, questions: list[Question]) -> list[Answer]:
+                raise AssertionError("ask_multiple() must NOT be called")
+
+            def inform(self, message: str) -> None:
+                pass
+
+            async def async_ask(self, question: Question) -> Answer:
+                captured_questions.append(question)
+                return Answer(value="ok", selected_option=Option(key="ok", label="ok"))
+
+        handler = HumanGateHandler(interviewer=CapturingInterviewer())
+        await handler.execute(graph.nodes["gate"], context, graph, "/tmp")
+
+        assert len(captured_questions) == 1
+        assert captured_questions[0].text == explicit_prompt, (
+            f"Expected attrs-based prompt, got: {captured_questions[0].text!r}"
+        )

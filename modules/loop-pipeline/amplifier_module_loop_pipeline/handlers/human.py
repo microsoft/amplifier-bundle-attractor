@@ -308,7 +308,24 @@ class HumanGateHandler:
             label_to_targets.setdefault(label, []).append(edge.to_node)
 
         # 2. Build the question with accelerator keys (L-11)
-        prompt = node.attrs.get("prompt") or node.label or f"Human gate: {node.id}"
+        # node.prompt is a first-class Node field populated by the DOT parser (the
+        # parser pops "prompt" from attrs into node.prompt, so node.attrs.get("prompt")
+        # always returns None for DOT-parsed nodes).  Fall back to attrs for nodes
+        # constructed directly in tests or legacy callers that set attrs["prompt"].
+        raw_prompt = (
+            node.prompt
+            or node.attrs.get("prompt")
+            or node.label
+            or f"Human gate: {node.id}"
+        )
+        # Expand $variable tokens in the prompt (e.g. variables injected by a
+        # parent folder node via context.* attrs) using the same expansion pipeline
+        # as the description field.
+        prompt = (
+            _expand_description(raw_prompt, graph, context)
+            if "$" in raw_prompt
+            else raw_prompt
+        )
 
         # Read description for edge-choice gates (same as freeform path)
         description = node.attrs.get("description", "")
@@ -409,7 +426,20 @@ class HumanGateHandler:
         """
         assert self._interviewer is not None  # guaranteed by execute() guard
 
-        prompt = node.attrs.get("prompt") or node.label or f"Human gate: {node.id}"
+        # node.prompt is a first-class Node field (DOT parser pops "prompt" from
+        # attrs into node.prompt).  Fall back to attrs for directly-constructed nodes.
+        raw_prompt = (
+            node.prompt
+            or node.attrs.get("prompt")
+            or node.label
+            or f"Human gate: {node.id}"
+        )
+        # Expand $variable tokens (e.g. $gate_topic injected by a parent folder node).
+        prompt = (
+            _expand_description(raw_prompt, graph, context)
+            if "$" in raw_prompt
+            else raw_prompt
+        )
 
         # --- Rich input request: read new attributes ---
         description = node.attrs.get("description", "")

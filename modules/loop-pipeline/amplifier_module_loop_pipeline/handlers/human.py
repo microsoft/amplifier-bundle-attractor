@@ -308,6 +308,11 @@ class HumanGateHandler:
             label_to_targets.setdefault(label, []).append(edge.to_node)
 
         # 2. Build the question with accelerator keys (L-11)
+        # Increment the iteration counter BEFORE prompt expansion so that
+        # pattern prompts can reference ${_gate_iter.<node_id>} to show
+        # turn-N indicators to the user (Issue 17b).
+        stage_id = self._get_stage_id(node, context)
+
         # node.prompt is a first-class Node field populated by the DOT parser (the
         # parser pops "prompt" from attrs into node.prompt, so node.attrs.get("prompt")
         # always returns None for DOT-parsed nodes).  Fall back to attrs for nodes
@@ -343,8 +348,6 @@ class HumanGateHandler:
             key = _parse_accelerator_key(c)
             key_to_label[key] = c
             options.append(Option(key=key, label=c))
-
-        stage_id = self._get_stage_id(node, context)
         if choices:
             question = Question(
                 text=prompt,
@@ -426,6 +429,11 @@ class HumanGateHandler:
         """
         assert self._interviewer is not None  # guaranteed by execute() guard
 
+        # Increment the iteration counter BEFORE prompt expansion so that
+        # pattern prompts can reference ${_gate_iter.<node_id>} to show
+        # turn-N indicators to the user (Issue 17b).
+        stage_id = self._get_stage_id(node, context)
+
         # node.prompt is a first-class Node field (DOT parser pops "prompt" from
         # attrs into node.prompt).  Fall back to attrs for directly-constructed nodes.
         raw_prompt = (
@@ -467,7 +475,6 @@ class HumanGateHandler:
         if ref_envelopes:
             metadata["attachments_ref"] = ref_envelopes
 
-        stage_id = self._get_stage_id(node, context)
         question = Question(
             text=prompt,
             type=QuestionType.FREEFORM,

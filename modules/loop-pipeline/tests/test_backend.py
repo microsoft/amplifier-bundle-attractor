@@ -746,6 +746,45 @@ def test_parse_outcome_empty_string_returns_fail():
     assert result.failure_reason == "Empty LLM response"
 
 
+def test_parse_outcome_json_fenced_with_json_tag():
+    """_parse_outcome extracts context_updates from ```json-fenced JSON.
+
+    Issue 17: LLMs emit ```json...``` fences despite explicit "no fences"
+    instructions.  The fence-stripping fallback must recover context_updates
+    (specifically gate_feedback) so the next ask turn shows eval's feedback.
+    """
+    from amplifier_module_loop_pipeline.backend import _parse_outcome
+
+    payload = (
+        "```json\n"
+        '{"status": "success", "preferred_label": "need_more",'
+        ' "context_updates": {"gate_feedback": "Your response lacks specifics."}}\n'
+        "```"
+    )
+    result = _parse_outcome(payload)
+    assert result.status == StageStatus.SUCCESS
+    assert result.preferred_label == "need_more"
+    assert result.context_updates is not None
+    assert result.context_updates["gate_feedback"] == "Your response lacks specifics."
+
+
+def test_parse_outcome_json_fenced_without_json_tag():
+    """_parse_outcome extracts context_updates from plain-fenced JSON (no 'json' tag)."""
+    from amplifier_module_loop_pipeline.backend import _parse_outcome
+
+    payload = (
+        "```\n"
+        '{"status": "success", "preferred_label": "scored",'
+        ' "context_updates": {"gate_feedback": ""}}\n'
+        "```"
+    )
+    result = _parse_outcome(payload)
+    assert result.status == StageStatus.SUCCESS
+    assert result.preferred_label == "scored"
+    assert result.context_updates is not None
+    assert result.context_updates["gate_feedback"] == ""
+
+
 # ---------------------------------------------------------------------------
 # Task 5: ProviderPreference import — lazy placeholder when foundation missing
 # ---------------------------------------------------------------------------

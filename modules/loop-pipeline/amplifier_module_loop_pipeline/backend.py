@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 try:
@@ -570,6 +571,15 @@ def _parse_outcome(output: str) -> Outcome:
             notes="No output from LLM",
             failure_reason="Empty LLM response",
         )
+
+    # Strip markdown code fences (```json...``` or ```...```) that LLMs sometimes
+    # emit despite explicit "no fences" instructions.  This is a common failure mode
+    # when the eval node prompt asks for a JSON object: the LLM wraps it in a fence,
+    # making stripped.startswith("{") false and causing context_updates to be lost.
+    # Example: "```json\n{...}\n```" -> "{...}"
+    _fence_match = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", stripped, re.DOTALL)
+    if _fence_match:
+        stripped = _fence_match.group(1).strip()
 
     # Try to parse JSON outcome
     if stripped.startswith("{"):

@@ -511,3 +511,70 @@ def test_single_attr_no_warning():
         """)
     comma_warnings = [x for x in w if "comma" in str(x.message).lower()]
     assert len(comma_warnings) == 0
+
+
+# --- Escape sequence regression tests (added for reality_check shell crash) ---
+# Background: chained str.replace() in _parse_value was order-dependent. The bug
+# was that ``\n`` -> LF ran before ``\\`` -> ``\``, so an input of ``\\n`` (two
+# literal backslashes followed by n, used by reality_check and semport
+# pipelines as a logical line separator) was mis-processed into ``\<LF>`` —
+# dash interprets that as line-continuation, joining script lines. The
+# resulting joined line broke heredoc structure in the reality_check
+# RenderVerdict node, causing 100% pipeline failure with
+# ``/bin/sh: Syntax error: "(" unexpected``.
+#
+# Fix: reorder the chain so ``\\`` -> ``\`` runs FIRST, before any
+# ``\<char>`` -> <char> conversion. With that order, ``\\n`` correctly
+# yields LF — which is what existing pipelines expect.
+
+
+def test_escape_double_backslash_n_yields_newline():
+    """REGRESSION: ``\\\\n`` in DOT source must yield a real newline (LF).
+
+    This is the existing semantics expected by reality_check, semport, and
+    smoke_test pipelines that use ``\\\\n`` as a logical line separator.
+    """
+    graph = parse_dot('digraph t { n [label="line1\\\\nline2"] }')
+    assert graph.nodes["n"].label == "line1\nline2"
+
+
+def test_escape_single_backslash_n_yields_newline():
+    """``\\n`` in DOT source yields a real newline (the simple case)."""
+    graph = parse_dot('digraph t { n [label="line1\\nline2"] }')
+    assert graph.nodes["n"].label == "line1\nline2"
+
+
+def test_escape_double_backslash_t_yields_tab():
+    """``\\\\t`` -> TAB (consistency with ``\\\\n``)."""
+    graph = parse_dot('digraph t { n [label="a\\\\tb"] }')
+    assert graph.nodes["n"].label == "a\tb"
+
+
+def test_escape_quote():
+    r"""``\"`` yields a literal quote inside a DOT string."""
+    graph = parse_dot('digraph t { n [label="he said \\"hi\\""] }')
+    assert graph.nodes["n"].label == 'he said "hi"'
+
+
+def test_escape_quadruple_backslash_yields_pair():
+    """``\\\\\\\\`` (4 backslashes) -> ``\\\\`` (2 backslashes).
+
+    Pairwise reduction: each adjacent ``\\\\`` collapses to ``\\``.
+    """
+    graph = parse_dot('digraph t { n [label="\\\\\\\\"] }')
+    assert graph.nodes["n"].label == "\\\\"
+
+
+def test_escape_multiline_shell_script_preserves_structure():
+    """Full reality_check-style tool_command must produce valid multi-line shell.
+
+    Before the fix: ``\\\\n`` between script lines became ``\<LF>`` (line
+    continuation), joining lines into one big logical line and breaking the
+    `python3 - << 'PYEOF'` heredoc. Result: dash parsed Python source as shell
+    code and crashed on the first ``(``.
+    """
+    cmd_attr = "#!/bin/sh\\\\nset -e\\\\nprintf hello\\\\nprintf world"
+    graph = parse_dot(f'digraph t {{ n [label="{cmd_attr}"] }}')
+    assert graph.nodes["n"].label == (
+        "#!/bin/sh\nset -e\nprintf hello\nprintf world"
+    )

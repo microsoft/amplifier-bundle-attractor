@@ -562,11 +562,22 @@ def _parse_value(raw: str) -> Any:
     # Quoted string
     if raw.startswith('"') and raw.endswith('"'):
         inner = raw[1:-1]
-        # Process escape sequences
+        # Process escape sequences.
+        #
+        # ORDER MATTERS. ``\\`` -> ``\`` MUST run first; otherwise an input of
+        # ``\\n`` (two literal backslashes followed by n, used by reality_check
+        # and semport pipelines as a logical line separator) is mis-processed:
+        # ``\n`` -> LF runs first, leaving ``\<LF>`` (backslash + real newline,
+        # which dash interprets as a line continuation) and the trailing
+        # ``\\`` -> ``\`` step finds nothing to replace.
+        #
+        # Correct order collapses the double backslash first, so the residual
+        # ``\n`` is then interpreted as a real newline -- which is what
+        # pipeline authors expect when they write ``\\n`` between script lines.
+        inner = inner.replace("\\\\", "\\")
         inner = inner.replace('\\"', '"')
         inner = inner.replace("\\n", "\n")
         inner = inner.replace("\\t", "\t")
-        inner = inner.replace("\\\\", "\\")
         # Check if it's a duration string
         dur = _try_parse_duration(inner)
         if dur is not None:

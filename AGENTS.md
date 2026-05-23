@@ -6,6 +6,10 @@ Conventions for AI coding agents (Amplifier, Claude Code, Cursor, etc.) and huma
 
 DOT-graph pipeline engine and handler bundle. Implements the **attractor nlspec** — graph-as-program execution where DOT nodes are computation, edges are dispatch, and clusters are subgraphs. The canonical spec reference lives at `github.com/strongdm/attractor`; this repo extends it but does not contradict it.
 
+## Phase-specific files
+
+Before designing changes, read [`PRINCIPLES.md`](PRINCIPLES.md) — upstream-spec linkage to `strongdm/attractor`, intentional deltas, and the "walk upstream first" discipline.
+
 ## Key directories
 
 - `modules/loop-pipeline/amplifier_module_loop_pipeline/` — engine and handlers. `engine.py` is the dispatch core; handlers/ contains node-type implementations.

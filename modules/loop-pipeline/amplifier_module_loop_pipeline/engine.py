@@ -1163,33 +1163,64 @@ class PipelineEngine:
         return results
 
     def _find_fan_in_node(self, parallel_target_ids: list[str]) -> str | None:
-        """Find the convergence node where all parallel branches meet.
+        """Find the first node reachable from ALL parallel branch roots via BFS.
 
-        Looks for a node that is an outgoing edge target from ALL
-        parallel target nodes (intersection of downstream neighbors).
+        Replaces the 1-hop intersection approach, which failed when branches
+        had multiple steps before converging (multi-hop fan-in).
+
+        Example that was broken under 1-hop:
+            component → RunBaseline → ExtractMetrics_B → EvalGather
+                      → RunVariant  → ExtractMetrics_V → EvalGather
+
+        1-hop: outgoing(RunBaseline) ∩ outgoing(RunVariant)
+               = {ExtractMetrics_B} ∩ {ExtractMetrics_V} = ∅  → None (WRONG)
+
+        BFS: reachable(RunBaseline) = {ExtractMetrics_B, EvalGather}
+             reachable(RunVariant)  = {ExtractMetrics_V, EvalGather}
+             common - roots         = {EvalGather}  → "EvalGather" (CORRECT)
+
+        Args:
+            parallel_target_ids: First node in each parallel branch (direct
+                children of the component/fan-out node).
+
+        Returns:
+            The earliest common descendant of all branches (minimum max-depth
+            across branches), or None if branches never converge.
         """
         if not parallel_target_ids:
             return None
 
-        # Collect all outgoing edge targets from each parallel node
-        target_sets: list[set[str]] = []
-        for node_id in parallel_target_ids:
-            targets = {e.to_node for e in self.graph.outgoing_edges(node_id)}
-            target_sets.append(targets)
+        # BFS from each branch root, collecting all reachable nodes with depth
+        reachable_per_branch: list[dict[str, int]] = []
+        for root in parallel_target_ids:
+            visited: dict[str, int] = {}
+            queue: list[tuple[str, int]] = [(root, 0)]
+            while queue:
+                node_id, depth = queue.pop(0)
+                if node_id in visited:
+                    continue
+                visited[node_id] = depth
+                for edge in self.graph.outgoing_edges(node_id):
+                    if edge.to_node not in visited:
+                        queue.append((edge.to_node, depth + 1))
+            reachable_per_branch.append(visited)
 
-        if not target_sets:
-            return None
+        # Common nodes = intersection of all reachable sets
+        common: set[str] = set(reachable_per_branch[0].keys())
+        for other in reachable_per_branch[1:]:
+            common = common.intersection(other.keys())
 
-        # Fan-in node = intersection of all target sets
-        common = target_sets[0]
-        for ts in target_sets[1:]:
-            common = common & ts
+        # Exclude branch roots (they cannot be their own fan-in node)
+        branch_root_set = set(parallel_target_ids)
+        common = common - branch_root_set
 
         if not common:
             return None
 
-        # If multiple common targets, pick the first alphabetically
-        return sorted(common)[0]
+        # Pick the node with the smallest maximum depth across all branches
+        # (the earliest / shallowest shared descendant)
+        best = min(common, key=lambda n: max(r[n] for r in reachable_per_branch))
+        return best
 
     # -- Failure routing helpers ----------------------------------------------
 

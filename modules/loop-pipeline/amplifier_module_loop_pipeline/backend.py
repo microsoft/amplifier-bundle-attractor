@@ -116,6 +116,7 @@ class AmplifierBackend:
         new._provider = self._provider
         new._unified_client = self._unified_client
         new._hooks = self._hooks
+
         # Copy tools: stateless tools are shared across clones (safe); stateful tools
         # (those exposing last_outcome) get an independent shallow copy with last_outcome
         # reset to None, so parallel branches start clean regardless of prior use.
@@ -509,7 +510,9 @@ class AmplifierBackend:
         #   3. No tool call either → plain prose → SUCCESS (spec 4.5), or empty → SUCCESS
         if result.text:
             stripped = result.text.strip()
-            _fence_match = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", stripped, re.DOTALL)
+            _fence_match = re.match(
+                r"^```(?:json)?\s*([\s\S]*?)\s*```$", stripped, re.DOTALL
+            )
             if bool(_fence_match) or stripped.startswith("{"):
                 return _parse_outcome(result.text)
 
@@ -557,25 +560,33 @@ class AmplifierBackend:
 # Helper functions
 # ---------------------------------------------------------------------------
 
-# Default models per provider (used when node.llm_model is not set)
-_DEFAULT_MODELS: dict[str, str] = {
-    "anthropic": "claude-sonnet-4-20250514",
-    "openai": "gpt-4o",
-    "gemini": "gemini-2.0-flash",
-    "test": "test-model",
-}
-
 
 def _resolve_model(node: Node) -> str:
     """Resolve the LLM model identifier from a pipeline node.
 
-    Uses the node's ``llm_model`` if set, otherwise falls back to a
-    sensible default based on the provider.
+    Requires an explicit ``llm_model`` attribute on the node.  No silent
+    fallback to deprecated or hardcoded defaults — every pipeline that
+    uses the direct tool loop must declare its model explicitly.
+
+    Args:
+        node: The pipeline node to resolve a model for.
+
+    Returns:
+        The explicit model identifier from ``node.llm_model``.
+
+    Raises:
+        ValueError: If neither ``node.llm_model`` nor ``attrs["llm_model"]``
+            is set.  The pipeline author must supply a model explicitly.
     """
     if node.llm_model:
         return node.llm_model
-    provider = node.llm_provider or node.attrs.get("llm_provider", "anthropic")
-    return _DEFAULT_MODELS.get(provider, "claude-sonnet-4-20250514")
+    raise ValueError(
+        f"Node '{node.id}' requires an explicit 'llm_model' attribute. "
+        f'Set llm_model="<model-name>" in the node\'s DOT attributes or '
+        f"via the pipeline's model_stylesheet. "
+        f"No default model is provided — this prevents silently running "
+        f"against a deprecated or unintended model."
+    )
 
 
 def _make_tool_handler(pipeline_tool: Any) -> Any:

@@ -18,7 +18,8 @@ providers:
   - module: provider-openai
     source: git+https://github.com/microsoft/amplifier-module-provider-openai@main
     config:
-      default_model: gpt-4.1
+      # default_model removed: model must be set explicitly via llm_model node attribute
+      # or the pipeline's model_stylesheet. No silent defaults.
       timeout: 600
 
 session:

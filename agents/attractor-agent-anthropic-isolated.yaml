@@ -18,7 +18,8 @@ providers:
   - module: provider-anthropic
     source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
     config:
-      default_model: claude-sonnet-4-20250514
+      # default_model removed: model must be set explicitly via llm_model node attribute
+      # or the pipeline's model_stylesheet. No silent defaults.
       timeout: 600
 
 session:

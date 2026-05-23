@@ -47,6 +47,7 @@ class HandlerRegistry:
 
     def __init__(self, **kwargs: Any) -> None:
         from .codergen import CodergenHandler
+        from .conditional import ConditionalHandler
         from .exit import ExitHandler
         from .fan_in import FanInHandler
         from .human import HumanGateHandler
@@ -62,6 +63,7 @@ class HandlerRegistry:
             "start": StartHandler(),
             "exit": ExitHandler(),
             "codergen": CodergenHandler(backend=kwargs.get("backend")),
+            "conditional": ConditionalHandler(),
             "tool": ToolHandler(),
             "wait.human": HumanGateHandler(
                 interviewer=kwargs.get("interviewer"),
@@ -92,7 +94,12 @@ class HandlerRegistry:
         Resolution order:
         1. Node's explicit ``type`` attribute if it matches a registered handler
         2. ``node_type`` attribute from node.attrs if it matches a registered handler
-        3. Shape-to-handler-type mapping (lowest priority, default codergen)
+        3. Shape-to-handler-type mapping (SHAPE_TO_HANDLER, spec §2.8)
+
+        Raises:
+            ValueError: If the node's shape is not in SHAPE_TO_HANDLER or the
+                resolved handler type is not registered.  No silent fallback to
+                codergen — unknown shape = clear error, not surprise LLM call.
         """
         if node.type and node.type in self._handlers:
             handler_type = node.type
@@ -101,8 +108,21 @@ class HandlerRegistry:
             if node_type_attr and node_type_attr in self._handlers:
                 handler_type = node_type_attr
             else:
-                handler_type = SHAPE_TO_HANDLER.get(node.shape, "codergen")
-        return self._handlers.get(handler_type, self._handlers["codergen"])
+                if node.shape not in SHAPE_TO_HANDLER:
+                    raise ValueError(
+                        f"Unknown node shape '{node.shape}' for node '{node.id}'. "
+                        f"Supported shapes: {sorted(SHAPE_TO_HANDLER.keys())}. "
+                        f"To use an LLM-driven node, use shape=box (codergen handler)."
+                    )
+                handler_type = SHAPE_TO_HANDLER[node.shape]
+
+        if handler_type not in self._handlers:
+            raise ValueError(
+                f"Handler '{handler_type}' for node '{node.id}' is not registered. "
+                f"This is an engine misconfiguration — '{handler_type}' appears in "
+                f"SHAPE_TO_HANDLER but was not added to HandlerRegistry._handlers."
+            )
+        return self._handlers[handler_type]
 
     def clone_for_branch(self) -> HandlerRegistry:
         """Create a branch-isolated copy of this registry.

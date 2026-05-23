@@ -665,11 +665,22 @@ def test_ellipse_removed_from_shape_to_handler():
     assert "ellipse" not in SHAPE_TO_HANDLER, "ellipse should be removed from SHAPE_TO_HANDLER"
 
 
-def test_diamond_removed_from_shape_to_handler():
-    """diamond shape must NOT be in SHAPE_TO_HANDLER (removed — routing via edge conditions)."""
+def test_diamond_maps_to_conditional_handler():
+    """diamond shape must map to 'conditional' in SHAPE_TO_HANDLER (spec §2.8, §4.7).
+
+    Previously diamond was absent from SHAPE_TO_HANDLER, causing it to silently
+    fall through to the codergen LLM agent.  The fix adds diamond → conditional,
+    implementing the ConditionalHandler spec (§4.7): a no-op that returns SUCCESS
+    immediately, leaving routing to the engine's edge-selection algorithm (§3.3).
+    """
     from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
 
-    assert "diamond" not in SHAPE_TO_HANDLER, "diamond should be removed from SHAPE_TO_HANDLER"
+    assert "diamond" in SHAPE_TO_HANDLER, (
+        "diamond must be registered in SHAPE_TO_HANDLER (spec §2.8)"
+    )
+    assert SHAPE_TO_HANDLER["diamond"] == "conditional", (
+        f"diamond must map to 'conditional', got '{SHAPE_TO_HANDLER['diamond']}' (spec §4.7)"
+    )
 
 
 # --- Alternative start/exit node conventions ---

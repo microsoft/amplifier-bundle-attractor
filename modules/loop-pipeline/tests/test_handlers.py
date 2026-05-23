@@ -380,12 +380,19 @@ async def test_context_variable_flows_between_pipeline_nodes(tmp_path):
     assert "$context" not in backend.prompts["review"]
 
 
-def test_registry_unknown_shape_defaults_to_codergen():
-    """Unknown shape falls back to codergen handler."""
+def test_registry_unknown_shape_raises_value_error():
+    """Unknown shape raises ValueError — no silent fallback to codergen.
+
+    Changed from the old behavior where unknown shapes silently fell back
+    to CodergenHandler.  The new behavior is a clear, actionable error:
+    unknown shape = loud failure, not a surprise LLM call.
+
+    Authors who want LLM-driven nodes must use shape=box explicitly.
+    """
     registry = HandlerRegistry()
     node = Node(id="u", shape="trapezoid")
-    handler = registry.get(node)
-    assert isinstance(handler, CodergenHandler)
+    with pytest.raises(ValueError, match="trapezoid"):
+        registry.get(node)
 
 
 def test_registry_custom_handler_registration():

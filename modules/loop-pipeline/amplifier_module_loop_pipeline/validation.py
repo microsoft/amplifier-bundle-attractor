@@ -25,6 +25,7 @@ SHAPE_TO_HANDLER: dict[str, str] = {
     "Mdiamond": "start",
     "Msquare": "exit",
     "box": "codergen",
+    "diamond": "conditional",
     "hexagon": "wait.human",
     "component": "parallel",
     "tripleoctagon": "parallel.fan_in",

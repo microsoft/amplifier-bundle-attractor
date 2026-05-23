@@ -17,7 +17,8 @@ providers:
   - module: provider-gemini
     source: git+https://github.com/microsoft/amplifier-module-provider-gemini@main
     config:
-      default_model: gemini-2.5-pro
+      # default_model removed: model must be set explicitly via llm_model node attribute
+      # or the pipeline's model_stylesheet. No silent defaults.
       timeout: 600
 
 session:

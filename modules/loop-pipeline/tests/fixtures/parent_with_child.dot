@@ -3,7 +3,7 @@ digraph parent_with_child {
 
     start     [shape=Mdiamond]
     pre_work  [shape=box, prompt="Do pre-work"]
-    review    [shape=folder, dot_file="child_pipeline.dot"]
+    review    [shape=folder, dot_file="child_pipeline.dot", runs_on=always]
     post_work [shape=box, prompt="Do post-work"]
     done      [shape=Msquare]
 

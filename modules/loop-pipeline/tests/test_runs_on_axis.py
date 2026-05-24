@@ -232,8 +232,14 @@ async def test_runs_on_success_default_behavior(tmp_path):
     )
     await engine.run()
 
-    # Default runs_on=success → skip because k is in failed_outputs
-    assert engine.node_outcomes["consumer"].status == StageStatus.SKIPPED
+    # Default runs_on=success + fail-fast: FAIL no longer traverses unconditional
+    # edges to default-runs_on nodes.  consumer is NOT reached (absent from
+    # node_outcomes), not SKIPPED.  Pipeline authors who want consumer to still
+    # execute after a failure must use runs_on=always or runs_on=failure.
+    assert "consumer" not in engine.node_outcomes, (
+        f"Expected consumer to NOT be in node_outcomes under fail-fast semantics, "
+        f"got status={engine.node_outcomes.get('consumer')}"
+    )
 
 
 @pytest.mark.asyncio

@@ -236,16 +236,23 @@ def test_fail_node_all_conditional_edges_no_match_returns_none():
     assert result is None
 
 
-def test_fail_node_with_unconditional_edge_routes():
-    """Unconditional edges still route correctly even from a FAIL node.
+def test_fail_outcome_does_not_traverse_unconditional_edges():
+    """Spec §3.7 fail-fast intent: FAIL outcomes do NOT traverse unconditional edges.
 
-    The fix removes the all-edges fallback, NOT the unconditional-edges path
-    (steps 4 & 5 of spec §3.3).  Pipelines that want a node to always route
-    somewhere — regardless of outcome — should use an unconditional edge, and
-    that must keep working.
+    Previously this test was named test_fail_node_with_unconditional_edge_routes
+    and asserted that unconditional edges were followed on FAIL.  That encoded
+    §3.3's pseudocode literally, but violated §3.7's stated fail-fast intent.
+
+    The corrected behavior: FAIL + unconditional edge → None.  The engine then
+    checks retry_target / fallback_retry_target and terminates if neither is set.
+
+    Pipeline authors who want fail-forward have three opt-in mechanisms:
+    - continue_on_fail="true"          → engine flips FAIL→SUCCESS before select_edge
+    - runs_on=always / runs_on=failure → downstream skip-gate override
+    - condition="outcome=fail" edge    → matched in Step 1 (unaffected by this change)
     """
     # Graph: N1 → N2 [condition="outcome=success"]  (won't match FAIL)
-    #        N1 → N3                                  (unconditional — should win)
+    #        N1 → N3                                  (unconditional — MUST NOT be followed on FAIL)
     edges = [
         Edge("N1", "N2", condition="outcome=success"),
         Edge("N1", "N3"),  # unconditional
@@ -253,8 +260,10 @@ def test_fail_node_with_unconditional_edge_routes():
     graph = _make_graph(edges)
     outcome = Outcome(status=StageStatus.FAIL)
     result = select_edge("N1", outcome, PipelineContext(), graph)
-    assert result is not None
-    assert result.to_node == "N3"
+    assert result is None, (
+        "FAIL outcome must NOT traverse unconditional edges (spec §3.7 fail-fast). "
+        f"Expected None, got edge to '{result.to_node if result else None}'"
+    )
 
 
 # --- Priority order tests ---

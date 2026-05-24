@@ -40,13 +40,28 @@ def _make_engine(dot_source: str, logs_root: str, hooks: Any = None) -> Pipeline
     validate_or_raise(graph)
     context = PipelineContext()
     registry = HandlerRegistry()
-    return PipelineEngine(
+    engine = PipelineEngine(
         graph=graph,
         context=context,
         handler_registry=registry,
         logs_root=logs_root,
         hooks=hooks,
     )
+
+    # Wire the subgraph_runner so ParallelHandler can execute branches.
+    # Without this, all branches fail immediately (no-op runner), which
+    # defeats the purpose of testing error_policy behavior.
+    async def subgraph_runner(
+        node_id: str,
+        branch_context: PipelineContext,
+        _graph: object,
+        _logs_root: str,
+    ) -> object:
+        return await engine._run_from(node_id, context=branch_context)
+
+    wired_registry = HandlerRegistry(subgraph_runner=subgraph_runner)
+    engine.handler_registry = wired_registry
+    return engine
 
 
 @pytest.mark.asyncio

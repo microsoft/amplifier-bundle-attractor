@@ -325,6 +325,22 @@ class PipelineEngine:
                     current_node.id, routing_outcome, self.context, self.graph
                 )
                 if edge is None:
+                    # Skip propagation: after select_edge, also try unconditional
+                    # edges for skip propagation.  Downstream nodes will be checked
+                    # by _check_node_skip and SKIPPED if their dependencies failed.
+                    # This preserves skip-chain observability even under the fail-fast
+                    # guard (which blocks unconditional edges for FAIL outcomes when
+                    # the target has runs_on=success, the default).
+                    skip_candidates = [
+                        e
+                        for e in self.graph.outgoing_edges(current_node.id)
+                        if not e.condition
+                    ]
+                    if skip_candidates:
+                        from .edge_selection import _best_by_weight_then_lexical
+
+                        edge = _best_by_weight_then_lexical(skip_candidates)
+                if edge is None:
                     retry_node = self._resolve_failure_retry_target(current_node)
                     if (
                         retry_node is not None
@@ -662,6 +678,12 @@ class PipelineEngine:
                         retry_node.id,
                         failure_routing_retries,
                     )
+                    # CR-3 (R12): Reset per-run state so skip-propagation from
+                    # attempt N does not block retried nodes in attempt N+1.
+                    # Mirrors the state clear in the goal-gate retry path above.
+                    self.completed_nodes.clear()
+                    self.node_outcomes.clear()
+                    self.failed_outputs.clear()
                     current_node = retry_node
                     continue
 
@@ -1150,8 +1172,20 @@ class PipelineEngine:
                 "context_updates": outcome.context_updates,
             }
 
-        # Execute all branches concurrently
-        tasks = [run_branch(edge.to_node) for edge in edges]
+        # Execute all branches concurrently with bounded parallelism.
+        # Read max_parallel from the source node's attrs (matching ParallelHandler's
+        # convention for shape=component nodes).  Default 4 mirrors ParallelHandler.
+        source_node = self.graph.nodes.get(edges[0].from_node) if edges else None
+        max_parallel = int(
+            source_node.attrs.get("max_parallel", 4) if source_node else 4
+        )
+        semaphore = asyncio.Semaphore(max_parallel)
+
+        async def bounded_run_branch(target_node_id: str) -> dict[str, Any]:
+            async with semaphore:
+                return await run_branch(target_node_id)
+
+        tasks = [bounded_run_branch(edge.to_node) for edge in edges]
         results = list(await asyncio.gather(*tasks))
 
         # Apply context_updates from all branches

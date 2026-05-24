@@ -210,3 +210,114 @@ async def test_parallelogram_shape_does_not_fan_out_unconditional_edges(tmp_path
         f"LeafB must NOT run (spec §3.3: select_edge returns ONE edge; parallelogram "
         f"is NOT a fan-out node), got {execution_counts.get('LeafB', 0)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 3: non-component multi-edge fan-out respects max_parallel (CONC-001–004)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_non_component_fanout_respects_max_parallel(tmp_path):
+    """_execute_parallel_fan_out bounds concurrency with the source node's max_parallel.
+
+    The engine-level fan-out path (for non-component nodes with multiple matching
+    conditional edges) must respect max_parallel exactly the same way ParallelHandler
+    does for shape=component nodes.  This test:
+
+    - Sets max_parallel=2 on the fan-out source node
+    - Fans out to 4 branches
+    - Uses a slow backend (asyncio.sleep) to create measurable overlap
+    - Tracks peak concurrent execution with a shared counter
+    - Asserts peak ≤ 2 (bounded) and all 4 branches eventually executed
+
+    Spec coverage: CONC-001–004, §3.8 (concurrency model).
+    """
+    import asyncio
+
+    peak_concurrent = 0
+    current_concurrent = 0
+    concurrent_lock = asyncio.Lock()
+    execution_counts: dict[str, int] = {}
+
+    class BoundedConcurrencyBackend:
+        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+            nonlocal peak_concurrent, current_concurrent
+            async with concurrent_lock:
+                current_concurrent += 1
+                if current_concurrent > peak_concurrent:
+                    peak_concurrent = current_concurrent
+            execution_counts[node.id] = execution_counts.get(node.id, 0) + 1
+            # Yield so other branches can start; makes overlapping detectable
+            await asyncio.sleep(0.05)
+            async with concurrent_lock:
+                current_concurrent -= 1
+            return "done"
+
+    # Fan-out source: shape=box (NOT component), max_parallel=2.
+    # All 4 branches have condition="outcome=success" so they all match at once.
+    # After the fan-out _execute_parallel_fan_out returns, the engine uses BFS
+    # (_find_fan_in_node) to locate the convergence node and routes there.
+    # NOTE: use a plain box for convergence, NOT a tripleoctagon — the tripleoctagon
+    # (FanInHandler) reads parallel.results which is only populated by ParallelHandler
+    # (shape=component).  The non-component fan-out path stores branch results in
+    # context_updates only, so a regular box is the correct convergence node here.
+    graph = Graph(
+        name="test-bounded-non-component-fanout",
+        nodes={
+            "start": Node(id="start", shape="Mdiamond"),
+            "FanOut": Node(
+                id="FanOut",
+                shape="box",
+                prompt="fan out work",
+                attrs={"max_parallel": "2"},  # caps concurrent branches at 2
+            ),
+            "Branch1": Node(id="Branch1", shape="box", prompt="branch 1"),
+            "Branch2": Node(id="Branch2", shape="box", prompt="branch 2"),
+            "Branch3": Node(id="Branch3", shape="box", prompt="branch 3"),
+            "Branch4": Node(id="Branch4", shape="box", prompt="branch 4"),
+            "Converge": Node(id="Converge", shape="box", prompt="after branches"),
+            "exit": Node(id="exit", shape="Msquare"),
+        },
+        edges=[
+            Edge(from_node="start", to_node="FanOut"),
+            # 4 conditional edges all matching outcome=success → multi-edge fan-out
+            Edge(from_node="FanOut", to_node="Branch1", condition="outcome=success"),
+            Edge(from_node="FanOut", to_node="Branch2", condition="outcome=success"),
+            Edge(from_node="FanOut", to_node="Branch3", condition="outcome=success"),
+            Edge(from_node="FanOut", to_node="Branch4", condition="outcome=success"),
+            # Convergence edges: BFS finds Converge as common reachable node from
+            # all 4 branch roots → engine routes there after fan-out completes
+            Edge(from_node="Branch1", to_node="Converge"),
+            Edge(from_node="Branch2", to_node="Converge"),
+            Edge(from_node="Branch3", to_node="Converge"),
+            Edge(from_node="Branch4", to_node="Converge"),
+            Edge(from_node="Converge", to_node="exit"),
+        ],
+    )
+
+    engine = PipelineEngine(
+        graph=graph,
+        context=PipelineContext(),
+        handler_registry=HandlerRegistry(backend=BoundedConcurrencyBackend()),
+        logs_root=str(tmp_path),
+    )
+    outcome = await engine.run()
+
+    assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS), (
+        f"Pipeline did not complete: {outcome.status}, {outcome.failure_reason}"
+    )
+
+    # All 4 branches must have run
+    for branch in ("Branch1", "Branch2", "Branch3", "Branch4"):
+        assert execution_counts.get(branch, 0) == 1, (
+            f"{branch} should have run exactly once, got "
+            f"{execution_counts.get(branch, 0)}"
+        )
+
+    # Peak concurrent execution must not exceed max_parallel=2
+    assert peak_concurrent <= 2, (
+        f"Peak concurrent branches was {peak_concurrent}, expected ≤ 2 "
+        f"(max_parallel=2 on FanOut node). "
+        f"_execute_parallel_fan_out must respect the source node's max_parallel."
+    )

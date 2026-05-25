@@ -111,6 +111,18 @@ The validator's exit code is the routing signal, not any LLM output.
 regex, XML change descriptions — any intermediate format that only exists to feed the next
 code step.
 
+**In-the-wild adoption.** Pipeline authors in the broader DOT ecosystem have independently
+converged on Strategy SF for use cases like language-to-language code porting. A
+representative third-party pattern: the implementation node uses file tools to write changes
+directly across target files; a downstream build gate (compiler or test runner) validates via
+deterministic exit code — no intermediate format to specify, no format variance to absorb.
+
+The within-ecosystem contrast is instructive: earlier iterations of the same work used the
+LLM-as-format-translator pattern (model produces structured code blocks → code parses →
+writes files), producing silent file drops when block formatting varied across model runs.
+Later iterations by the same author group adopted Strategy SF — from reliability pressure,
+not from this document. That independent convergence is corroborating evidence.
+
 ---
 
 ## 4. Strategy V+R — Validation + Retry

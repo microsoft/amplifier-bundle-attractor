@@ -16,6 +16,7 @@ Before designing changes, read [`PRINCIPLES.md`](PRINCIPLES.md) — upstream-spe
 - `modules/loop-pipeline/tests/` — unit tests (1049+ passing as of recent `main`).
 - `examples/pipelines/` — canonical pipeline patterns. Useful as live test fixtures when verifying engine changes.
 - `specs/` — our spec extensions and the canonical attractor reference.
+- `docs/CONTRACTS.md` — engine-level contracts: M5 substitution, fail-fast policy, structural concurrency, and cross-consumer guidance.
 
 ## Test commands
 

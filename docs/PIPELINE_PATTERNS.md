@@ -240,6 +240,38 @@ CheckVerdict -> Retry    [condition="context.tool.last_line=rejected"];
 `printf` is deterministic. The routing signal comes from `grep`'s judgment of the agent's
 natural output — not from the agent typing an exact keyword.
 
+**Note on `goal_gate` / `outcome=success/fail/retry`:** The attractor engine provides
+`goal_gate=true` as the spec-designed mechanism for outcome-based routing. When set, the
+engine interprets the LLM's response to compute the node's `outcome` status, which
+conditional edges route on (`condition="outcome=success"`, `condition="outcome=fail"`, etc.).
+Pipeline authors using `goal_gate` are not violating spec — this is the designed-in path for
+verdict routing.
+
+However, `goal_gate` shares the underlying fragility of LLM-emitted routing: the engine's
+interpretation depends on the LLM producing the expected outcome signal. Local models,
+smaller frontier models, and models with verbose tendencies can fail this silently.
+
+**Default lean:** if the LLM is already writing evidence to a file as part of its work
+product, route on that file (LLM writes → parallelogram greps → routes via `printf`). This
+produces the same outcome with less variance and no reliance on exact LLM token output.
+
+**When `goal_gate` is the right choice:**
+
+- The routing decision depends purely on LLM judgment with no file artifact
+- The pipeline targets only frontier models in practice
+- Adding a file-grep parallelogram would be ceremony with no real value
+
+**When to prefer file-based routing over `goal_gate`:**
+
+- The LLM is already writing evidence to a file (audit log, review verdict, validation result)
+- Local model portability is a goal
+- The pipeline runs across model families where exact-token output varies
+
+Community canonical pipelines use `goal_gate` extensively for verdict nodes and that works in
+practice for their target environments. Newer pipeline patterns favor file-based routing when
+the evidence file already exists for other reasons. This is a design trade-off — not a
+hierarchy of right and wrong.
+
 ---
 
 ### AP-3: Prompt/Validator Drift

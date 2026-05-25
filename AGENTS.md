@@ -17,6 +17,7 @@ Before designing changes, read [`PRINCIPLES.md`](PRINCIPLES.md) — upstream-spe
 - `examples/pipelines/` — canonical pipeline patterns. Useful as live test fixtures when verifying engine changes.
 - `specs/` — our spec extensions and the canonical attractor reference.
 - `docs/CONTRACTS.md` — engine-level contracts: M5 substitution, fail-fast policy, structural concurrency, and cross-consumer guidance.
+- `docs/PIPELINE_PATTERNS.md` — design discipline for pipeline authors: when to use LLM nodes vs. tool nodes, the Direct Work + Code Verification pattern (SF), the Validation + Retry pattern (V+R), and the anti-pattern catalog.
 
 ## Test commands
 

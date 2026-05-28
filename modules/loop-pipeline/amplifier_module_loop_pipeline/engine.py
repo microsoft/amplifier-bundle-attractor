@@ -712,7 +712,7 @@ class PipelineEngine:
             )
 
             # Step 6: Handle loop_restart edge attribute (NLSpec Section 174)
-            if edge.loop_restart is True:
+            if edge.loop_restart:
                 self.iteration_count += 1
                 iteration_dir = os.path.join(
                     self.logs_root, f"iteration_{self.iteration_count}"

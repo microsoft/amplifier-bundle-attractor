@@ -31,6 +31,7 @@ cited as prior-art inspiration where useful.
 | [DOT Syntax Reference](docs/DOT-SYNTAX.md) | Quick reference tables and copy-paste patterns |
 | [Routing Reference](docs/ROUTING-REFERENCE.md) | Edge selection algorithm, `report_outcome` tool, condition expressions, common pitfalls |
 | [App Integration Guide](docs/APP-INTEGRATION-GUIDE.md) | Using pipelines from Python applications (DirectProvider vs AmplifierSession) |
+| [Pipeline Design Principles](docs/PIPELINE_DESIGN_PRINCIPLES.md) | Six framework-agnostic design principles: tier discipline, validation patterns, loop convergence, LLM output protocols, parameterization, verdict-bearing nodes |
 
 ## Quick Start
 

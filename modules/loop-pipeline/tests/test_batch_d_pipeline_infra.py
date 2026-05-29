@@ -46,6 +46,7 @@ from amplifier_module_loop_pipeline.transforms import (
     apply_transforms,
     expand_variables,
 )
+from amplifier_module_loop_pipeline.run_identity import RunIdentity
 from amplifier_module_loop_pipeline.validation import validate_or_raise
 from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
@@ -504,7 +505,19 @@ class TestM23CheckpointFidelityDegradation:
     @pytest.mark.asyncio
     async def test_full_fidelity_degraded_on_resume(self, tmp_path):
         """When checkpoint has full fidelity, it degrades to summary:high for one hop then restores."""
-        # Create a checkpoint with full fidelity in context
+        dot_source = """
+            digraph {
+                goal = "build auth"
+                default_fidelity = "full"
+                start [shape=Mdiamond]
+                plan [prompt="Plan"]
+                implement [prompt="Build"]
+                exit [shape=Msquare]
+                start -> plan -> implement -> exit
+            }
+            """
+        identity = RunIdentity.from_graph(parse_dot(dot_source))
+
         cp = Checkpoint(
             current_node="plan",
             completed_nodes={"start": "success", "plan": "success"},
@@ -518,23 +531,12 @@ class TestM23CheckpointFidelityDegradation:
                 "plan": {"status": "success"},
             },
             timestamp="2025-01-01T00:00:00Z",
+            identity=identity,
         )
         save_checkpoint(cp, str(tmp_path / "checkpoint.json"))
 
         engine = _make_engine(
-            dot_source="""
-            digraph {
-                goal = "build auth"
-                default_fidelity = "full"
-                start [shape=Mdiamond]
-                plan [prompt="Plan"]
-                implement [prompt="Build"]
-                exit [shape=Msquare]
-                start -> plan -> implement -> exit
-            }
-            """,
-            backend=MockBackend(),
-            logs_root=str(tmp_path),
+            dot_source=dot_source, backend=MockBackend(), logs_root=str(tmp_path)
         )
         await engine.run()
         # After resume, fidelity is degraded for the first hop then restored to full
@@ -544,6 +546,19 @@ class TestM23CheckpointFidelityDegradation:
     @pytest.mark.asyncio
     async def test_non_full_fidelity_not_degraded_on_resume(self, tmp_path):
         """When checkpoint has non-full fidelity, it's not changed."""
+        dot_source = """
+            digraph {
+                goal = "build auth"
+                default_fidelity = "compact"
+                start [shape=Mdiamond]
+                plan [prompt="Plan"]
+                implement [prompt="Build"]
+                exit [shape=Msquare]
+                start -> plan -> implement -> exit
+            }
+            """
+        identity = RunIdentity.from_graph(parse_dot(dot_source))
+
         cp = Checkpoint(
             current_node="plan",
             completed_nodes={"start": "success", "plan": "success"},
@@ -557,23 +572,12 @@ class TestM23CheckpointFidelityDegradation:
                 "plan": {"status": "success"},
             },
             timestamp="2025-01-01T00:00:00Z",
+            identity=identity,
         )
         save_checkpoint(cp, str(tmp_path / "checkpoint.json"))
 
         engine = _make_engine(
-            dot_source="""
-            digraph {
-                goal = "build auth"
-                default_fidelity = "compact"
-                start [shape=Mdiamond]
-                plan [prompt="Plan"]
-                implement [prompt="Build"]
-                exit [shape=Msquare]
-                start -> plan -> implement -> exit
-            }
-            """,
-            backend=MockBackend(),
-            logs_root=str(tmp_path),
+            dot_source=dot_source, backend=MockBackend(), logs_root=str(tmp_path)
         )
         await engine.run()
         fidelity = engine.context.get("graph.default_fidelity")
@@ -590,6 +594,20 @@ class TestM23CheckpointFidelityDegradation:
                 fidelities_seen.append(fidelity)
                 return "done"
 
+        dot_source = """
+            digraph {
+                goal = "build auth"
+                default_fidelity = "full"
+                start [shape=Mdiamond]
+                plan [prompt="Plan"]
+                implement [prompt="Build"]
+                review [prompt="Review"]
+                exit [shape=Msquare]
+                start -> plan -> implement -> review -> exit
+            }
+            """
+        identity = RunIdentity.from_graph(parse_dot(dot_source))
+
         cp = Checkpoint(
             current_node="plan",
             completed_nodes={"start": "success", "plan": "success"},
@@ -603,22 +621,12 @@ class TestM23CheckpointFidelityDegradation:
                 "plan": {"status": "success"},
             },
             timestamp="2025-01-01T00:00:00Z",
+            identity=identity,
         )
         save_checkpoint(cp, str(tmp_path / "checkpoint.json"))
 
         engine = _make_engine(
-            dot_source="""
-            digraph {
-                goal = "build auth"
-                default_fidelity = "full"
-                start [shape=Mdiamond]
-                plan [prompt="Plan"]
-                implement [prompt="Build"]
-                review [prompt="Review"]
-                exit [shape=Msquare]
-                start -> plan -> implement -> review -> exit
-            }
-            """,
+            dot_source=dot_source,
             backend=FidelityCapturingBackend(),
             logs_root=str(tmp_path),
         )

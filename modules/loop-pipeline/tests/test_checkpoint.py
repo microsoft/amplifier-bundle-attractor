@@ -4,16 +4,18 @@ After every node execution, a JSON checkpoint is saved so the pipeline
 can resume after crashes. Tests cover serialization, deserialization,
 engine integration, and resume-from-checkpoint behavior.
 
-Spec coverage: CHKP-001–006, Section 5.3.
+Spec coverage: CHKP-001–006, Section 5.3, T2.4 (RunIdentity hard-fail).
 """
 
 import json
+import logging
 import os
 
 import pytest
 
 from amplifier_module_loop_pipeline.checkpoint import (
     Checkpoint,
+    CheckpointMismatchError,
     load_checkpoint,
     save_checkpoint,
 )
@@ -23,6 +25,7 @@ from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import StageStatus
+from amplifier_module_loop_pipeline.run_identity import RunIdentity
 from amplifier_module_loop_pipeline.validation import validate_or_raise
 from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
@@ -266,7 +269,20 @@ class TestResumeFromCheckpoint:
     @pytest.mark.asyncio
     async def test_resume_skips_completed_nodes(self, tmp_path):
         """Resumed engine skips nodes that are already completed."""
-        # First, create a checkpoint that says start and plan are done
+        dot_source = """
+            digraph {
+                goal = "build auth"
+                start [shape=Mdiamond]
+                plan [prompt="Plan"]
+                implement [prompt="Build"]
+                exit [shape=Msquare]
+                start -> plan -> implement -> exit
+            }
+            """
+        # Compute identity so the engine accepts the checkpoint (T2.4)
+        graph = parse_dot(dot_source)
+        identity = RunIdentity.from_graph(graph)
+
         cp = Checkpoint(
             current_node="plan",
             completed_nodes={"start": "success", "plan": "success"},
@@ -276,24 +292,14 @@ class TestResumeFromCheckpoint:
                 "plan": {"status": "success"},
             },
             timestamp="2025-01-01T00:00:00Z",
+            identity=identity,
         )
         save_checkpoint(cp, str(tmp_path / "checkpoint.json"))
 
         # Now create an engine and resume from checkpoint
         backend = MockBackend("done")
         engine = _make_engine(
-            dot_source="""
-            digraph {
-                goal = "build auth"
-                start [shape=Mdiamond]
-                plan [prompt="Plan"]
-                implement [prompt="Build"]
-                exit [shape=Msquare]
-                start -> plan -> implement -> exit
-            }
-            """,
-            backend=backend,
-            logs_root=str(tmp_path),
+            dot_source=dot_source, backend=backend, logs_root=str(tmp_path)
         )
         outcome = await engine.run()
         assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
@@ -305,6 +311,19 @@ class TestResumeFromCheckpoint:
     @pytest.mark.asyncio
     async def test_resume_restores_context(self, tmp_path):
         """Resumed engine has context values from checkpoint."""
+        dot_source = """
+            digraph {
+                goal = "build auth"
+                start [shape=Mdiamond]
+                plan [prompt="Plan"]
+                implement [prompt="Build"]
+                exit [shape=Msquare]
+                start -> plan -> implement -> exit
+            }
+            """
+        graph = parse_dot(dot_source)
+        identity = RunIdentity.from_graph(graph)
+
         cp = Checkpoint(
             current_node="plan",
             completed_nodes={"start": "success", "plan": "success"},
@@ -318,23 +337,13 @@ class TestResumeFromCheckpoint:
                 "plan": {"status": "success"},
             },
             timestamp="2025-01-01T00:00:00Z",
+            identity=identity,
         )
         save_checkpoint(cp, str(tmp_path / "checkpoint.json"))
 
         backend = MockBackend("done")
         engine = _make_engine(
-            dot_source="""
-            digraph {
-                goal = "build auth"
-                start [shape=Mdiamond]
-                plan [prompt="Plan"]
-                implement [prompt="Build"]
-                exit [shape=Msquare]
-                start -> plan -> implement -> exit
-            }
-            """,
-            backend=backend,
-            logs_root=str(tmp_path),
+            dot_source=dot_source, backend=backend, logs_root=str(tmp_path)
         )
         await engine.run()
         # Context should include the restored values
@@ -360,3 +369,298 @@ class TestResumeFromCheckpoint:
         assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
         # Backend called for step (start is handled by StartHandler)
         assert "step" in backend.calls
+
+
+# --- RunIdentity hard-fail (T2.4) ---
+
+_SIMPLE_DOT = """
+digraph {
+    start [shape=Mdiamond]
+    step  [prompt="Work"]
+    exit  [shape=Msquare]
+    start -> step -> exit
+}
+"""
+
+_DIFFERENT_DOT = """
+digraph {
+    start [shape=Mdiamond]
+    step1 [prompt="Work A"]
+    step2 [prompt="Work B"]
+    exit  [shape=Msquare]
+    start -> step1 -> step2 -> exit
+}
+"""
+
+
+class TestRunIdentityHardFail:
+    """T2.4: RunIdentity replaces graph_fingerprint; mismatch is a hard-fail.
+
+    Five cases are specified:
+    1. Pre-identity format (no identity, no graph_fingerprint) → discard silently, log info.
+    2. Wave-0 #252 format (has graph_fingerprint, matches) → resume.
+    3. Wave-0 #252 format (has graph_fingerprint, mismatches) → hard-fail.
+    4. New T2.4 format (has identity, matches) → resume.
+    5. New T2.4 format (has identity, mismatches) → hard-fail.
+    """
+
+    # -- load_checkpoint unit-level tests (no engine) --
+
+    def test_load_legacy_checkpoint_returns_none_identity(self, tmp_path):
+        """Pre-#252 checkpoint (no identity, no graph_fingerprint) loads with identity=None."""
+        path = str(tmp_path / "checkpoint.json")
+        raw = {
+            "current_node": "step",
+            "completed_nodes": {"start": "success"},
+            "context": {},
+            "node_outcomes": {},
+            "timestamp": "2025-01-01T00:00:00Z",
+            "node_retries": {},
+            "logs": [],
+            # Note: no "identity" and no "graph_fingerprint" keys
+        }
+        with open(path, "w") as f:
+            json.dump(raw, f)
+
+        cp = load_checkpoint(path)
+        assert cp.identity is None
+
+    def test_load_252_format_checkpoint_builds_identity_from_graph_fingerprint(
+        self, tmp_path
+    ):
+        """Wave-0 #252 format (graph_fingerprint str) → RunIdentity reconstructed."""
+        path = str(tmp_path / "checkpoint.json")
+        raw = {
+            "current_node": "step",
+            "completed_nodes": {"start": "success"},
+            "context": {},
+            "node_outcomes": {},
+            "timestamp": "2025-01-01T00:00:00Z",
+            "node_retries": {},
+            "logs": [],
+            "graph_fingerprint": "abcdef1234567890abcdef1234567890",
+        }
+        with open(path, "w") as f:
+            json.dump(raw, f)
+
+        cp = load_checkpoint(path)
+        assert cp.identity is not None
+        assert isinstance(cp.identity, RunIdentity)
+        assert cp.identity.graph_fingerprint == "abcdef1234567890abcdef1234567890"
+
+    def test_load_t24_format_checkpoint_builds_identity(self, tmp_path):
+        """New T2.4 format (identity dict) → RunIdentity reconstructed correctly."""
+        path = str(tmp_path / "checkpoint.json")
+        raw = {
+            "current_node": "step",
+            "completed_nodes": {"start": "success"},
+            "context": {},
+            "node_outcomes": {},
+            "timestamp": "2025-01-01T00:00:00Z",
+            "node_retries": {},
+            "logs": [],
+            "identity": {"graph_fingerprint": "deadbeef1234567890abcdef12345678"},
+        }
+        with open(path, "w") as f:
+            json.dump(raw, f)
+
+        cp = load_checkpoint(path)
+        assert cp.identity is not None
+        assert cp.identity.graph_fingerprint == "deadbeef1234567890abcdef12345678"
+
+    def test_save_checkpoint_with_identity_serializes_identity(self, tmp_path):
+        """Checkpoint with RunIdentity saves identity dict to JSON."""
+        identity = RunIdentity(graph_fingerprint="cafebabe1234567890abcdef12345678")
+        cp = Checkpoint(
+            current_node="step",
+            completed_nodes={},
+            context_snapshot={},
+            node_outcomes={},
+            timestamp="2025-01-01T00:00:00Z",
+            identity=identity,
+        )
+        path = str(tmp_path / "checkpoint.json")
+        save_checkpoint(cp, path)
+
+        with open(path) as f:
+            data = json.load(f)
+
+        assert "identity" in data
+        assert (
+            data["identity"]["graph_fingerprint"] == "cafebabe1234567890abcdef12345678"
+        )
+
+    # -- engine integration tests --
+
+    @pytest.mark.asyncio
+    async def test_legacy_checkpoint_is_discarded_with_info_log(self, tmp_path, caplog):
+        """Pre-identity checkpoint (no identity) is discarded; info log emitted; runs fresh."""
+        # Write a checkpoint with no identity field
+        cp_path = tmp_path / "checkpoint.json"
+        raw = {
+            "current_node": "step",
+            "completed_nodes": {"start": "success", "step": "success"},
+            "context": {"graph.goal": "test"},
+            "node_outcomes": {
+                "start": {"status": "success"},
+                "step": {"status": "success"},
+            },
+            "timestamp": "2025-01-01T00:00:00Z",
+            "node_retries": {},
+            "logs": [],
+        }
+        with open(str(cp_path), "w") as f:
+            json.dump(raw, f)
+
+        backend = MockBackend("done")
+        engine = _make_engine(_SIMPLE_DOT, backend=backend, logs_root=str(tmp_path))
+
+        with caplog.at_level(logging.INFO):
+            outcome = await engine.run()
+
+        assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
+        # step should have run because checkpoint was discarded (fresh run)
+        assert "step" in backend.calls
+        # Info log should mention the legacy discard
+        assert any(
+            "pre-identity" in record.message.lower()
+            or "legacy" in record.message.lower()
+            or "migration" in record.message.lower()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_matching_identity_resumes_normally(self, tmp_path):
+        """Checkpoint with matching identity resumes; completed nodes skipped."""
+        # Build the identity for the graph we'll use
+        graph = parse_dot(_SIMPLE_DOT)
+        from amplifier_module_loop_pipeline.run_identity import RunIdentity as RI
+
+        identity = RI.from_graph(graph)
+
+        # Write a checkpoint with the correct identity and step already done
+        cp_path = tmp_path / "checkpoint.json"
+        raw = {
+            "current_node": "step",
+            "completed_nodes": {"start": "success", "step": "success"},
+            "context": {"graph.goal": ""},
+            "node_outcomes": {
+                "start": {
+                    "status": "success",
+                    "notes": None,
+                    "failure_reason": None,
+                    "preferred_label": None,
+                },
+                "step": {
+                    "status": "success",
+                    "notes": "done",
+                    "failure_reason": None,
+                    "preferred_label": None,
+                },
+            },
+            "timestamp": "2025-01-01T00:00:00Z",
+            "node_retries": {},
+            "logs": [],
+            "identity": {"graph_fingerprint": identity.graph_fingerprint},
+        }
+        with open(str(cp_path), "w") as f:
+            json.dump(raw, f)
+
+        backend = MockBackend("done")
+        engine = _make_engine(_SIMPLE_DOT, backend=backend, logs_root=str(tmp_path))
+        outcome = await engine.run()
+
+        assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
+        # step was completed in checkpoint → backend should NOT have been called for step
+        assert "step" not in backend.calls
+
+    @pytest.mark.asyncio
+    async def test_identity_mismatch_raises_checkpoint_mismatch_error(self, tmp_path):
+        """Identity mismatch → CheckpointMismatchError raised (hard-fail, not silent restart)."""
+        # Write a checkpoint with a DIFFERENT graph's identity
+        different_graph = parse_dot(_DIFFERENT_DOT)
+        from amplifier_module_loop_pipeline.run_identity import RunIdentity as RI
+
+        different_identity = RI.from_graph(different_graph)
+
+        cp_path = tmp_path / "checkpoint.json"
+        raw = {
+            "current_node": "step1",
+            "completed_nodes": {"start": "success"},
+            "context": {},
+            "node_outcomes": {"start": {"status": "success"}},
+            "timestamp": "2025-01-01T00:00:00Z",
+            "node_retries": {},
+            "logs": [],
+            "identity": {"graph_fingerprint": different_identity.graph_fingerprint},
+        }
+        with open(str(cp_path), "w") as f:
+            json.dump(raw, f)
+
+        # Run the SIMPLE graph against a checkpoint from the DIFFERENT graph
+        engine = _make_engine(
+            _SIMPLE_DOT, backend=MockBackend("done"), logs_root=str(tmp_path)
+        )
+
+        with pytest.raises(CheckpointMismatchError) as exc_info:
+            await engine.run()
+
+        # Error message must contain remediation: tell user to delete the file
+        error_msg = str(exc_info.value)
+        assert "delete" in error_msg.lower() or "remove" in error_msg.lower()
+        assert str(cp_path) in error_msg
+
+    @pytest.mark.asyncio
+    async def test_252_format_mismatch_raises_checkpoint_mismatch_error(self, tmp_path):
+        """Wave-0 #252 format with mismatched graph_fingerprint → hard-fail."""
+        cp_path = tmp_path / "checkpoint.json"
+        raw = {
+            "current_node": "step",
+            "completed_nodes": {"start": "success"},
+            "context": {},
+            "node_outcomes": {"start": {"status": "success"}},
+            "timestamp": "2025-01-01T00:00:00Z",
+            "node_retries": {},
+            "logs": [],
+            "graph_fingerprint": "0" * 32,  # clearly wrong fingerprint
+        }
+        with open(str(cp_path), "w") as f:
+            json.dump(raw, f)
+
+        engine = _make_engine(
+            _SIMPLE_DOT, backend=MockBackend("done"), logs_root=str(tmp_path)
+        )
+
+        with pytest.raises(CheckpointMismatchError):
+            await engine.run()
+
+    @pytest.mark.asyncio
+    async def test_error_message_contains_checkpoint_path(self, tmp_path):
+        """CheckpointMismatchError includes the path to the stale checkpoint file."""
+        different_graph = parse_dot(_DIFFERENT_DOT)
+        from amplifier_module_loop_pipeline.run_identity import RunIdentity as RI
+
+        different_identity = RI.from_graph(different_graph)
+
+        cp_path = tmp_path / "checkpoint.json"
+        raw = {
+            "current_node": "step1",
+            "completed_nodes": {"start": "success"},
+            "context": {},
+            "node_outcomes": {},
+            "timestamp": "2025-01-01T00:00:00Z",
+            "node_retries": {},
+            "logs": [],
+            "identity": {"graph_fingerprint": different_identity.graph_fingerprint},
+        }
+        with open(str(cp_path), "w") as f:
+            json.dump(raw, f)
+
+        engine = _make_engine(
+            _SIMPLE_DOT, backend=MockBackend("done"), logs_root=str(tmp_path)
+        )
+
+        with pytest.raises(CheckpointMismatchError) as exc_info:
+            await engine.run()
+
+        assert str(cp_path) in str(exc_info.value)

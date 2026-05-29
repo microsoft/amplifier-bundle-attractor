@@ -21,8 +21,14 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import ArtifactStore
-from .checkpoint import Checkpoint, load_checkpoint, save_checkpoint
+from .checkpoint import (
+    Checkpoint,
+    CheckpointMismatchError,
+    load_checkpoint,
+    save_checkpoint,
+)
 from .context import PipelineContext
+from .run_identity import RunIdentity
 from .edge_selection import select_all_matching_edges, select_edge
 from .graph import Graph, Node
 from .handlers import HandlerRegistry
@@ -981,7 +987,30 @@ class PipelineEngine:
 
         Returns True if a checkpoint was loaded (resume mode), False otherwise.
 
-        Spec Section 5.3: Resume behavior.
+        Raises CheckpointMismatchError if the checkpoint belongs to a different
+        graph than the one currently running.  This is an intentional hard-fail:
+        silently restarting would re-execute side-effecting nodes (git pushes,
+        branch creates, file writes) that have already been applied.
+
+        Three checkpoint formats are handled:
+
+        1. Pre-identity (no ``identity`` field, no ``graph_fingerprint``):
+           One-time migration — discard with an info-level log message; treat as
+           "no checkpoint exists."  NOT a hard-fail: these checkpoints predate
+           the identity guard entirely.
+
+        2. Wave-0 #252 format (top-level ``graph_fingerprint`` string):
+           Promoted into a RunIdentity and checked normally.  Mismatch → hard-fail.
+
+        3. T2.4 format (``identity`` dict):
+           Standard path.  Mismatch → hard-fail.
+
+        Resume re-runs are scoped to nodes after the last completed_node.
+        Idempotency of side-effecting handlers is the handler's responsibility,
+        NOT the engine's.  See ``docs/designs/RECURRING-BUG-CLASSES.md``
+        Species S3 for context.
+
+        Spec Section 5.3: Resume behavior, T2.4 (RunIdentity hard-fail).
         """
         if not os.path.exists(self._checkpoint_path):
             return False
@@ -991,6 +1020,37 @@ class PipelineEngine:
         except (FileNotFoundError, KeyError, ValueError):
             logger.warning("Failed to load checkpoint, starting fresh")
             return False
+
+        # T2.4: Identity guard — must run BEFORE restoring context.
+        current_identity = RunIdentity.from_graph(self.graph)
+
+        if cp.identity is None:
+            # Pre-identity format (no identity field, no graph_fingerprint).
+            # This is a one-time migration: discard silently, start fresh.
+            # NOT a hard-fail — these checkpoints predate the identity guard.
+            logger.info(
+                "Pre-identity checkpoint format detected at %s; discarding "
+                "(one-time migration — new checkpoints will embed RunIdentity).",
+                self._checkpoint_path,
+            )
+            return False
+
+        if cp.identity != current_identity:
+            # Hard-fail: refuse to resume a checkpoint from a different graph.
+            # Silently restarting would re-apply side-effecting nodes.
+            raise CheckpointMismatchError(
+                f"Checkpoint identity mismatch at {self._checkpoint_path}.\n"
+                f"  Checkpoint identity : {cp.identity.graph_fingerprint[:12]}...\n"
+                f"  Current graph       : {current_identity.graph_fingerprint[:12]}...\n"
+                f"\n"
+                f"The pipeline graph has changed since this checkpoint was written.\n"
+                f"To avoid double-applying side-effecting nodes (git pushes,\n"
+                f"branch creation, file writes), resume is REFUSED.\n"
+                f"\n"
+                f"To start fresh: delete {self._checkpoint_path} and re-run."
+            )
+
+        # Identity matches — proceed with context restoration.
 
         # Restore context from checkpoint
         for key, value in cp.context_snapshot.items():
@@ -1058,6 +1118,7 @@ class PipelineEngine:
             node_outcomes=serialized_outcomes,
             timestamp=datetime.now(timezone.utc).isoformat(),
             logs=self.context.get_logs(),  # L-7: include logs in checkpoint
+            identity=RunIdentity.from_graph(self.graph),  # T2.4: scope to this graph
         )
         save_checkpoint(cp, self._checkpoint_path)
 

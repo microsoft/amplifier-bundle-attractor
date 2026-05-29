@@ -258,9 +258,12 @@ class PipelineEngine:
                     self.graph,
                 )
                 if edge is None:
-                    fail_outcome = Outcome(
-                        status=StageStatus.FAIL,
-                        failure_reason=f"No matching edge from resumed node '{current_node.id}'",
+                    fail_outcome = self.terminate_pipeline(
+                        node_id=current_node.id,
+                        upstream_outcome=None,
+                        termination_reason=(
+                            f"No matching edge from resumed node '{current_node.id}'"
+                        ),
                     )
                     await self._emit(
                         PIPELINE_ERROR,
@@ -349,9 +352,10 @@ class PipelineEngine:
                         failure_routing_retries += 1
                         current_node = retry_node
                         continue
-                    fail_outcome = Outcome(
-                        status=StageStatus.FAIL,
-                        failure_reason=(
+                    fail_outcome = self.terminate_pipeline(
+                        node_id=current_node.id,
+                        upstream_outcome=routing_outcome,
+                        termination_reason=(
                             f"No matching edge from skipped node '{current_node.id}'"
                         ),
                     )
@@ -689,9 +693,12 @@ class PipelineEngine:
                     current_node = retry_node
                     continue
 
-                fail_outcome = Outcome(
-                    status=StageStatus.FAIL,
-                    failure_reason=f"No matching edge from node '{current_node.id}'",
+                fail_outcome = self.terminate_pipeline(
+                    node_id=current_node.id,
+                    upstream_outcome=outcome,
+                    termination_reason=(
+                        f"No matching edge from node '{current_node.id}'"
+                    ),
                 )
                 await self._emit(
                     PIPELINE_ERROR,
@@ -1302,6 +1309,48 @@ class PipelineEngine:
         if target_id and target_id in self.graph.nodes:
             return self.graph.nodes[target_id]
         return None
+
+    def terminate_pipeline(
+        self,
+        *,
+        node_id: str,
+        upstream_outcome: Outcome | None,
+        termination_reason: str,
+    ) -> Outcome:
+        """The ONLY API for routing-termination Outcome construction.
+
+        Threads ``upstream_outcome.failure_reason`` automatically.  If no
+        upstream reason exists (or upstream_outcome is None), the routing
+        message becomes the failure_reason — today's behavior preserved for
+        outcome-less terminations.
+
+        Invariants (enforced by test_terminate_pipeline.py):
+        - Never raises.  (Totality test asserts this across full input space.)
+        - Preserves ``upstream_outcome.failure_reason`` as failure_reason
+          when present; routing message lives in notes.
+        - If upstream had no reason: failure_reason = routing message, notes = None.
+
+        Args:
+            node_id: ID of the node where routing terminated.  Not used in
+                result construction but available for caller context / logging.
+            upstream_outcome: The handler's outcome (or routing_outcome from
+                skip-path), or None for resume-path where no handler ran.
+            termination_reason: Human-readable routing message
+                (e.g. "No matching edge from node 'X'").
+
+        Returns:
+            An Outcome with status=FAIL and the threaded failure_reason / notes.
+
+        Sole-caller guard: the AST test in test_terminate_pipeline.py asserts
+        that no top-level Outcome construction with a "No matching edge from"
+        failure_reason pattern exists outside this method body.
+        """
+        upstream_reason = upstream_outcome.failure_reason if upstream_outcome else None
+        return Outcome(
+            status=StageStatus.FAIL,
+            failure_reason=upstream_reason or termination_reason,
+            notes=termination_reason if upstream_reason else None,
+        )
 
     # -- R12 M1-M4 helpers ---------------------------------------------------
 

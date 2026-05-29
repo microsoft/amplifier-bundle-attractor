@@ -15,6 +15,7 @@ from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
 from amplifier_module_loop_pipeline.validation import validate_or_raise
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 class MockBackend:
@@ -55,7 +56,7 @@ def _make_engine(
     graph = parse_dot(dot_source)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     return PipelineEngine(
         graph=graph,
         context=context,
@@ -338,7 +339,7 @@ async def test_goal_gate_retry_bounded(tmp_path):
     """)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     engine = PipelineEngine(
         graph=graph,
         context=context,

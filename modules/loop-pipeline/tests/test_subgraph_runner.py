@@ -11,6 +11,7 @@ from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 class CountingHandler:
@@ -53,7 +54,7 @@ async def test_run_from_executes_subgraph(tmp_path):
     """run_subgraph('a') should execute a, b, then stop at exit."""
     graph = _make_subgraph()
     counting = CountingHandler()
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     registry.register("codergen", counting)
 
     engine = PipelineEngine(
@@ -78,7 +79,7 @@ async def test_run_from_with_isolated_context(tmp_path):
     """_run_from with a separate context should not pollute the engine context."""
     graph = _make_subgraph()
     counting = CountingHandler()
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     registry.register("codergen", counting)
 
     main_context = PipelineContext()
@@ -116,7 +117,7 @@ async def test_run_from_stops_at_dead_end(tmp_path):
         ],
     )
     counting = CountingHandler()
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     registry.register("codergen", counting)
 
     engine = PipelineEngine(
@@ -137,7 +138,7 @@ async def test_run_from_stops_at_dead_end(tmp_path):
 async def test_run_from_nonexistent_node(tmp_path):
     """_run_from with a bad node ID should return FAIL."""
     graph = _make_subgraph()
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
 
     engine = PipelineEngine(
         graph=graph,

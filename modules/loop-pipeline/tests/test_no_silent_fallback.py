@@ -24,6 +24,7 @@ import pytest
 from amplifier_module_loop_pipeline.graph import Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +38,7 @@ def test_unknown_shape_raises_value_error():
     Before the fix: silently returns CodergenHandler.
     After the fix: raises ValueError naming the bad shape.
     """
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     bad_node = Node(id="broken-gate", shape="trapezoid")
 
     with pytest.raises(ValueError, match="trapezoid"):
@@ -50,7 +51,7 @@ def test_unknown_shape_error_lists_supported_shapes():
     The error message must help the author fix the problem, not just
     say 'unknown shape' — they need to know what IS valid.
     """
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     bad_node = Node(id="broken-gate", shape="octagon_mystery")
 
     with pytest.raises(ValueError) as exc_info:
@@ -68,7 +69,7 @@ def test_unknown_shape_error_lists_supported_shapes():
 
 def test_unknown_shape_names_the_bad_shape():
     """The ValueError message must include the offending shape name."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     bad_node = Node(id="my-node", shape="cloud_undefined")
 
     with pytest.raises(ValueError) as exc_info:
@@ -91,7 +92,7 @@ def test_known_shapes_still_dispatch_correctly():
     This is a regression guard: removing .get(shape, "codergen") must not
     accidentally break dispatch for any already-registered shape.
     """
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
 
     for shape, expected_handler_type in SHAPE_TO_HANDLER.items():
         node = Node(id=f"test-{shape}", shape=shape)
@@ -118,7 +119,7 @@ def test_codergen_still_works_for_box_shape():
     """
     from amplifier_module_loop_pipeline.handlers.codergen import CodergenHandler
 
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     llm_node = Node(id="my-llm-node", shape="box", prompt="Do something")
     handler = registry.get(llm_node)
 

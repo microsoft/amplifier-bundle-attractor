@@ -21,6 +21,7 @@ from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +101,7 @@ digraph parent {{
 
         capturing = CapturingBackend()
         context = PipelineContext()
-        registry = HandlerRegistry(backend=capturing)
+        registry = HandlerRegistry(HandlerContext(backend=capturing))
         logs_root = str(tmp_path / "logs")
 
         engine = PipelineEngine(
@@ -151,7 +152,7 @@ digraph parent {{
 
         capturing = CapturingBackend()
         context = PipelineContext()
-        registry = HandlerRegistry(backend=capturing)
+        registry = HandlerRegistry(HandlerContext(backend=capturing))
         logs_root = str(tmp_path / "logs")
 
         engine = PipelineEngine(
@@ -205,7 +206,7 @@ digraph parent {{
 
         capturing = CapturingBackend()
         parent_context = PipelineContext()
-        registry = HandlerRegistry(backend=capturing)
+        registry = HandlerRegistry(HandlerContext(backend=capturing))
         logs_root = str(tmp_path / "logs")
 
         engine = PipelineEngine(
@@ -257,7 +258,7 @@ digraph parent {{
 
         capturing = CapturingBackend()
         context = PipelineContext()
-        registry = HandlerRegistry(backend=capturing)
+        registry = HandlerRegistry(HandlerContext(backend=capturing))
         logs_root = str(tmp_path / "logs")
 
         engine = PipelineEngine(
@@ -318,7 +319,7 @@ digraph parent {{
 
         capturing = CapturingBackend()
         context = PipelineContext()
-        registry = HandlerRegistry(backend=capturing)
+        registry = HandlerRegistry(HandlerContext(backend=capturing))
         logs_root = str(tmp_path / "logs")
 
         engine = PipelineEngine(

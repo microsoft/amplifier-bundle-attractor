@@ -27,6 +27,7 @@ from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +48,7 @@ async def _make_wired_engine(
     return PipelineEngine(
         graph=graph,
         context=PipelineContext(),
-        handler_registry=HandlerRegistry(backend=backend),
+        handler_registry=HandlerRegistry(HandlerContext(backend=backend)),
         logs_root=logs_root,
     )
 
@@ -174,7 +175,7 @@ async def test_parallelogram_shape_does_not_fan_out_unconditional_edges(tmp_path
 
     # No subgraph_runner needed — ToolHandler and LLM nodes don't use it.
     context = PipelineContext()
-    registry = HandlerRegistry(backend=CountingBackend())
+    registry = HandlerRegistry(HandlerContext(backend=CountingBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -287,7 +288,7 @@ async def test_non_component_fanout_respects_max_parallel(tmp_path):
     engine = PipelineEngine(
         graph=graph,
         context=PipelineContext(),
-        handler_registry=HandlerRegistry(backend=BoundedConcurrencyBackend()),
+        handler_registry=HandlerRegistry(HandlerContext(backend=BoundedConcurrencyBackend())),
         logs_root=str(tmp_path),
     )
     outcome = await engine.run()

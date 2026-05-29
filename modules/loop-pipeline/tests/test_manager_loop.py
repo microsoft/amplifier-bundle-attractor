@@ -17,6 +17,7 @@ from amplifier_module_loop_pipeline.context import PipelineContext
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers.manager_loop import ManagerLoopHandler
 from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +544,7 @@ class TestManagerHandlerRegistration:
     def test_registry_resolves_manager_handler(self):
         from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 
-        registry = HandlerRegistry()
+        registry = HandlerRegistry(HandlerContext())
         node = Node(id="mgr", shape="house")
         handler = registry.get(node)
         assert isinstance(handler, ManagerLoopHandler)
@@ -716,7 +717,7 @@ class TestManagerChildDotfileObservability:
         from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 
         def _registry_factory():
-            return HandlerRegistry(backend=_MockBackend())
+            return HandlerRegistry(HandlerContext(backend=_MockBackend()))
 
         handler = ManagerLoopHandler(handler_registry_factory=_registry_factory)
         graph = _make_graph(

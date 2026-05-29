@@ -14,6 +14,7 @@ from amplifier_module_loop_pipeline.dot_parser import parse_dot
 from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
 from amplifier_module_loop_pipeline.pipeline_events import (
     PIPELINE_CHECKPOINT,
@@ -84,7 +85,7 @@ def _make_engine(
     graph = parse_dot(dot_source)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     return PipelineEngine(
         graph=graph,
         context=context,
@@ -746,7 +747,7 @@ class TestErrorEvents:
             ],
         )
         context = PipelineContext()
-        registry = HandlerRegistry(backend=MockBackend("ok"))
+        registry = HandlerRegistry(HandlerContext(backend=MockBackend("ok")))
         engine = PipelineEngine(
             graph=graph,
             context=context,
@@ -786,7 +787,7 @@ class TestNoHooksBackwardCompat:
 
         validate_or_raise(graph)
         context = PipelineContext()
-        registry = HandlerRegistry(backend=MockBackend())
+        registry = HandlerRegistry(HandlerContext(backend=MockBackend()))
         engine = PipelineEngine(
             graph=graph,
             context=context,

@@ -22,6 +22,7 @@ from amplifier_module_loop_pipeline.pipeline_events import (
 )
 from amplifier_module_loop_pipeline.substitution import extract_refs
 from amplifier_module_loop_pipeline.validation import validate_or_raise
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +51,7 @@ def _make_engine(
     graph = parse_dot(dot_source)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     return PipelineEngine(
         graph=graph,
         context=context,

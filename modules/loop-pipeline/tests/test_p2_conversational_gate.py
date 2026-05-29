@@ -23,6 +23,7 @@ from amplifier_module_loop_pipeline.graph import Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.interviewer import Answer, Option, QueueInterviewer
 from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 # ---------------------------------------------------------------------------
 # Path helpers
@@ -322,7 +323,7 @@ class TestConversationalGateExecution:
         backend = ScoredBackend()
 
         context = _make_gate_context()
-        registry = HandlerRegistry(backend=backend, interviewer=interviewer)
+        registry = HandlerRegistry(HandlerContext(backend=backend, interviewer=interviewer))
         engine = PipelineEngine(
             graph=graph,
             context=context,
@@ -357,7 +358,7 @@ class TestConversationalGateExecution:
         )
         backend = ScoredBackend()
         context = _make_gate_context()
-        registry = HandlerRegistry(backend=backend, interviewer=interviewer)
+        registry = HandlerRegistry(HandlerContext(backend=backend, interviewer=interviewer))
         engine = PipelineEngine(
             graph=graph,
             context=context,
@@ -406,7 +407,7 @@ class TestConversationalGateExecution:
         )
 
         context = _make_gate_context()
-        registry = HandlerRegistry(backend=sequential_backend, interviewer=interviewer)
+        registry = HandlerRegistry(HandlerContext(backend=sequential_backend, interviewer=interviewer))
         engine = PipelineEngine(
             graph=graph,
             context=context,
@@ -447,7 +448,7 @@ class TestConversationalGateExecution:
         )
 
         context = _make_gate_context()
-        registry = HandlerRegistry(backend=sequential_backend, interviewer=interviewer)
+        registry = HandlerRegistry(HandlerContext(backend=sequential_backend, interviewer=interviewer))
         engine = PipelineEngine(
             graph=graph,
             context=context,
@@ -493,7 +494,7 @@ class TestConversationalGateExecution:
             ]
         )
         context = _make_gate_context()
-        registry = HandlerRegistry(backend=CapturingBackend(), interviewer=interviewer)
+        registry = HandlerRegistry(HandlerContext(backend=CapturingBackend(), interviewer=interviewer))
         engine = PipelineEngine(
             graph=graph,
             context=context,

@@ -13,6 +13,7 @@ from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import StageStatus
 from amplifier_module_loop_pipeline.validation import validate_or_raise
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +68,7 @@ def _make_engine(
     graph = parse_dot(dot_source)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     return PipelineEngine(
         graph=graph,
         context=context,
@@ -205,7 +206,7 @@ async def test_cancel_emits_pipeline_complete_event(tmp_path):
     graph = parse_dot(_LINEAR_DOT)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=RecordingBackend())
+    registry = HandlerRegistry(HandlerContext(backend=RecordingBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -233,7 +234,7 @@ async def test_cancel_emits_pipeline_complete_event(tmp_path):
 async def test_cancel_propagates_to_nested_child_pipeline(tmp_path):
     """When parent is cancelled, the child pipeline (nested via PipelineHandler) also stops.
 
-    Wiring: parent PipelineEngine -> HandlerRegistry(cancel_event=...) ->
+    Wiring: parent PipelineEngine -> HandlerRegistry(HandlerContext(cancel_event=...)) ->
             PipelineHandler(cancel_event=..., handler_registry_factory=...) ->
             child PipelineEngine(cancel_event=...)
 
@@ -287,7 +288,7 @@ digraph parent {{
     context = PipelineContext()
 
     # Build parent registry with cancel_event and our backend
-    registry = HandlerRegistry(backend=backend, cancel_event=cancel_event)
+    registry = HandlerRegistry(HandlerContext(backend=backend, cancel_event=cancel_event))
 
     # Override the pipeline handler with one that uses a factory so the
     # *child* engine also gets our test backend (the default child registry
@@ -295,7 +296,7 @@ digraph parent {{
     registry.register(
         "pipeline",
         PipelineHandler(
-            handler_registry_factory=lambda: HandlerRegistry(backend=backend),
+            handler_registry_factory=lambda: HandlerRegistry(HandlerContext(backend=backend)),
             cancel_event=cancel_event,
         ),
     )

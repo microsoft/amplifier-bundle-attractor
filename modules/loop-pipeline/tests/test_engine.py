@@ -15,6 +15,7 @@ from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
 from amplifier_module_loop_pipeline.validation import validate_or_raise
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 class MockBackend:
@@ -52,7 +53,7 @@ def _make_engine(
     graph = parse_dot(dot_source)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     return PipelineEngine(
         graph=graph,
         context=context,
@@ -213,7 +214,7 @@ async def test_no_matching_edge_returns_fail(tmp_path):
         ],
     )
     context = PipelineContext()
-    registry = HandlerRegistry(backend=MockBackend("ok"))
+    registry = HandlerRegistry(HandlerContext(backend=MockBackend("ok")))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -292,7 +293,7 @@ async def test_start_node_fallback_to_id_start(tmp_path):
         ],
     )
     context = PipelineContext()
-    registry = HandlerRegistry(backend=MockBackend("ok"))
+    registry = HandlerRegistry(HandlerContext(backend=MockBackend("ok")))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -319,7 +320,7 @@ async def test_start_node_fallback_to_id_Start(tmp_path):
         ],
     )
     context = PipelineContext()
-    registry = HandlerRegistry(backend=MockBackend("ok"))
+    registry = HandlerRegistry(HandlerContext(backend=MockBackend("ok")))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -346,7 +347,7 @@ async def test_start_node_shape_takes_priority(tmp_path):
         ],
     )
     context = PipelineContext()
-    registry = HandlerRegistry(backend=MockBackend("ok"))
+    registry = HandlerRegistry(HandlerContext(backend=MockBackend("ok")))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -387,7 +388,7 @@ async def test_auto_status_overrides_fail_to_success(tmp_path):
         ],
     )
     context = PipelineContext()
-    registry = HandlerRegistry(backend=FailingBackend())
+    registry = HandlerRegistry(HandlerContext(backend=FailingBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -423,7 +424,7 @@ async def test_auto_status_false_preserves_fail(tmp_path):
         ],
     )
     context = PipelineContext()
-    registry = HandlerRegistry(backend=FailingBackend())
+    registry = HandlerRegistry(HandlerContext(backend=FailingBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -480,7 +481,7 @@ async def test_engine_finds_start_by_node_type_attr(tmp_path):
         ],
     )
     context = PipelineContext()
-    registry = HandlerRegistry(backend=MockBackend("done"))
+    registry = HandlerRegistry(HandlerContext(backend=MockBackend("done")))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -517,7 +518,7 @@ async def test_engine_runs_alternative_start_exit(tmp_path):
         ],
     )
     context = PipelineContext()
-    registry = HandlerRegistry(backend=MockBackend("done"))
+    registry = HandlerRegistry(HandlerContext(backend=MockBackend("done")))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -549,7 +550,7 @@ async def test_engine_mdiamond_takes_priority_over_node_type(tmp_path):
         ],
     )
     context = PipelineContext()
-    registry = HandlerRegistry(backend=MockBackend("done"))
+    registry = HandlerRegistry(HandlerContext(backend=MockBackend("done")))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -604,7 +605,7 @@ async def test_loop_restart_re_executes_target_node(tmp_path):
     backend = LoopOnceBackend()
     graph = _make_loop_restart_graph()
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -627,7 +628,7 @@ async def test_loop_restart_resets_retry_counters(tmp_path):
     backend = LoopOnceBackend()
     graph = _make_loop_restart_graph()
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -649,7 +650,7 @@ async def test_loop_restart_increments_iteration_counter(tmp_path):
     backend = LoopOnceBackend()
     graph = _make_loop_restart_graph()
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -681,7 +682,7 @@ async def test_normal_edge_without_loop_restart(tmp_path):
         ],
     )
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -739,7 +740,7 @@ async def test_multi_edge_fan_out_executes_all_targets(tmp_path):
     )
 
     context = PipelineContext()
-    registry = HandlerRegistry(backend=TrackingBackend())
+    registry = HandlerRegistry(HandlerContext(backend=TrackingBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -791,7 +792,7 @@ async def test_multi_edge_fan_out_detects_fan_in(tmp_path):
     )
 
     context = PipelineContext()
-    registry = HandlerRegistry(backend=TrackingBackend())
+    registry = HandlerRegistry(HandlerContext(backend=TrackingBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -838,7 +839,7 @@ async def test_multi_edge_single_match_still_works(tmp_path):
     )
 
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -893,7 +894,7 @@ async def test_multi_edge_parallel_context_isolation(tmp_path):
     )
 
     context = PipelineContext()
-    registry = HandlerRegistry(backend=ContextMutatingBackend())
+    registry = HandlerRegistry(HandlerContext(backend=ContextMutatingBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -947,7 +948,7 @@ async def test_parallel_fan_out_branches_run_concurrently(tmp_path):
     )
 
     context = PipelineContext()
-    registry = HandlerRegistry(backend=SlowCloningBackend())
+    registry = HandlerRegistry(HandlerContext(backend=SlowCloningBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -1000,7 +1001,7 @@ async def test_parallel_fan_out_clones_registry_per_branch(tmp_path):
     )
 
     context = PipelineContext()
-    registry = HandlerRegistry(backend=CloningBackend())
+    registry = HandlerRegistry(HandlerContext(backend=CloningBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,

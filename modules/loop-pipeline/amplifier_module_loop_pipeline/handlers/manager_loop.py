@@ -313,10 +313,14 @@ class ManagerLoopHandler:
         if self._handler_registry_factory is not None:
             child_registry = self._handler_registry_factory()
         else:
+            from .context import HandlerContext
+
             child_registry = HandlerRegistry(
-                backend=self._backend,
-                hooks=self._hooks,
-                cancel_event=self._cancel_event,
+                HandlerContext(
+                    backend=self._backend,
+                    hooks=self._hooks,
+                    cancel_event=self._cancel_event,
+                )
             )
         child_engine = PipelineEngine(
             graph=child_graph,

@@ -23,6 +23,7 @@ from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +77,7 @@ async def _make_wired_engine(
     return PipelineEngine(
         graph=graph,
         context=PipelineContext(),
-        handler_registry=HandlerRegistry(backend=backend),
+        handler_registry=HandlerRegistry(HandlerContext(backend=backend)),
         logs_root=logs_root,
     )
 
@@ -250,7 +251,7 @@ async def test_non_component_multi_edge_fanout_still_works(tmp_path):
 
     # No subgraph_runner needed for box nodes (uses engine-level fan-out)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=TrackingBackend())
+    registry = HandlerRegistry(HandlerContext(backend=TrackingBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,

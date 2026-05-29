@@ -25,6 +25,7 @@ from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import StageStatus
 from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ def test_diamond_shape_dispatches_to_conditional_handler():
     """
     from amplifier_module_loop_pipeline.handlers.conditional import ConditionalHandler
 
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     diamond_node = Node(id="MyGate", shape="diamond")
     handler = registry.get(diamond_node)
 
@@ -137,7 +138,7 @@ async def test_diamond_node_completes_without_llm_in_pipeline(tmp_path):
     engine = PipelineEngine(
         graph=graph,
         context=PipelineContext(),
-        handler_registry=HandlerRegistry(backend=TrackingBackend()),
+        handler_registry=HandlerRegistry(HandlerContext(backend=TrackingBackend())),
         logs_root=str(tmp_path),
     )
     outcome = await engine.run()

@@ -19,6 +19,7 @@ from amplifier_module_loop_pipeline.transforms import (
     expand_variables,
 )
 from amplifier_module_loop_pipeline.validation import validate_or_raise
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 def _make_graph(**overrides) -> Graph:
@@ -248,7 +249,7 @@ def _make_engine(
     graph = parse_dot(dot_source)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     return PipelineEngine(
         graph=graph,
         context=context,
@@ -283,7 +284,7 @@ class TestEngineTransformIntegration:
         context.set("graph.goal", "build auth")
         apply_transforms(graph, context)
         validate_or_raise(graph)
-        registry = HandlerRegistry(backend=backend)
+        registry = HandlerRegistry(HandlerContext(backend=backend))
         engine = PipelineEngine(
             graph=graph,
             context=context,
@@ -313,7 +314,7 @@ class TestEngineTransformIntegration:
         context = PipelineContext()
         apply_transforms(graph, context)
         validate_or_raise(graph)
-        registry = HandlerRegistry(backend=backend)
+        registry = HandlerRegistry(HandlerContext(backend=backend))
         engine = PipelineEngine(
             graph=graph,
             context=context,
@@ -357,7 +358,7 @@ class TestTransformOrdering:
         )
         validate_or_raise(graph)
         context = PipelineContext()
-        registry = HandlerRegistry(backend=backend)
+        registry = HandlerRegistry(HandlerContext(backend=backend))
         engine = PipelineEngine(
             graph=graph,
             context=context,

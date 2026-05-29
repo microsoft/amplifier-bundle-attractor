@@ -23,6 +23,7 @@ from .context import PipelineContext
 from .dot_parser import parse_dot
 from .engine import PipelineEngine
 from .handlers import HandlerRegistry
+from .handlers.context import HandlerContext
 from .outcome import Outcome, StageStatus
 from .hook_bridge import _current_node_context, set_node_context
 from .pipeline_events import PROVIDER_ERROR, PROVIDER_REQUEST, PROVIDER_RESPONSE
@@ -512,8 +513,10 @@ class PipelineOrchestrator:
 
         # 8. Create registry (no closures, no rewire — engine passes self at call time)
         registry = HandlerRegistry(
-            backend=backend,
-            hooks=hooks,
+            HandlerContext(
+                backend=backend,
+                hooks=hooks,
+            )
         )
 
         # 9. Create engine (carries itself to handlers via execute(engine=...))

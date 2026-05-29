@@ -26,6 +26,7 @@ from amplifier_module_loop_pipeline.context import PipelineContext
 from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 def _make_engine(graph: Graph, tmp_path) -> PipelineEngine:
@@ -33,7 +34,7 @@ def _make_engine(graph: Graph, tmp_path) -> PipelineEngine:
     return PipelineEngine(
         graph=graph,
         context=PipelineContext(),
-        handler_registry=HandlerRegistry(),
+        handler_registry=HandlerRegistry(HandlerContext()),
         logs_root=str(tmp_path),
     )
 
@@ -289,7 +290,7 @@ async def test_pipeline_with_multi_hop_branches_completes(tmp_path):
     engine = PipelineEngine(
         graph=graph,
         context=PipelineContext(),
-        handler_registry=HandlerRegistry(backend=CountingBackend()),
+        handler_registry=HandlerRegistry(HandlerContext(backend=CountingBackend())),
         logs_root=str(tmp_path),
     )
 

@@ -19,6 +19,7 @@ from amplifier_module_loop_pipeline.interviewer import (
     QueueInterviewer,
 )
 from amplifier_module_loop_pipeline.outcome import StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 def _make_graph_with_human_gate() -> Graph:
@@ -519,7 +520,7 @@ class TestHumanHandlerRegistration:
     def test_registry_resolves_human_handler(self):
         from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 
-        registry = HandlerRegistry()
+        registry = HandlerRegistry(HandlerContext())
         node = Node(id="gate", shape="hexagon")
         handler = registry.get(node)
         assert isinstance(handler, HumanGateHandler)

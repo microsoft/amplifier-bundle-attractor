@@ -9,6 +9,7 @@ from amplifier_module_loop_pipeline.context import PipelineContext
 from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # --- Mock backend that returns outcomes with no notes ---
@@ -117,7 +118,7 @@ def _make_engine_with_completed_nodes(
     graph = parse_dot(dot)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=None)
+    registry = HandlerRegistry(HandlerContext(backend=None))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -145,7 +146,7 @@ def _make_engine_with_mixed_outcomes() -> PipelineEngine:
     graph = parse_dot(dot)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=None)
+    registry = HandlerRegistry(HandlerContext(backend=None))
     engine = PipelineEngine(
         graph=graph,
         context=context,

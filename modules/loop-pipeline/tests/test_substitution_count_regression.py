@@ -23,6 +23,7 @@ from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import StageStatus
 from amplifier_module_loop_pipeline.validation import validate_or_raise
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -40,7 +41,7 @@ def _make_engine(dot_source: str, logs_root: str, hooks: Any = None) -> Pipeline
     graph = parse_dot(dot_source)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     return PipelineEngine(
         graph=graph,
         context=context,

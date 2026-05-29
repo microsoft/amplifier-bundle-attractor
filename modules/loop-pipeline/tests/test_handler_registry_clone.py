@@ -9,6 +9,7 @@ Verifies that clone_for_branch() produces a registry where:
 from unittest.mock import MagicMock
 
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 def _make_registry_with_mock_backend():
@@ -16,7 +17,7 @@ def _make_registry_with_mock_backend():
     mock_backend = MagicMock()
     cloned_backend = MagicMock()
     mock_backend.clone.return_value = cloned_backend
-    registry = HandlerRegistry(backend=mock_backend)
+    registry = HandlerRegistry(HandlerContext(backend=mock_backend))
     return registry, mock_backend, cloned_backend
 
 

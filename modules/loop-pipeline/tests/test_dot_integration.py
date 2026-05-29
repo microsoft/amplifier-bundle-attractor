@@ -82,6 +82,7 @@ from amplifier_module_loop_pipeline.pipeline_events import (
 )
 from amplifier_module_loop_pipeline.transforms import apply_transforms
 from amplifier_module_loop_pipeline.validation import validate_or_raise
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +216,7 @@ def _make_integration_engine(
     engine = PipelineEngine(
         graph=graph,
         context=context,
-        handler_registry=HandlerRegistry(backend=backend, hooks=hooks),
+        handler_registry=HandlerRegistry(HandlerContext(backend=backend, hooks=hooks)),
         logs_root=logs_root,
         hooks=hooks,
     )
@@ -846,7 +847,7 @@ def _make_production_engine(
     engine = PipelineEngine(
         graph=graph,
         context=context,
-        handler_registry=HandlerRegistry(backend=backend, hooks=hooks),
+        handler_registry=HandlerRegistry(HandlerContext(backend=backend, hooks=hooks)),
         logs_root=logs_root,
         hooks=hooks,
     )

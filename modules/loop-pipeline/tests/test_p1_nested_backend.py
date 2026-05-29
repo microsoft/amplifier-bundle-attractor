@@ -19,6 +19,7 @@ from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 # ---------------------------------------------------------------------------
 # SpyBackend
@@ -100,7 +101,7 @@ digraph parent {
 
         spy = SpyBackend()
         context = PipelineContext()
-        registry = HandlerRegistry(backend=spy)
+        registry = HandlerRegistry(HandlerContext(backend=spy))
         logs_root = str(tmp_path / "logs")
 
         engine = PipelineEngine(
@@ -115,7 +116,7 @@ digraph parent {
         assert outcome.status == StageStatus.SUCCESS
 
         # FIX CONFIRMED: child_work IS called via spy because
-        # PipelineHandler creates HandlerRegistry(backend=self._backend) for the child.
+        # PipelineHandler creates HandlerRegistry(HandlerContext(backend=self._backend)) for the child.
         assert spy.was_called_for("child_work") is True, (
             "Expected child_work in spy calls — backend is propagated "
             "to child pipelines via PipelineHandler (post-fix behavior)"
@@ -143,7 +144,7 @@ digraph parent {
 
         spy = SpyBackend()
         context = PipelineContext()
-        registry = HandlerRegistry(backend=spy)
+        registry = HandlerRegistry(HandlerContext(backend=spy))
         logs_root = str(tmp_path / "logs")
 
         engine = PipelineEngine(

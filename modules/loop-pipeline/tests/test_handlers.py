@@ -16,6 +16,7 @@ from amplifier_module_loop_pipeline.handlers.exit import ExitHandler
 from amplifier_module_loop_pipeline.handlers.start import StartHandler
 from amplifier_module_loop_pipeline.handlers.tool import ToolHandler
 from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 def _make_graph(**kwargs) -> Graph:
@@ -36,7 +37,7 @@ def _make_context() -> PipelineContext:
 
 def test_registry_resolves_start_handler():
     """Registry maps shape=Mdiamond to StartHandler."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     node = Node(id="s", shape="Mdiamond")
     handler = registry.get(node)
     assert isinstance(handler, StartHandler)
@@ -44,7 +45,7 @@ def test_registry_resolves_start_handler():
 
 def test_registry_resolves_exit_handler():
     """Registry maps shape=Msquare to ExitHandler."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     node = Node(id="e", shape="Msquare")
     handler = registry.get(node)
     assert isinstance(handler, ExitHandler)
@@ -52,7 +53,7 @@ def test_registry_resolves_exit_handler():
 
 def test_registry_resolves_codergen_handler():
     """Registry maps shape=box to CodergenHandler."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     node = Node(id="c", shape="box")
     handler = registry.get(node)
     assert isinstance(handler, CodergenHandler)
@@ -60,7 +61,7 @@ def test_registry_resolves_codergen_handler():
 
 def test_registry_explicit_type_overrides_shape():
     """Node type attribute overrides shape-based resolution."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     node = Node(id="x", shape="box", type="tool")
     handler = registry.get(node)
     assert isinstance(handler, ToolHandler)
@@ -275,7 +276,7 @@ async def test_tool_handler_no_timeout_runs_normally(tmp_path):
 
 def test_registry_resolves_tool_handler():
     """Registry maps shape=parallelogram to ToolHandler."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     node = Node(id="t", shape="parallelogram")
     handler = registry.get(node)
     assert isinstance(handler, ToolHandler)
@@ -366,7 +367,7 @@ async def test_context_variable_flows_between_pipeline_nodes(tmp_path):
     graph = parse_dot(dot_source)
     validate_or_raise(graph)
     context = PipelineContext()
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -389,7 +390,7 @@ def test_registry_unknown_shape_raises_value_error():
 
     Authors who want LLM-driven nodes must use shape=box explicitly.
     """
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     node = Node(id="u", shape="trapezoid")
     with pytest.raises(ValueError, match="trapezoid"):
         registry.get(node)
@@ -402,7 +403,7 @@ def test_registry_custom_handler_registration():
         async def execute(self, node, context, graph, logs_root, *, engine=None):
             return Outcome(status=StageStatus.SUCCESS, notes="custom")
 
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     registry.register("my_custom", CustomHandler())
     node = Node(id="x", type="my_custom")
     handler = registry.get(node)
@@ -414,7 +415,7 @@ def test_registry_custom_handler_registration():
 
 def test_registry_node_type_fallback():
     """node_type attribute is used as fallback when type is empty."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     # node_type="tool" should resolve to ToolHandler
     node = Node(id="x", shape="box", type="", attrs={"node_type": "tool"})
     handler = registry.get(node)
@@ -423,7 +424,7 @@ def test_registry_node_type_fallback():
 
 def test_registry_node_type_unknown_falls_to_shape():
     """Unknown node_type (e.g. stack.observe) falls through to shape-based lookup."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     # node_type="stack.observe" is NOT a registered handler type
     # shape=box -> codergen
     node = Node(id="x", shape="box", type="", attrs={"node_type": "stack.observe"})
@@ -433,7 +434,7 @@ def test_registry_node_type_unknown_falls_to_shape():
 
 def test_registry_node_type_steer_falls_to_shape():
     """Unknown node_type (stack.steer) falls through to shape-based lookup."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     node = Node(id="x", shape="box", type="", attrs={"node_type": "stack.steer"})
     handler = registry.get(node)
     assert isinstance(handler, CodergenHandler)
@@ -441,7 +442,7 @@ def test_registry_node_type_steer_falls_to_shape():
 
 def test_registry_type_takes_priority_over_node_type():
     """Explicit type= attribute takes priority over node_type."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     node = Node(id="x", shape="box", type="tool", attrs={"node_type": "codergen"})
     handler = registry.get(node)
     assert isinstance(handler, ToolHandler)
@@ -449,7 +450,7 @@ def test_registry_type_takes_priority_over_node_type():
 
 def test_registry_node_type_takes_priority_over_shape():
     """node_type takes priority over shape-based lookup."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     # shape=box -> codergen, but node_type="tool" should override to ToolHandler
     node = Node(id="x", shape="box", type="", attrs={"node_type": "tool"})
     handler = registry.get(node)
@@ -458,7 +459,7 @@ def test_registry_node_type_takes_priority_over_shape():
 
 def test_registry_no_type_no_node_type_uses_shape():
     """When neither type nor node_type is set, shape-based lookup works as before."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     node = Node(id="x", shape="parallelogram")
     handler = registry.get(node)
     assert isinstance(handler, ToolHandler)
@@ -466,7 +467,7 @@ def test_registry_no_type_no_node_type_uses_shape():
 
 def test_registry_register_replaces_existing():
     """Registering for an existing type replaces the handler (HAND-006)."""
-    registry = HandlerRegistry()
+    registry = HandlerRegistry(HandlerContext())
     original = registry.get(Node(id="s", shape="Mdiamond"))
     assert isinstance(original, StartHandler)
 

@@ -16,6 +16,7 @@ from amplifier_module_loop_pipeline.handlers.pipeline import (
     resolve_dot_path,
 )
 from amplifier_module_loop_pipeline.outcome import StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 class _MockBackend:
@@ -30,7 +31,7 @@ def _make_registry_factory():
     from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 
     def factory():
-        return HandlerRegistry(backend=_MockBackend())
+        return HandlerRegistry(HandlerContext(backend=_MockBackend()))
 
     return factory
 
@@ -409,7 +410,7 @@ class TestPipelineHandlerRegistration:
         """Node with shape=folder resolves to PipelineHandler instance."""
         from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 
-        registry = HandlerRegistry()
+        registry = HandlerRegistry(HandlerContext())
         node = Node(id="sub", shape="folder")
         handler = registry.get(node)
         assert isinstance(handler, PipelineHandler)
@@ -418,7 +419,7 @@ class TestPipelineHandlerRegistration:
         """Node with type='pipeline' resolves to PipelineHandler instance."""
         from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 
-        registry = HandlerRegistry()
+        registry = HandlerRegistry(HandlerContext())
         node = Node(id="sub", shape="box", type="pipeline")
         handler = registry.get(node)
         assert isinstance(handler, PipelineHandler)
@@ -449,7 +450,7 @@ class TestPipelineHandlerE2E:
         graph.source_dir = FIXTURES_DIR
 
         context = PipelineContext()
-        registry = HandlerRegistry(backend=_MockBackend())
+        registry = HandlerRegistry(HandlerContext(backend=_MockBackend()))
         logs_root = str(tmp_path / "logs")
 
         engine = PipelineEngine(
@@ -477,7 +478,7 @@ class TestPipelineHandlerE2E:
         graph.source_dir = FIXTURES_DIR
 
         context = PipelineContext()
-        registry = HandlerRegistry()
+        registry = HandlerRegistry(HandlerContext())
         logs_root = str(tmp_path / "logs")
 
         engine = PipelineEngine(
@@ -532,7 +533,7 @@ class TestInterviewerForwarding:
         from amplifier_module_loop_pipeline.interviewer import AutoApproveInterviewer
 
         interviewer = AutoApproveInterviewer()
-        registry = HandlerRegistry(interviewer=interviewer)
+        registry = HandlerRegistry(HandlerContext(interviewer=interviewer))
 
         pipeline_handler = registry._handlers["pipeline"]
         assert isinstance(pipeline_handler, PipelineHandler)
@@ -554,7 +555,7 @@ class TestInterviewerForwarding:
         from amplifier_module_loop_pipeline.interviewer import AutoApproveInterviewer
 
         interviewer = AutoApproveInterviewer()
-        registry = HandlerRegistry(interviewer=interviewer)
+        registry = HandlerRegistry(HandlerContext(interviewer=interviewer))
 
         branch_registry = registry.clone_for_branch()
 
@@ -657,7 +658,7 @@ digraph parent_e2e {
         graph.source_dir = str(tmp_path)
 
         context = PipelineContext()
-        registry = HandlerRegistry(interviewer=AutoApproveInterviewer())
+        registry = HandlerRegistry(HandlerContext(interviewer=AutoApproveInterviewer()))
         logs_root = str(tmp_path / "logs")
 
         engine = PipelineEngine(
@@ -998,7 +999,7 @@ class TestChildRegistrySubgraphRunnerWiring:
         engine = PipelineEngine(
             graph=graph,
             context=context,
-            handler_registry=HandlerRegistry(backend=_MockBackend()),
+            handler_registry=HandlerRegistry(HandlerContext(backend=_MockBackend())),
             logs_root=logs_root,
         )
         outcome = await engine.run(goal="test wiring")
@@ -1059,7 +1060,7 @@ class TestChildRegistrySubgraphRunnerWiring:
         engine = PipelineEngine(
             graph=graph,
             context=context,
-            handler_registry=HandlerRegistry(backend=_MockBackend()),
+            handler_registry=HandlerRegistry(HandlerContext(backend=_MockBackend())),
             logs_root=logs_root,
         )
 

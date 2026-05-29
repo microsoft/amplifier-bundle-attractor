@@ -22,6 +22,7 @@ from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.outcome import StageStatus
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +37,7 @@ def _make_engine_with_graph(
     context = PipelineContext()
     # Set context.target_dir so file checks are relative to tmp_path
     context.set("context.target_dir", str(tmp_path))
-    registry = HandlerRegistry(backend=backend)
+    registry = HandlerRegistry(HandlerContext(backend=backend))
     return PipelineEngine(
         graph=graph,
         context=context,
@@ -287,7 +288,7 @@ async def test_requires_uses_context_target_dir_for_path_resolution(tmp_path):
     # Point context.target_dir at the workspace subdirectory (not tmp_path)
     context = PipelineContext()
     context.set("context.target_dir", str(target_dir))
-    registry = HandlerRegistry(backend=TrackingBackend())
+    registry = HandlerRegistry(HandlerContext(backend=TrackingBackend()))
     engine = PipelineEngine(
         graph=graph,
         context=context,

@@ -195,7 +195,13 @@ class ManagerLoopHandler:
             try:
                 if child_dotfile:
                     child_outcome = await self._run_child_dotfile(
-                        child_dotfile, child_context, graph, logs_root, node.id, cycle
+                        child_dotfile,
+                        child_context,
+                        graph,
+                        logs_root,
+                        node.id,
+                        cycle,
+                        engine=engine,  # Move 2: pass engine so child seeds from branch backend
                     )
                 else:
                     assert engine is not None
@@ -267,11 +273,18 @@ class ManagerLoopHandler:
         logs_root: str,
         manager_node_id: str,
         cycle: int,
+        engine: "PipelineEngine | None" = None,
     ) -> Outcome:
         """Run a child pipeline from an external DOT file.
 
         Mirrors PipelineHandler-style child engine execution:
         resolve path, read DOT, parse, create child engine, run.
+
+        Args:
+            engine: The currently executing engine (passed from execute()).
+                Move 2: used to seed the child registry from the engine's
+                backend (which may be a branch-isolated clone) rather than
+                the captured self._backend.
         """
         # Lazy imports to avoid circular dependencies
         from ..engine import PipelineEngine
@@ -309,15 +322,26 @@ class ManagerLoopHandler:
         )
         os.makedirs(child_logs, exist_ok=True)
 
-        # Create child HandlerRegistry and PipelineEngine
+        # Create child HandlerRegistry and PipelineEngine.
+        # Move 2: seed from the executing engine's backend (which may be a
+        # branch-isolated clone) rather than the captured self._backend.
+        # This ensures manager child pipelines inside a parallel branch
+        # inherit the branch's isolated backend state.
+        # Verified safe: a manager handler always receives the same backend
+        # as its parent; _handler_registry_factory is None on production paths.
         if self._handler_registry_factory is not None:
             child_registry = self._handler_registry_factory()
         else:
             from .context import HandlerContext
 
+            effective_backend = (
+                engine.handler_registry.get_backend()
+                if engine is not None
+                else self._backend
+            )
             child_registry = HandlerRegistry(
                 HandlerContext(
-                    backend=self._backend,
+                    backend=effective_backend,
                     hooks=self._hooks,
                     cancel_event=self._cancel_event,
                 )

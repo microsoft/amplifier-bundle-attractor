@@ -67,17 +67,40 @@ class _TrackingBackend:
         return "done"
 
     def clone(self) -> "_TrackingBackend":
-        return _TrackingBackend(label=f"{self.label}@clone{id(self)}")
+        # Share the calls list so the root backend can observe all branch calls.
+        # id(self) in each call still distinguishes which clone ran the node.
+        cloned = _TrackingBackend(label=f"{self.label}@clone{id(self)}")
+        cloned.calls = self.calls
+        return cloned
+
+
+_RECORDING_BACKEND_COUNTER: int = 0  # module-level monotone counter
 
 
 class _RecordingBackend:
-    """Writes (node_id → id(self)) into a shared dict on every call."""
+    """Writes (node_id → stable_uid) into a shared dict on every call.
 
-    def __init__(self, record: dict[str, int], label: str = "root") -> None:
+    Uses a module-level monotone counter for each instance so that UIDs
+    are guaranteed unique even when objects are garbage-collected and their
+    memory addresses reused between sequential asyncio tasks.
+    """
+
+    def __init__(
+        self,
+        record: dict[str, int],
+        label: str = "root",
+        _uid: int | None = None,
+    ) -> None:
+        global _RECORDING_BACKEND_COUNTER
         self._record = record
         self.label = label
         self._session_pool: dict[str, str] = {}
         self._completed_nodes: dict[str, Any] = {}
+        if _uid is None:
+            _RECORDING_BACKEND_COUNTER += 1
+            self._uid = _RECORDING_BACKEND_COUNTER
+        else:
+            self._uid = _uid
 
     async def run(
         self,
@@ -86,13 +109,14 @@ class _RecordingBackend:
         context: PipelineContext,
         **_kwargs: Any,
     ) -> str:
-        self._record[node.id] = id(self)
+        self._record[node.id] = self._uid
         return "done"
 
     def clone(self) -> "_RecordingBackend":
-        return _RecordingBackend(
-            self._record, label=f"{self.label}@clone{id(self)}"
-        )
+        global _RECORDING_BACKEND_COUNTER
+        _RECORDING_BACKEND_COUNTER += 1
+        uid = _RECORDING_BACKEND_COUNTER
+        return _RecordingBackend(self._record, label=f"{self.label}@c{uid}", _uid=uid)
 
 
 def _build_engine(dot_source: str, backend: Any, tmp_path: Any) -> PipelineEngine:
@@ -621,10 +645,12 @@ async def test_g6b_multiedge_fanout_branch_outcomes_reach_parent(tmp_path):
         "branch_d outcome must be in parent engine.node_outcomes (S3)"
     )
     assert engine.node_outcomes["branch_c"].status in (
-        StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS
+        StageStatus.SUCCESS,
+        StageStatus.PARTIAL_SUCCESS,
     )
     assert engine.node_outcomes["branch_d"].status in (
-        StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS
+        StageStatus.SUCCESS,
+        StageStatus.PARTIAL_SUCCESS,
     )
 
 

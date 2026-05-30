@@ -140,9 +140,21 @@ class ParallelHandler:
                     )
                 else:
                     try:
-                        outcome = await engine.run_subgraph(
-                            target_node_id, context=branch_context
-                        )
+                        # Move 1: give each branch its own engine so run_subgraph
+                        # uses an isolated handler_registry (and therefore isolated
+                        # backend _session_pool / _completed_nodes per branch).
+                        # Fall back to the parent engine for mock/stub engines used
+                        # in unit tests that predate clone_for_branch.
+                        clone_fn = getattr(engine, "clone_for_branch", None)
+                        if clone_fn is not None:
+                            branch_engine = clone_fn(context=branch_context)
+                            outcome = await branch_engine.run_subgraph(
+                                target_node_id, context=branch_context
+                            )
+                        else:
+                            outcome = await engine.run_subgraph(
+                                target_node_id, context=branch_context
+                            )
                     except Exception as e:
                         logger.warning(
                             "Branch %s raised exception: %s", target_node_id, e

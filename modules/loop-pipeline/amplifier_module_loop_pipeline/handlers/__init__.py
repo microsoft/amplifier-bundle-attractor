@@ -128,15 +128,34 @@ class HandlerRegistry:
             )
         return self._handlers[handler_type]
 
-    def clone_for_branch(self) -> HandlerRegistry:
+    def get_backend(self) -> "object | None":
+        """Return the backend from the codergen handler, if present.
+
+        Used by child-engine builders (PipelineHandler, ManagerLoopHandler)
+        to seed child registries from the currently executing engine's backend
+        rather than a captured ``self._backend`` reference.  This ensures that
+        folder nodes inside a parallel branch inherit the branch-isolated
+        backend rather than the original parent backend (Move 2).
+        """
+        from .codergen import CodergenHandler
+
+        codergen = self._handlers.get("codergen")
+        if isinstance(codergen, CodergenHandler):
+            return codergen._backend
+        return None
+
+    def clone_for_branch(self) -> "HandlerRegistry":
         """Create a branch-isolated copy of this registry.
 
         Shallow-copies the handlers dict and replaces the codergen handler
-        with a new instance backed by a cloned backend.  All other handlers
-        are shared (they are stateless).
+        with a new instance backed by a cloned backend.  The pipeline handler
+        is also replaced with a fresh instance (mutable ``_subgraph_runs``).
+        All other handlers are shared (they are stateless or their backend
+        dependency is severed by Move 2).
 
-        Used by ``_execute_parallel_fan_out`` so each concurrent branch
-        gets its own backend mutable state.
+        Called by ``PipelineEngine.clone_for_branch`` so each concurrent
+        parallel branch gets its own backend mutable state (``_session_pool``,
+        ``_completed_nodes``).
         """
         from .codergen import CodergenHandler
         from .pipeline import PipelineHandler
@@ -145,7 +164,9 @@ class HandlerRegistry:
         new._ctx = self._ctx  # frozen dataclass — safe to share
         new._handlers = dict(self._handlers)
 
-        # Replace codergen with a clone that has its own backend state
+        # Replace codergen with a clone that has its own backend state.
+        # The cloned backend carries fresh _session_pool and _completed_nodes
+        # so concurrent branches cannot cross-pollute session state.
         original_codergen = self._handlers.get("codergen")
         if isinstance(original_codergen, CodergenHandler):
             backend = original_codergen._backend
@@ -153,7 +174,11 @@ class HandlerRegistry:
                 cloned_backend = backend.clone()
                 new._handlers["codergen"] = CodergenHandler(backend=cloned_backend)
 
-        # Replace pipeline handler with a fresh instance (has mutable _subgraph_runs)
+        # Replace pipeline handler with a fresh instance (has mutable _subgraph_runs).
+        # Note: after Move 2, PipelineHandler.execute seeds its child registry
+        # from the executing engine's handler_registry.get_backend() instead of
+        # self._backend, so the backend field here is only a fallback for the
+        # no-engine path.
         original_pipeline = self._handlers.get("pipeline")
         if isinstance(original_pipeline, PipelineHandler):
             new._handlers["pipeline"] = PipelineHandler(

@@ -167,15 +167,31 @@ class PipelineHandler:
         child_logs = os.path.join(logs_root, f"subgraph_{node.id}")
         os.makedirs(child_logs, exist_ok=True)
 
-        # (8) Create child HandlerRegistry (no closure, no rewire — engine passes self via execute(engine=...))
+        # (8) Create child HandlerRegistry.
+        # Move 2: seed the child backend from the EXECUTING ENGINE's registry
+        # rather than the captured self._backend.  This ensures that a folder
+        # node inside a parallel branch inherits the branch's isolated backend
+        # (from clone_for_branch) instead of the original parent backend.
+        # Verified safe: a folder handler always receives the same backend as
+        # its parent (per-node model selection uses _ProviderPreference on
+        # that one backend, not distinct instances); _handler_registry_factory
+        # is None on every production path.
         if self._handler_registry_factory is not None:
             child_registry = self._handler_registry_factory()
         else:
             from .context import HandlerContext
 
+            # Prefer the executing engine's backend so branch isolation propagates
+            # into child pipelines.  Fall back to self._backend when engine is None
+            # (should not happen in production; kept for test-harness compatibility).
+            effective_backend = (
+                engine.handler_registry.get_backend()
+                if engine is not None
+                else self._backend
+            )
             child_registry = HandlerRegistry(
                 HandlerContext(
-                    backend=self._backend,
+                    backend=effective_backend,
                     hooks=self._hooks,
                     cancel_event=self._cancel_event,
                     interviewer=self._interviewer,

@@ -88,7 +88,7 @@ class PipelineEngine:
             str, int
         ] = {}  # per-node execution count (graph-level visits)
         self._fidelity_degraded_hop: bool = False
-        self._checkpoint_path = os.path.join(logs_root, "checkpoint.json")
+        self._checkpoint_path: str | None = os.path.join(logs_root, "checkpoint.json")
         self.artifact_store = ArtifactStore(base_dir=logs_root)
 
         # M1/M2 (R12): Output table + failed-outputs propagation table.
@@ -98,6 +98,72 @@ class PipelineEngine:
         # came from a failed or skipped predecessor.  Cleared on retry (CR-3).
         self._output_table: dict[str, frozenset[str]] = build_output_table(graph)
         self.failed_outputs: dict[str, str] = {}
+
+        # S5: Branch-clone marker and discriminator.
+        # Set by clone_for_branch() to prevent run() from being called on a
+        # branch engine.  _branch_id is threaded into events emitted from this
+        # engine so concurrent-branch logs are sortable (S4).
+        self._is_branch_clone: bool = False
+        self._branch_id: str | None = None
+
+    def clone_for_branch(self, *, context: PipelineContext) -> "PipelineEngine":
+        """Create a branch-isolated clone of this engine for parallel execution.
+
+        Each concurrent parallel branch must have its own engine so that
+        ``run_subgraph`` uses an isolated ``handler_registry`` (and therefore
+        an isolated backend ``_session_pool`` / ``_completed_nodes``).
+
+        Split table (critic-corrected, implement exactly):
+          ISOLATED per branch (cloned):
+            context          — caller must pass ``context.clone()``
+            handler_registry — ``clone_for_branch()`` gives fresh backend state
+            node_outcomes    — auto-fresh by __init__
+            completed_nodes  — auto-fresh by __init__
+            iteration_count  — auto-fresh by __init__
+            _node_execution_counts — auto-fresh by __init__
+            _fidelity_degraded_hop — auto-fresh by __init__
+            failed_outputs   — auto-fresh by __init__
+
+          SHARED by reference (immutable or shared semantics):
+            graph            — immutable post-load
+            logs_root        — shared str, no mutable state
+            hooks            — events surface on one stream
+            _cancel_event    — cancel propagates across all branches
+            artifact_store   — CRITICAL (C1): share the L-12 lock and
+                               cross-branch artifact visibility
+            _output_table    — pure function of graph, avoid re-derivation
+
+          DISABLED on clones:
+            _checkpoint_path — None; S5 guard prevents run() on branch clones
+
+        Args:
+            context: Branch-isolated context (caller must pass ``context.clone()``).
+
+        Returns:
+            A new ``PipelineEngine`` marked as a branch clone.
+
+        Raises:
+            RuntimeError: If called on an engine that is itself a branch clone
+                (nested cloning is not permitted; only the top-level engine clones).
+        """
+        clone = PipelineEngine(
+            graph=self.graph,
+            context=context,
+            handler_registry=self.handler_registry.clone_for_branch(),
+            logs_root=self.logs_root,
+            hooks=self.hooks,
+            cancel_event=self._cancel_event,
+        )
+        # C1: share the parent's ArtifactStore (preserves L-12 lock and visibility)
+        clone.artifact_store = self.artifact_store
+        # Avoid wasteful re-derivation (output table is a pure function of graph)
+        clone._output_table = self._output_table
+        # S5: disable checkpointing on branch clones
+        clone._checkpoint_path = None
+        # S4 + S5: mark as branch clone and assign a discriminator for log sorting
+        clone._is_branch_clone = True
+        clone._branch_id = f"branch@{id(clone):#x}"
+        return clone
 
     def _check_cancelled(self) -> bool:
         """Check if cancellation has been requested via the cancel event."""
@@ -116,7 +182,25 @@ class PipelineEngine:
 
         Returns:
             The final Outcome of the pipeline run.
+
+        Raises:
+            RuntimeError: If called on a branch-clone engine (S5 guard).
+                Branch engines are driven by ``run_subgraph`` only; calling
+                ``run()`` on them would silently attempt checkpoint
+                resume/save against the shared ``logs_root``, corrupting
+                the parent engine's checkpoint state.
         """
+        # S5: Branch-clone guard — run() must never be called on a branch engine.
+        # Branch engines are driven exclusively via run_subgraph().
+        # Silent checkpoint resume/save on a branch would corrupt the parent's
+        # checkpoint, producing wrong output non-deterministically.
+        if self._is_branch_clone:
+            raise RuntimeError(
+                "run() must not be called on a branch-clone engine; "
+                "branch engines are driven by run_subgraph() only. "
+                "Create a top-level PipelineEngine for full pipeline execution."
+            )
+
         pipeline_start_time = time.monotonic()
 
         # Initialize context with graph attributes
@@ -1012,7 +1096,7 @@ class PipelineEngine:
 
         Spec Section 5.3: Resume behavior, T2.4 (RunIdentity hard-fail).
         """
-        if not os.path.exists(self._checkpoint_path):
+        if self._checkpoint_path is None or not os.path.exists(self._checkpoint_path):
             return False
 
         try:
@@ -1120,6 +1204,8 @@ class PipelineEngine:
             logs=self.context.get_logs(),  # L-7: include logs in checkpoint
             identity=RunIdentity.from_graph(self.graph),  # T2.4: scope to this graph
         )
+        if self._checkpoint_path is None:
+            return  # S5: branch clones never checkpoint (run() guard prevents this)
         save_checkpoint(cp, self._checkpoint_path)
 
     # -- Run directory helpers -----------------------------------------------
@@ -1193,9 +1279,11 @@ class PipelineEngine:
 
         async def run_branch(target_node_id: str) -> dict[str, Any]:
             branch_context = self.context.clone()
-            branch_registry = self.handler_registry.clone_for_branch()
+            # Move 1: give each branch its own engine so run_subgraph uses an
+            # isolated handler_registry (and therefore isolated backend state).
+            branch_engine = self.clone_for_branch(context=branch_context)
             node = self.graph.nodes[target_node_id]
-            handler = branch_registry.get(node)
+            handler = branch_engine.handler_registry.get(node)
             handler_type = node.type or node.shape
 
             # Increment per-node execution count for branch nodes
@@ -1226,7 +1314,7 @@ class PipelineEngine:
                     self.logs_root,
                     retry_policy,
                     hooks=self.hooks,
-                    engine=self,
+                    engine=branch_engine,  # S3: branch engine; outcome recorded below
                 )
             except Exception as exc:
                 outcome = Outcome(
@@ -1236,7 +1324,8 @@ class PipelineEngine:
 
             node_duration = (time.monotonic() - node_start) * 1000
 
-            # Record completion in the main engine state
+            # S3: Record completion in the PARENT engine's state so downstream
+            # edge-selection (select_edge) and fan-in can read branch outcomes.
             self.completed_nodes.append(target_node_id)
             self.node_outcomes[target_node_id] = outcome
 
@@ -1714,8 +1803,15 @@ class PipelineEngine:
     # -- Event helpers -------------------------------------------------------
 
     async def _emit(self, event_name: str, data: dict[str, Any]) -> None:
-        """Emit an event via hooks, if provided."""
+        """Emit an event via hooks, if provided.
+
+        S4: If this engine is a branch clone, injects ``branch_id`` into the
+        event payload so concurrent-branch logs can be disambiguated.  The
+        discriminator is ``None`` for the top-level engine (no overhead).
+        """
         if self.hooks is not None:
+            if self._branch_id is not None:
+                data = {**data, "branch_id": self._branch_id}
             await self.hooks.emit(event_name, data)
 
     async def _emit_complete(self, outcome: Outcome, start_time: float) -> None:

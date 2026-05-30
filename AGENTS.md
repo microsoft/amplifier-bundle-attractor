@@ -43,6 +43,17 @@ Unit tests alone are insufficient for engine and handler changes. Past bugs have
 - **`tripleoctagon` (fan-in) special-case**: `engine.py` (around line 704) special-cases `tripleoctagon` such that the subgraph runner stops there. If you change subgraph termination semantics, this is the place that breaks first.
 - **Per-branch event contract**: per-branch events emitted from `ParallelHandler` bubble to the main events stream as `pipeline:node_start` / `pipeline:node_complete` with a `via_parallel=True` marker. Downstream observability (and at least one bundle outside this repo) relies on this marker. Don't break that contract silently.
 - **False-positive `ContractViolation`**: there is a known historical class of false-positive ContractViolation events triggered by the main loop re-firing after a handler-internal dispatch. Tests in `tests/test_contract_violation_event.py` and `tests/test_parallel_branch_observability.py` exist to lock this down — read them before changing the affected paths.
+- **`HandlerRegistry` construction requires a `HandlerContext`** (#37): a new handler dependency is a new FIELD on `HandlerContext`, never a `**kwargs` entry. This exact wiring was bitten 5 times before it was made type-required.
+- **Routing-termination outcomes go through `engine.terminate_pipeline()`** (#37): never construct a fresh `Outcome(FAIL, ...)` inline at a no-matching-edge boundary — it drops the handler's `failure_reason`.
+- **Checkpoint resume is identity-gated via `RunIdentity`** (#39): never read run state keyed only by `logs_root`. Mismatched identity must hard-fail, never silently restart — side-effecting nodes would double-apply.
+- **DOT parser normalizes IDs once at the tokenizer entry**, not per-consumer.
+
+## Recurring bug classes — read before designing or reviewing
+
+This ecosystem has five documented recurring bug species: incomplete assembly, lossy reconstruction, unscoped shared state, partial-coverage symmetry, and aspirational contract. The pitfalls above are scar-tissue instances of them.
+
+- **Designing a change**: read [`docs/designs/RECURRING-BUG-CLASSES.md`](docs/designs/RECURRING-BUG-CLASSES.md).
+- **Reviewing a PR**: read [`docs/designs/CODE-REVIEW-CHECKLIST.md`](docs/designs/CODE-REVIEW-CHECKLIST.md).
 
 ## Spec authority
 

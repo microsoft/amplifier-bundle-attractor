@@ -102,6 +102,18 @@ a review node with edges `condition="outcome=pass"` and `condition="outcome=retr
 should call `report_outcome(status="success", preferred_label="pass")` or
 `report_outcome(status="fail", preferred_label="retry")`.
 
+> **Common mistake: escaped-quote delimiters** — Condition (and all attribute)
+> values must use **plain double-quotes** as delimiters.  Writing
+> `condition=\"key=value\"` (backslash-quote) instead of
+> `condition="key=value"` is a syntax error.  Before the fail-loud fix was
+> added, the tokenizer silently mis-parsed the backslash-delimited form as a
+> bare key (`key=value`), which resolves truthy — causing ALL conditional edges
+> to "match" and the engine to fan-out instead of routing.  The parser now
+> raises a `ValueError` immediately with the position and the correct form.
+> See [DOT-SYNTAX.md](DOT-SYNTAX.md#quoting-and-escaping) for the full rule
+> and the one legitimate place `\"` is valid (inside a quoted string value,
+> e.g. a shell command containing literal double-quotes).
+
 > **Recommended pattern:** Use `condition="outcome!=retry"` instead of
 > `condition="outcome=pass"` for forward edges. This is resilient to agents
 > that return `status="success"` without setting `preferred_label`.
@@ -552,6 +564,7 @@ Set these on the `graph` element:
 | Missing `weight` on conditional edges | Nondeterministic edge selection | Add `weight` to break ties between equally-matched edges |
 | Using `full` fidelity everywhere | High cost, slow execution | Use `full` only where conversation continuity matters |
 | Circular dependencies without exit | Infinite loop | Ensure every cycle has a conditional exit path |
+| `condition=\"key=value\"` (backslash delimiters) | Parser error (or, before the fail-loud fix, silent wrong routing) | Use plain quotes: `condition="key=value"` — see callout above |
 
 ## Complete Example: Feature Build Pipeline
 

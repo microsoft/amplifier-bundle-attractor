@@ -466,9 +466,46 @@ _TOKEN_RE = re.compile(
 
 
 def _tokenize(body: str) -> list[str]:
-    """Tokenize the body of a digraph into a flat list of tokens."""
+    """Tokenize the body of a digraph into a flat list of tokens.
+
+    Raises:
+        ValueError: If a stray backslash-quote sequence (``\\"``) is found
+            outside a quoted string.  This pattern means the caller used
+            ``\\\"value\\\"`` as an attribute delimiter instead of the
+            required plain ``"value"`` form.  The error is raised
+            immediately with an actionable message so the author can fix
+            the source rather than silently receiving a mis-parsed
+            condition (see RECURRING-BUG-CLASSES.md S6).
+    """
     tokens: list[str] = []
+    pos = 0  # tracks the end of the last consumed match
     for m in _TOKEN_RE.finditer(body):
+        # --- Gap check: inspect unmatched characters before this match ---
+        # Any character in the gap between pos and m.start() was NOT consumed
+        # by any token pattern.  The specific error we guard against:
+        # a backslash immediately followed by a double-quote (the ``\"...\"``
+        # delimiter attempt).  Valid ``\"`` interior escapes ARE consumed by
+        # the ``string`` token, so they never appear in a gap.
+        gap_start = pos
+        gap_end = m.start()
+        if gap_end > gap_start:
+            gap = body[gap_start:gap_end]
+            bs_idx = gap.find("\\")
+            if bs_idx != -1:
+                abs_bs = gap_start + bs_idx
+                if abs_bs + 1 < len(body) and body[abs_bs + 1] == '"':
+                    raise ValueError(
+                        f"DOT parse error near position {abs_bs}: "
+                        f"backslash-quote ('\\\"') cannot be used as an "
+                        f"attribute delimiter. Attribute values must use plain "
+                        f"double-quotes. "
+                        f'Write  condition="key=value"  not  '
+                        f'condition=\\"key=value\\". '
+                        f"Backslash-escapes are only valid INSIDE a quoted "
+                        f'string (e.g. tool_command="echo \\"hello\\"").'
+                    )
+        pos = m.end()
+
         if m.group("ws"):
             continue
         if m.group("string"):

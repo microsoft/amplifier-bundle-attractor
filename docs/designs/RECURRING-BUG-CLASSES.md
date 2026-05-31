@@ -181,6 +181,58 @@ ecosystem over the past year, and 100% of fix commits in
   refactor**. Filed as future work. The S5 question in the review
   checklist is the immediate guard against new instances landing.
 
+### S6 — Parser fails open on malformed input
+
+- **Invariant violated**: the parser accepts input the spec explicitly
+  rejects, silently producing plausible-but-wrong output.  The
+  malformed input is never surfaced as an error; debugging happens
+  far from the cause, in runtime behaviour.
+- **Recognition signature** (what to look for):
+  - tokenizer / parser uses "best-effort" or "skip-and-continue"
+    semantics on unrecognized tokens
+  - malformed input produces structurally valid (but semantically
+    wrong) intermediate values — conditions, attribute names, etc.
+  - the runtime produces wrong-but-plausible output with no visible
+    error; the only diagnostic is incorrect behavior
+  - "the spec says reject this" but the code path reaches evaluation
+    anyway
+- **Canonical incident**: edge conditions written as
+  `condition=\"key=value\"` (backslash-quote delimiters) instead of
+  the required `condition="key=value"` (plain-quote delimiters).  The
+  tokenizer skipped the stray backslash and tried to match the
+  `"key=value..."` fragment as a string, but the trailing `\"` was
+  treated as an interior escape and the string match failed.  The
+  tokenizer then backed up to the `"` at position +1 and the
+  unquoted `key=value` fragment matched as a bare identifier.  The
+  attribute parser saw `condition = key=value` (a bare ident, not a
+  quoted string), and the condition evaluator reached the bare-key
+  truthy branch: `_resolve_key("key=value", ...)` returned
+  `"continue"` (non-empty) → `True`.  ALL four conditional edges
+  matched; the engine took the parallel fan-out path; `loop_restart`
+  was never processed; hours were spent debugging routing.  Fixed
+  by gap-detection in `_tokenize` (S6-fix, PR to be filed).
+- **Noun-fix**: detect unmatched characters in the tokenizer.  After
+  each regex match, inspect the gap between the last consumed
+  position and the new match start.  A backslash immediately before a
+  double-quote in a gap is unambiguously malformed (valid `\"`
+  interior escapes are consumed inside a `string` token and never
+  appear in a gap).  Raise `ValueError` immediately with position and
+  the correct form.  The "fail-open" surface shrinks to zero for this
+  pattern.
+- **Anti-fix**: extend the tokenizer to ACCEPT `\"...\"` by normalising
+  it to `"..."`.  This makes the parser more permissive than the
+  spec's strict-subset mandate (§2.1) and converts a detection
+  opportunity into a silent acceptance.  The NEXT author with a
+  slightly different malformed form inherits a parser that is even
+  less likely to signal.
+- **What this design CLOSES**: **tokenize-time loud, not runtime
+  guessing**.  Authors see `ValueError: DOT parse error near position
+  N: backslash-quote ('\"') cannot be used as an attribute delimiter`
+  at parse time — before the engine runs a single node.  The error
+  message names the offending construct, points at the position, and
+  states the correct form.  The fix is a 30-line addition that does
+  not change any tokenizer architecture.
+
 ## The "true nouns vs located nouns" distinction (this matters)
 
 Of the five designs shipping or staged in Wave 1–3, **only two make
@@ -193,6 +245,7 @@ violation unconstructable**:
 | **LOCATED NOUN** | terminate_pipeline (T2.3) | Sole-caller AST guard + totality test. Verb relocated earlier in the lifecycle. |
 | **ASSISTED PATTERN** | HostPath / DTUPath (T3.1) | Pyright at write time + `to_host()` runtime validation. Advisory; constructor bypassable. |
 | **SPOT FIX** | DOT parser key-stripping (#33) | Centralized at one site for now. A future tokenizer change could reintroduce S4. |
+| **FAIL-LOUD NOUN** | DOT tokenizer gap-detection (S6-fix) | Parse-time `ValueError` on stray `\"` delimiter. Gap detection runs over every character; a new malformed form must also produce a gap to bypass the check. Closes S6. |
 
 **Lesson**: earlier detection is cheaper than later detection, so the
 located nouns and assisted patterns are still net-positive — but they

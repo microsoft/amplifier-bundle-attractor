@@ -576,3 +576,137 @@ def test_escape_multiline_shell_heredoc_tool_command_preserves_structure():
     cmd_attr = "#!/bin/sh\\\\nset -e\\\\nprintf hello\\\\nprintf world"
     graph = parse_dot(f'digraph t {{ n [label="{cmd_attr}"] }}')
     assert graph.nodes["n"].label == ("#!/bin/sh\nset -e\nprintf hello\nprintf world")
+
+
+# --- Fail-loud: malformed backslash-quote delimiters (Layer A) ---
+
+
+def test_malformed_backslash_delimiter_rejected():
+    r"""Backslash-quote (\"...\") as attribute delimiter must raise ValueError.
+
+    This is the specific failure mode from ralph-loop pipelines: edge conditions
+    used \"value\" instead of "value", causing the tokenizer to silently
+    mis-parse the condition as a bare key (context.tool.last_line) and evaluate
+    it truthy for all 4 outgoing edges, producing a fan-out instead of
+    single-edge routing.  The fix (Layer A) raises an error immediately so the
+    author sees the problem at parse time instead of debugging wrong runtime
+    behaviour.
+
+    See RECURRING-BUG-CLASSES.md S6.
+    """
+    # Python repr: 'condition=\\"context.tool.last_line=continue\\"'
+    # On-disk DOT: condition=\"context.tool.last_line=continue\"
+    with pytest.raises(ValueError, match="backslash-quote"):
+        parse_dot(
+            "digraph test {"
+            "  start [shape=Mdiamond]; done [shape=Msquare]"
+            '  start -> done [condition=\\"context.tool.last_line=continue\\"]'
+            "}"
+        )
+
+
+def test_malformed_backslash_delimiter_error_is_actionable():
+    r"""Error message must name the offending construct and the correct form."""
+    with pytest.raises(ValueError) as exc_info:
+        parse_dot(
+            "digraph t {"
+            "  s [shape=Mdiamond]; d [shape=Msquare]"
+            '  s -> d [condition=\\"outcome=success\\"]'
+            "}"
+        )
+    msg = str(exc_info.value)
+    # Points at the problem
+    assert "backslash-quote" in msg or '\\"' in msg
+    # Names the correct form
+    assert "plain" in msg or 'condition="' in msg
+
+
+def test_plain_quote_condition_parses_and_routes_correctly():
+    r"""Plain-quoted condition must parse and select exactly one matching edge.
+
+    Regression guard: with the old silent-mis-parse behaviour, all 4 conditional
+    edges from Verify matched because the malformed \"context.tool.last_line\"
+    was a truthy bare key.  This test confirms that with plain quotes exactly
+    one edge matches when context.tool.last_line=continue.
+    """
+    from amplifier_module_loop_pipeline.context import PipelineContext
+    from amplifier_module_loop_pipeline.edge_selection import select_all_matching_edges
+    from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
+
+    graph = parse_dot("""
+    digraph test {
+        start  [shape=Mdiamond]
+        verify [prompt="Verify"]
+        execute     [prompt="Execute again"]
+        report_done [shape=Msquare]
+        report_stalled [shape=Msquare]
+        report_max    [shape=Msquare]
+
+        start -> verify
+        verify -> execute       [condition="context.tool.last_line=continue", loop_restart=true]
+        verify -> report_done   [condition="context.tool.last_line=done"]
+        verify -> report_stalled[condition="context.tool.last_line=stalled"]
+        verify -> report_max    [condition="context.tool.last_line=max_iter"]
+    }
+    """)
+
+    ctx = PipelineContext()
+    ctx.set("tool.last_line", "continue")
+    outcome = Outcome(status=StageStatus.SUCCESS)
+
+    matched = select_all_matching_edges("verify", outcome, ctx, graph)
+    assert len(matched) == 1, (
+        f"Expected exactly 1 matching edge, got {len(matched)}: "
+        f"{[e.to_node for e in matched]}"
+    )
+    assert matched[0].to_node == "execute"
+    assert matched[0].attrs.get("loop_restart") is True
+
+
+def test_backslash_quote_inside_string_value_still_valid():
+    r"""Backslash-quote INSIDE a quoted string (interior escape) must still work.
+
+    The fix must not break the legitimate use: tool_command="echo \"hello\""
+    where \"  is an interior escape for a literal double-quote character,
+    not a delimiter.  The outer delimiters remain plain double-quotes.
+    """
+    graph = parse_dot(
+        "digraph t {"
+        "  s [shape=Mdiamond]; d [shape=Msquare]"
+        '  s [tool_command="echo \\"hello world\\""]'
+        "  s -> d"
+        "}"
+    )
+    assert graph.nodes["s"].attrs.get("tool_command") == 'echo "hello world"'
+
+
+def test_bare_key_truthy_condition_still_supported():
+    """Bare-key truthy conditions (L-20) remain valid after the Layer A fix.
+
+    The Layer A fix only rejects stray backslashes before a double-quote.
+    A bare-key condition like condition="approved" (no operator) is
+    intentional (CEXPR-011, Spec Section 10.5) and must continue to work.
+    """
+    from amplifier_module_loop_pipeline.conditions import evaluate_condition
+    from amplifier_module_loop_pipeline.context import PipelineContext
+    from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
+
+    # Bare-key condition parses without error
+    graph = parse_dot("""
+    digraph test {
+        start [shape=Mdiamond]; done [shape=Msquare]
+        start -> done [condition="approved"]
+    }
+    """)
+    edge = graph.edges[0]
+    assert edge.condition == "approved"
+
+    # Evaluates truthy when context key has a non-empty value
+    ctx = PipelineContext()
+    ctx.set("approved", "yes")
+    outcome = Outcome(status=StageStatus.SUCCESS)
+    assert evaluate_condition("approved", outcome, ctx) is True
+
+    # Evaluates falsy when context key is absent
+    ctx2 = PipelineContext()
+    assert evaluate_condition("approved", outcome, ctx2) is False

@@ -168,6 +168,37 @@ digraph {
 }
 ```
 
+## Quoting and Escaping
+
+Attribute values are delimited by **plain double-quotes only**.  Backslash-escapes
+are valid **inside** a quoted value, never as the outer delimiter.
+
+```dot
+# CORRECT — plain double-quotes as delimiters
+verify -> execute [condition="context.tool.last_line=continue"]
+node [tool_command="echo \"hello world\""]   # \" inside the value = literal "
+
+# WRONG — backslash-quote as delimiter (parse error)
+verify -> execute [condition=\"context.tool.last_line=continue\"]
+```
+
+**Rule of thumb**: if you're writing `attr=\"...\"`, stop — the outer `\"` is
+wrong.  Only the inner content of a string may use `\"` as an escape.
+
+The tricky case is `tool_command` or `prompt` attributes that contain shell
+quoting.  The outer delimiters are still plain `"`:
+
+```dot
+node [tool_command="if [ ! -d \"$dir\" ]; then echo missing; fi"]
+#                   ^^ interior escape for literal "    ^^ still plain outer
+```
+
+**What happens if you get it wrong (pre-fix):** the tokenizer silently
+mis-parses `\"key=value\"` as the bare key `key=value`, which resolves
+truthy — so a conditional edge appears to match even when its condition
+is false.  **After the fix**, a loud `ValueError` points at the position
+and names the required form.
+
 ## Common Mistakes
 
 | Mistake | Fix |
@@ -180,3 +211,4 @@ digraph {
 | `$goal` not expanding | Ensure graph has `goal="..."` attribute or pass `goal` to the tool |
 | Fan-in without fan-out | `tripleoctagon` expects `parallel.results` in context |
 | `$param` not expanding | Pass `params` dict to `run_pipeline` tool call |
+| Using `\"...\"` as attribute delimiter | Use plain `"..."` — see **Quoting and Escaping** above |

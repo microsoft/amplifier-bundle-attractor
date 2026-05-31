@@ -1,7 +1,7 @@
 """Tests for AmplifierBackend.clone() — parallel branch isolation.
 
 Verifies that clone() produces a new backend with:
-- Fresh mutable state (session_pool, completed_nodes, etc.)
+- Fresh mutable state (_thread_transcripts, completed_nodes, etc.)
 - Shared immutable refs (coordinator, profiles, provider, etc.)
 - Independent tool dict (shallow copy)
 """
@@ -32,21 +32,25 @@ class TestAmplifierBackendClone:
     def test_clone_has_empty_mutable_state(self):
         """Cloned backend starts with fresh mutable state.
 
-        _session_pool, _completed_nodes, and _last_node_id are always fresh.
+        _thread_transcripts, _completed_nodes, and _last_node_id are always fresh.
         _spawn_fn and _spawn_checked are INHERITED from the parent (not reset)
         so branch clones never perform a concurrent first-resolution of
         session.spawn under asyncio.gather.
+
+        _thread_transcripts being fresh is the mechanism that makes thread_id
+        branch-local: sibling parallel branches each start with an empty
+        transcript even if they share an explicit thread_id (EXTENSIONS.md §13).
         """
         original = _make_backend()
         # Dirty the original's mutable state
-        original._session_pool["thread-1"] = "session-abc"
+        original._thread_transcripts["thread-1"] = [("node-1", "instr", "output")]
         original._completed_nodes["node-1"] = Outcome(status=StageStatus.SUCCESS)
         original._last_node_id = "node-1"
         original._spawn_checked = True
 
         clone = original.clone()
 
-        assert clone._session_pool == {}
+        assert clone._thread_transcripts == {}
         assert clone._completed_nodes == {}
         assert clone._last_node_id is None
         # _spawn_checked is inherited (not reset) to prevent concurrent
@@ -82,13 +86,13 @@ class TestAmplifierBackendClone:
         original = _make_backend()
 
         clone = original.clone()
-        clone._session_pool["thread-x"] = "session-999"
+        clone._thread_transcripts["thread-x"] = [("node-x", "instr", "output")]
         clone._completed_nodes["node-x"] = Outcome(status=StageStatus.FAIL)
         clone._last_node_id = "node-x"
         clone._spawn_checked = True
         clone._tools["tool_new"] = MagicMock()
 
-        assert original._session_pool == {}
+        assert original._thread_transcripts == {}
         assert original._completed_nodes == {}
         assert original._last_node_id is None
         assert original._spawn_checked is False

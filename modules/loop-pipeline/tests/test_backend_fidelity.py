@@ -196,17 +196,23 @@ async def test_backend_default_fidelity_is_compact():
 
 
 @pytest.mark.asyncio
-async def test_backend_reuses_session_for_full_fidelity():
-    """Full fidelity with same thread_id reuses the session_id from pool."""
+async def test_backend_carries_history_via_parent_messages_for_full_fidelity():
+    """Full fidelity with same thread_id carries history via parent_messages.
+
+    The second node on the same thread must receive the first node's
+    (instruction, output) exchange as parent_messages — NOT sub_session_id.
+    sub_session_id was the type confusion (id-where-a-conversation-belongs)
+    that caused the continuity bug.
+    """
     coordinator = MockCoordinator(
-        spawn_result={"output": "done", "session_id": "sess-abc"}
+        spawn_result={"output": "first task output", "session_id": "sess-abc"}
     )
     backend = AmplifierBackend(
         coordinator=coordinator,
         profiles={"anthropic": "attractor-anthropic"},
     )
 
-    # First call: creates new session
+    # First call: no prior history, spawns fresh
     node1 = _make_node(
         id="step1",
         attrs={
@@ -219,8 +225,17 @@ async def test_backend_reuses_session_for_full_fidelity():
     context = _make_context()
 
     await backend.run(node1, "First task", context, incoming_edge=edge, graph=graph)
+    first_call_kwargs = coordinator.last_spawn_kwargs
 
-    # Second call: same thread_id should reuse session
+    # First call: no prior history → no parent_messages, no sub_session_id
+    assert "sub_session_id" not in first_call_kwargs, (
+        "sub_session_id must never appear on a full-fidelity spawn"
+    )
+    assert not first_call_kwargs.get("parent_messages"), (
+        "First node on a thread has no prior history — no parent_messages"
+    )
+
+    # Second call: same thread_id should carry prior history as parent_messages
     node2 = _make_node(
         id="step2",
         attrs={
@@ -229,12 +244,26 @@ async def test_backend_reuses_session_for_full_fidelity():
             "thread_id": "main-thread",
         },
     )
-    await backend.run(node2, "Second task", context, incoming_edge=edge, graph=graph)
+    edge2 = Edge(from_node="step1", to_node="step2")
+    await backend.run(node2, "Second task", context, incoming_edge=edge2, graph=graph)
     second_call_kwargs = coordinator.last_spawn_kwargs
 
-    # The second call should include sub_session_id for resumption
-    assert "sub_session_id" in second_call_kwargs
-    assert second_call_kwargs["sub_session_id"] == "sess-abc"
+    # Second call: parent_messages carries the first node's exchange
+    assert "parent_messages" in second_call_kwargs, (
+        "Second full-fidelity node on same thread must receive parent_messages"
+    )
+    pm = second_call_kwargs["parent_messages"]
+    assert len(pm) == 2, f"Expected 2 messages (user + assistant), got {len(pm)}: {pm}"
+    assert pm[0]["role"] == "user"
+    assert pm[0]["content"] == "First task"
+    assert pm[1]["role"] == "assistant"
+    assert pm[1]["content"] == "first task output"
+
+    # Second call: never uses sub_session_id
+    assert "sub_session_id" not in second_call_kwargs, (
+        "sub_session_id must never appear on a full-fidelity spawn; "
+        "continuity is via parent_messages"
+    )
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,60 @@
+// 11-manager-child-dotfile-hitl/child-with-gate.dot -- Child pipeline containing a HITL gate.
+//
+// This file is referenced by parent.dot via:
+//   manager [shape=house, "stack.child_dotfile"="child-with-gate.dot"]
+//
+// The human gate (shape=hexagon, type="wait.human") is the critical node for
+// verifying the bug fix: the HumanGateHandler must receive a real interviewer
+// (not None) that was forwarded from the top-level HandlerRegistry through
+// ManagerLoopHandler._run_child_dotfile() -> child HandlerContext.
+//
+// How to drive the gate manually:
+//   When prompted "Approve the sprint deliverable?", type "A" to approve.
+//   DTU / CI uses AutoApproveInterviewer, which selects the first option automatically.
+//
+// Expected flow:
+//   start -> hitl_gate (presents approval question) -> approved -> done
+//   (or: start -> hitl_gate -> rejected -> done, if the human rejects)
+
+digraph ChildWithHITLGate {
+    graph [
+        goal="Approve the sprint deliverable to proceed"
+    ]
+    rankdir=TB
+
+    // Structural nodes
+    start    [shape=Mdiamond, label="Start"]
+    done     [shape=Msquare,  label="Done"]
+
+    // Human-in-the-loop approval gate.
+    // shape=hexagon maps to wait.human handler (HumanGateHandler).
+    // Outgoing edge labels become the options presented to the human.
+    // Accelerator key [A] / [R] are parsed from the label prefix.
+    hitl_gate [
+        shape=hexagon,
+        label="Approve the sprint deliverable?",
+        type="wait.human"
+    ]
+
+    // Outcome nodes — what happens after the human decides
+    approved [
+        label="Mark Approved",
+        prompt="The sprint deliverable has been approved. Record the approval decision."
+    ]
+
+    rejected [
+        label="Request Rework",
+        prompt="The sprint deliverable was rejected. Summarize the rework needed."
+    ]
+
+    // Flow
+    start -> hitl_gate
+
+    // Edge labels become the choices the human sees
+    hitl_gate -> approved [label="[A] Approve"]
+    hitl_gate -> rejected [label="[R] Reject"]
+
+    // Both paths terminate at done
+    approved -> done
+    rejected -> done
+}

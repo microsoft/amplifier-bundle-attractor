@@ -1,0 +1,54 @@
+// 11-manager-child-dotfile-hitl/parent.dot -- Manager node supervising a child pipeline
+// that contains a human-in-the-loop (HITL) approval gate.
+//
+// Reproduces the latent bug fixed in PR #45:
+//   ManagerLoopHandler._run_child_dotfile() was building its child HandlerRegistry
+//   with HandlerContext(...) missing interviewer=, so the HumanGateHandler inside
+//   the child pipeline always received interviewer=None and raised ValueError at
+//   runtime: "HumanGateHandler requires an Interviewer but none was provided."
+//
+// Structure:
+//   parent.dot  (this file)
+//     start -> manager (shape=house, child_dotfile=child-with-gate.dot) -> done
+//   child-with-gate.dot  (sibling file)
+//     start -> hitl_gate (shape=hexagon) -> approved -> done
+//
+// To drive this pipeline, the interviewer must be wired end-to-end:
+//   HandlerRegistry -> ManagerLoopHandler -> child HandlerContext -> HumanGateHandler
+//
+// The human gate presents "Approve the sprint deliverable?" with two outgoing edges:
+//   [A] Approve  -> approved
+//   [R] Reject   -> rejected
+// When driven interactively, approve with "A".
+// When driven by AutoApproveInterviewer (DTU / CI), the gate is auto-approved.
+
+digraph ManagerChildDotfileHITL {
+    graph [
+        goal="Demonstrate manager child_dotfile pipeline with HITL gate",
+        label="Manager Child-Dotfile HITL Example",
+        default_fidelity="full"
+    ]
+    rankdir=TB
+
+    // Structural nodes
+    start [shape=Mdiamond, label="Start"]
+    done  [shape=Msquare,  label="Done"]
+
+    // Manager node (shape=house) — supervises the child pipeline from child-with-gate.dot.
+    // manager.max_cycles=1 keeps the example deterministic (one pass is sufficient to
+    // prove the interviewer is wired through).
+    // manager.actions=observe — no steering or wait needed for this reproduction case.
+    // stack.child_dotfile resolves relative to this file's directory (source_dir).
+    manager [
+        shape=house,
+        label="Supervise Approval Sprint",
+        prompt="Oversee the approval-gate child pipeline.",
+        "manager.max_cycles"="1",
+        "manager.actions"="observe",
+        "stack.child_dotfile"="child-with-gate.dot"
+    ]
+
+    // Flow: start -> manager -> done
+    // The manager's child pipeline is fully contained in child-with-gate.dot.
+    start -> manager -> done
+}

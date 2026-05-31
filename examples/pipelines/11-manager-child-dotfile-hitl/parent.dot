@@ -21,6 +21,12 @@
 //   [R] Reject   -> rejected
 // When driven interactively, approve with "A".
 // When driven by AutoApproveInterviewer (DTU / CI), the gate is auto-approved.
+//
+// DOT parser note: attribute keys with dots (e.g. manager.max_cycles) must be written
+// WITHOUT surrounding double-quotes. The attractor DOT parser stores quoted keys with
+// their embedded quote characters, which breaks lookups using bare key strings.
+// Correct:  manager.max_cycles=1
+// Wrong:    "manager.max_cycles"="1"
 
 digraph ManagerChildDotfileHITL {
     graph [
@@ -39,13 +45,16 @@ digraph ManagerChildDotfileHITL {
     // prove the interviewer is wired through).
     // manager.actions=observe — no steering or wait needed for this reproduction case.
     // stack.child_dotfile resolves relative to this file's directory (source_dir).
+    //
+    // NOTE: attribute keys with dots are written WITHOUT surrounding double-quotes so
+    // the attractor DOT parser stores them as bare strings (matching the lookup code).
     manager [
         shape=house,
         label="Supervise Approval Sprint",
         prompt="Oversee the approval-gate child pipeline.",
-        "manager.max_cycles"="1",
-        "manager.actions"="observe",
-        "stack.child_dotfile"="child-with-gate.dot"
+        manager.max_cycles=1,
+        manager.actions=observe,
+        stack.child_dotfile="child-with-gate.dot"
     ]
 
     // Flow: start -> manager -> done

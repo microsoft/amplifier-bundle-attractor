@@ -182,26 +182,30 @@ Implementation follows TDD; validate with the seed→recall codeword scenario.
 
 ---
 
-## Phase 2 — Cross-run resume (DEFINED, deferred — separate design)
+## Phase 2 — Cross-run resume: evaluated, intentionally NOT built
 
-Bounded by §5.3: cross-run = degrade the first resumed `full` node to `summary:high`, NOT
-full-session restore (live sessions can't be serialized). Five open items, each a decision
-to be made in a later design:
+Decision (2026-05): cross-run resume — persisting per-thread transcripts so a `full`
+thread survives a container restart — was evaluated and deliberately NOT built.
 
-- **CR-2 load-path:** the engine→backend restore wiring does not exist (resume restores
-  `self.context`/`completed_nodes` only; nothing repopulates `_thread_transcripts`).
-  Saving without a load path = dead weight.
-- **CR-3 summary seam:** M-23's `summary:high` reads `completed_nodes` Outcomes
-  (`fidelity.py:_build_summary_preamble`), NOT a message list — so the degrade story must
-  be rewritten honestly, including the "first-resumed-node missing from the next node's
-  history" seam.
-- **CR-4 cross-run idempotency** (atop the intra-run idempotency this design already
-  solves).
-- **SC-1 boundedness:** `full` transcript growth is unbounded (no compaction exists despite
-  §5.4 naming it); the sharp edge is O(N²) checkpoint write amplification
-  (`save_checkpoint` rewrites the whole indented JSON every node). Decision: compaction vs
-  length cap vs sidecar transcript file.
-- **SC-2 redaction:** verbatim prompts/outputs at rest in `checkpoint.json`.
+Rationale:
+- §5.3 caps cross-run `full` at `summary:high` degradation, never full restore. The
+  achievable ceiling is a degraded summary, not continuity.
+- That degraded behavior already exists: the M-23 path degrades `full -> summary:high`
+  on resume from `completed_nodes` outcomes, so a resumed node is not blank today.
+- Building it (engine->backend restore wiring, a transcript-aware summarizer,
+  cross-run idempotency, transcript boundedness to avoid O(N^2) checkpoint rewrite,
+  and redaction of conversation content at rest) is roughly 4-8 engineering-days across
+  the riskiest engine paths (checkpoint / resume / persistence-at-rest), plus permanent
+  maintenance and a new security surface — for marginal, already-mostly-covered value.
+- Revisit only if a concrete pipeline relies on `full` cross-node memory, runs long
+  enough to span restarts, AND the outcome-summary baseline is demonstrably insufficient.
+
+### Behavior authors can rely on
+- Within a run: `full` threads have full conversation continuity.
+- Across a container restart: a `full` thread degrades to `summary:high` (built from
+  node outcomes, per §5.3). Raw conversation memory does NOT survive a restart, by spec.
+  Put state that must survive restarts in node outcomes/context (which are checkpointed),
+  not in conversation threads.
 
 ---
 

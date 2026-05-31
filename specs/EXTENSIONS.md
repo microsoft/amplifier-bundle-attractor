@@ -226,3 +226,53 @@ cross-sub-pipeline session continuity, because the spec never promises it and th
 normative clauses (§5.3, §5.4, §9.4) indicate the opposite. Authors who need a node to continue
 a shared-`thread_id` session must keep it inline in the same graph (or in a flattened cluster),
 not behind a sub-pipeline / folder / manager-child boundary.
+
+---
+
+## 12. `fidelity=full` Continuity Is Realized via `parent_messages` at Node-Exchange Granularity
+
+**What:** The spec's §5.4 `full`-fidelity "reuse the same session / full history preserved"
+requirement is realized in our implementation by a backend-held message-list carrier injected
+into each subsequent same-thread spawn via the `parent_messages` mechanism (foundation
+`_prepared.py` §4.5 leave-open). The carrier holds **node-exchange granularity**: one
+`(role=user, content=instruction)` + `(role=assistant, content=final_output)` pair per `full`
+node. The child agent's inner tool-loop turns are **not** included — only the conversation
+*between* nodes is preserved, not the child's internal reasoning.
+
+**Why:** The spec's §5.4 language ("reuse the same LLM session", "full history preserved") is
+written as a *behavior specification*, not a mechanism mandate. The spec separately notes
+(§5.3) that sessions are in-memory and non-serializable, and unified-llm §2.6 models the LLM
+client as stateless (continuity = caller-passed message list). Our realization of §5.4 using
+`parent_messages` is mechanism-not-policy: the spec's §4.5 CodergenBackend interface is
+silent on how continuity is achieved, leaving this to the app layer. Node-exchange granularity
+(instruction + final output) was accepted as the meaning of `full` at the backend layer — the
+spawn result exposes only `output` + `session_id`, not inner tool-loop turns, so inner-turn
+fidelity across nodes is architecturally inaccessible at this layer.
+
+**Compatibility:** Additive and non-breaking. Prior behavior (sub_session_id re-pass) was
+silently broken — it never preserved history because session_id is an identity/trace token,
+not a history pointer. This change restores the spec-mandated behavior. No spec-conformant
+`.dot` file can depend on the broken non-continuity.
+
+---
+
+## 13. `thread_id` Is Branch-Local — Same `thread_id` in Sibling Branches Does Not Join Conversations
+
+**What:** `fidelity=full` session continuity (§5.4 thread resolution) is *branch-local*: the
+backend's `_thread_transcripts` carrier is reset to `{}` when a backend is cloned for a
+parallel branch (`clone()`). Two sibling branches that both carry an explicit `thread_id`
+**do not share conversation history** — each branch accumulates its own independent
+transcript. Thread-id-based history continuity operates only within a single linear path
+(i.e., a single branch's sequential execution).
+
+**Why:** This resolves the same §5.4 vs §3.8 spec conflict addressed in §9 (per-branch
+session-pool isolation): §3.8 isolation (each parallel branch receives an independent clone)
+takes precedence over §5.4 thread-id-based reuse when the two rules conflict. Isolation is
+the deterministic, safe resolution — a shared conversation across concurrent branches is
+precisely the cross-contamination the per-branch isolation design eliminates. The transcript
+isolation is a natural consequence of the backend clone resetting mutable state.
+
+**Compatibility:** Backward-compatible. The prior implementation was broken for cross-node
+continuity regardless of branching, so no existing pipeline could have been relying on
+cross-branch conversation sharing. Authors who intend a shared thread to carry history across
+nodes must place those nodes in the same sequential path (not in sibling parallel branches).

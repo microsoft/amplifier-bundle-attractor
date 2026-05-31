@@ -146,6 +146,21 @@ class PipelineEngine:
             RuntimeError: If called on an engine that is itself a branch clone
                 (nested cloning is not permitted; only the top-level engine clones).
         """
+        # Resolve spawn capability on the parent backend BEFORE cloning so that
+        # branch clones inherit an already-resolved _spawn_fn instead of
+        # performing a concurrent first-resolution under asyncio.gather.
+        # Without this, N parallel branches each receive a fresh clone with
+        # _spawn_fn=None and all race to call get_capability simultaneously,
+        # causing some branches to fall back to the tool loop (session_id: None)
+        # and silently break fidelity=full.
+        # Use getattr so that backends without the method (e.g. test stubs) are
+        # skipped safely — the hasattr + call pattern isn't type-safe on
+        # get_backend()'s "object | None" return type.
+        parent_backend = self.handler_registry.get_backend()
+        ensure_fn = getattr(parent_backend, "ensure_spawn_resolved", None)
+        if ensure_fn is not None:
+            ensure_fn()
+
         clone = PipelineEngine(
             graph=self.graph,
             context=context,

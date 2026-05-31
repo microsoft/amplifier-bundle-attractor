@@ -137,13 +137,38 @@ class AmplifierBackend:
             return tool
 
         new._tools = {k: _clone_tool(v) for k, v in self._tools.items()}
+        # Inherit resolved spawn capability — the capability is a stateless
+        # function from the shared _coordinator, so sharing the reference is as
+        # safe as the clone already sharing _coordinator.  Inheriting prevents
+        # concurrent first-resolution when N branch clones run under
+        # asyncio.gather (each clone would otherwise race to call
+        # _coordinator.get_capability("session.spawn") simultaneously, causing
+        # some branches to receive None and fall to the tool-loop fallback).
+        new._spawn_fn = self._spawn_fn
+        new._spawn_checked = self._spawn_checked
         # Fresh mutable state
-        new._spawn_fn = None
-        new._spawn_checked = False
         new._session_pool = {}
         new._completed_nodes = {}
         new._last_node_id = None
         return new
+
+    def ensure_spawn_resolved(self) -> None:
+        """Resolve the session.spawn capability in place, once.
+
+        Call this on the parent backend before creating branch clones via
+        ``clone()``.  This guarantees that all clones inherit an already-
+        resolved ``_spawn_fn`` (and ``_spawn_checked = True``) instead of
+        performing a concurrent first-resolution when N branch engines each
+        hit the lazy-check block in ``run()`` simultaneously under
+        ``asyncio.gather``.
+
+        Idempotent: safe to call multiple times; subsequent calls are no-ops.
+        """
+        if not self._spawn_checked:
+            cap = self._coordinator.get_capability("session.spawn")
+            if cap is not None:
+                self._spawn_fn = cap
+            self._spawn_checked = True
 
     async def run(
         self,

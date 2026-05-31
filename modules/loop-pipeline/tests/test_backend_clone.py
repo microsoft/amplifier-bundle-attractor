@@ -30,7 +30,13 @@ class TestAmplifierBackendClone:
     """Tests for AmplifierBackend.clone()."""
 
     def test_clone_has_empty_mutable_state(self):
-        """Cloned backend starts with fresh mutable state."""
+        """Cloned backend starts with fresh mutable state.
+
+        _session_pool, _completed_nodes, and _last_node_id are always fresh.
+        _spawn_fn and _spawn_checked are INHERITED from the parent (not reset)
+        so branch clones never perform a concurrent first-resolution of
+        session.spawn under asyncio.gather.
+        """
         original = _make_backend()
         # Dirty the original's mutable state
         original._session_pool["thread-1"] = "session-abc"
@@ -43,7 +49,9 @@ class TestAmplifierBackendClone:
         assert clone._session_pool == {}
         assert clone._completed_nodes == {}
         assert clone._last_node_id is None
-        assert clone._spawn_checked is False
+        # _spawn_checked is inherited (not reset) to prevent concurrent
+        # first-resolution; see test_backend_clone_spawn_inheritance.py
+        assert clone._spawn_checked is True
 
     def test_clone_shares_immutable_refs(self):
         """Cloned backend shares the same immutable reference objects."""

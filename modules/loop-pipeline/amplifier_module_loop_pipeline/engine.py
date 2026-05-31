@@ -111,7 +111,7 @@ class PipelineEngine:
 
         Each concurrent parallel branch must have its own engine so that
         ``run_subgraph`` uses an isolated ``handler_registry`` (and therefore
-        an isolated backend ``_session_pool`` / ``_completed_nodes``).
+        an isolated backend ``_thread_transcripts`` / ``_completed_nodes``).
 
         Split table (critic-corrected, implement exactly):
           ISOLATED per branch (cloned):

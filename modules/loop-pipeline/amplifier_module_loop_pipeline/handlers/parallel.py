@@ -142,7 +142,7 @@ class ParallelHandler:
                     try:
                         # Move 1: give each branch its own engine so run_subgraph
                         # uses an isolated handler_registry (and therefore isolated
-                        # backend _session_pool / _completed_nodes per branch).
+                        # backend _thread_transcripts / _completed_nodes per branch).
                         # Fall back to the parent engine for mock/stub engines used
                         # in unit tests that predate clone_for_branch.
                         clone_fn = getattr(engine, "clone_for_branch", None)

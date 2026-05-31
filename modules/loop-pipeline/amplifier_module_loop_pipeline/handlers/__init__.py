@@ -154,8 +154,8 @@ class HandlerRegistry:
         dependency is severed by Move 2).
 
         Called by ``PipelineEngine.clone_for_branch`` so each concurrent
-        parallel branch gets its own backend mutable state (``_session_pool``,
-        ``_completed_nodes``).
+        parallel branch gets its own backend mutable state
+        (``_thread_transcripts``, ``_completed_nodes``).
         """
         from .codergen import CodergenHandler
         from .pipeline import PipelineHandler
@@ -165,8 +165,8 @@ class HandlerRegistry:
         new._handlers = dict(self._handlers)
 
         # Replace codergen with a clone that has its own backend state.
-        # The cloned backend carries fresh _session_pool and _completed_nodes
-        # so concurrent branches cannot cross-pollute session state.
+        # The cloned backend carries fresh _thread_transcripts and _completed_nodes
+        # so concurrent branches cannot cross-pollute thread transcript or session state.
         original_codergen = self._handlers.get("codergen")
         if isinstance(original_codergen, CodergenHandler):
             backend = original_codergen._backend

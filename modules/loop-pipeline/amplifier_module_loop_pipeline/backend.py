@@ -11,6 +11,21 @@ model returns a text-only response.
 
 Spec coverage: Section 4.5 (CodergenBackend Interface), Section 1.4,
                FID-001–010, Section 5.4.
+
+fidelity=full continuity (see docs/designs/fidelity-full-session-continuity.md):
+  ``_thread_transcripts`` maps a branch-local thread_key to a list of
+  (node_id, instruction, output) triples — the accumulated node-exchange
+  history for that thread.  After each ``full`` node, the exchange is
+  appended (truncating any stale tail first, for goal-gate-retry
+  idempotency).  On the next same-thread ``full`` node the history is
+  converted to a ``parent_messages`` list (user/assistant roles) and
+  passed to a FRESH spawn — never a session_id re-pass.  This removes
+  the type confusion (id-where-a-conversation-belongs) that caused the
+  continuity bug.
+
+  Thread_id is branch-local: ``clone()`` resets ``_thread_transcripts``
+  so parallel branches each start with a fresh transcript even when they
+  share an explicit ``thread_id``.  See EXTENSIONS.md §12–13.
 """
 
 from __future__ import annotations
@@ -99,7 +114,14 @@ class AmplifierBackend:
         self._hooks = hooks
         self._spawn_fn: Any | None = None
         self._spawn_checked = False
-        self._session_pool: dict[str, str] = {}
+        # _thread_transcripts: thread_key → list of (node_id, instruction, output) triples.
+        # Replaces the former _session_pool (which stored a session_id — a type confusion:
+        # an id where a conversation belongs).  Each triple represents one node-exchange
+        # at user/assistant granularity.  Idempotent under goal-gate retries via
+        # truncate-to-node-then-append (see _append_to_transcript).
+        # Born branch-local: clone() resets to {} so parallel branches never share history.
+        # See docs/designs/fidelity-full-session-continuity.md and EXTENSIONS.md §12–13.
+        self._thread_transcripts: dict[str, list[tuple[str, str, str]]] = {}
         self._completed_nodes: dict[str, Outcome] = {}
         self._last_node_id: str | None = None
 
@@ -146,8 +168,10 @@ class AmplifierBackend:
         # some branches to receive None and fall to the tool-loop fallback).
         new._spawn_fn = self._spawn_fn
         new._spawn_checked = self._spawn_checked
-        # Fresh mutable state
-        new._session_pool = {}
+        # Fresh mutable state — transcripts are born branch-local so that two
+        # branches sharing the same thread_id maintain independent histories
+        # (§3.8 isolation, EXTENSIONS.md §9 / §13).
+        new._thread_transcripts = {}
         new._completed_nodes = {}
         new._last_node_id = None
         return new
@@ -349,14 +373,40 @@ class AmplifierBackend:
                     }
                 ]
 
-        # Session pool for full fidelity (spec FID-001: thread reuse)
+        # fidelity=full: resolve thread_key once for both pre-spawn history injection
+        # and post-spawn transcript append.
+        #
+        # The former _session_pool stored a session_id and re-passed it as
+        # sub_session_id — a type confusion (an id where a conversation belongs).
+        # The fix: carry the actual node-exchange history in _thread_transcripts and
+        # pass it as parent_messages to a FRESH spawn.  Foundation injects it via
+        # set_messages before the child session runs.
+        #
+        # Mutual-exclusion invariant: for a full-fidelity carry, parent_messages and
+        # sub_session_id are NEVER both present — parent_messages drives continuity;
+        # sub_session_id is never set here.  The assert below enforces this so that
+        # any future code path that accidentally re-introduces the old mechanism will
+        # fail loudly rather than silently dropping history (the original symptom).
+        thread_key: str | None = None
         if fidelity == "full" and graph is not None:
             thread_key = resolve_thread_key(
                 node, incoming_edge, graph, self._last_node_id
             )
-            existing_session = self._session_pool.get(thread_key)
-            if existing_session is not None:
-                spawn_kwargs["sub_session_id"] = existing_session
+            prior_messages = self._get_parent_messages_for_thread(thread_key)
+            if prior_messages:
+                spawn_kwargs["parent_messages"] = prior_messages
+
+        # CR-1 guard: parent_messages and sub_session_id must never coexist.
+        # (sub_session_id is not set by this method for full-fidelity, so this
+        # fires only if a caller or future patch accidentally introduces it.)
+        assert not (
+            spawn_kwargs.get("parent_messages") and spawn_kwargs.get("sub_session_id")
+        ), (
+            "BUG: parent_messages and sub_session_id cannot both be set for a "
+            "full-fidelity spawn.  parent_messages drives continuity; "
+            "sub_session_id re-passes a session identity and would cause "
+            "foundation to silently drop the injected history."
+        )
 
         # Spawn the child session
         try:
@@ -401,17 +451,19 @@ class AmplifierBackend:
 
         outcome = _parse_outcome(output)
 
-        # Capture session_id from spawn result — always, for all fidelity modes
+        # Capture session_id from spawn result for status.json observability.
+        # session_id is kept on the Outcome for telemetry/debugging — it no longer
+        # drives continuity (that role belongs to _thread_transcripts).
         session_id = result.get("session_id") if isinstance(result, dict) else None
         if session_id:
             outcome.session_id = session_id
 
-        # Record session_id in pool for full fidelity reuse
-        if fidelity == "full" and graph is not None and session_id:
-            thread_key = resolve_thread_key(
-                node, incoming_edge, graph, self._last_node_id
-            )
-            self._session_pool[thread_key] = session_id
+        # Append this node's exchange to the thread transcript (full fidelity only).
+        # Uses truncate-to-node-then-append for idempotency: if this node is being
+        # re-run (e.g., after a goal-gate retry), its prior turn is replaced rather
+        # than duplicated.  See _append_to_transcript for the algorithm.
+        if fidelity == "full" and graph is not None and thread_key is not None:
+            self._append_to_transcript(thread_key, node.id, instruction, output)
 
         return outcome
 
@@ -559,6 +611,73 @@ class AmplifierBackend:
             status=StageStatus.SUCCESS,
             notes=f"Stage completed: {node.id}",
         )
+
+    # ------------------------------------------------------------------
+    # _thread_transcripts helpers — fidelity=full continuity carrier
+    # ------------------------------------------------------------------
+
+    def _append_to_transcript(
+        self,
+        thread_key: str,
+        node_id: str,
+        instruction: str,
+        output: str,
+    ) -> None:
+        """Append a node's (instruction, output) exchange to the thread transcript.
+
+        Implements **truncate-to-node-then-append** for goal-gate-retry
+        idempotency: if this node already has a turn in the transcript (from a
+        prior attempt in the same run), all turns from that node onwards are
+        removed before the new turn is appended.  This means a re-run node
+        *replaces* its prior exchange rather than duplicating it.
+
+        Algorithm:
+            1. Scan the current transcript for the first tuple whose node_id
+               matches the incoming node_id.
+            2. If found at position i: truncate the list to the first i entries
+               (discarding that node and all subsequent nodes' entries).
+            3. Append the new triple (node_id, instruction, output).
+
+        Called with role=user/assistant only (system/developer roles are
+        stripped at this layer, matching app-cli behavior).
+
+        Thread_id is branch-local (EXTENSIONS.md §13): ``clone()`` resets
+        ``_thread_transcripts`` so sibling parallel branches each maintain
+        independent transcripts even when they share an explicit thread_id.
+
+        Note on sequentiality (§3.8 / design §2):
+            Same-thread-key full nodes within a single branch always run
+            sequentially (the engine while-loop is sequential; parallel
+            branches each receive an isolated backend clone).  No asyncio
+            lock is required.
+        """
+        turns = self._thread_transcripts.get(thread_key, [])
+        # Truncate from the first occurrence of this node_id, replacing any
+        # stale tail left by a prior attempt of the same node or later nodes.
+        for i, (nid, _, _) in enumerate(turns):
+            if nid == node_id:
+                turns = turns[:i]
+                break
+        turns.append((node_id, instruction, output))
+        self._thread_transcripts[thread_key] = turns
+
+    def _get_parent_messages_for_thread(self, thread_key: str) -> list[dict[str, Any]]:
+        """Return the accumulated conversation history for a thread as a flat
+        ``parent_messages`` list (user/assistant dicts).
+
+        Each stored triple ``(node_id, instruction, output)`` expands to two
+        messages:
+            {"role": "user",      "content": instruction}
+            {"role": "assistant", "content": output}
+
+        Returns an empty list if the thread has no prior exchanges (first node
+        on the thread — no parent_messages will be set in that case).
+        """
+        messages: list[dict[str, Any]] = []
+        for _, instr, out in self._thread_transcripts.get(thread_key, []):
+            messages.append({"role": "user", "content": instr})
+            messages.append({"role": "assistant", "content": out})
+        return messages
 
     def _get_or_create_unified_client(self) -> Any:
         """Return the injected client or lazily create one from environment."""

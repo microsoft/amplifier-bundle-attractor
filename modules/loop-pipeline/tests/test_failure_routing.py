@@ -27,7 +27,7 @@ class CountingBackend:
         self._outcomes = outcomes or {}
         self._call_counts: dict[str, int] = {}
 
-    async def run(self, node, prompt, context) -> str | Outcome:
+    async def run(self, node, prompt, context, incoming_edge=None, graph=None) -> str | Outcome:
         count = self._call_counts.get(node.id, 0)
         self._call_counts[node.id] = count + 1
         seq = self._outcomes.get(node.id, ["done"])

@@ -113,7 +113,7 @@ async def test_diamond_node_completes_without_llm_in_pipeline(tmp_path):
     execution_counts: dict[str, int] = {}
 
     class TrackingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             execution_counts[node.id] = execution_counts.get(node.id, 0) + 1
             return "done"
 

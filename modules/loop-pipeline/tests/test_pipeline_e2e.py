@@ -62,7 +62,7 @@ class SuccessBackend:
         self.calls: list[str] = []
         self.prompts: dict[str, str] = {}
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
         self.calls.append(node.id)
         self.prompts[node.id] = prompt
         return f"Completed: {node.id}"
@@ -81,7 +81,7 @@ class OutcomeBackend:
         self.call_counts: dict[str, int] = {}
 
     async def run(
-        self, node: Node, prompt: str, context: PipelineContext
+        self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
     ) -> str | Outcome:
         self.calls.append(node.id)
         self.call_counts[node.id] = self.call_counts.get(node.id, 0) + 1
@@ -102,7 +102,7 @@ class RetryThenSucceedBackend:
         self._node_attempts: dict[str, int] = {}
 
     async def run(
-        self, node: Node, prompt: str, context: PipelineContext
+        self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
     ) -> str | Outcome:
         self.calls.append(node.id)
         self._node_attempts[node.id] = self._node_attempts.get(node.id, 0) + 1
@@ -386,7 +386,7 @@ class TestConditionalBranch:
             def __init__(self):
                 self.calls: list[str] = []
 
-            async def run(self, node, prompt, context):
+            async def run(self, node, prompt, context, incoming_edge=None, graph=None):
                 self.calls.append(node.id)
                 if node.id == "test":
                     call_count["test"] += 1

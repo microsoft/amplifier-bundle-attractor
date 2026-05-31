@@ -24,7 +24,7 @@ from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 class MockBackend:
     """Backend that returns a fixed string for every call."""
 
-    async def run(self, node, prompt, context):
+    async def run(self, node, prompt, context, incoming_edge=None, graph=None):
         return "done"
 
 

@@ -25,7 +25,7 @@ class MockBackend:
         self._return_value = return_value
         self.calls: list[str] = []
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
         self.calls.append(node.id)
         return self._return_value
 
@@ -38,7 +38,7 @@ class SequenceBackend:
         self.calls: list[str] = []
 
     async def run(
-        self, node: Node, prompt: str, context: PipelineContext
+        self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
     ) -> str | Outcome:
         self.calls.append(node.id)
         return self._outcomes.get(node.id, "ok")
@@ -145,7 +145,7 @@ async def test_context_updates_propagate(tmp_path):
         def __init__(self):
             self.seen_values: dict[str, str | None] = {}
 
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             if node.id == "step1":
                 return Outcome(
                     status=StageStatus.SUCCESS,
@@ -231,7 +231,7 @@ async def test_goal_gate_unsatisfied_returns_fail(tmp_path):
     """Goal gate with non-success outcome fails the pipeline at exit."""
 
     class FailingBackend:
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             if node.id == "critical":
                 return Outcome(status=StageStatus.FAIL, failure_reason="broken")
             return "ok"
@@ -365,7 +365,7 @@ async def test_auto_status_overrides_fail_to_success(tmp_path):
     """auto_status=true overrides non-success outcome to SUCCESS (L-9)."""
 
     class FailingBackend:
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             if node.id == "auto_node":
                 return Outcome(status=StageStatus.FAIL, failure_reason="oops")
             return "ok"
@@ -406,7 +406,7 @@ async def test_auto_status_false_preserves_fail(tmp_path):
     """Without auto_status, FAIL outcome is preserved (L-9)."""
 
     class FailingBackend:
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             if node.id == "fail_node":
                 return Outcome(status=StageStatus.FAIL, failure_reason="oops")
             return "ok"
@@ -570,7 +570,7 @@ class LoopOnceBackend:
     def __init__(self):
         self.calls: list[str] = []
 
-    async def run(self, node, prompt, context):
+    async def run(self, node, prompt, context, incoming_edge=None, graph=None):
         self.calls.append(node.id)
         if node.id == "work" and self.calls.count("work") == 1:
             return Outcome(status=StageStatus.SUCCESS, preferred_label="loop")
@@ -710,7 +710,7 @@ async def test_multi_edge_fan_out_executes_all_targets(tmp_path):
     executed_nodes: list[str] = []
 
     class TrackingBackend:
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             executed_nodes.append(node.id)
             return Outcome(status=StageStatus.SUCCESS)
 
@@ -762,7 +762,7 @@ async def test_multi_edge_fan_out_detects_fan_in(tmp_path):
     executed_nodes: list[str] = []
 
     class TrackingBackend:
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             executed_nodes.append(node.id)
             return Outcome(status=StageStatus.SUCCESS)
 
@@ -860,7 +860,7 @@ async def test_multi_edge_parallel_context_isolation(tmp_path):
     seen_values: dict[str, str | None] = {}
 
     class ContextMutatingBackend:
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             if node.id == "branch_a":
                 context.set("branch_key", "from_a")
                 return Outcome(status=StageStatus.SUCCESS)
@@ -919,7 +919,7 @@ async def test_parallel_fan_out_branches_run_concurrently(tmp_path):
         def clone(self):
             return SlowCloningBackend()
 
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             if node.id.startswith("b"):
                 await asyncio.sleep(0.2)
             return Outcome(status=StageStatus.SUCCESS)
@@ -974,7 +974,7 @@ async def test_parallel_fan_out_clones_registry_per_branch(tmp_path):
         def clone(self):
             return CloningBackend()
 
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             return Outcome(status=StageStatus.SUCCESS)
 
     graph = Graph(

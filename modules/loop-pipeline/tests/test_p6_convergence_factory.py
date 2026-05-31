@@ -70,7 +70,7 @@ class ConvergedBackend:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> Outcome:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> Outcome:
         self.calls.append(node.id)
         if node.id == "assess":
             return Outcome(status=StageStatus.SUCCESS, preferred_label="converged")
@@ -88,7 +88,7 @@ class RefineThenConvergeBackend:
         self.calls: list[str] = []
         self._assess_count = 0
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> Outcome:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> Outcome:
         self.calls.append(node.id)
         if node.id == "assess":
             self._assess_count += 1
@@ -104,7 +104,7 @@ class CapturingBackend:
     def __init__(self) -> None:
         self.prompts: dict[str, str] = {}
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> Outcome:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> Outcome:
         self.prompts[node.id] = prompt
         if node.id == "assess":
             return Outcome(status=StageStatus.SUCCESS, preferred_label="converged")

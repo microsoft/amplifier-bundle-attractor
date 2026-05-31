@@ -39,7 +39,7 @@ class FailingBackend:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> Outcome:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> Outcome:
         self.calls.append(node.id)
         if node.id.startswith("fail_"):
             return Outcome(status=StageStatus.FAIL, failure_reason="simulated failure")
@@ -256,7 +256,7 @@ class TestContinueOnFail:
 
         class SuccessBackend:
             async def run(
-                self, node: Node, prompt: str, context: PipelineContext
+                self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
             ) -> Outcome:
                 return Outcome(status=StageStatus.SUCCESS, notes="all good")
 

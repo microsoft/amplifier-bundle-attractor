@@ -32,7 +32,7 @@ class SpyBackend:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
         self.calls.append((node.id, prompt))
         return "done"
 

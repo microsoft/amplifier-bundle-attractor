@@ -55,7 +55,7 @@ class MockBackend:
     def __init__(self, return_value: str = "done") -> None:
         self._return_value = return_value
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
         return self._return_value
 
 
@@ -66,7 +66,7 @@ class FailingBackend:
         self._fail_node = fail_node
 
     async def run(
-        self, node: Node, prompt: str, context: PipelineContext
+        self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
     ) -> str | Outcome:
         if node.id == self._fail_node:
             return Outcome(status=StageStatus.FAIL, failure_reason="intentional")
@@ -506,7 +506,7 @@ class SessionBackend:
         self._session_id = session_id
 
     async def run(
-        self, node: Node, prompt: str, context: PipelineContext
+        self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
     ) -> str | Outcome:
         if node.id == self._session_node:
             return Outcome(status=StageStatus.SUCCESS, session_id=self._session_id)
@@ -595,7 +595,7 @@ class TestNodeCompleteSessionId:
 
         class SlowBackend:
             async def run(
-                self, node: Node, prompt: str, context: PipelineContext
+                self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
             ) -> str:
                 await asyncio.sleep(10)  # will be timed out
                 return "done"

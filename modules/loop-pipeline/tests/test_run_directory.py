@@ -30,7 +30,7 @@ class MockBackend:
     def __init__(self, return_value: str = "done") -> None:
         self._return_value = return_value
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
         return self._return_value
 
 
@@ -41,7 +41,7 @@ class SequenceBackend:
         self._outcomes = outcomes
 
     async def run(
-        self, node: Node, prompt: str, context: PipelineContext
+        self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
     ) -> str | Outcome:
         return self._outcomes.get(node.id, "ok")
 

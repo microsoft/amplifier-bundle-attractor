@@ -711,7 +711,7 @@ class TestManagerChildDotfileObservability:
         )
 
         class _MockBackend:
-            async def run(self, node, prompt, context):
+            async def run(self, node, prompt, context, incoming_edge=None, graph=None):
                 return _json.dumps({"status": "success", "notes": f"mock: {node.id}"})
 
         from amplifier_module_loop_pipeline.handlers import HandlerRegistry

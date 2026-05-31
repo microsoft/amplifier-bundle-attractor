@@ -74,7 +74,7 @@ async def test_component_shape_fans_out_unconditional_edges(tmp_path):
     execution_counts: dict[str, int] = {}
 
     class CountingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             execution_counts[node.id] = execution_counts.get(node.id, 0) + 1
             return "done"
 
@@ -146,7 +146,7 @@ async def test_parallelogram_shape_does_not_fan_out_unconditional_edges(tmp_path
     execution_counts: dict[str, int] = {}
 
     class CountingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             execution_counts[node.id] = execution_counts.get(node.id, 0) + 1
             return "done"
 
@@ -230,7 +230,7 @@ async def test_non_component_fanout_respects_max_parallel(tmp_path):
     execution_counts: dict[str, int] = {}
 
     class BoundedConcurrencyBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             nonlocal peak_concurrent, current_concurrent
             async with concurrent_lock:
                 current_concurrent += 1

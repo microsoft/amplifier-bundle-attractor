@@ -25,7 +25,7 @@ class MockBackend:
         self._outcomes = outcomes or {}
         self.calls: list[str] = []
 
-    async def run(self, node, prompt, context) -> str | Outcome:
+    async def run(self, node, prompt, context, incoming_edge=None, graph=None) -> str | Outcome:
         self.calls.append(node.id)
         return self._outcomes.get(node.id, "ok")
 
@@ -39,7 +39,7 @@ class CountingBackend:
         self._counts: dict[str, int] = {}
         self.calls: list[str] = []
 
-    async def run(self, node, prompt, context) -> str | Outcome:
+    async def run(self, node, prompt, context, incoming_edge=None, graph=None) -> str | Outcome:
         self.calls.append(node.id)
         count = self._counts.get(node.id, 0)
         self._counts[node.id] = count + 1

@@ -103,7 +103,7 @@ class MockBackend:
         self.call_count = 0
 
     async def run(
-        self, node: Node, prompt: str, context: PipelineContext
+        self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
     ) -> str | Outcome:
         self.last_prompt = prompt
         self.call_count += 1
@@ -153,7 +153,7 @@ async def test_codergen_backend_returns_outcome(tmp_path):
     """If backend returns an Outcome directly, use it."""
 
     class OutcomeBackend:
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             return Outcome(status=StageStatus.FAIL, failure_reason="tests failing")
 
     handler = CodergenHandler(backend=OutcomeBackend())
@@ -347,7 +347,7 @@ async def test_context_variable_flows_between_pipeline_nodes(tmp_path):
         def __init__(self):
             self.prompts: dict[str, str] = {}
 
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             self.prompts[node.id] = prompt
             if node.id == "draft":
                 return "Here is the draft content about fibonacci"

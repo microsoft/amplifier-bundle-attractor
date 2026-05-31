@@ -97,7 +97,7 @@ async def test_component_fanout_each_branch_executes_exactly_once(tmp_path):
     execution_counts: dict[str, int] = {}
 
     class CountingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             execution_counts[node.id] = execution_counts.get(node.id, 0) + 1
             return "done"
 
@@ -136,7 +136,7 @@ async def test_component_fanout_all_three_branches_execute(tmp_path):
     executed: list[str] = []
 
     class TrackingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             executed.append(node.id)
             return "done"
 
@@ -161,7 +161,7 @@ async def test_component_fanout_parallel_results_has_three_entries(tmp_path):
     """
 
     class SimpleBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             return "done"
 
     graph = _make_3branch_component_graph()
@@ -189,7 +189,7 @@ async def test_component_fanout_fan_in_node_executes_after_all_branches(tmp_path
     executed: list[str] = []
 
     class TrackingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             executed.append(node.id)
             return "done"
 
@@ -224,7 +224,7 @@ async def test_non_component_multi_edge_fanout_still_works(tmp_path):
     executed: list[str] = []
 
     class TrackingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             executed.append(node.id)
             return "done"
 

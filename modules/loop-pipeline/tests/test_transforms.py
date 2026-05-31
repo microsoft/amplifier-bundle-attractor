@@ -236,7 +236,7 @@ class MockBackend:
     def __init__(self) -> None:
         self.seen_prompts: dict[str, str] = {}
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
         self.seen_prompts[node.id] = node.prompt
         return "done"
 

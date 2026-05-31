@@ -36,7 +36,7 @@ class CapturingBackend:
         self.prompts: dict[str, str] = {}
         self.context_snapshots: dict[str, dict] = {}
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
         self.prompts[node.id] = prompt
         self.context_snapshots[node.id] = context.snapshot()
         return "done"

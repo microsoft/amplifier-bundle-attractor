@@ -38,7 +38,7 @@ class RecordingBackend:
         self._return_value = return_value
         self.calls: list[str] = []
 
-    async def run(self, node, prompt, context):
+    async def run(self, node, prompt, context, incoming_edge=None, graph=None):
         self.calls.append(node.id)
         return self._return_value
 
@@ -51,7 +51,7 @@ class BlockingBackend:
         self._signal_event = signal_event
         self.calls: list[str] = []
 
-    async def run(self, node, prompt, context):
+    async def run(self, node, prompt, context, incoming_edge=None, graph=None):
         self.calls.append(node.id)
         if node.id == self._signal_after:
             self._signal_event.set()
@@ -130,7 +130,7 @@ async def test_engine_stops_on_cancel_between_nodes(tmp_path):
         def __init__(self):
             self.calls: list[str] = []
 
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             self.calls.append(node.id)
             if node.id == "step1":
                 cancel_event.set()
@@ -275,7 +275,7 @@ digraph parent {{
         def __init__(self):
             self.calls: list[str] = []
 
-        async def run(self, node, prompt, context):
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
             self.calls.append(node.id)
             if node.id == "child_step1":
                 cancel_event.set()

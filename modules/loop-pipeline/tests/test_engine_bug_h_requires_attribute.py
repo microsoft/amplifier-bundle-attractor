@@ -62,7 +62,7 @@ async def test_requires_missing_file_fails_node_before_handler_runs(tmp_path):
     handler_called = False
 
     class TrackingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             nonlocal handler_called
             handler_called = True
             return "done"
@@ -118,7 +118,7 @@ async def test_requires_all_present_handler_runs_normally(tmp_path):
     handler_called = False
 
     class TrackingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             nonlocal handler_called
             handler_called = True
             return "done"
@@ -165,7 +165,7 @@ async def test_no_requires_attr_behavior_unchanged(tmp_path):
     handler_called = False
 
     class TrackingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             nonlocal handler_called
             handler_called = True
             return "done"
@@ -205,7 +205,7 @@ async def test_requires_partial_missing_reports_all_missing_files(tmp_path):
     # variant_opus.md and variant_sonnet.md are NOT created
 
     class NoopBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             return "done"
 
     graph = Graph(
@@ -262,7 +262,7 @@ async def test_requires_uses_context_target_dir_for_path_resolution(tmp_path):
     handler_called = False
 
     class TrackingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             nonlocal handler_called
             handler_called = True
             return "done"

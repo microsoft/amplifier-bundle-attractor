@@ -60,7 +60,7 @@ class MockBackend:
     def __init__(self, return_value: str = "done") -> None:
         self._return_value = return_value
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
         return self._return_value
 
 
@@ -255,7 +255,7 @@ class TestM19StatusJsonFields:
 
         class _SessionOutcomeBackend:
             async def run(
-                self, node: Node, prompt: str, context: PipelineContext
+                self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
             ) -> Outcome:
                 if node.id == "work":
                     return Outcome(
@@ -589,7 +589,7 @@ class TestM23CheckpointFidelityDegradation:
         fidelities_seen: list[str] = []
 
         class FidelityCapturingBackend:
-            async def run(self, node, prompt, context):
+            async def run(self, node, prompt, context, incoming_edge=None, graph=None):
                 fidelity = context.get("graph.default_fidelity")
                 fidelities_seen.append(fidelity)
                 return "done"

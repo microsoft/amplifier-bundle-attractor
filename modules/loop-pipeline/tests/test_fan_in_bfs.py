@@ -245,7 +245,7 @@ async def test_pipeline_with_multi_hop_branches_completes(tmp_path):
     execution_counts: dict[str, int] = {}
 
     class CountingBackend:
-        async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+        async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
             execution_counts[node.id] = execution_counts.get(node.id, 0) + 1
             return "done"
 

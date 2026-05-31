@@ -22,7 +22,7 @@ from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 class _MockBackend:
     """Minimal mock backend — returns JSON success outcome for any node."""
 
-    async def run(self, node, prompt, context):
+    async def run(self, node, prompt, context, incoming_edge=None, graph=None):
         return json.dumps({"status": "success", "notes": f"mock: {node.id}"})
 
 

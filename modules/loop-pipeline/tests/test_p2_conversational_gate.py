@@ -44,7 +44,7 @@ _DEMO_DOT = _PATTERNS_DIR / "demo-conversational-gates.dot"
 class ScoredBackend:
     """Always returns preferred_label='scored' — simulates a passing evaluation."""
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> Outcome:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> Outcome:
         return Outcome(status=StageStatus.SUCCESS, preferred_label="scored")
 
 
@@ -56,7 +56,7 @@ class SequentialOutcomeBackend:
         self._idx = 0
         self.call_count = 0
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> Outcome:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> Outcome:
         result = self._outcomes[min(self._idx, len(self._outcomes) - 1)]
         self._idx += 1
         self.call_count += 1
@@ -480,7 +480,7 @@ class TestConversationalGateExecution:
 
         class CapturingBackend:
             async def run(
-                self, node: Node, prompt: str, context: PipelineContext
+                self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
             ) -> Outcome:
                 captured_prompts[node.id] = prompt
                 return Outcome(status=StageStatus.SUCCESS, preferred_label="scored")

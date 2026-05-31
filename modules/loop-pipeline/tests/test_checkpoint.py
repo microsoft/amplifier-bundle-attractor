@@ -191,7 +191,7 @@ class MockBackend:
         self._return_value = return_value
         self.calls: list[str] = []
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext) -> str:
+    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
         self.calls.append(node.id)
         return self._return_value
 

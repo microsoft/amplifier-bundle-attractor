@@ -9,7 +9,6 @@ Spec coverage: CODER-001-011, Section 4.5
 
 from __future__ import annotations
 
-import inspect
 import json
 import os
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -54,36 +53,6 @@ class CodergenHandler:
 
     def __init__(self, backend: Any | None = None) -> None:
         self._backend = backend
-        # Cached decision: does this backend's run() accept the `graph` kwarg?
-        # Resolved once on first use (see _backend_accepts_graph).
-        self._backend_accepts_graph: bool | None = None
-
-    def _resolve_backend_accepts_graph(self) -> bool:
-        """Return True if the backend's ``run`` accepts ``graph`` (cached).
-
-        The production ``AmplifierBackend.run`` accepts ``incoming_edge`` and
-        ``graph`` (widened ``CodergenBackend`` Protocol).  Many lightweight test
-        doubles were written against the historical 3-arg ``run(node, prompt,
-        context)`` signature.  We forward ``graph`` only when the backend can
-        receive it, so the production path gets full-fidelity continuity while
-        minimal backends keep working unchanged.  A backend that declares
-        ``**kwargs`` is also treated as accepting it.
-        """
-        if self._backend_accepts_graph is None:
-            run = getattr(self._backend, "run", None)
-            if run is None:
-                self._backend_accepts_graph = False
-            else:
-                try:
-                    params = inspect.signature(run).parameters
-                    self._backend_accepts_graph = "graph" in params or any(
-                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-                    )
-                except (ValueError, TypeError):
-                    # Builtins / C-callables without an introspectable
-                    # signature: do not forward the optional kwargs.
-                    self._backend_accepts_graph = False
-        return self._backend_accepts_graph
 
     async def execute(
         self,
@@ -141,16 +110,12 @@ class CodergenHandler:
             # needed.
             #
             # `graph`/`incoming_edge` are OPTIONAL CodergenBackend params (declared
-            # with defaults). The production AmplifierBackend accepts them; some
-            # minimal backends are written against the historical 3-arg signature.
-            # Forward only when the backend can receive them (feature-detect once,
-            # cached) so we never pass an unexpected kwarg to a legacy backend.
-            if self._resolve_backend_accepts_graph():
-                result = await self._backend.run(
-                    node, prompt, context, incoming_edge=None, graph=graph
-                )
-            else:
-                result = await self._backend.run(node, prompt, context)
+            # with defaults), so this unconditional call is the whole contract:
+            # the production AmplifierBackend accepts them and all conforming test
+            # doubles match this signature.
+            result = await self._backend.run(
+                node, prompt, context, incoming_edge=None, graph=graph
+            )
             if isinstance(result, Outcome):
                 _write_status(stage_dir, result)
                 return result

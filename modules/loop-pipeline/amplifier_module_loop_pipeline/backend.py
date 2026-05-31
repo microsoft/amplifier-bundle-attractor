@@ -243,6 +243,25 @@ class AmplifierBackend:
             # Fallback when graph not provided (backward compat)
             fidelity = node.attrs.get("fidelity", "compact")
 
+        # CR-1 loud guard (silent-continuity-loss class): a fidelity=full node
+        # needs `graph` to resolve its thread key and drive the transcript
+        # store/read.  If `full` continuity is requested but `graph` is missing,
+        # the store/read gates below would silently skip — exactly the dead-code
+        # bug a live DTU run exposed (seeds wrote codewords, recall came back
+        # empty because CodergenHandler.execute dropped `graph`).  Warn loudly so
+        # a future caller that drops `graph` fails visibly instead of silently
+        # losing continuity.  Scoped to the `full` path only: non-full nodes and
+        # legitimately thread-less nodes never need a graph and must not warn.
+        if fidelity == "full" and graph is None:
+            logger.warning(
+                "Node %s requested fidelity=full continuity but no graph was "
+                "passed to backend.run() — the thread key cannot be resolved, so "
+                "conversation continuity will NOT be honored for this node. The "
+                "caller (handler/engine) must forward `graph`. See "
+                "docs/designs/fidelity-full-session-continuity.md.",
+                node.id,
+            )
+
         # 4. Build the instruction with preamble for non-full modes
         if fidelity == "full":
             instruction = prompt

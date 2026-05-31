@@ -9,6 +9,7 @@ Spec coverage: CODER-001-011, Section 4.5
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -27,10 +28,21 @@ class CodergenBackend(Protocol):
     """Interface for LLM execution backends.
 
     Spec Section 4.5: CodergenBackend Interface.
+
+    ``graph`` (and ``incoming_edge`` where available) MUST be forwarded by the
+    handler: the backend's fidelity resolution and fidelity=full transcript
+    store/read gates require ``graph`` to resolve the thread key.  Omitting it
+    silently disables full-fidelity continuity (see
+    docs/designs/fidelity-full-session-continuity.md).
     """
 
     async def run(
-        self, node: Node, prompt: str, context: PipelineContext
+        self,
+        node: Node,
+        prompt: str,
+        context: PipelineContext,
+        incoming_edge: Any | None = None,
+        graph: Graph | None = None,
     ) -> str | Outcome: ...
 
 
@@ -42,6 +54,36 @@ class CodergenHandler:
 
     def __init__(self, backend: Any | None = None) -> None:
         self._backend = backend
+        # Cached decision: does this backend's run() accept the `graph` kwarg?
+        # Resolved once on first use (see _backend_accepts_graph).
+        self._backend_accepts_graph: bool | None = None
+
+    def _resolve_backend_accepts_graph(self) -> bool:
+        """Return True if the backend's ``run`` accepts ``graph`` (cached).
+
+        The production ``AmplifierBackend.run`` accepts ``incoming_edge`` and
+        ``graph`` (widened ``CodergenBackend`` Protocol).  Many lightweight test
+        doubles were written against the historical 3-arg ``run(node, prompt,
+        context)`` signature.  We forward ``graph`` only when the backend can
+        receive it, so the production path gets full-fidelity continuity while
+        minimal backends keep working unchanged.  A backend that declares
+        ``**kwargs`` is also treated as accepting it.
+        """
+        if self._backend_accepts_graph is None:
+            run = getattr(self._backend, "run", None)
+            if run is None:
+                self._backend_accepts_graph = False
+            else:
+                try:
+                    params = inspect.signature(run).parameters
+                    self._backend_accepts_graph = "graph" in params or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+                    )
+                except (ValueError, TypeError):
+                    # Builtins / C-callables without an introspectable
+                    # signature: do not forward the optional kwargs.
+                    self._backend_accepts_graph = False
+        return self._backend_accepts_graph
 
     async def execute(
         self,
@@ -80,7 +122,35 @@ class CodergenHandler:
                 "Pass backend=MockBackend() explicitly if you want simulated responses for testing."
             )
         try:
-            result = await self._backend.run(node, prompt, context)
+            # Forward `graph` into the backend so fidelity resolution and the
+            # fidelity=full transcript store/read gates (which require
+            # `graph is not None`) actually fire on the production path.
+            #
+            # Without this, full-fidelity continuity is silently dead: the
+            # backend's gates skip and seed→recall loses history (proven by a
+            # live DTU run — seeds wrote codewords, recall came back empty).
+            #
+            # `incoming_edge` is NOT available here: execute_with_retry (the sole
+            # invoker, retry.py) threads `graph` but not the edge, and the engine
+            # call sites (engine.py) don't pass it either. The edge only affects
+            # EDGE-level `thread_id`/`fidelity` overrides; node-level and
+            # graph-level thread/fidelity resolution — which the DTU and the vast
+            # majority of pipelines use — work from `graph` alone. We pass
+            # `incoming_edge=None` explicitly; threading the edge end-to-end is a
+            # separate, larger change tracked for when edge-level overrides are
+            # needed.
+            #
+            # `graph`/`incoming_edge` are OPTIONAL CodergenBackend params (declared
+            # with defaults). The production AmplifierBackend accepts them; some
+            # minimal backends are written against the historical 3-arg signature.
+            # Forward only when the backend can receive them (feature-detect once,
+            # cached) so we never pass an unexpected kwarg to a legacy backend.
+            if self._resolve_backend_accepts_graph():
+                result = await self._backend.run(
+                    node, prompt, context, incoming_edge=None, graph=graph
+                )
+            else:
+                result = await self._backend.run(node, prompt, context)
             if isinstance(result, Outcome):
                 _write_status(stage_dir, result)
                 return result

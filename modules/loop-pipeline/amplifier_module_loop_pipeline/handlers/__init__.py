@@ -79,6 +79,7 @@ class HandlerRegistry:
                 backend=ctx.backend,
                 hooks=ctx.hooks,
                 cancel_event=ctx.cancel_event,
+                interviewer=ctx.interviewer,
             ),
             "parallel": ParallelHandler(
                 hooks=ctx.hooks,

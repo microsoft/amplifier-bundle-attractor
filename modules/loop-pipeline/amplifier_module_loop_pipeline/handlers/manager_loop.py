@@ -105,11 +105,13 @@ class ManagerLoopHandler:
         hooks: Any = None,
         cancel_event: Any = None,
         handler_registry_factory: Any | None = None,
+        interviewer: Any = None,
     ) -> None:
         self._backend = backend
         self._hooks = hooks
         self._cancel_event = cancel_event
         self._handler_registry_factory = handler_registry_factory
+        self._interviewer = interviewer
         self._subgraph_runs: dict[str, dict[str, Any]] = {}
 
     async def execute(
@@ -344,6 +346,7 @@ class ManagerLoopHandler:
                     backend=effective_backend,
                     hooks=self._hooks,
                     cancel_event=self._cancel_event,
+                    interviewer=self._interviewer,
                 )
             )
         child_engine = PipelineEngine(

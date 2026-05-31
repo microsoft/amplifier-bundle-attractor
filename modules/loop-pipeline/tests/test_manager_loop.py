@@ -743,3 +743,166 @@ class TestManagerChildDotfileObservability:
         assert "nodes_completed" in run_data
         assert run_data["dot_file"] == str(child_dot)
         assert run_data["total_elapsed_ms"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# Interviewer forwarding tests for the child_dotfile path
+# ---------------------------------------------------------------------------
+
+
+CHILD_DOT_WITH_HITL_GATE = """\
+digraph child_hitl {
+    start [shape=Mdiamond]
+    gate  [shape=hexagon, label="Approve to proceed?", type="wait.human"]
+    done  [shape=Msquare]
+    start -> gate
+    gate  -> done [label="Approve"]
+}
+"""
+
+
+class TestManagerChildDotfileInterviewerForwarding:
+    """Regression tests: ManagerLoopHandler must forward its interviewer to child_dotfile registry.
+
+    Root cause (latent bug): _run_child_dotfile() built its child HandlerContext
+    without interviewer=, so HumanGateHandler inside any manager child_dotfile
+    always received interviewer=None and raised ValueError at runtime.
+
+    Fix: add interviewer param to ManagerLoopHandler.__init__, wire it through
+    HandlerRegistry, and pass interviewer=self._interviewer to the child HandlerContext.
+    """
+
+    def test_registry_passes_interviewer_to_manager_handler(self) -> None:
+        """HandlerRegistry.__init__ must pass ctx.interviewer to ManagerLoopHandler.
+
+        RED on current main: ManagerLoopHandler.__init__ has no interviewer param;
+        registry doesn't pass it; manager_handler._interviewer does not exist.
+        GREEN after fix: param added, registry wired, attribute present and correct.
+        """
+        from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+        from amplifier_module_loop_pipeline.interviewer import AutoApproveInterviewer
+
+        interviewer = AutoApproveInterviewer()
+        registry = HandlerRegistry(HandlerContext(interviewer=interviewer))
+
+        manager_handler = registry._handlers["stack.manager_loop"]
+        assert isinstance(manager_handler, ManagerLoopHandler)
+        assert manager_handler._interviewer is interviewer, (
+            "HandlerRegistry must pass ctx.interviewer to ManagerLoopHandler. "
+            "Without this, HITL gates inside a manager child_dotfile pipeline "
+            "silently receive interviewer=None and raise ValueError at runtime."
+        )
+
+    @pytest.mark.asyncio
+    async def test_hitl_gate_in_manager_child_dotfile_succeeds_with_interviewer(
+        self, tmp_path
+    ) -> None:
+        """HITL gate inside a manager child_dotfile receives the interviewer and auto-approves.
+
+        RED on current main: ManagerLoopHandler.__init__ raises TypeError (no
+        interviewer param), so even constructing the handler fails; and even if
+        constructed another way the child HandlerContext is built without
+        interviewer= so HumanGateHandler raises ValueError.
+        GREEN after fix: interviewer threaded through, AutoApproveInterviewer
+        approves the gate, child pipeline succeeds, manager returns SUCCESS.
+        """
+        from amplifier_module_loop_pipeline.interviewer import AutoApproveInterviewer
+
+        child_dot = tmp_path / "child_hitl.dot"
+        child_dot.write_text(CHILD_DOT_WITH_HITL_GATE)
+
+        # Parent graph: manager node points to the child_dotfile.
+        # has_child_edge=False because the child pipeline lives in the dotfile.
+        graph = _make_graph(
+            manager_attrs={
+                "manager.max_cycles": "1",
+                "manager.actions": "observe",
+                "stack.child_dotfile": str(child_dot),
+            },
+            has_child_edge=False,
+        )
+        graph.source_dir = str(tmp_path)
+
+        # Requires the interviewer param to exist on ManagerLoopHandler.__init__
+        handler = ManagerLoopHandler(interviewer=AutoApproveInterviewer())
+
+        ctx = PipelineContext()
+        outcome = await handler.execute(
+            graph.nodes["manager"], ctx, graph, str(tmp_path), engine=None
+        )
+
+        assert outcome.status == StageStatus.SUCCESS, (
+            f"Expected SUCCESS but got {outcome.status!r} — "
+            f"failure_reason: {outcome.failure_reason!r}. "
+            "Likely cause: HumanGateHandler received interviewer=None because "
+            "ManagerLoopHandler._run_child_dotfile() did not thread the interviewer "
+            "into the child HandlerContext."
+        )
+
+    @pytest.mark.asyncio
+    async def test_e2e_manager_child_dotfile_hitl_via_full_engine(
+        self, tmp_path
+    ) -> None:
+        """Full E2E: PipelineEngine with manager child_dotfile containing HITL gate.
+
+        Interviewer must propagate through the full chain:
+          HandlerRegistry -> ManagerLoopHandler -> child HandlerContext -> HumanGateHandler
+
+        RED on current main: interviewer dropped at the child HandlerContext step.
+        GREEN after fix.
+        """
+        import json as _json
+
+        from amplifier_module_loop_pipeline.dot_parser import parse_dot
+        from amplifier_module_loop_pipeline.engine import PipelineEngine
+        from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+        from amplifier_module_loop_pipeline.interviewer import AutoApproveInterviewer
+
+        class _MockBackend:
+            async def run(self, node, prompt, context, incoming_edge=None, graph=None):
+                return _json.dumps({"status": "success", "notes": f"mock: {node.id}"})
+
+        # Write the child DOT with a HITL gate
+        child_dot = tmp_path / "hitl_child.dot"
+        child_dot.write_text(CHILD_DOT_WITH_HITL_GATE)
+
+        # Parent DOT: manager node (shape=house) with child_dotfile pointing at
+        # the child pipeline that contains a hexagon gate.
+        # Dotted attribute names must be quoted in DOT syntax.
+        parent_dot_source = """\
+digraph parent_manager_hitl {
+    graph [goal="Test manager child_dotfile HITL forwarding"]
+    start   [shape=Mdiamond]
+    manager [shape=house, "manager.max_cycles"="1", "manager.actions"="observe",
+             "stack.child_dotfile"="hitl_child.dot"]
+    done    [shape=Msquare]
+    start -> manager -> done
+}
+"""
+        parent_graph = parse_dot(parent_dot_source)
+        # source_dir so that "hitl_child.dot" resolves relative to tmp_path
+        parent_graph.source_dir = str(tmp_path)
+
+        ctx = PipelineContext()
+        registry = HandlerRegistry(
+            HandlerContext(
+                backend=_MockBackend(),
+                interviewer=AutoApproveInterviewer(),
+            )
+        )
+        logs_root = str(tmp_path / "logs")
+
+        engine = PipelineEngine(
+            graph=parent_graph,
+            context=ctx,
+            handler_registry=registry,
+            logs_root=logs_root,
+        )
+        outcome = await engine.run()
+
+        assert outcome.status == StageStatus.SUCCESS, (
+            f"Expected SUCCESS but got {outcome.status!r} — "
+            f"failure_reason: {outcome.failure_reason!r}. "
+            "Interviewer may not have reached the child HITL gate through the "
+            "manager child_dotfile pipeline."
+        )

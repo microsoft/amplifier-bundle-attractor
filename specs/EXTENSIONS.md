@@ -197,3 +197,32 @@ spec's §9.4 sub-pipeline pattern with a dedicated, declarative shape.
 §2.8 shape\u2192handler table, and `dot_file` does not collide with any spec-defined attribute
 name, so the mechanism cannot change the behavior of any spec-conformant `.dot` file.
 (Documenting a pre-existing extension that was previously undocumented.)
+
+---
+
+## 11. Sub-Pipeline and Manager-Child Execution Is a Fresh Session Boundary
+
+**What:** Same-`thread_id` LLM session continuity (§5.4 thread resolution) applies WITHIN a
+single graph traversal. It does NOT cross a sub-pipeline boundary: a node inside a
+`shape=folder` / `dot_file=` sub-pipeline (§9.4) or a manager-loop child dotfile (§4.11) runs
+as a separate child graph/engine and starts a fresh LLM session, even if it carries the same
+`thread_id` as a node in the parent graph. Session continuity for a shared `thread_id` holds
+for inline nodes and flattened DOT `subgraph cluster_*` blocks (which §11.1 flattens into the
+same graph), but not across a child-graph execution boundary.
+
+**Why:** The spec frames sessions as run-local and non-serializable (§5.3: "in-memory LLM
+sessions cannot be serialized"; §3.1 finalize closes sessions), the thread-resolution ladder
+is graph-scoped (§5.4, tier 3 is "graph-level default thread"), and §9.4 defines a
+sub-pipeline as "a node whose handler runs an entire sub-graph as its execution" — a separate
+execution unit. This matches the subagent model (coding-agent-loop §7.1: a child session "runs
+its own agentic loop with its own conversation history but shares the parent's execution
+environment"). Our implementation makes this concrete: a sub-pipeline / manager child runs on
+a child engine with its own session pool. The spec does not explicitly state cross-sub-pipeline
+continuity either way; we adopt "fresh boundary" as the deterministic, spec-intent-aligned
+choice, consistent with the per-branch isolation decisions in sections 8 and 9.
+
+**Compatibility:** Backward-compatible. No spec-conformant `.dot` can depend on
+cross-sub-pipeline session continuity, because the spec never promises it and the surrounding
+normative clauses (§5.3, §5.4, §9.4) indicate the opposite. Authors who need a node to continue
+a shared-`thread_id` session must keep it inline in the same graph (or in a flattened cluster),
+not behind a sub-pipeline / folder / manager-child boundary.

@@ -545,7 +545,7 @@ def _parse_attr_block(tokens: list[str], pos: int) -> dict[str, Any]:
         if i + 2 <= end and tokens[i + 1] == "=":
             if prev_was_value:
                 found_missing_comma = True
-            key = tokens[i]
+            key = _unquote_key(tokens[i])
             raw_val = tokens[i + 2]
             attrs[key] = _parse_value(raw_val)
             prev_was_value = True
@@ -589,6 +589,23 @@ def _find_matching_brace(tokens: list[str], pos: int) -> int:
 
 
 # --- Value parsing ---
+
+
+def _unquote_key(raw: str) -> str:
+    """Strip surrounding double-quotes from an attribute-key token.
+
+    The tokenizer emits a quoted key (e.g. ``"manager.max_cycles"``) verbatim,
+    quotes included.  Downstream attribute lookups use the bare identifier, so
+    the quotes must be removed here.
+
+    Unlike :func:`_parse_value` this does **not** coerce types or process escape
+    sequences — an attribute key is always a plain string identifier.  A quoted
+    numeric key such as ``"3"`` stays the string ``"3"``, not the integer ``3``.
+    Unquoted keys pass through unchanged.
+    """
+    if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+        return raw[1:-1]
+    return raw
 
 
 def _parse_value(raw: str) -> Any:

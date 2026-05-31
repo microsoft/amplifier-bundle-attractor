@@ -568,7 +568,7 @@ def test_escape_quadruple_backslash_yields_pair():
 def test_escape_multiline_shell_heredoc_tool_command_preserves_structure():
     """Multi-line shell heredoc tool_command must produce valid multi-line shell.
 
-    Before the fix: ``\\\\n`` between script lines became ``\<LF>`` (line
+    Before the fix: ``\\\\n`` between script lines became ``\\<LF>`` (line
     continuation), joining lines into one big logical line and breaking any
     `python3 - << 'PYEOF'` heredoc. Result: dash parsed Python source as shell
     code and crashed on the first ``(``.
@@ -710,3 +710,76 @@ def test_bare_key_truthy_condition_still_supported():
     # Evaluates falsy when context key is absent
     ctx2 = PipelineContext()
     assert evaluate_condition("approved", outcome, ctx2) is False
+
+
+# --- Quoted attribute key stripping (fix/parser-unquote-keys) ---
+
+
+def test_quoted_attribute_key_strips_quotes():
+    """Quoted attribute key must be stored without surrounding double-quotes.
+
+    A DOT attribute block like:
+        A [ "manager.max_cycles"=1 ]
+    produces a tokenized key token that includes the outer quotes verbatim.
+    Downstream lookups use the bare identifier, so attrs.get("manager.max_cycles")
+    must return the value — not None.  Value 1 (unquoted integer) exercises both
+    key-unquoting and normal value type-coercion in the same assertion.
+    """
+    graph = parse_dot(
+        "digraph t { start [shape=Mdiamond]; done [shape=Msquare]; "
+        "start -> done; "
+        'A [ "manager.max_cycles"=1 ] }'
+    )
+    assert graph.nodes["A"].attrs.get("manager.max_cycles") == 1
+
+
+def test_quoted_and_unquoted_keys_coexist():
+    """Quoted and unquoted keys in the same attribute block both resolve correctly.
+
+    Mixing bare unquoted keys (max_iter) with quoted dotted-namespace keys
+    ("stack.child_dotfile") in a single block must not break either lookup.
+    Note: 'shape' is a promoted node field, not stored in attrs — test uses
+    max_iter (a plain unquoted key that does live in attrs) as the control.
+    """
+    graph = parse_dot(
+        "digraph t { start [shape=Mdiamond]; done [shape=Msquare]; start -> done; "
+        'M [ shape=house, "stack.child_dotfile"="child.dot", max_iter=3 ] }'
+    )
+    # Unquoted key — must work both before and after the fix (control).
+    assert graph.nodes["M"].attrs.get("max_iter") == 3
+    # Quoted dotted-namespace key — this is the bug being fixed.
+    assert graph.nodes["M"].attrs.get("stack.child_dotfile") == "child.dot"
+
+
+def test_quoted_key_value_not_type_coerced_as_key():
+    """Quoted numeric key token must stay a plain string, not be type-coerced.
+
+    _unquote_key must strip quotes only; it must NOT route through _parse_value,
+    which would coerce a quoted numeric string like "3" into int 3.
+    A key of "3"=x means the attribute name is the string "3", not the integer 3.
+    """
+    graph = parse_dot(
+        "digraph t { start [shape=Mdiamond]; done [shape=Msquare]; start -> done; "
+        'A [ "3"=x ] }'
+    )
+    # Key must be the string "3" (not the integer 3, not '"3"' with quotes).
+    assert graph.nodes["A"].attrs.get("3") == "x"
+    assert 3 not in graph.nodes["A"].attrs  # int coercion must not have happened
+    assert '"3"' not in graph.nodes["A"].attrs  # raw quoted form must be gone
+
+
+def test_quoted_key_composes_with_backslash_validation():
+    r"""Quoted key + malformed backslash-quote value still raises ValueError.
+
+    A block containing both a valid quoted key ("manager.max_cycles"="1")
+    AND a separate attribute whose value uses a malformed backslash-quote
+    delimiter (condition=\\\"bad\\\") must still raise #44's ValueError.
+    Proves there is no regression in the interaction between the two fixes.
+    """
+    with pytest.raises(ValueError, match="backslash-quote"):
+        parse_dot(
+            "digraph t {"
+            "  s [shape=Mdiamond]; d [shape=Msquare]"
+            '  s -> d [ "manager.max_cycles"="1", condition=\\"bad\\" ]'
+            "}"
+        )

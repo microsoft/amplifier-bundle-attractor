@@ -7,6 +7,10 @@
 
 ---
 
+> **STATUS — Historical (2026-02-10):** Many findings since resolved — H-11 fixed PR #36; fidelity fixed PR #42/#46; C-1 fixed PR #41. Preserved for architectural history.
+
+---
+
 ## Executive Summary
 
 The implementation has strong architectural foundations — 886 unit tests, real API calls proven across 2 providers, DOT parsing and pipeline traversal working. But the adversarial review found **70 total findings** (10 CRITICAL, 14 HIGH, 24 MEDIUM, 22 LOW) across three review dimensions:

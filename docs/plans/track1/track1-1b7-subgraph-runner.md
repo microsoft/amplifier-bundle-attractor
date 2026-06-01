@@ -1,3 +1,5 @@
+> **STATUS: Completed — PR #36.**
+
 # Track 1-1B7: Wire subgraph_runner for Parallel/Manager Handlers (H-11)
 
 > **Execution:** Use the subagent-driven-development workflow to implement this plan.

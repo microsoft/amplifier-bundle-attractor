@@ -157,6 +157,8 @@ cross-branch session sharing, because the spec never defines that behavior \u201
 opposite (§3.8 isolation). This change moves observable behavior toward what a conforming
 pipeline already assumes.
 
+> **Implementation note:** `_session_pool` was superseded by `_thread_transcripts` (see §12–13); the per-branch isolation semantics described here remain in effect.
+
 ---
 
 ## 9. Same `thread_id` Across Concurrent Branches Resolves to Isolation

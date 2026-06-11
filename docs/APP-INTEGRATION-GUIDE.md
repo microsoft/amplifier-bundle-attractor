@@ -175,16 +175,30 @@ def register_spawn_capability(session: Any, prepared: PreparedBundle) -> None:
                 f"Agent '{agent_name}' not found. Available: {available}"
             )
 
-        child_bundle = Bundle(
-            name=agent_name,
-            version="1.0.0",
-            session=config.get("session", {}),
-            providers=config.get("providers", []),
-            tools=config.get("tools", []),
-            hooks=config.get("hooks", []),
-            instruction=config.get("instruction")
-            or config.get("system", {}).get("instruction"),
-        )
+        # Agent configs arrive in two shapes -- build the child bundle for each:
+        #
+        #   1. Lazy bundle-ref: a single-key dict {"bundle": "<uri>"}. It has
+        #      no inline fields, so you MUST load_bundle() it. Building a
+        #      Bundle(...) from config.get(...) here would produce a
+        #      structurally empty child that inherits the parent's
+        #      orchestrator and falls to a no-tools backend (an
+        #      ImportError / silent fallback at runtime).
+        #
+        #   2. Inline config: a dict of bundle fields (tools/providers/
+        #      instruction/...). Build the child Bundle(...) from those fields.
+        if "bundle" in config and len(config) == 1:
+            child_bundle = await load_bundle(config["bundle"])
+        else:
+            child_bundle = Bundle(
+                name=agent_name,
+                version="1.0.0",
+                session=config.get("session", {}),
+                providers=config.get("providers", []),
+                tools=config.get("tools", []),
+                hooks=config.get("hooks", []),
+                instruction=config.get("instruction")
+                or config.get("system", {}).get("instruction"),
+            )
 
         return await prepared.spawn(
             child_bundle=child_bundle,
@@ -260,6 +274,26 @@ session.execute()   # Run the pipeline
 **Key principle:** `prepare()` is expensive (module downloads, dependency
 resolution). Call it once. `create_session()` is cheap -- call it for each
 pipeline run.
+
+### Offline / Pinned Execution
+
+If the environment already has every module installed (CI runners, air-gapped
+hosts, reproducible builds), use the supported offline path:
+
+```python
+prepared = await composed.prepare(install_deps=False)
+```
+
+`prepare(install_deps=False)` skips all network access: it discovers the paths
+of already-installed modules and builds the resolver from them, but installs
+nothing. The modules must already be importable in the active environment.
+
+**Trap:** do not try to skip `prepare()` entirely by hand-feeding a raw
+mount-plan to `create_session()`. The resolver (module path map, dependency
+graph) is computed *inside* `prepare()` and cannot be precomputed or supplied
+externally -- a hand-built mount-plan leaves the resolver unset and the session
+fails to wire its modules. Always go through `prepare()`; use
+`install_deps=False` when you need it to stay offline.
 
 ### How Backend Selection Works
 
@@ -451,6 +485,8 @@ When composing bundles for isolated execution, follow these rules:
 | `DirectProviderBackend` nodes have no tools | Cannot read/write files or run commands | Use Path B (AmplifierSession) for coding pipelines |
 | Provider model in global settings overrides bundle | Unexpected model selection | Use project-level `.amplifier/settings.yaml` |
 | `PreparedBundle.spawn()` returns string | Requires JSON-in-string parsing for structured results | The engine handles this internally |
+| Box node whose final assistant message is only tool-calls returns empty | The engine sees an empty result and treats it as a silent failure / fallback | Nudge the node prompt so the final message is non-empty text (e.g. "After running tools, end with a one-line summary -- the final message must not be empty") |
+| LLM node has no model when the agent bundle carries no `default_model` | The node cannot select a provider/model and fails | Set an explicit model -- via the node's `llm_provider`/model attribute, `provider_preferences` on `create_session()`, or a `default_model` in the bundle |
 
 ## Further Reading
 

@@ -1,5 +1,5 @@
 [project]
-name = "unified-llm-client"
+name = "amplifier-unified-llm-client"
 version = "0.1.0"
 description = "Provider-agnostic LLM client — faithful implementation of the Attractor Unified LLM Client spec"
 license = "MIT"

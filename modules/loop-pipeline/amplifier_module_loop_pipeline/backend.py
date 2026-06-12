@@ -304,10 +304,10 @@ class AmplifierBackend:
                 graph,
                 context,
             )
-            # Fallback logic (infrastructure failure, empty output) is handled
-            # inside _run_with_spawn — see that method for the full rationale.
-            # When _run_with_spawn returns here, the child ran and produced output;
-            # _parse_outcome has already determined the outcome.
+            # When _run_with_spawn returns here, it either extracted an outcome
+            # from the child's output / report_outcome / status, or it returned
+            # Outcome(FAIL) so the engine can route via FAIL-edge → retry_target /
+            # goal_gate.  No silent in-process fallback occurs inside that method.
         elif self._provider is not None:
             outcome = await self._run_with_tool_loop(
                 node,
@@ -432,17 +432,10 @@ class AmplifierBackend:
             result = await self._spawn_fn(**spawn_kwargs)
         except Exception as e:
             # Infrastructure failure: the spawn mechanism itself broke (e.g.
-            # agent profile not found, session init error).  The child never
-            # ran, so falling back to the direct tool loop is reasonable.
+            # agent profile not found, session init error).  Return FAIL so the
+            # engine can route via the spec's FAIL-edge (retry_target / goal_gate)
+            # rather than silently re-running the node in a different harness.
             logger.warning("Spawn failed for node %s: %s", node.id, e)
-            if self._provider is not None:
-                logger.warning(
-                    "Node %s: retrying via direct tool loop after spawn exception",
-                    node.id,
-                )
-                return await self._run_with_tool_loop(
-                    node, instruction, reasoning_effort, max_agent_turns
-                )
             return Outcome(status=StageStatus.FAIL, failure_reason=str(e))
 
         # Parse outcome from result.
@@ -467,16 +460,13 @@ class AmplifierBackend:
                 return spawn_outcome
 
             # Genuinely empty: no text, no report_outcome, no success status.
-            if self._provider is not None:
-                logger.warning(
-                    "Node %s: spawn returned empty output; "
-                    "falling back to direct tool loop. "
-                    "Ensure the child agent profile is correctly configured.",
-                    node.id,
-                )
-                return await self._run_with_tool_loop(
-                    node, instruction, reasoning_effort, max_agent_turns
-                )
+            # Return FAIL so the engine can route via the spec's FAIL-edge
+            # (retry_target / goal_gate) rather than silently re-running the
+            # node in a materially different in-process harness.
+            logger.warning(
+                "Node %s: spawn returned empty output with no recoverable outcome.",
+                node.id,
+            )
             return Outcome(
                 status=StageStatus.FAIL,
                 notes="No output from child session",
@@ -502,7 +492,7 @@ class AmplifierBackend:
         return outcome
 
     # ------------------------------------------------------------------
-    # Path B: Direct provider mini tool loop (fallback)
+    # Path B: Direct provider mini tool loop (spawn-unavailable path)
     # ------------------------------------------------------------------
 
     async def _run_with_tool_loop(

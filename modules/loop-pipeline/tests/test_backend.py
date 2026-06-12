@@ -608,12 +608,13 @@ async def test_spawn_empty_output_with_success_status_does_not_fall_back():
 
 
 @pytest.mark.asyncio
-async def test_spawn_truly_empty_still_falls_back():
-    """No text, no report_outcome, no success status => still fall back.
+async def test_spawn_truly_empty_fails_loud():
+    """No text, no report_outcome, no success status => FAIL (fail-loud).
 
-    This is the genuinely-empty case the fallback was designed for. The fix
-    must NOT swallow it: with a provider available, the spawn path still
-    delegates to the direct tool loop.
+    The fallback has been removed: a genuinely-empty spawn result must now
+    return Outcome(FAIL) regardless of whether a direct provider is available,
+    so the engine can route via FAIL-edge → retry_target / goal_gate rather
+    than silently re-running the node in a different in-process harness.
     """
     coordinator = MockCoordinator(
         spawn_result={
@@ -626,17 +627,19 @@ async def test_spawn_truly_empty_still_falls_back():
     backend = AmplifierBackend(
         coordinator=coordinator,
         profiles={"anthropic": "attractor-anthropic"},
-        provider=object(),
+        provider=object(),  # provider present — must NOT trigger fallback any more
     )
     spy = _install_fallback_spy(backend)
 
     node = _make_node(attrs={"llm_provider": "anthropic"})
     result = await backend.run(node, "task", _make_context())
 
-    assert spy["called"] is True, (
-        "genuinely-empty spawn output must still fall back to the tool loop."
+    assert spy["called"] is False, (
+        "genuinely-empty spawn output must now fail loud (FAIL outcome), "
+        "not silently fall back to the direct tool loop."
     )
     assert isinstance(result, Outcome)
+    assert result.status == StageStatus.FAIL
 
 
 @pytest.mark.asyncio
@@ -660,6 +663,81 @@ async def test_spawn_truly_empty_no_provider_still_fails():
 
     assert isinstance(result, Outcome)
     assert result.status == StageStatus.FAIL
+
+
+# ---------------------------------------------------------------------------
+# Fallback removal: spawn failures / empty output must FAIL loud (fail-loud
+# spec compliance). The direct tool loop must NOT be silently substituted for
+# a failed spawn — the engine needs to see the FAIL so it can route via
+# FAIL-edge → retry_target / goal_gate.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_spawn_raises_with_provider_returns_fail_not_fallback():
+    """Spawn raises + provider set => Outcome(FAIL), NOT a silent fallback.
+
+    Previously the code re-ran the task via _run_with_tool_loop when the
+    spawn raised and self._provider was truthy.  That hid the infrastructure
+    failure from the engine's retry/goal machinery.  Now it must always fail
+    loud, regardless of whether a direct provider is available.
+    """
+    coordinator = FailingCoordinator()
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+        provider=object(),  # truthy — previously triggered the in-process retry
+    )
+    spy = _install_fallback_spy(backend)
+
+    node = _make_node(attrs={"llm_provider": "anthropic"})
+    result = await backend.run(node, "task", _make_context())
+
+    assert spy["called"] is False, (
+        "spawn raised an exception but the code fell back to the direct tool loop "
+        "instead of returning FAIL — the engine never saw the infrastructure failure."
+    )
+    assert isinstance(result, Outcome)
+    assert result.status == StageStatus.FAIL
+
+
+@pytest.mark.asyncio
+async def test_spawn_truly_empty_with_provider_returns_fail_not_fallback():
+    """Empty spawn + no recoverable outcome + provider set => FAIL, NOT fallback.
+
+    Previously the code re-ran the task via _run_with_tool_loop when spawn
+    returned empty output with no report_outcome / success status and
+    self._provider was truthy.  That silently masked a real spawn
+    misconfiguration.  Now it must always fail loud so the engine can route
+    via FAIL-edge → retry_target / goal_gate.
+    """
+    coordinator = MockCoordinator(
+        spawn_result={
+            "output": "",
+            "session_id": "c-1",
+            "status": "error",  # not a success status
+            "metadata": {},
+        }
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+        provider=object(),  # truthy — previously triggered the in-process retry
+    )
+    spy = _install_fallback_spy(backend)
+
+    node = _make_node(attrs={"llm_provider": "anthropic"})
+    result = await backend.run(node, "task", _make_context())
+
+    assert spy["called"] is False, (
+        "spawn returned empty output with no recoverable outcome but the code "
+        "fell back to the direct tool loop instead of returning FAIL."
+    )
+    assert isinstance(result, Outcome)
+    assert result.status == StageStatus.FAIL
+    assert "Empty spawn output" in (result.failure_reason or ""), (
+        f"Expected 'Empty spawn output' in failure_reason, got: {result.failure_reason!r}"
+    )
 
 
 # --- Config forwarding tests ---

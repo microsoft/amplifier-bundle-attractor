@@ -268,6 +268,22 @@ class UnifiedProviderAdapter:
     # Public API: complete()
     # ------------------------------------------------------------------
 
+    async def close(self) -> None:
+        """Release the wrapped unified LLM client (spec finalize contract).
+
+        The wrapped ``unified_llm.Client`` owns an ``AsyncAnthropic``/httpx
+        client bound to the running event loop.  When the owning (child)
+        session is torn down it must close this WITHIN the loop; otherwise GC
+        later runs ``aclose()`` on a closed loop, raising
+        ``RuntimeError: Event loop is closed``.
+
+        Safe and idempotent: a no-op when the wrapped client does not expose
+        ``close()``.
+        """
+        close_fn = getattr(self._client, "close", None)
+        if close_fn is not None:
+            await close_fn()
+
     async def complete(self, request: ChatRequest) -> ChatResponse:
         """Satisfy loop-agent's provider.complete() contract.
 

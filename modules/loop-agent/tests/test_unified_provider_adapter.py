@@ -29,6 +29,47 @@ def test_constructor_stores_config():
 
 
 # ---------------------------------------------------------------------------
+# Bug 1: UnifiedProviderAdapter.close() releases the wrapped client
+#
+# The adapter wraps a unified_llm.Client that owns an AsyncAnthropic/httpx
+# client. Per the spec (unified-llm-spec.md:183), the client implements an
+# async close(); the adapter must expose close() so its owner (the child
+# session / spawn finalize) can release the connection within the event loop,
+# preventing the "Event loop is closed" RuntimeError at corpus scale.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_adapter_close_closes_client():
+    """UnifiedProviderAdapter.close() must await the wrapped client's close()."""
+    mock_client = MagicMock()
+    mock_client.close = AsyncMock()
+    adapter = UnifiedProviderAdapter(
+        provider_name="anthropic",
+        model="claude-sonnet-4-20250514",
+        client=mock_client,
+    )
+    await adapter.close()
+    mock_client.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_adapter_close_is_safe_when_client_has_no_close():
+    """close() must not raise if the wrapped client lacks a close() method."""
+
+    class _NoCloseClient:
+        pass
+
+    adapter = UnifiedProviderAdapter(
+        provider_name="anthropic",
+        model="claude-sonnet-4-20250514",
+        client=_NoCloseClient(),
+    )
+    # Must be a no-op, not an AttributeError.
+    await adapter.close()
+
+
+# ---------------------------------------------------------------------------
 # Task 3: Simple text message translation
 # ---------------------------------------------------------------------------
 from amplifier_core.message_models import ChatRequest, Message as CoreMessage
@@ -238,7 +279,6 @@ def test_translate_thinking_response_with_signature():
 # ---------------------------------------------------------------------------
 # Task 8: Tool call translation
 # ---------------------------------------------------------------------------
-from amplifier_core.message_models import ToolCall as CoreToolCall
 from unified_llm.types import ToolCallData as ULMToolCallData
 
 

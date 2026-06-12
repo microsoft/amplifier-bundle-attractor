@@ -532,6 +532,20 @@ class PipelineOrchestrator:
         try:
             outcome = await engine.run(goal=prompt or None)
         finally:
+            # Backend teardown: release any cached LLM client (e.g. the
+            # AsyncAnthropic/httpx client the fallback path lazily creates)
+            # WITHIN this event loop. Skipping it lets GC run aclose() on a
+            # closed loop later, raising "RuntimeError: Event loop is closed"
+            # (spec finalize contract: attractor-spec.md Section 3.1 step 6).
+            backend_close = getattr(backend, "close", None)
+            if backend_close is not None:
+                try:
+                    await backend_close()
+                except Exception:
+                    logger.exception(
+                        "Failed to close backend during finalize - LLM client may leak"
+                    )
+
             # Environment teardown
             if container_id and "env_destroy" in tools:
                 try:

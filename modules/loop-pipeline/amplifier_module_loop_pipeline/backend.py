@@ -448,10 +448,25 @@ class AmplifierBackend:
         # Parse outcome from result.
         # If the child produced output, _parse_outcome determines the outcome —
         # including intentional {"status":"fail"} verdicts from goal_gate nodes.
-        # If the child produced NO output (silent failure — crash, bad profile,
-        # etc.), fall back to the direct tool loop the same way an exception would.
         output = result.get("output", "") if isinstance(result, dict) else str(result)
         if not output.strip():
+            # The child's FINAL assistant message was empty — but that does NOT
+            # mean the child failed.  A child that did its work via tool calls
+            # (writing pages, then a terminal report_outcome) and ended on a tool
+            # call legitimately has no closing prose.  Before falling back, honor
+            # the SAME outcome sources the direct tool loop already uses: the
+            # child's report_outcome args and the orchestrator's completion
+            # status (captured in the spawn result, see _prepared.py spawn()).
+            spawn_outcome = _outcome_from_spawn_result(result)
+            if spawn_outcome is not None:
+                session_id = (
+                    result.get("session_id") if isinstance(result, dict) else None
+                )
+                if session_id:
+                    spawn_outcome.session_id = session_id
+                return spawn_outcome
+
+            # Genuinely empty: no text, no report_outcome, no success status.
             if self._provider is not None:
                 logger.warning(
                     "Node %s: spawn returned empty output; "
@@ -707,6 +722,27 @@ class AmplifierBackend:
         self._unified_client = unified_llm.Client.from_env()
         return self._unified_client
 
+    async def close(self) -> None:
+        """Release the cached unified LLM client (spec finalize contract).
+
+        The fallback path lazily creates a ``unified_llm.Client`` wrapping an
+        ``AsyncAnthropic``/httpx client bound to the running event loop.  Under
+        the per-article ``asyncio.run()`` lifecycle, that client must be closed
+        WITHIN its loop; otherwise GC later runs ``aclose()`` on a dead loop,
+        raising ``RuntimeError: Event loop is closed``.  This method is called
+        by the orchestrator's finalize path.
+
+        Idempotent and safe: a no-op when no client was created, and tolerant of
+        clients that do not expose ``close()``.
+        """
+        client = self._unified_client
+        if client is None:
+            return
+        close_fn = getattr(client, "close", None)
+        if close_fn is not None:
+            await close_fn()
+        self._unified_client = None
+
     async def _emit(self, event_name: str, data: dict[str, Any]) -> Any:
         """Emit an event via hooks, if provided.
 
@@ -812,6 +848,65 @@ def _find_report_outcome_call(result: Any) -> dict[str, Any] | None:
         for tc in getattr(step, "tool_calls", []) or []:
             if getattr(tc, "name", None) == "report_outcome":
                 return getattr(tc, "arguments", {}) or {}
+    return None
+
+
+# Spawn-result status strings that count as a real, non-failing completion.
+# These map 1:1 to non-FAIL StageStatus members; any other string (e.g.
+# "error", "", or a missing status) is treated as "no success signal".
+_SPAWN_SUCCESS_STATUSES = frozenset(
+    {
+        StageStatus.SUCCESS.value,
+        StageStatus.PARTIAL_SUCCESS.value,
+    }
+)
+
+
+def _outcome_from_spawn_result(result: Any) -> Outcome | None:
+    """Recover an Outcome from a spawn result whose final text was empty.
+
+    A child that completed its work via tool calls (and ended on a terminal
+    report_outcome) legitimately returns empty final text.  The spawn result
+    still carries the authoritative outcome in the SAME sources the direct
+    tool loop honors:
+
+      1. ``metadata["report_outcome"]`` — the child's report_outcome arguments,
+         captured from its orchestrator:complete metadata.  Mirrors how
+         ``_run_with_tool_loop`` consults ``_find_report_outcome_call``.
+      2. ``status`` — the orchestrator's completion status.  A recognized
+         success status means the child finished cleanly; empty closing prose
+         is acceptable (spec Section 4.5 treats prose/empty success as SUCCESS).
+
+    Returns the recovered Outcome, or ``None`` when there is genuinely no
+    outcome signal (no report_outcome AND no success status), in which case the
+    caller falls back / fails loud as before.
+    """
+    if not isinstance(result, dict):
+        return None
+
+    metadata = result.get("metadata")
+    report_outcome = (
+        metadata.get("report_outcome") if isinstance(metadata, dict) else None
+    )
+    if isinstance(report_outcome, dict):
+        status = _STATUS_MAP.get(report_outcome.get("status", ""))
+        if status is not None:
+            return Outcome(
+                status=status,
+                failure_reason=report_outcome.get("failure_reason"),
+                notes=report_outcome.get("notes"),
+                preferred_label=report_outcome.get("preferred_label"),
+                suggested_next_ids=report_outcome.get("suggested_next_ids"),
+                context_updates=report_outcome.get("context_updates"),
+            )
+
+    if result.get("status") in _SPAWN_SUCCESS_STATUSES:
+        status = _STATUS_MAP[result["status"]]
+        return Outcome(
+            status=status,
+            notes="Child session completed with empty final message",
+        )
+
     return None
 
 

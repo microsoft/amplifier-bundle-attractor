@@ -505,6 +505,163 @@ async def test_backend_handles_no_spawn_no_provider():
     assert "available" in (result.failure_reason or "").lower()
 
 
+# ---------------------------------------------------------------------------
+# Bug 2: spawn path must honor the child's outcome, not gate on final text
+#
+# A child that completes its work via tool calls + report_outcome (or whose
+# orchestrator:complete status is success) but emits NO closing prose returns
+# empty `output`. The spawn path must NOT silently fall back in that case --
+# it must honor the same outcome sources the direct tool loop already uses
+# (report_outcome args + completion status). It should fall back / fail loud
+# ONLY when there is genuinely no text AND no report_outcome AND no success
+# status.
+# ---------------------------------------------------------------------------
+
+
+def _install_fallback_spy(backend: AmplifierBackend) -> dict[str, Any]:
+    """Replace _run_with_tool_loop with a spy that records if it was called.
+
+    Returns a mutable dict whose ``called`` flag flips True if the spawn path
+    falls back to the direct tool loop.
+    """
+    state: dict[str, Any] = {"called": False}
+
+    async def _spy(*_args: Any, **_kwargs: Any) -> Outcome:
+        state["called"] = True
+        return Outcome(status=StageStatus.SUCCESS, notes="fallback ran")
+
+    backend._run_with_tool_loop = _spy  # type: ignore[method-assign]
+    return state
+
+
+@pytest.mark.asyncio
+async def test_spawn_empty_output_with_report_outcome_does_not_fall_back():
+    """Empty final text + a report_outcome in the spawn result => honor it.
+
+    The child did its work and reported an outcome via the report_outcome
+    tool; its final assistant message was just empty. The spawn path must
+    use that outcome and MUST NOT fall back to the direct tool loop.
+    """
+    coordinator = MockCoordinator(
+        spawn_result={
+            "output": "",  # no closing prose
+            "session_id": "c-1",
+            "status": "success",
+            "metadata": {
+                "report_outcome": {
+                    "status": "success",
+                    "notes": "Integrated source 2 into Foo and Bar pages.",
+                }
+            },
+        }
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+        provider=object(),  # truthy => fallback is POSSIBLE if code chooses it
+    )
+    spy = _install_fallback_spy(backend)
+
+    node = _make_node(attrs={"llm_provider": "anthropic"})
+    result = await backend.run(node, "task", _make_context())
+
+    assert spy["called"] is False, (
+        "spawn path fell back to the direct tool loop even though the child "
+        "reported a valid outcome -- the report_outcome was discarded."
+    )
+    assert isinstance(result, Outcome)
+    assert result.status == StageStatus.SUCCESS
+    assert "Integrated source 2" in (result.notes or "")
+
+
+@pytest.mark.asyncio
+async def test_spawn_empty_output_with_success_status_does_not_fall_back():
+    """Empty final text but status=success => treat as a successful completion.
+
+    A child that finished cleanly (orchestrator:complete status=success) but
+    ended on a tool call with no closing prose must be treated as SUCCESS,
+    not silently re-routed through the fallback path.
+    """
+    coordinator = MockCoordinator(
+        spawn_result={
+            "output": "",
+            "session_id": "c-1",
+            "status": "success",
+            "metadata": {},
+        }
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+        provider=object(),
+    )
+    spy = _install_fallback_spy(backend)
+
+    node = _make_node(attrs={"llm_provider": "anthropic"})
+    result = await backend.run(node, "task", _make_context())
+
+    assert spy["called"] is False, (
+        "spawn path fell back despite a success completion status."
+    )
+    assert isinstance(result, Outcome)
+    assert result.status == StageStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_spawn_truly_empty_still_falls_back():
+    """No text, no report_outcome, no success status => still fall back.
+
+    This is the genuinely-empty case the fallback was designed for. The fix
+    must NOT swallow it: with a provider available, the spawn path still
+    delegates to the direct tool loop.
+    """
+    coordinator = MockCoordinator(
+        spawn_result={
+            "output": "",
+            "session_id": "c-1",
+            "status": "error",  # not a success status
+            "metadata": {},
+        }
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+        provider=object(),
+    )
+    spy = _install_fallback_spy(backend)
+
+    node = _make_node(attrs={"llm_provider": "anthropic"})
+    result = await backend.run(node, "task", _make_context())
+
+    assert spy["called"] is True, (
+        "genuinely-empty spawn output must still fall back to the tool loop."
+    )
+    assert isinstance(result, Outcome)
+
+
+@pytest.mark.asyncio
+async def test_spawn_truly_empty_no_provider_still_fails():
+    """No text, no outcome, no success status, no provider => FAIL (loud)."""
+    coordinator = MockCoordinator(
+        spawn_result={
+            "output": "",
+            "session_id": "c-1",
+            "status": "error",
+            "metadata": {},
+        }
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+        # no provider => no fallback available
+    )
+    node = _make_node(attrs={"llm_provider": "anthropic"})
+    result = await backend.run(node, "task", _make_context())
+
+    assert isinstance(result, Outcome)
+    assert result.status == StageStatus.FAIL
+
+
 # --- Config forwarding tests ---
 
 
@@ -1168,3 +1325,97 @@ def test_clone_isolates_stateful_tool_instances():
         "status": "fail",
         "failure_reason": "prior run",
     }
+
+
+# ---------------------------------------------------------------------------
+# Bug 1: AmplifierBackend.close() releases the cached unified client
+#
+# The per-article asyncio.run() lifecycle (engine_runner) means the cached
+# AsyncAnthropic/httpx client created in _get_or_create_unified_client must be
+# closed WITHIN its loop before the loop ends; otherwise GC later runs aclose()
+# on a closed loop -> "RuntimeError: Event loop is closed". The spec mandates
+# resource close on finalize (attractor-spec.md:333; unified-llm-spec.md:183).
+# ---------------------------------------------------------------------------
+
+
+class _ClosableClient:
+    """Mock unified client exposing the spec-mandated async close()."""
+
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_backend_close_closes_unified_client():
+    """AmplifierBackend.close() must call Client.close() on the cached client."""
+    client = _ClosableClient()
+    backend = AmplifierBackend(
+        coordinator=MockCoordinator(),
+        profiles={},
+        unified_client=client,
+    )
+    await backend.close()
+    assert client.close_calls == 1, (
+        "AmplifierBackend.close() must close the cached unified client "
+        "(spec finalize contract) -- the leaked AsyncAnthropic is the source "
+        "of the 'Event loop is closed' RuntimeError at corpus scale."
+    )
+
+
+@pytest.mark.asyncio
+async def test_backend_close_is_noop_without_client():
+    """close() must be safe when no unified client was ever created."""
+    backend = AmplifierBackend(coordinator=MockCoordinator(), profiles={})
+    # Must not raise even though _unified_client is None.
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_execute_closes_backend(tmp_path):
+    """The orchestrator's finalize path must close the backend it ran with.
+
+    This is the wiring assertion: after PipelineOrchestrator.execute() runs a
+    pipeline, the backend's close() must have been awaited (within the same
+    event loop), satisfying the spec's finalize contract and preventing the
+    client leak.
+    """
+    from amplifier_module_loop_pipeline import PipelineOrchestrator
+
+    class _SpyBackend:
+        def __init__(self) -> None:
+            self.closed = 0
+
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
+            return f"Completed: {node.id}"
+
+        async def close(self) -> None:
+            self.closed += 1
+
+    spy = _SpyBackend()
+    orch = PipelineOrchestrator(
+        {
+            "dot_source": (
+                "digraph { "
+                "start [shape=Mdiamond]; "
+                'impl [label="Impl", prompt="do it"]; '
+                "exit [shape=Msquare]; "
+                "start -> impl -> exit }"
+            ),
+            "logs_root": str(tmp_path),
+        }
+    )
+    await orch.execute(
+        prompt="goal",
+        context=None,
+        providers={},
+        tools={},
+        hooks=None,
+        backend=spy,
+    )
+    assert spy.closed == 1, (
+        "PipelineOrchestrator.execute() must close the backend in its finalize "
+        "path so the unified client is released within the event loop."
+    )

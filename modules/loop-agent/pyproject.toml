@@ -9,7 +9,14 @@ authors = [
 ]
 dependencies = [
     "amplifier-core>=0.1.0",
-    "amplifier-unified-llm-client",
+    # Direct git reference (not a bare name) so the dependency resolves even
+    # when the foundation activator installs with `--no-sources`, which strips
+    # the `[tool.uv.sources]` path override below. The package is vendored
+    # in-repo and unpublished (renamed in #50 to avoid a PyPI name collision);
+    # a direct reference keeps that collision-avoidance (uv never queries an
+    # index for the name) while surviving `--no-sources`. The path source is
+    # retained below for local editable development.
+    "amplifier-unified-llm-client @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/unified-llm-client",
 ]
 
 [project.entry-points."amplifier.modules"]

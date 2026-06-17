@@ -8,7 +8,10 @@ the node's ``outputs="key1,key2"`` DOT attribute.  Effective output set is
 SC-2 (COE Phase 4 resolution) — closed inference table:
   ``tool``      → ``tool.output``, ``tool.last_line``
                   (+ keys from ``parse_json`` when declared via ``outputs=``)
-  ``wait.human``→ ``human.input``, ``human.choice``
+  ``wait.human``→ absent by design (R12 R12.5): emits mode-specific keys
+                  (``human.gate.selected`` or ``human.gate.text``) that cannot
+                  be statically inferred without false-positive
+                  PIPELINE_NODE_CONTRACT_VIOLATION events
   ``parallel``  → ``branch.{idx}.outcome`` (per outgoing branch, computed
                   dynamically from the graph's outgoing edges at build time)
   other         → empty set (use explicit ``outputs=`` declaration)

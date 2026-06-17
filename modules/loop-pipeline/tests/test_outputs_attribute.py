@@ -26,11 +26,17 @@ def test_tool_handler_infers_tool_output_and_last_line():
     assert "tool.last_line" in inferred
 
 
-def test_human_handler_infers_human_input_and_choice():
-    """SC-2: human handler contributes human.input and human.choice."""
-    inferred = HANDLER_INFERRED_OUTPUTS["wait.human"]
-    assert "human.input" in inferred
-    assert "human.choice" in inferred
+def test_human_handler_not_in_inference_table_by_design():
+    """R12 R12.5: wait.human is intentionally absent from the inference table.
+
+    The human gate handler emits mode-specific outputs — human.gate.selected
+    (selection mode) or human.gate.text (freeform mode) — never both.  Static
+    inference of either key would produce false-positive
+    PIPELINE_NODE_CONTRACT_VIOLATION events for whichever key was not emitted.
+    Fix (R12 R12.5): drop the inferred set entirely; pipeline authors who want
+    contract checking on a human-gate node declare outputs="..." explicitly.
+    """
+    assert "wait.human" not in HANDLER_INFERRED_OUTPUTS
 
 
 def test_other_handlers_not_in_inference_table():
@@ -110,8 +116,14 @@ def test_explicit_outputs_merged_with_inferred():
     assert "tool.last_line" in table["worker"]
 
 
-def test_human_handler_inferred_outputs_in_table():
-    """M1: human handler infers human.input and human.choice."""
+def test_human_handler_no_inferred_outputs_in_table():
+    """R12 R12.5: human gate node (shape=hexagon) has an empty output table.
+
+    wait.human is absent from HANDLER_INFERRED_OUTPUTS by design — the handler
+    emits mode-specific keys (human.gate.selected or human.gate.text) and
+    static inference would produce false-positive contract-violation events.
+    Pipeline authors use explicit outputs= to opt into contract checking.
+    """
     dot = """
     digraph {
         start [shape=Mdiamond]
@@ -122,8 +134,7 @@ def test_human_handler_inferred_outputs_in_table():
     """
     graph = parse_dot(dot)
     table = build_output_table(graph)
-    assert "human.input" in table["gate"]
-    assert "human.choice" in table["gate"]
+    assert table["gate"] == frozenset()
 
 
 def test_parallel_handler_infers_branch_outcomes():

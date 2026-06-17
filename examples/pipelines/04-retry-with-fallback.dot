@@ -9,7 +9,6 @@ digraph RetryWithFallback {
         goal="Generate a complex regex pattern that validates email addresses per RFC 5322",
         label="Retry with Fallback Pipeline",
         default_max_retry=3,
-        fallback_retry_target="simple_implement",
         default_fidelity="full",
         default_thread_id="retry-with-fallback"
     ]

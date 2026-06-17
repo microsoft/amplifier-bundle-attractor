@@ -4,11 +4,22 @@ Provides stubs for optional dependencies (amplifier_foundation, amplifier_core)
 that are not installed in the test virtual environment.  These stubs must be
 registered in sys.modules *before* any test module imports the backend, so this
 file (as a conftest) is processed first by pytest.
+
+Also ensures that the amplifier_module_loop_pipeline package is loaded from
+this source tree, not from a potentially stale editable install elsewhere.
 """
 
+import pathlib
 import sys
 import types
 from dataclasses import dataclass, field
+
+# Ensure the local source directory is resolved first.  An editable install
+# from a different checkout (e.g. modern-bundle-pipeline) would otherwise
+# shadow the changes under test.  Insert before site-packages path entries.
+_MODULE_SRC = str(pathlib.Path(__file__).parent.parent)
+if _MODULE_SRC not in sys.path:
+    sys.path.insert(0, _MODULE_SRC)
 
 
 # ---------------------------------------------------------------------------

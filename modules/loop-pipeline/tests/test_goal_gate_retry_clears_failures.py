@@ -1,18 +1,22 @@
-"""Tests for CR-3: goal-gate retry clears failed_outputs.
+"""Tests for CR-3: retry clears failed_outputs / completed_nodes / node_outcomes.
 
 R12 WS-6 — engine node-failure propagation.
 
-CR-3 (COE Phase 4): When goal-gate retry fires (engine.py goal gate path),
-the engine SHALL CLEAR failed_outputs alongside completed_nodes and node_outcomes.
-Without this, skip-propagation from attempt N would block retried nodes in
-attempt N+1.
+CR-3 (COE Phase 4): When a retry fires, the engine SHALL CLEAR failed_outputs
+alongside completed_nodes and node_outcomes.  Without this, skip-propagation
+from attempt N would block retried nodes in attempt N+1.
 
-Goal-gate mechanics (how it works in this engine):
-  - A non-exit node with goal_gate=true is a gate node.
-  - _check_goal_gates() inspects node_outcomes for gate nodes.
-  - If a gate node's outcome is !success, the gate is unsatisfied.
-  - If there is a retry_target, the engine clears per-run state (CR-3)
-    and jumps to the retry target node.
+Retry trigger (spec §3.7 conformance):
+  The failing node carries a NODE-level ``retry_target`` (spec §3.7 step 2 —
+  explicit, author-authored failure handling on that node).  When the node
+  fails with no matching fail-edge, the engine follows the node-level
+  retry_target and clears per-run state (CR-3) before re-executing.
+
+  NOTE: graph-level ``retry_target`` is intentionally NOT consulted on
+  per-node failure (spec §3.7); it applies only to the goal-gate-unsatisfied-
+  at-exit path (spec §3.4).  These tests therefore use node-level retry_target
+  so the retry is triggered the spec-conformant way.  The CR-3 state-clearing
+  contract under test is identical regardless of which retry path fired.
 """
 
 from __future__ import annotations
@@ -54,13 +58,13 @@ def _make_engine(dot_source: str, logs_root: str, hooks: Any = None) -> Pipeline
 
 @pytest.mark.asyncio
 async def test_goal_gate_retry_clears_failed_outputs(tmp_path):
-    """CR-3: failed_outputs cleared alongside completed_nodes on goal-gate retry.
+    """CR-3: failed_outputs cleared alongside completed_nodes on retry.
 
     Pipeline:
       start → work_a [goal_gate, outputs="k", retry_target=work_a] → exit
 
-    Attempt 1: work_a fails → failed_outputs has "k" → exit gate unsatisfied
-              → retry fires (CR-3: state cleared including failed_outputs).
+    Attempt 1: work_a fails → failed_outputs has "k" → node-level retry_target
+              fires (CR-3: state cleared including failed_outputs).
     Attempt 2: work_a succeeds → gate satisfied → pipeline succeeds.
 
     work_a uses a counter file to fail once then succeed.
@@ -77,12 +81,12 @@ async def test_goal_gate_retry_clears_failed_outputs(tmp_path):
     engine = _make_engine(
         f"""
         digraph {{
-            retry_target=work_a
             start [shape=Mdiamond]
             work_a [shape=parallelogram,
                     tool_command="{cmd}",
                     outputs="work.result",
-                    goal_gate=true]
+                    goal_gate=true,
+                    retry_target=work_a]
             exit [shape=Msquare]
             start -> work_a -> exit
         }}
@@ -105,7 +109,7 @@ async def test_goal_gate_retry_clears_failed_outputs(tmp_path):
 
 @pytest.mark.asyncio
 async def test_goal_gate_retry_clears_completed_nodes(tmp_path):
-    """CR-3: completed_nodes and node_outcomes are cleared on goal-gate retry.
+    """CR-3: completed_nodes and node_outcomes are cleared on retry.
 
     Verifies the full state-clearing contract: all three tables reset.
     After retry, work_a must be re-executed (not skipped as already-completed).
@@ -121,12 +125,12 @@ async def test_goal_gate_retry_clears_completed_nodes(tmp_path):
     engine = _make_engine(
         f"""
         digraph {{
-            retry_target=work_a
             start [shape=Mdiamond]
             work_a [shape=parallelogram,
                     tool_command="{cmd}",
                     outputs="work.result",
-                    goal_gate=true]
+                    goal_gate=true,
+                    retry_target=work_a]
             exit [shape=Msquare]
             start -> work_a -> exit
         }}
@@ -150,9 +154,10 @@ async def test_skipped_node_reruns_after_predecessor_succeeds_on_retry(tmp_path)
     executes if its predecessor now succeeds.
 
     Pipeline:
-      start → producer [goal_gate, outputs="k"] → consumer [uses ${k}] → exit
+      start → producer [goal_gate, outputs="k", retry_target=producer]
+            → consumer [uses ${k}] → exit
 
-    Attempt 1: producer fails → consumer SKIPPED → gate unsatisfied → retry.
+    Attempt 1: producer fails → consumer SKIPPED → node-level retry_target fires.
     Attempt 2 (after CR-3 clear): producer succeeds → consumer runs → gate satisfied.
     """
     counter_file = tmp_path / "attempt.txt"
@@ -168,12 +173,12 @@ async def test_skipped_node_reruns_after_predecessor_succeeds_on_retry(tmp_path)
     engine = _make_engine(
         f"""
         digraph {{
-            retry_target=producer
             start [shape=Mdiamond]
             producer [shape=parallelogram,
                       tool_command="{cmd}",
                       outputs="k",
-                      goal_gate=true]
+                      goal_gate=true,
+                      retry_target=producer]
             consumer [shape=parallelogram,
                       tool_command="echo using_${{k}} > {output_file}"]
             exit [shape=Msquare]

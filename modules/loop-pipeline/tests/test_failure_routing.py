@@ -1,13 +1,15 @@
-"""Tests for per-node failure routing (1b2).
+"""Tests for per-node failure routing (spec §3.7).
 
-When no edge matches after node execution, the engine should check
-retry_target and fallback_retry_target on the node and graph before
-returning FAIL.
+When no edge matches after node execution, the engine checks node-level
+retry_target and fallback_retry_target only, then halts loud.
 
-Fallback chain: node.retry_target → node.fallback_retry_target →
-                graph.retry_target → graph.fallback_retry_target → terminate.
+Fallback chain (per-node failure, spec §3.7):
+    node.retry_target → node.fallback_retry_target → FAIL (terminate).
 
-Spec coverage: EXEC-015–018, Section 3.3.
+Graph-level retry_target/fallback_retry_target are goal-gate-exit only
+(spec §3.4) and must NOT be consulted on per-node failure.
+
+Spec coverage: EXEC-015–018, Section 3.7.
 """
 
 import pytest
@@ -116,12 +118,24 @@ class TestNodeRetryTarget:
         assert backend.call_count("fallback") >= 1
 
 
-class TestGraphRetryTarget:
-    """Graph-level retry targets are checked after node-level."""
+class TestGraphRetryTargetNotUsedOnNodeFailure:
+    """Graph-level retry targets must NOT fire on per-node failure (spec §3.7).
+
+    graph.retry_target and graph.fallback_retry_target are goal-gate-exit
+    only (spec §3.4).  A node failure with no fail-edge and no node-level
+    retry target must terminate FAIL loud — NOT jump to the graph target.
+    """
 
     @pytest.mark.asyncio
-    async def test_graph_retry_target_used_when_node_has_none(self, tmp_path):
-        """Graph's retry_target is used when node has no retry targets."""
+    async def test_graph_retry_target_NOT_used_on_node_failure_halts_loud(
+        self, tmp_path
+    ):
+        """Graph retry_target must NOT fire on per-node failure → loud FAIL.
+
+        Regression lock for spec §3.7: when a node has no fail-edge and no
+        node-level retry_target, the engine must TERMINATE FAIL with the
+        node's failure reason — it must NOT jump to graph.retry_target.
+        """
         graph = Graph(
             name="test",
             nodes={
@@ -138,12 +152,21 @@ class TestGraphRetryTarget:
         )
         backend = CountingBackend()
         engine = _make_engine(graph, backend=backend, logs_root=str(tmp_path))
-        await engine.run()
-        assert backend.call_count("graph_recovery") >= 1
+        outcome = await engine.run()
+        # Must terminate FAIL — NOT route to graph_recovery
+        assert outcome.status == StageStatus.FAIL
+        assert backend.call_count("graph_recovery") == 0
 
     @pytest.mark.asyncio
-    async def test_graph_fallback_retry_target_last_resort(self, tmp_path):
-        """Graph's fallback_retry_target is the last resort before terminate."""
+    async def test_graph_fallback_retry_target_NOT_used_on_node_failure_halts_loud(
+        self, tmp_path
+    ):
+        """Graph fallback_retry_target must NOT fire on per-node failure → loud FAIL.
+
+        Regression lock for spec §3.7: graph.fallback_retry_target is
+        goal-gate-exit only; per-node failure with no fail-edge and no
+        node-level targets must TERMINATE FAIL, not enter the graph target.
+        """
         graph = Graph(
             name="test",
             nodes={
@@ -160,8 +183,10 @@ class TestGraphRetryTarget:
         )
         backend = CountingBackend()
         engine = _make_engine(graph, backend=backend, logs_root=str(tmp_path))
-        await engine.run()
-        assert backend.call_count("last_resort") >= 1
+        outcome = await engine.run()
+        # Must terminate FAIL — NOT route to last_resort
+        assert outcome.status == StageStatus.FAIL
+        assert backend.call_count("last_resort") == 0
 
 
 class TestFailureRoutingTerminate:

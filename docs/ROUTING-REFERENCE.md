@@ -419,10 +419,20 @@ failed.
    A -> error_handler [condition="outcome=fail",         weight=8]
    ```
 
-2. Set `fallback_retry_target` at the graph level to catch unhandled failures:
+2. Add a node-level `retry_target` on the failing node to redirect on failure:
    ```dot
-   graph [fallback_retry_target="error_handler"]
+   A [retry_target="error_handler"]
    ```
+   This follows spec §3.7 step 2. For per-node or subgraph failure recovery,
+   use a `condition="outcome=fail"` edge (§3.7 step 1) or a node-level
+   `retry_target` / `fallback_retry_target` on the failing node (§3.7 steps 2–3).
+   If neither is present, the engine halts loud with the failure reason (§3.7 step 4).
+
+   > **Scope note:** Graph-level `retry_target` and `fallback_retry_target` apply
+   > **only** to the goal-gate-unsatisfied-at-exit path (§3.4 — *"jump to if exit is
+   > reached with unsatisfied goal gates"*). They are **not** consulted on arbitrary
+   > per-node failure. Relying on them to catch unhandled node failures is off-spec
+   > and will cause the engine to halt loud instead.
 
 3. Use `goal_gate=true` on critical nodes — the engine will not exit the
    pipeline successfully if a goal gate node never reached `SUCCESS`.

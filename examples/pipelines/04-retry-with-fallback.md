@@ -3,9 +3,9 @@
 ## What This Exercises
 
 - **`max_retries` attribute**: `implement` has `max_retries=2` meaning up to 3 total executions (1 initial + 2 retries)
-- **`retry_target`**: When `implement` exhausts retries, jump back to `plan` for a fresh approach
-- **`fallback_retry_target`**: If `retry_target` also fails or is invalid, fall back to `simple_implement`
-- **Graph-level `fallback_retry_target`**: The graph itself has `fallback_retry_target="simple_implement"` as a last resort
+- **`retry_target`** (node-level): When `implement` exhausts retries, jump back to `plan` for a fresh approach (spec §3.7 step 2)
+- **`fallback_retry_target`** (node-level on `implement`): If `retry_target` also fails, fall back to `simple_implement` (spec §3.7 step 3)
+- **Fail-edge**: `validate -> implement [condition="outcome=fail"]` — explicit per-node failure routing (spec §3.7 step 1)
 - **Graph-level `default_max_retry`**: Sets the global retry ceiling to 3
 - **`goal_gate` + retry interaction**: Both `implement` and `simple_implement` are goal gates -- the pipeline cannot exit until at least one succeeds
 - **`allow_partial`**: `simple_implement` accepts PARTIAL_SUCCESS when retries exhaust, treating it as good enough
@@ -17,11 +17,11 @@ start --> plan --> implement --> validate --> done
            ^        |                |
            |        | (retry_target) |
            +--------+               |
-                                     | (fail edge)
+                                     | (fail edge: condition="outcome=fail")
                                      +-----------> implement
            
 simple_implement --> validate
-(fallback_retry_target from implement and graph)
+(reached via node-level fallback_retry_target on implement)
 ```
 
 ## Expected Behavior

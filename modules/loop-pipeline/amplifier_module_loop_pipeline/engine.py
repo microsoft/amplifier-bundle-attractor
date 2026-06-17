@@ -1466,16 +1466,15 @@ class PipelineEngine:
         Fallback chain (first match wins):
         1. node.retry_target
         2. node.fallback_retry_target
-        3. graph.retry_target
-        4. graph.fallback_retry_target
+
+        Graph-level retry_target is goal-gate-exit only (spec §3.4); it is
+        intentionally NOT consulted on per-node failure (spec §3.7).
 
         Returns the target Node or None if no valid target exists.
         """
         target_id = (
             node.attrs.get("retry_target")
             or node.attrs.get("fallback_retry_target")
-            or self.graph.graph_attrs.get("retry_target")
-            or self.graph.graph_attrs.get("fallback_retry_target")
         )
         if target_id and target_id in self.graph.nodes:
             return self.graph.nodes[target_id]

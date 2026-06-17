@@ -130,8 +130,7 @@ retry target. If that also fails, the fallback target catches it.
 digraph {
     graph [
         goal="Generate an RFC 5322 email validation regex",
-        default_max_retry=3,
-        fallback_retry_target="simple_implement"
+        default_max_retry=3
     ]
 
     start [shape=Mdiamond]
@@ -532,7 +531,7 @@ Set these on the `graph` element:
 | `default_fidelity` | String | `compact` | Default context fidelity for all nodes. |
 | `default_max_retry` | Integer | `0` | Global retry ceiling. |
 | `retry_target` | String | `""` | Global retry target when exit has unsatisfied goal gates. |
-| `fallback_retry_target` | String | `""` | Global fallback retry target. |
+| `fallback_retry_target` | String | `""` | Global fallback retry target when exit has unsatisfied goal gates. |
 
 ## Tips for Effective Node Prompts
 

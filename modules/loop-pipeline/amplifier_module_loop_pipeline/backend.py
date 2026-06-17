@@ -944,6 +944,55 @@ def _parse_outcome(output: str) -> Outcome:
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
 
+    # Before falling through to the SUCCESS default, attempt to RECOVER an
+    # embedded verdict from prose-wrapped responses.  Models sometimes emit prose
+    # followed by a JSON verdict object (e.g. "Here's my verdict:\n{...}") rather
+    # than pure JSON.  We find the LAST balanced {...} in the string and, if it
+    # contains a recognised status, honour it rather than silently coercing to
+    # SUCCESS.  Pure-JSON and fenced-JSON paths above are unchanged; this only
+    # fires when both prior branches were skipped (stripped does NOT start with
+    # "{" or a code fence).
+    #
+    # Spec invariant: an explicit FAIL/RETRY verdict MUST NOT be silently coerced
+    # to SUCCESS.  Verdict nodes that want reliable parsing should emit pure JSON
+    # or call the report_outcome tool.
+    last_open = stripped.rfind("{")
+    if last_open != -1:
+        depth = 0
+        end_pos = -1
+        for _i in range(last_open, len(stripped)):
+            _ch = stripped[_i]
+            if _ch == "{":
+                depth += 1
+            elif _ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end_pos = _i
+                    break
+        if end_pos != -1:
+            candidate = stripped[last_open : end_pos + 1]
+            try:
+                _embedded = json.loads(candidate)
+                if isinstance(_embedded, dict) and "status" in _embedded:
+                    _recovered_status = _STATUS_MAP.get(_embedded["status"])
+                    if _recovered_status is not None:
+                        logger.warning(
+                            "Verdict recovered from prose-wrapped response "
+                            "(embedded status=%r).  Verdict nodes should emit "
+                            "pure JSON or call the report_outcome tool.",
+                            _embedded["status"],
+                        )
+                        return Outcome(
+                            status=_recovered_status,
+                            failure_reason=_embedded.get("failure_reason"),
+                            notes=_embedded.get("notes"),
+                            preferred_label=_embedded.get("preferred_label"),
+                            suggested_next_ids=_embedded.get("suggested_next_ids"),
+                            context_updates=_embedded.get("context_updates"),
+                        )
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
     # Plain text response — per spec Section 4.5, treat as SUCCESS
     return Outcome(
         status=StageStatus.SUCCESS,

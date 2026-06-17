@@ -119,10 +119,11 @@ Source: `backend.py:604-637, 903-951`.
 - A verdict status is taken from the response **only if the entire stripped response is a
   JSON object** (`stripped.startswith("{")`) or a ` ```json ``` ` fenced block
   (`backend.py:614-618`). Not "JSON on the last line" — the **whole** message.
-- **KNOWN OPEN BUG (fix planned — design Track 3A):** prose-then-JSON → `startswith("{")` is false → falls
-  through to `report_outcome` args → else **plain prose → silently coerced to SUCCESS**
-  (`backend.py:632-637, 947-951`). A model that "explains, then emits JSON" has its verdict
-  silently dropped. Empty response → FAIL.
+- **Prose-then-JSON recovery (FIXED):** if a response is prose with a trailing/embedded JSON
+  verdict object, the engine now extracts the LAST balanced `{...}` and, if it carries a recognized
+  `status`, HONORS it (with a logged warning) instead of coercing to SUCCESS (`backend.py:947-994`).
+  An explicit FAIL/RETRY is no longer silently dropped. Empty response → FAIL. (Still prefer pure
+  JSON / `report_outcome` — the recovery is a safety net, not a contract.)
 - **Robust path:** have the node call the **`report_outcome` tool** rather than emit
   free-text JSON.
 
@@ -135,11 +136,12 @@ Source: `backend.py:604-637, 903-951`.
   not in `compact` specifically. `compact`/`truncate` preambles surface that short key;
   **`full` bypasses it** via stored transcripts (`backend.py:643-704`). Need the full prior
   text downstream? Use `fidelity=full`.
-- **`folder`/subgraph checkpoint reuse across loop iterations** `[UNVERIFIED]` — child logs
-  use a node-id-keyed path `subgraph_<node.id>` (`pipeline.py:167`); a folder re-entered in a
-  loop reuses the same child log/checkpoint dir and may restore stale completed-state (the
-  "skips all but the 1st source" symptom). Child-engine resume gate not yet traced; repro
-  `prove_folder_failure.py` pending. Treat as open until confirmed.
+- **`folder`/subgraph checkpoint reuse across loop iterations (CONFIRMED + FIXED):** child logs
+  were keyed on node id alone (`subgraph_<node.id>`), so a folder re-entered in a loop restored the
+  prior iteration's completed checkpoint and silently skipped work (the "skips all but the 1st
+  source" symptom). Now namespaced per invocation — `subgraph_<node.id>` then `__iter1`, `__iter2`…
+  (`pipeline.py:168-200`) — so each iteration runs fresh while a single child run can still resume.
+  Regression test: `tests/test_folder_checkpoint_reuse_repro.py`.
 
 ---
 

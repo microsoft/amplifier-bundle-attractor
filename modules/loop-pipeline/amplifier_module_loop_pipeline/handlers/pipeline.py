@@ -86,6 +86,11 @@ class PipelineHandler:
         self._backend = backend
         self._interviewer = interviewer
         self._subgraph_runs: dict[str, Any] = {}
+        # Per-invocation counter used when engine is None (test-harness path).
+        # Key: (logs_root, node.id) so distinct run roots don't share counts.
+        # When engine is not None, the counter lives on the engine itself so
+        # it persists correctly across loop iterations within one parent run.
+        self._folder_invocation_counts: dict[tuple[str, str], int] = {}
 
     async def _emit(self, event_name: str, data: dict[str, Any]) -> None:
         """Emit an event via hooks, if provided."""
@@ -163,8 +168,35 @@ class PipelineHandler:
                 child_key = attr_key[len("context.") :]
                 child_context.set(child_key, str(attr_value))
 
-        # (7) Create child logs dir
-        child_logs = os.path.join(logs_root, f"subgraph_{node.id}")
+        # (7) Create child logs dir — namespaced per invocation so that a folder
+        # node re-entered across loop iterations always gets a FRESH checkpoint
+        # directory instead of resuming the completed state from iteration 1.
+        #
+        # When engine is not None (production path), track the count on the
+        # engine itself; the engine object persists across all loop iterations
+        # of one parent run, so the counter increments correctly.
+        #
+        # When engine is None (test-harness path), fall back to a counter on
+        # this handler instance, keyed by (logs_root, node.id), so distinct
+        # run roots don't share counts and the existing single-dir behaviour is
+        # preserved for callers that never re-enter the same (root, node.id).
+        #
+        # First invocation uses the canonical name subgraph_{node.id} for
+        # back-compat; subsequent invocations append __iter{n}.
+        if engine is not None:
+            if not hasattr(engine, "_folder_invocation_counts"):
+                engine._folder_invocation_counts: dict[str, int] = {}  # type: ignore[attr-defined]
+            _inv = engine._folder_invocation_counts.get(node.id, 0)
+            engine._folder_invocation_counts[node.id] = _inv + 1
+        else:
+            _key = (logs_root, node.id)
+            _inv = self._folder_invocation_counts.get(_key, 0)
+            self._folder_invocation_counts[_key] = _inv + 1
+
+        if _inv == 0:
+            child_logs = os.path.join(logs_root, f"subgraph_{node.id}")
+        else:
+            child_logs = os.path.join(logs_root, f"subgraph_{node.id}__iter{_inv}")
         os.makedirs(child_logs, exist_ok=True)
 
         # (8) Create child HandlerRegistry.

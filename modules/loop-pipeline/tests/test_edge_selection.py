@@ -61,6 +61,40 @@ def test_preferred_label_match():
     assert selected.to_node == "B"
 
 
+def test_step2_skips_conditional_edge_with_matching_label():
+    """Spec §3.3 Step 2: a conditional edge whose condition FAILED in Step 1 must
+    NOT be selected by preferred_label match (B4 — only unconditional edges)."""
+    edges = [
+        Edge("A", "B", condition="outcome=fail", label="go"),  # condition false on SUCCESS
+        Edge("A", "C"),  # unconditional fallback
+    ]
+    graph = _make_graph(edges)
+    outcome = Outcome(status=StageStatus.SUCCESS, preferred_label="go")
+    selected = select_edge("A", outcome, PipelineContext(), graph)
+    assert selected is not None
+    assert selected.to_node == "C", (
+        f"Step 2 selected condition-false edge by label (got {selected.to_node}); "
+        "spec §3.3 Step 2 considers only unconditional edges"
+    )
+
+
+def test_step3_skips_conditional_edge_with_matching_target():
+    """Spec §3.3 Step 3: a conditional edge whose condition FAILED must NOT be
+    selected by suggested_next_ids match (B4 — only unconditional edges)."""
+    edges = [
+        Edge("A", "B", condition="outcome=fail"),  # condition false on SUCCESS
+        Edge("A", "C"),  # unconditional fallback
+    ]
+    graph = _make_graph(edges)
+    outcome = Outcome(status=StageStatus.SUCCESS, suggested_next_ids=["B"])
+    selected = select_edge("A", outcome, PipelineContext(), graph)
+    assert selected is not None
+    assert selected.to_node == "C", (
+        f"Step 3 selected condition-false edge by target id (got {selected.to_node}); "
+        "spec §3.3 Step 3 considers only unconditional edges"
+    )
+
+
 def test_label_normalization():
     """Labels normalized: lowercase, strip accelerators (ESEL-004)."""
     edges = [Edge("A", "B", label="[Y] Tests Pass")]

@@ -46,17 +46,20 @@ def select_edge(
         return _best_by_weight_then_lexical(condition_matched)
 
     # Step 2: Preferred label match
+    # Spec §3.3 Step 2: only UNCONDITIONAL edges are eligible — a conditional
+    # edge whose condition failed in Step 1 must NOT be selected here by label.
     if outcome.preferred_label:
         norm_pref = _normalize_label(outcome.preferred_label)
         for e in edges:
-            if e.label and _normalize_label(e.label) == norm_pref:
+            if not e.condition and e.label and _normalize_label(e.label) == norm_pref:
                 return e
 
     # Step 3: Suggested next IDs
+    # Spec §3.3 Step 3: only UNCONDITIONAL edges are eligible (same rationale).
     if outcome.suggested_next_ids:
         for suggested_id in outcome.suggested_next_ids:
             for e in edges:
-                if e.to_node == suggested_id:
+                if not e.condition and e.to_node == suggested_id:
                     return e
 
     # Step 4 & 5: Weight with lexical tiebreak (unconditional edges only)

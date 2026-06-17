@@ -901,9 +901,9 @@ class TestL15PresetPolicies:
         assert policy.max_attempts == 1
 
     def test_preset_standard(self):
-        """'standard' preset: 3 attempts."""
+        """'standard' preset: 5 attempts, 200ms initial delay (spec §3.5)."""
         policy = RetryPolicy.from_preset("standard")
-        assert policy.max_attempts == 3
+        assert policy.max_attempts == 5
 
     def test_preset_aggressive(self):
         """'aggressive' preset: 5 attempts."""
@@ -917,9 +917,9 @@ class TestL15PresetPolicies:
         assert policy.backoff.backoff_factor == 1.0
 
     def test_preset_patient(self):
-        """'patient' preset: 10 attempts."""
+        """'patient' preset: 3 attempts, 2000ms initial delay, factor 3.0 (spec §3.5)."""
         policy = RetryPolicy.from_preset("patient")
-        assert policy.max_attempts == 10
+        assert policy.max_attempts == 3
 
     def test_unknown_preset_raises(self):
         """Unknown preset name raises ValueError."""

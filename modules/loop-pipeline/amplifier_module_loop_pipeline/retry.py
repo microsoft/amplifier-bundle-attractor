@@ -116,24 +116,31 @@ class RetryPolicy:
     def from_preset(cls, name: str) -> RetryPolicy:
         """Create a RetryPolicy from a named preset (L-15).
 
-        Presets:
+        Presets (spec §3.5 table, attractor-spec.md:554-560):
             none       — 1 attempt (no retries).
-            standard   — 3 attempts, exponential backoff.
-            aggressive — 5 attempts, exponential backoff.
-            linear     — 3 attempts, linear backoff (factor=1.0).
-            patient    — 10 attempts, exponential backoff.
+            standard   — 5 attempts, 200ms initial delay, factor 2.0.
+            aggressive — 5 attempts, 500ms initial delay, factor 2.0.
+            linear     — 3 attempts, 500ms initial delay, factor 1.0 (fixed).
+            patient    — 3 attempts, 2000ms initial delay, factor 3.0.
 
         Raises ValueError for unknown preset names.
         """
         presets: dict[str, RetryPolicy] = {
             "none": cls(max_attempts=1),
-            "standard": cls(max_attempts=3),
-            "aggressive": cls(max_attempts=5),
+            # Spec §3.5 preset table (attractor-spec.md:554-560)
+            "standard": cls(max_attempts=5),  # delays 200,400,800,1600,3200 ms
+            "aggressive": cls(
+                max_attempts=5,
+                backoff=BackoffConfig(initial_delay_ms=500),  # delays 500,1000,2000,4000,8000 ms
+            ),
             "linear": cls(
                 max_attempts=3,
-                backoff=BackoffConfig(backoff_factor=1.0),
+                backoff=BackoffConfig(initial_delay_ms=500, backoff_factor=1.0),  # fixed 500ms
             ),
-            "patient": cls(max_attempts=10),
+            "patient": cls(
+                max_attempts=3,
+                backoff=BackoffConfig(initial_delay_ms=2000, backoff_factor=3.0),  # delays 2000,6000,18000 ms
+            ),
         }
         if name not in presets:
             raise ValueError(
@@ -223,6 +230,12 @@ async def execute_with_retry(
 
         # FAIL — return immediately, no retries
         if outcome.status == StageStatus.FAIL:
+            return outcome
+
+        # SKIPPED — return immediately; the engine's auto_status check may
+        # promote this to SUCCESS when auto_status=true (spec §2.6 / Appendix C).
+        # Do not retry a SKIPPED outcome — retrying would not produce a status.
+        if outcome.status == StageStatus.SKIPPED:
             return outcome
 
         # RETRY — retry if attempts remain

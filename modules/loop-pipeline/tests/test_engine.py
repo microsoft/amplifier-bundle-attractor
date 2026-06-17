@@ -361,8 +361,13 @@ async def test_start_node_shape_takes_priority(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_auto_status_overrides_fail_to_success(tmp_path):
-    """auto_status=true overrides non-success outcome to SUCCESS (L-9)."""
+async def test_auto_status_preserves_explicit_fail(tmp_path):
+    """auto_status=true must NOT mask an explicit FAIL — fail-loud (spec §2.6/Appendix C).
+
+    The handler explicitly returns FAIL; auto_status may only synthesize SUCCESS
+    when the handler writes *no* status (SKIPPED sentinel), not when it returns a
+    real failure.
+    """
 
     class FailingBackend:
         async def run(self, node, prompt, context, incoming_edge=None, graph=None):
@@ -384,7 +389,7 @@ async def test_auto_status_overrides_fail_to_success(tmp_path):
         },
         edges=[
             Edge(from_node="start", to_node="auto_node"),
-            Edge(from_node="auto_node", to_node="exit"),
+            Edge(from_node="auto_node", to_node="exit", condition="outcome=fail"),
         ],
     )
     context = PipelineContext()
@@ -395,10 +400,9 @@ async def test_auto_status_overrides_fail_to_success(tmp_path):
         handler_registry=registry,
         logs_root=str(tmp_path),
     )
-    outcome = await engine.run()
-    # auto_status=true should have overridden the FAIL to SUCCESS
-    assert engine.node_outcomes["auto_node"].status == StageStatus.SUCCESS
-    assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
+    await engine.run()
+    # auto_status must NOT override an explicit FAIL — the failure must be preserved
+    assert engine.node_outcomes["auto_node"].status == StageStatus.FAIL
 
 
 @pytest.mark.asyncio

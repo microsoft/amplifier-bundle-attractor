@@ -584,16 +584,20 @@ class PipelineEngine:
                 )
                 return cancelled_outcome
 
-            # L-9: auto_status — override non-success to SUCCESS when enabled
-            if current_node.auto_status is True and not outcome.is_success:
+            # L-9: auto_status — synthesize SUCCESS only when the handler writes
+            # no status (SKIPPED).  Spec §2.6 / Appendix C: "auto-generates a
+            # SUCCESS outcome" only applies when *no* status was written.
+            # An explicit FAIL or RETRY must pass through unchanged (fail-loud).
+            # Accept both bare true and the quoted string "true" (DOT parser
+            # returns "true" for quoted attribute values).
+            if current_node.auto_status in (True, "true") and outcome.status == StageStatus.SKIPPED:
                 logger.debug(
-                    "Node '%s' has auto_status=true; overriding %s to SUCCESS",
+                    "Node '%s' has auto_status=true; promoting SKIPPED to SUCCESS",
                     current_node.id,
-                    outcome.status.value,
                 )
                 outcome = Outcome(
                     status=StageStatus.SUCCESS,
-                    notes=f"auto_status override (was {outcome.status.value})",
+                    notes="auto_status override (was skipped)",
                     context_updates=outcome.context_updates,
                     preferred_label=outcome.preferred_label,
                     suggested_next_ids=outcome.suggested_next_ids,
@@ -1037,7 +1041,7 @@ class PipelineEngine:
             node = self.graph.nodes.get(node_id)
             if node is None:
                 continue
-            if node.attrs.get("goal_gate") is True:
+            if node.attrs.get("goal_gate") in (True, "true"):
                 if outcome.is_success:
                     satisfied.append(node_id)
                 else:

@@ -290,7 +290,7 @@ def _check_reachability(graph: Graph, diags: list[Diagnostic]) -> None:
 def _check_goal_gate_has_retry(graph: Graph, diags: list[Diagnostic]) -> None:
     """LINT: goal_gate_has_retry — goal gates should have retry targets."""
     for node in graph.nodes.values():
-        if node.attrs.get("goal_gate") is True:
+        if node.attrs.get("goal_gate") in (True, "true"):
             has_retry = bool(
                 node.attrs.get("retry_target")
                 or node.attrs.get("fallback_retry_target")

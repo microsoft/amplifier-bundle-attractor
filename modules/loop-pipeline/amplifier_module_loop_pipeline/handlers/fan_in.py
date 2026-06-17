@@ -123,6 +123,8 @@ class FanInHandler:
         # Record winner in context
         context.set("parallel.fan_in.best_id", best_id)
         context.set("parallel.fan_in.best_status", best_status)
+        # Spec §4.8: canonical key is best_outcome; keep best_status for compat
+        context.set("parallel.fan_in.best_outcome", best_status)
 
         # If best candidate failed, fan-in fails
         if best_status == "fail":
@@ -138,6 +140,8 @@ class FanInHandler:
             context_updates={
                 "parallel.fan_in.best_id": best_id,
                 "parallel.fan_in.best_status": best_status,
+                # Spec §4.8: canonical key is best_outcome; keep best_status for compat
+                "parallel.fan_in.best_outcome": best_status,
             },
         )
 

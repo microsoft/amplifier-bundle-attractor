@@ -27,15 +27,14 @@ def evaluate_condition(
     if not condition or not condition.strip():
         return True
 
-    # Split on '&&' first, then ',' within each piece.
-    # Both separators carry AND semantics (all clauses must pass).
-    # Matches the Rust reference grammar: Separator ::= '&&' | ','
+    # Split on '&&' — the ONLY conjunction operator (spec §10, §10.7).
+    # Comma is NOT an AND separator; a value containing a comma is compared
+    # literally as a single clause (e.g. context.x=a,b matches the value "a,b").
     raw_clauses: list[str] = []
     for piece in condition.split("&&"):
-        for sub in piece.split(","):
-            sub = sub.strip()
-            if sub:
-                raw_clauses.append(sub)
+        piece = piece.strip()
+        if piece:
+            raw_clauses.append(piece)
 
     for clause in raw_clauses:
         if not _evaluate_clause(clause, outcome, context):

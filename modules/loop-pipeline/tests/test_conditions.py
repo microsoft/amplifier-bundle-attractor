@@ -276,85 +276,29 @@ def test_outcome_resolves_status_fail_when_no_preferred_label():
     assert evaluate_condition("outcome=fail", outcome, ctx) is True
 
 
-# --- comma as clause separator (design drift from Rust reference, DOT-BUG-001) ---
+# --- spec §10.7 regression: && is the only AND separator ---
 
 
-def test_comma_separated_both_pass():
-    """Comma is a valid AND separator — matches Rust condition.rs grammar.
-
-    Real-world case: PickNextTask edge condition in dotpowers.dot
-      context.tool.output!=all_complete,context.tool.output!=no_tasks_found
-    """
+def test_ampersand_and_both_clauses_must_pass():
+    """Spec §10.7: '&&' is the ONLY AND separator — both clauses must pass (B10)."""
     outcome = Outcome(status=StageStatus.SUCCESS)
     ctx = PipelineContext()
-    ctx.set("tool.output", "next_task-task-002")
-    assert (
-        evaluate_condition(
-            "context.tool.output!=all_complete,context.tool.output!=no_tasks_found",
-            outcome,
-            ctx,
-        )
-        is True
-    )
+    ctx.set("state", "ready")
+    # Both clauses pass → True
+    assert evaluate_condition("outcome=success && context.state=ready", outcome, ctx) is True
+    # Second clause fails → False
+    ctx.set("state", "busy")
+    assert evaluate_condition("outcome=success && context.state=ready", outcome, ctx) is False
 
 
-def test_comma_separated_first_clause_fails():
-    """First clause fails — whole condition must be False (AND semantics)."""
+def test_comma_in_value_is_literal_not_and_separator():
+    """Spec §10.7: comma is NOT an AND separator — a value containing a comma
+    is treated as ONE literal clause, not split into two clauses (B10)."""
     outcome = Outcome(status=StageStatus.SUCCESS)
     ctx = PipelineContext()
-    ctx.set("tool.output", "all_complete")
-    assert (
-        evaluate_condition(
-            "context.tool.output!=all_complete,context.tool.output!=no_tasks_found",
-            outcome,
-            ctx,
-        )
-        is False
-    )
-
-
-def test_comma_separated_second_clause_fails():
-    """Second clause fails — whole condition must be False.
-
-    This is the specific failure mode of the original bug: before the fix,
-    the entire condition was treated as ONE clause with a garbage comparison
-    value, which never matched any real output, so the condition was always
-    TRUE — causing ImplementTask to fire unconditionally.
-    """
-    outcome = Outcome(status=StageStatus.SUCCESS)
-    ctx = PipelineContext()
-    ctx.set("tool.output", "no_tasks_found")
-    assert (
-        evaluate_condition(
-            "context.tool.output!=all_complete,context.tool.output!=no_tasks_found",
-            outcome,
-            ctx,
-        )
-        is False  # was True before fix — the bug
-    )
-
-
-def test_mixed_comma_and_ampersand():
-    """Comma and && separators can be mixed; all clauses must pass."""
-    outcome = Outcome(status=StageStatus.SUCCESS)
-    ctx = PipelineContext()
-    ctx.set("a", "1")
-    ctx.set("b", "2")
-    # Mixed separators: comma between first two, && before third
-    assert (
-        evaluate_condition(
-            "outcome=success,context.a=1 && context.b=2",
-            outcome,
-            ctx,
-        )
-        is True
-    )
-    ctx.set("b", "99")
-    assert (
-        evaluate_condition(
-            "outcome=success,context.a=1 && context.b=2",
-            outcome,
-            ctx,
-        )
-        is False
-    )
+    ctx.set("tag", "a,b")
+    # Single clause: key=context.tag, value=a,b — literal match
+    assert evaluate_condition("context.tag=a,b", outcome, ctx) is True
+    # Different value → no match
+    ctx.set("tag", "a,c")
+    assert evaluate_condition("context.tag=a,b", outcome, ctx) is False

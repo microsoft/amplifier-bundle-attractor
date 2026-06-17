@@ -314,3 +314,34 @@ unquoted values are equivalent).
 previously terminated the run — moving observable behavior toward the author's stated intent.
 No spec-conformant `.dot` file can depend on the prior "single timeout kills the graph despite
 `allow_partial`" behavior, since that was the defect this corrects.
+
+---
+
+## 15. `max_pipeline_duration` Graph-Level Wall-Clock Timeout
+
+**What:** A graph-level attribute `max_pipeline_duration` (integer, milliseconds) that is NOT
+defined in the upstream attractor nlspec. When set, the engine checks elapsed wall-clock time
+before each step; if the elapsed time exceeds `max_pipeline_duration`, the pipeline terminates
+immediately with `status=FAIL` and `failure_reason="max_pipeline_duration_exceeded"`.
+
+**Why:** The upstream spec's step-count ceiling (`max_steps`) guards against infinite loops but
+does not bound wall-clock time. Long-running nodes (network calls, LLM invocations) can stall
+a pipeline for an unbounded duration even within the step ceiling. `max_pipeline_duration`
+provides an independent wall-clock safety bound that is orthogonal to step count and useful
+for production deployments with SLA requirements.
+
+**Behavior:**
+- Checked before each step in the main execution loop (Step 0 in the engine's step dispatch).
+- Measured via `time.monotonic()` (elapsed milliseconds since pipeline start).
+- Terminates the pipeline without executing the current step if the limit is exceeded.
+- The termination outcome carries `failure_reason="max_pipeline_duration_exceeded"` and a
+  human-readable `notes` message showing the configured limit.
+
+**Implementation locations:**
+- `engine.py:280–291` — enforcement logic (Step 0 duration check)
+- `graph.py:301` — `max_pipeline_duration: int | None` field on the `Graph` model (milliseconds)
+- `dot_parser.py:444` — promotes the DOT graph-block attribute to `graph_fields`, coercing to `int`
+
+**Compatibility:** Additive. Pipelines that do not set `max_pipeline_duration` are unaffected
+(the attribute defaults to `None` and the check is skipped). The attribute name does not collide
+with any upstream spec-defined graph attribute.

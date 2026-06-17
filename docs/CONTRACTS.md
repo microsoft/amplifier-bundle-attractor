@@ -52,9 +52,10 @@ spec.
 
 **Behavior:** When a node produces `outcome.status=FAIL`, unconditional outgoing edges
 are NOT followed. The engine checks for explicit failure routing: a
-`condition="outcome=fail"` edge, a declared `retry_target` / `fallback_retry_target`, or
+`condition="outcome=fail"` edge, a declared **node-level** `retry_target` / `fallback_retry_target`, or
 a downstream node with `runs_on=always` or `runs_on=failure`. If none apply, the pipeline
-terminates with the FAIL outcome.
+terminates with the FAIL outcome. (Graph-level `retry_target` is goal-gate-exit only, spec §3.4 —
+it is not consulted on per-node failure.)
 
 **Implication for consumers:** Failures are loud by default. Downstream nodes that
 depend on missing inputs don't silently receive nothing — they don't run at all. Pipeline

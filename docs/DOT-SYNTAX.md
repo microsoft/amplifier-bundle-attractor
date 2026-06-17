@@ -63,7 +63,7 @@ digraph {
 | `goal` | string | Pipeline objective. Expands `$goal` in prompts. |
 | `default_fidelity` | string | Default fidelity for all nodes |
 | `default_max_retry` | int | Default retry count for all nodes |
-| `retry_target` | string | Global fallback retry target |
+| `retry_target` | string | Retry target when exit has unsatisfied goal gates (spec §3.4); not consulted on per-node failure |
 | `max_pipeline_duration` | string | Timeout for entire pipeline (e.g. "10m") |
 | `model_stylesheet` | string | CSS-like rules for model/provider config |
 | `params` | string | Comma-separated list of `$param` names (documentation) |

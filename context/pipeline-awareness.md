@@ -98,6 +98,17 @@ When `run_pipeline` returns, the result contains:
 Read the result and tell the user what happened. Do NOT call any follow-up tools
 related to the pipeline — it is already complete.
 
+## Authoring or editing a pipeline? Consult attractor-expert FIRST
+
+Before handing any `.dot` authoring/editing — or any "build an LLM workflow" task —
+to a generic builder (modular-builder, a self-spawn, or inline Python), delegate to
+`attractor:attractor-expert` for BOTH the design and the authoring. Generic builders
+carry **no** attractor engine runtime semantics and will re-discover the foot-guns the
+hard way (routing on `tool.output` vs `last_line`, missing FAIL edges, prose-vs-JSON
+verdicts, `tool_command` CWD, folder checkpoint reuse). The engine's actual runtime
+behavior — including where it diverges from the spec prose — is in
+`@attractor:context/engine-semantics.md`.
+
 ## Deep Questions
 
 For deep pipeline design questions, DOT syntax details, debugging pipeline

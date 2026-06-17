@@ -2,7 +2,7 @@ digraph ConditionalRetry {
     graph [goal="Fix the bug"]
 
     start [shape=Mdiamond]
-    fix [shape=box, prompt="Fix the bug: $goal"]
+    fix [shape=box, llm_model="test-model", prompt="Fix the bug: $goal"]
     done [shape=Msquare]
 
     start -> fix

@@ -3,11 +3,11 @@ digraph ParallelTest {
 
     start [shape=Mdiamond]
     parallel [shape=component]
-    bugs [shape=box, prompt="Check for bugs"]
-    style_check [shape=box, prompt="Check code style"]
-    security [shape=box, prompt="Check security issues"]
+    bugs [shape=box, llm_model="test-model", prompt="Check for bugs"]
+    style_check [shape=box, llm_model="test-model", prompt="Check code style"]
+    security [shape=box, llm_model="test-model", prompt="Check security issues"]
     collect [shape=tripleoctagon]
-    summarize [shape=box, prompt="Summarize findings"]
+    summarize [shape=box, llm_model="test-model", prompt="Summarize findings"]
     done [shape=Msquare]
 
     start -> parallel

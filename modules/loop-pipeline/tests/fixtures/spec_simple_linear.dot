@@ -5,8 +5,8 @@ digraph Simple {
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
 
-    run_tests [label="Run Tests", prompt="Run the test suite and report results"]
-    report    [label="Report", prompt="Summarize the test results"]
+    run_tests [label="Run Tests", llm_model="test-model", prompt="Run the test suite and report results"]
+    report    [label="Report", llm_model="test-model", prompt="Summarize the test results"]
 
     start -> run_tests -> report -> exit
 }

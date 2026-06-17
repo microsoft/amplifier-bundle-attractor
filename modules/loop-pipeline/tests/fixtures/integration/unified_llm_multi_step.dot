@@ -2,9 +2,9 @@ digraph MultiStep {
     graph [goal="Build a calculator"]
 
     start [shape=Mdiamond]
-    plan [shape=box, prompt="Create a plan for: $goal"]
-    implement [shape=box, prompt="Implement based on the plan"]
-    review [shape=box, prompt="Review the implementation"]
+    plan [shape=box, llm_model="test-model", prompt="Create a plan for: $goal"]
+    implement [shape=box, llm_model="test-model", prompt="Implement based on the plan"]
+    review [shape=box, llm_model="test-model", prompt="Review the implementation"]
     done [shape=Msquare]
 
     start -> plan -> implement -> review -> done

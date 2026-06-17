@@ -2,7 +2,7 @@ digraph UnifiedSimple {
     graph [goal="Write hello world"]
 
     start [shape=Mdiamond]
-    implement [shape=box, prompt="Write a hello world program"]
+    implement [shape=box, llm_model="test-model", prompt="Write a hello world program"]
     done [shape=Msquare]
 
     start -> implement -> done

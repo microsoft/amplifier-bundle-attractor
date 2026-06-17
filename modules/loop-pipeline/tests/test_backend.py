@@ -373,8 +373,18 @@ async def test_backend_passes_agent_configs():
 
 
 @pytest.mark.asyncio
-async def test_backend_uses_sub_session_id_not_session_id():
-    """Session reuse passes 'sub_session_id', not 'session_id'."""
+async def test_backend_uses_parent_messages_not_sub_session_id():
+    """Full-fidelity continuity uses parent_messages, never sub_session_id.
+
+    The former _session_pool re-passed session_id as sub_session_id — a type
+    confusion (an id where a conversation belongs).  The fix (backend.py:398-406)
+    carries the accumulated node-exchange history in _thread_transcripts and
+    passes it as parent_messages to a FRESH spawn.  sub_session_id is NEVER set.
+
+    After node1 executes on thread "t", its (instruction, output) exchange is
+    appended to _thread_transcripts["t"].  When node2 runs on the same thread,
+    _get_parent_messages_for_thread returns two messages that seed the new spawn.
+    """
     coordinator = MockCoordinator(
         spawn_result={"output": "ok", "session_id": "sess-abc"},
     )
@@ -411,10 +421,18 @@ async def test_backend_uses_sub_session_id_not_session_id():
     await backend.run(node1, "First", _make_context(), incoming_edge=edge, graph=graph)
     await backend.run(node2, "Second", _make_context(), incoming_edge=edge, graph=graph)
 
-    # Must use sub_session_id (not session_id) for the CLI spawn capability
-    assert "sub_session_id" in coordinator.last_spawn_kwargs
+    # sub_session_id must NEVER appear — the old re-pass mechanism is gone
+    assert "sub_session_id" not in coordinator.last_spawn_kwargs
     assert "session_id" not in coordinator.last_spawn_kwargs
-    assert coordinator.last_spawn_kwargs["sub_session_id"] == "sess-abc"
+
+    # Instead, node1's exchange is carried as parent_messages into node2's spawn
+    assert "parent_messages" in coordinator.last_spawn_kwargs
+    messages = coordinator.last_spawn_kwargs["parent_messages"]
+    # First turn: node1 received instruction "First", output was "ok"
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "First"
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["content"] == "ok"
 
 
 # --- Outcome parsing tests ---
@@ -917,7 +935,7 @@ async def test_reasoning_effort_passed_to_tool_loop(monkeypatch):
         profiles={},
         provider=object(),  # truthy sentinel to enable Path B
     )
-    node = _make_node(attrs={"llm_provider": "test", "reasoning_effort": "low"})
+    node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model", "reasoning_effort": "low"})
     result = await backend.run(node, "task", _make_context())
 
     assert result.status == StageStatus.SUCCESS
@@ -941,7 +959,7 @@ async def test_reasoning_effort_defaults_to_none(monkeypatch):
         profiles={},
         provider=object(),  # truthy sentinel to enable Path B
     )
-    node = _make_node(attrs={"llm_provider": "test"})
+    node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model"})
     result = await backend.run(node, "task", _make_context())
 
     assert result.status == StageStatus.SUCCESS

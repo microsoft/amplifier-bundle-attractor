@@ -898,13 +898,11 @@ class TestSemportPipeline:
         assert graph.nodes["Start"].shape == "circle"
         assert graph.nodes["Exit"].shape == "doublecircle"
 
-        # node_type goes to attrs (parser promotes "type", not "node_type")
-        assert graph.nodes["Start"].attrs.get("node_type") == "start"
-        assert graph.nodes["Exit"].attrs.get("node_type") == "exit"
-        assert (
-            graph.nodes["FetchUpstreamSonnet"].attrs.get("node_type") == "stack.steer"
-        )
-        assert graph.nodes["FinalizePlanGPT"].attrs.get("node_type") == "stack.observe"
+        # Parser promotes DOT "type" attribute to node.type directly
+        assert graph.nodes["Start"].type == "start"
+        assert graph.nodes["Exit"].type == "exit"
+        assert graph.nodes["FetchUpstreamSonnet"].type == "stack.steer"
+        assert graph.nodes["FinalizePlanGPT"].type == "stack.observe"
 
         # Graph-level attributes
         assert graph.default_fidelity == "truncate"
@@ -955,8 +953,8 @@ class TestSemportPipeline:
                 _routing_response(),
                 # 4. ImplementPort — port implemented
                 _routing_response(),
-                # 5. TestValidate — tests pass
-                _routing_response(preferred_label="pass"),
+                # 5. TestValidate — tests pass (edge condition: outcome=yes)
+                _routing_response(preferred_label="yes"),
                 # 6. FinalizeAndUpdateLedger — ledger updated, loop back
                 _routing_response(),
                 # 7. FetchUpstreamSonnet (2nd) — no more commits
@@ -1140,22 +1138,25 @@ class TestConsensusPipeline:
     async def test_consensus_has_dod_path(self, tmp_path):
         """has_dod: CheckDoD routes to Plan nodes, skipping DoD definition.
 
-        Start -> CheckDoD(->PlanGemini) -> PlanGemini -> Debate
-        -> Implement -> ReviewGPT -> ReviewConsensus(->Exit) -> Exit
+        Start -> CheckDoD(has_dod) -> PlanGemini+PlanGPT+PlanOpus (parallel)
+        -> DebateConsolidate -> Implement -> ReviewGPT (lexical first)
+        -> ReviewConsensus(yes) -> Exit
 
-        CheckDoD gets codergen handler (type="stack.steer" not in
-        handler registry). suggested_next_ids controls routing since
-        edges have conditions but no labels.
+        preferred_label="has_dod" matches condition="outcome=has_dod" on all
+        three Plan edges, triggering parallel fan-out.
+        ReviewConsensus uses preferred_label="yes" to match condition="outcome=yes".
         """
         hooks = RecordingHooks()
         client = MockUnifiedClient(
             [
-                _routing_response(suggested_next_ids=["PlanGemini"]),  # CheckDoD
-                _routing_response(),  # PlanGemini
+                _routing_response(preferred_label="has_dod"),  # CheckDoD -> 3 Plan nodes parallel
+                _routing_response(),  # PlanGemini (parallel)
+                _routing_response(),  # PlanGPT (parallel)
+                _routing_response(),  # PlanOpus (parallel)
                 _routing_response(),  # DebateConsolidate
-                _routing_response(),  # Implement
-                _routing_response(),  # ReviewGPT (lexical first)
-                _routing_response(suggested_next_ids=["Exit"]),  # ReviewConsensus
+                _routing_response(),  # Implement -> ReviewGPT (lexical: ReviewGPT < ReviewGemini)
+                _routing_response(),  # ReviewGPT
+                _routing_response(preferred_label="yes"),  # ReviewConsensus -> Exit
             ]
         )
         engine = _make_production_engine(self._dot(), client, hooks, str(tmp_path))
@@ -1173,23 +1174,30 @@ class TestConsensusPipeline:
 
     @pytest.mark.asyncio
     async def test_consensus_needs_dod_path(self, tmp_path):
-        """needs_dod: CheckDoD -> DefineDoD -> Consolidate -> Plan -> Exit.
+        """needs_dod: CheckDoD -> DefineDoD (parallel) -> Consolidate -> Plan -> Exit.
 
-        Start -> CheckDoD(->DefineDoD_Gemini) -> DefineDoD_Gemini
-        -> ConsolidateDoD -> PlanGPT -> Debate -> Implement -> ReviewGPT
-        -> ReviewConsensus(->Exit) -> Exit
+        Start -> CheckDoD(needs_dod) -> DefineDoD_Gemini+GPT+Opus (parallel)
+        -> ConsolidateDoD -> PlanGPT (lexical: PlanGPT < PlanGemini) -> Debate
+        -> Implement -> ReviewGPT (lexical first) -> ReviewConsensus(yes) -> Exit
+
+        preferred_label="needs_dod" matches condition="outcome=needs_dod" on all
+        three DoD-definition edges, triggering parallel fan-out.
+        ConsolidateDoD has three unconditional edges to Plan nodes; engine picks
+        PlanGPT (lexically first: 'G'+'P' < 'G'+'e' in ASCII).
         """
         hooks = RecordingHooks()
         client = MockUnifiedClient(
             [
-                _routing_response(suggested_next_ids=["DefineDoD_Gemini"]),  # CheckDoD
-                _routing_response(),  # DefineDoD_Gemini
-                _routing_response(),  # ConsolidateDoD
-                _routing_response(),  # PlanGPT (lexical first)
+                _routing_response(preferred_label="needs_dod"),  # CheckDoD -> 3 DoD nodes parallel
+                _routing_response(),  # DefineDoD_Gemini (parallel)
+                _routing_response(),  # DefineDoD_GPT (parallel)
+                _routing_response(),  # DefineDoD_Opus (parallel)
+                _routing_response(),  # ConsolidateDoD -> PlanGPT (lexical first)
+                _routing_response(),  # PlanGPT -> DebateConsolidate
                 _routing_response(),  # DebateConsolidate
-                _routing_response(),  # Implement
+                _routing_response(),  # Implement -> ReviewGPT (lexical first)
                 _routing_response(),  # ReviewGPT
-                _routing_response(suggested_next_ids=["Exit"]),  # ReviewConsensus
+                _routing_response(preferred_label="yes"),  # ReviewConsensus -> Exit
             ]
         )
         engine = _make_production_engine(self._dot(), client, hooks, str(tmp_path))
@@ -1206,18 +1214,22 @@ class TestConsensusPipeline:
 
     @pytest.mark.asyncio
     async def test_consensus_review_pass(self, tmp_path):
-        """ReviewConsensus with yes -> exits pipeline successfully."""
+        """ReviewConsensus with yes -> exits pipeline successfully.
+
+        has_dod path: CheckDoD -> Plans (parallel) -> Debate -> Implement
+        -> ReviewGPT -> ReviewConsensus(yes) -> Exit
+        """
         hooks = RecordingHooks()
         client = MockUnifiedClient(
             [
-                _routing_response(suggested_next_ids=["PlanGemini"]),  # CheckDoD
-                _routing_response(),  # PlanGemini
+                _routing_response(preferred_label="has_dod"),  # CheckDoD -> 3 Plans parallel
+                _routing_response(),  # PlanGemini (parallel)
+                _routing_response(),  # PlanGPT (parallel)
+                _routing_response(),  # PlanOpus (parallel)
                 _routing_response(),  # DebateConsolidate
-                _routing_response(),  # Implement
+                _routing_response(),  # Implement -> ReviewGPT (lexical first)
                 _routing_response(),  # ReviewGPT
-                _routing_response(
-                    suggested_next_ids=["Exit"]
-                ),  # ReviewConsensus -> Exit
+                _routing_response(preferred_label="yes"),  # ReviewConsensus -> Exit
             ]
         )
         engine = _make_production_engine(self._dot(), client, hooks, str(tmp_path))
@@ -1234,31 +1246,37 @@ class TestConsensusPipeline:
     async def test_consensus_review_retry(self, tmp_path):
         """ReviewConsensus retry -> Postmortem -> Plan* -> pass on 2nd try.
 
-        First pass: ... -> ReviewConsensus(->Postmortem) -> Postmortem
-        -> PlanGPT (lexical first) -> Debate -> Implement -> ReviewGPT
-        Second pass: -> ReviewConsensus(->Exit) -> Exit
+        First pass:
+          CheckDoD(has_dod) -> Plans(parallel) -> Debate -> Implement
+          -> ReviewGPT -> ReviewConsensus(retry) -> Postmortem
+        Second pass:
+          Postmortem -> PlanGPT (lexical first via unconditional loop_restart)
+          -> Debate -> Implement -> ReviewGPT -> ReviewConsensus(yes) -> Exit
+
+        preferred_label="retry" matches condition="outcome=retry" on the
+        ReviewConsensus -> Postmortem edge.
+        Postmortem has three unconditional loop_restart edges to Plan nodes;
+        engine picks PlanGPT (lexically first).
         """
         hooks = RecordingHooks()
         client = MockUnifiedClient(
             [
                 # --- First pass ---
-                _routing_response(suggested_next_ids=["PlanGemini"]),  # CheckDoD
-                _routing_response(),  # PlanGemini
+                _routing_response(preferred_label="has_dod"),  # CheckDoD -> 3 Plans parallel
+                _routing_response(),  # PlanGemini (parallel)
+                _routing_response(),  # PlanGPT (parallel)
+                _routing_response(),  # PlanOpus (parallel)
                 _routing_response(),  # DebateConsolidate
-                _routing_response(),  # Implement
+                _routing_response(),  # Implement -> ReviewGPT (lexical first)
                 _routing_response(),  # ReviewGPT
-                _routing_response(
-                    suggested_next_ids=["Postmortem"]
-                ),  # ReviewConsensus -> retry
-                _routing_response(),  # Postmortem
-                # --- Second pass (Postmortem -> PlanGPT via lexical) ---
-                _routing_response(),  # PlanGPT
+                _routing_response(preferred_label="retry"),  # ReviewConsensus -> Postmortem
+                _routing_response(),  # Postmortem -> PlanGPT (lexical first, loop_restart)
+                # --- Second pass ---
+                _routing_response(),  # PlanGPT -> DebateConsolidate
                 _routing_response(),  # DebateConsolidate
-                _routing_response(),  # Implement
+                _routing_response(),  # Implement -> ReviewGPT (lexical first)
                 _routing_response(),  # ReviewGPT
-                _routing_response(
-                    suggested_next_ids=["Exit"]
-                ),  # ReviewConsensus -> pass
+                _routing_response(preferred_label="yes"),  # ReviewConsensus -> Exit
             ]
         )
         engine = _make_production_engine(self._dot(), client, hooks, str(tmp_path))
@@ -1276,20 +1294,21 @@ class TestConsensusPipeline:
     async def test_consensus_hook_events_include_all_three_providers(self, tmp_path):
         """Hook events show anthropic, openai, AND gemini."""
         hooks = RecordingHooks()
-        # has_dod path through PlanGemini (gemini) + ReviewGPT (openai)
-        # + CheckDoD (anthropic)
+        # has_dod parallel path:
+        #   CheckDoD (anthropic) -> PlanGemini (gemini) + PlanGPT (openai) + PlanOpus (anthropic)
+        #   -> DebateConsolidate (anthropic) -> Implement (anthropic)
+        #   -> ReviewGPT (openai) -> ReviewConsensus (anthropic)
+        # All three providers covered: anthropic, openai, gemini.
         client = MockUnifiedClient(
             [
-                _routing_response(
-                    suggested_next_ids=["PlanGemini"]
-                ),  # CheckDoD (anthropic)
-                _routing_response(),  # PlanGemini (gemini)
+                _routing_response(preferred_label="has_dod"),  # CheckDoD (anthropic)
+                _routing_response(),  # PlanGemini (gemini, parallel)
+                _routing_response(),  # PlanGPT (openai, parallel)
+                _routing_response(),  # PlanOpus (anthropic, parallel)
                 _routing_response(),  # DebateConsolidate (anthropic)
-                _routing_response(),  # Implement (anthropic)
+                _routing_response(),  # Implement (anthropic) -> ReviewGPT (lexical first)
                 _routing_response(),  # ReviewGPT (openai)
-                _routing_response(
-                    suggested_next_ids=["Exit"]
-                ),  # ReviewConsensus (anthropic)
+                _routing_response(preferred_label="yes"),  # ReviewConsensus (anthropic)
             ]
         )
         engine = _make_production_engine(self._dot(), client, hooks, str(tmp_path))

@@ -204,7 +204,7 @@ async def test_tool_loop_passes_reasoning_effort_all_values(
         profiles={},
         provider=object(),  # truthy sentinel enables Path B
     )
-    node = _make_node(attrs={"llm_provider": "test", "reasoning_effort": effort})
+    node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model", "reasoning_effort": effort})
     result = await backend.run(node, "task", _make_context())
 
     assert result.status.value == "success"
@@ -230,7 +230,7 @@ async def test_tool_loop_reasoning_effort_defaults_to_none(
         profiles={},
         provider=object(),
     )
-    node = _make_node(attrs={"llm_provider": "test"})
+    node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model"})
     result = await backend.run(node, "task", _make_context())
 
     assert result.status.value == "success"
@@ -353,7 +353,7 @@ async def test_tool_loop_passes_max_agent_turns(
         profiles={},
         provider=object(),
     )
-    node = _make_node(attrs={"llm_provider": "test", "max_agent_turns": "8"})
+    node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model", "max_agent_turns": "8"})
     result = await backend.run(node, "task", _make_context())
 
     assert result.status.value == "success"
@@ -379,7 +379,7 @@ async def test_tool_loop_max_agent_turns_defaults_to_constant(
         profiles={},
         provider=object(),
     )
-    node = _make_node(attrs={"llm_provider": "test"})
+    node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model"})
     result = await backend.run(node, "task", _make_context())
 
     assert result.status.value == "success"

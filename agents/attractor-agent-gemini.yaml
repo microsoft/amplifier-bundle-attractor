@@ -45,5 +45,9 @@ tools:
     source: git+https://github.com/microsoft/amplifier-module-tool-web@main
 
 context:
+  # Layer-1 base prompt (nlspec §6.1: "Provider-specific base instructions from ProviderProfile").
+  # foundation registers a system-prompt factory on the context module when this include is set;
+  # loop-agent's AgentOrchestrator.execute() resolves the factory before creating the session
+  # so the file content becomes session_config.system_prompt (Layer 1).
   include:
     - context/system-gemini.md

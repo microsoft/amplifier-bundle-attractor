@@ -509,8 +509,20 @@ class AgentSession:
         # Resolve canonical provider ID for doc filtering
         provider_id = self._resolve_provider_id()
 
-        # Layer 1: Base prompt
-        base_prompt = self._config.system_prompt or "You are a coding agent."
+        # Layer 1: Base prompt — resolved by AgentOrchestrator.execute() from the bundle's
+        # context._system_prompt_factory (which delivers context.include files per nlspec §6.1:
+        # "Provider-specific base instructions (from ProviderProfile)").
+        # Falls back to system_prompt config; falls through to a stub with a warning when
+        # neither the factory nor the config provides content.
+        base_prompt = self._config.system_prompt
+        if not base_prompt:
+            logger.warning(
+                "Layer-1 base prompt is empty: no context._system_prompt_factory "
+                "contribution and no system_prompt in orchestrator config. "
+                "Falling back to stub. Set context.include in the bundle profile "
+                "or system_prompt in orchestrator config."
+            )
+            base_prompt = "You are a coding agent."
 
         # Layer 2: Environment context
         working_dir = self._config.working_dir or os.getcwd()

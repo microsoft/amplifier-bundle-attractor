@@ -309,3 +309,151 @@ async def test_tool_descriptions_in_system_prompt():
     system_content = request.messages[0].content
     assert "read_file" in system_content
     assert "Reads a file from disk" in system_content
+
+
+# ---------------------------------------------------------------------------
+# Layer-1 fix: context._system_prompt_factory delivers provider base prompt
+# (nlspec §6.1 — "Provider-specific base instructions (from ProviderProfile)")
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_context_factory_provides_layer1_base_prompt():
+    """When context has _system_prompt_factory, its result is used as Layer-1.
+
+    Spec §6.1: Layer 1 = "Provider-specific base instructions (from ProviderProfile)".
+    The factory is registered by foundation when context.include is declared in the
+    bundle profile. loop-agent must resolve it in execute() since it builds its own
+    message list and never calls context.get_messages_for_request().
+    """
+    FACTORY_SENTINEL = "BASE-PROMPT-FROM-FACTORY-X7K9Q2"
+
+    async def mock_factory():
+        return f"# Agent Base\n\n{FACTORY_SENTINEL}\n\nYou are a coding agent."
+
+    context = MagicMock()
+    context._system_prompt_factory = mock_factory  # real async function
+
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={"max_tool_rounds_per_input": 1},  # no system_prompt — factory must provide it
+    )
+    await orch.execute("hello", context, {"anthropic": provider}, {}, hooks)
+
+    request = provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+    assert FACTORY_SENTINEL in system_content, (
+        f"Factory sentinel not found in system prompt. Got: {system_content[:200]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_context_factory_wins_over_config_system_prompt():
+    """context._system_prompt_factory is primary; system_prompt config is fallback.
+
+    Spec §6.1: the context module delivers "Provider-specific base instructions
+    (from ProviderProfile)". This takes precedence over an explicit system_prompt
+    in orchestrator config. No double-injection: the factory already incorporates
+    the bundle instruction.
+    """
+    FACTORY_SENTINEL = "FACTORY-WINS-SENTINEL-M3P7"
+    CONFIG_SENTINEL = "CONFIG-SYSTEM-PROMPT-SHOULD-NOT-WIN"
+
+    async def mock_factory():
+        return f"# From Factory\n\n{FACTORY_SENTINEL}"
+
+    context = MagicMock()
+    context._system_prompt_factory = mock_factory
+
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={
+            "system_prompt": CONFIG_SENTINEL,  # explicit config present
+            "max_tool_rounds_per_input": 1,
+        },
+    )
+    await orch.execute("hello", context, {"anthropic": provider}, {}, hooks)
+
+    request = provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+    # Factory result is the canonical Layer-1; config system_prompt is a fallback
+    assert FACTORY_SENTINEL in system_content, (
+        f"Factory sentinel not found. Got: {system_content[:200]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_context_factory_error_falls_back_to_config():
+    """When factory raises, Layer-1 falls back to system_prompt config."""
+
+    async def failing_factory():
+        raise RuntimeError("factory failure")
+
+    context = MagicMock()
+    context._system_prompt_factory = failing_factory
+
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={"system_prompt": "Fallback prompt.", "max_tool_rounds_per_input": 1},
+    )
+    await orch.execute("hello", context, {"anthropic": provider}, {}, hooks)
+
+    request = provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+    assert "Fallback prompt." in system_content
+
+
+@pytest.mark.asyncio
+async def test_non_coroutine_factory_not_called():
+    """A non-async _system_prompt_factory attribute is ignored (no call).
+
+    Guards against MagicMock auto-attributes in tests — MagicMock creates a regular
+    (non-coroutine) callable on any attribute access, and calling it as an async
+    function would raise. inspect.iscoroutinefunction ensures we only call real factories.
+    """
+    factory_called = []
+
+    def sync_factory():  # NOT async — should be ignored
+        factory_called.append(True)
+        return "should not be used"
+
+    context = MagicMock()
+    context._system_prompt_factory = sync_factory
+
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={"system_prompt": "Config prompt.", "max_tool_rounds_per_input": 1},
+    )
+    await orch.execute("hello", context, {"anthropic": provider}, {}, hooks)
+
+    # Sync factory must NOT have been called
+    assert not factory_called, "sync factory should not be called"
+
+    # Config system_prompt should be used instead
+    request = provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+    assert "Config prompt." in system_content

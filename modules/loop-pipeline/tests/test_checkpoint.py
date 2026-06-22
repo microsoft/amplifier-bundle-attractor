@@ -24,7 +24,7 @@ from amplifier_module_loop_pipeline.dot_parser import parse_dot
 from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
-from amplifier_module_loop_pipeline.outcome import StageStatus
+from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
 from amplifier_module_loop_pipeline.run_identity import RunIdentity
 from amplifier_module_loop_pipeline.validation import validate_or_raise
 from amplifier_module_loop_pipeline.handlers.context import HandlerContext
@@ -191,7 +191,14 @@ class MockBackend:
         self._return_value = return_value
         self.calls: list[str] = []
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
+    async def run(
+        self,
+        node: Node,
+        prompt: str,
+        context: PipelineContext,
+        incoming_edge=None,
+        graph=None,
+    ) -> str:
         self.calls.append(node.id)
         return self._return_value
 
@@ -664,3 +671,144 @@ class TestRunIdentityHardFail:
             await engine.run()
 
         assert str(cp_path) in str(exc_info.value)
+
+
+# --- Resume: dynamic router re-execution ---
+
+_DYNAMIC_ROUTER_DOT = """
+digraph {
+    start [shape=Mdiamond]
+    router [shape=box, prompt="Decide route"]
+    branch_a [shape=box, prompt="Branch A"]
+    branch_b [shape=box, prompt="Branch B"]
+    exit [shape=Msquare]
+    start -> router
+    router -> branch_a [condition="preferred_label=route_a"]
+    router -> branch_b [condition="preferred_label=route_b"]
+    branch_a -> exit
+    branch_b -> exit
+}
+"""
+
+
+class _RouterBackend:
+    """Backend that emits a fixed preferred_label for the 'router' node."""
+
+    def __init__(self, label: str = "route_a") -> None:
+        self.calls: list[str] = []
+        self._label = label
+
+    async def run(
+        self,
+        node: Node,
+        prompt: str,
+        context: PipelineContext,
+        incoming_edge=None,
+        graph=None,
+    ) -> Outcome:
+        self.calls.append(node.id)
+        if node.id == "router":
+            return Outcome(status=StageStatus.SUCCESS, preferred_label=self._label)
+        return Outcome(status=StageStatus.SUCCESS)
+
+
+class TestResumeDynamicRouter:
+    """Resume fix: dynamic routers with stale checkpoint outcomes are re-executed.
+
+    Spec coverage: resume fast-forward re-execution (engine.py Step 1b fix).
+    """
+
+    @pytest.mark.asyncio
+    async def test_resume_reexecutes_dynamic_router(self, tmp_path):
+        """A completed router node whose saved outcome has no preferred_label
+        (stale checkpoint) is stripped from completed state and re-executed once,
+        then routes correctly to the branch matching the live preferred_label."""
+        graph = parse_dot(_DYNAMIC_ROUTER_DOT)
+        identity = RunIdentity.from_graph(graph)
+
+        # Checkpoint: router is done, but preferred_label was NOT persisted —
+        # select_edge at Step 1b cannot reproduce the routing signal.
+        cp = Checkpoint(
+            current_node="router",
+            completed_nodes={"start": "success", "router": "success"},
+            context_snapshot={},
+            node_outcomes={
+                "start": {
+                    "status": "success",
+                    "notes": None,
+                    "failure_reason": None,
+                    "preferred_label": None,
+                },
+                "router": {
+                    "status": "success",
+                    "notes": None,
+                    "failure_reason": None,
+                    "preferred_label": None,  # stale — routing label lost
+                },
+            },
+            timestamp="2025-01-01T00:00:00Z",
+            identity=identity,
+        )
+        save_checkpoint(cp, str(tmp_path / "checkpoint.json"))
+
+        backend = _RouterBackend(label="route_a")
+        engine = _make_engine(
+            _DYNAMIC_ROUTER_DOT, backend=backend, logs_root=str(tmp_path)
+        )
+        outcome = await engine.run()
+
+        # Pipeline must succeed — router re-executed and emitted a valid routing label.
+        assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
+        # Router was re-executed exactly once (not skipped, not run multiple times).
+        assert backend.calls.count("router") == 1
+        # Correct branch taken via the re-emitted label.
+        assert "branch_a" in backend.calls
+        assert "branch_b" not in backend.calls
+
+    @pytest.mark.asyncio
+    async def test_resume_loop_guard_terminates_when_router_still_unroutable(
+        self, tmp_path
+    ):
+        """When a re-executed router still yields no matching edge, the pipeline
+        fails cleanly with a 'no_matching_edge' failure — not a max-steps overflow."""
+        graph = parse_dot(_DYNAMIC_ROUTER_DOT)
+        identity = RunIdentity.from_graph(graph)
+
+        # Same stale checkpoint: router completed with no preferred_label.
+        cp = Checkpoint(
+            current_node="router",
+            completed_nodes={"start": "success", "router": "success"},
+            context_snapshot={},
+            node_outcomes={
+                "start": {
+                    "status": "success",
+                    "notes": None,
+                    "failure_reason": None,
+                    "preferred_label": None,
+                },
+                "router": {
+                    "status": "success",
+                    "notes": None,
+                    "failure_reason": None,
+                    "preferred_label": None,  # stale
+                },
+            },
+            timestamp="2025-01-01T00:00:00Z",
+            identity=identity,
+        )
+        save_checkpoint(cp, str(tmp_path / "checkpoint.json"))
+
+        # Backend always returns a label that matches no outgoing edge.
+        backend = _RouterBackend(label="nonexistent_label")
+        engine = _make_engine(
+            _DYNAMIC_ROUTER_DOT, backend=backend, logs_root=str(tmp_path)
+        )
+        outcome = await engine.run()
+
+        # Must fail, not time out via the step-count safety bound.
+        assert outcome.status == StageStatus.FAIL
+        # Router was invoked exactly once — no infinite re-execution loop.
+        assert backend.calls.count("router") == 1
+        # Failure is 'no matching edge', not 'safety bound exceeded'.
+        assert "no matching edge" in (outcome.failure_reason or "").lower()
+        assert "exceeded" not in (outcome.failure_reason or "").lower()

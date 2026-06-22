@@ -83,6 +83,11 @@ class PipelineEngine:
         self._cancel_event = cancel_event
         self.node_outcomes: dict[str, Outcome] = {}
         self.completed_nodes: list[str] = []
+        # Guard set for the resume re-execution path: tracks nodes that were
+        # already stripped-and-re-queued once during the resume fast-forward
+        # (Step 1b).  A second no-matching-edge for the same node means it is
+        # truly unroutable — terminate rather than loop.
+        self._resume_reexecuted: set[str] = set()
         self.iteration_count: int = 0
         self._node_execution_counts: dict[
             str, int
@@ -362,7 +367,16 @@ class PipelineEngine:
                     self.context,
                     self.graph,
                 )
-                if edge is None:
+                if edge is not None:
+                    # Fast-forward: edge found from restored outcome — skip to next node.
+                    current_node = self.graph.nodes[edge.to_node]
+                    continue
+                # edge is None: the restored checkpoint outcome cannot reproduce the
+                # routing label for this node (common for dynamic routers whose label
+                # is emitted at runtime, e.g. ResumeGate emitting "fresh"/"resume").
+                if current_node.id in self._resume_reexecuted:
+                    # Second no-match for this node on resume — truly unroutable.
+                    # Preserve the original terminate behaviour.
                     fail_outcome = self.terminate_pipeline(
                         node_id=current_node.id,
                         upstream_outcome=None,
@@ -380,8 +394,22 @@ class PipelineEngine:
                     )
                     await self._emit_complete(fail_outcome, pipeline_start_time)
                     return fail_outcome
-                current_node = self.graph.nodes[edge.to_node]
-                continue
+                # First no-match: dynamic router with a stale checkpoint outcome.
+                # Strip it from completed state and fall through to re-execute it
+                # so it can regenerate its routing label at runtime.
+                self._resume_reexecuted.add(current_node.id)
+                self.completed_nodes.remove(current_node.id)
+                self.node_outcomes.pop(current_node.id, None)
+                self.failed_outputs = {
+                    k: v for k, v in self.failed_outputs.items() if v != current_node.id
+                }
+                logger.info(
+                    "Resume: node '%s' has a stale checkpoint outcome (no matching "
+                    "edge); stripping completed state and re-executing to regenerate "
+                    "routing label.",
+                    current_node.id,
+                )
+                # Do NOT continue — fall through to the handler execution path below.
 
             # M2/M3/M4: Eager reference scan — skip if a predecessor failed.
             # Must run BEFORE the handler is invoked so handlers never see
@@ -590,7 +618,10 @@ class PipelineEngine:
             # An explicit FAIL or RETRY must pass through unchanged (fail-loud).
             # Accept both bare true and the quoted string "true" (DOT parser
             # returns "true" for quoted attribute values).
-            if current_node.auto_status in (True, "true") and outcome.status == StageStatus.SKIPPED:
+            if (
+                current_node.auto_status in (True, "true")
+                and outcome.status == StageStatus.SKIPPED
+            ):
                 logger.debug(
                     "Node '%s' has auto_status=true; promoting SKIPPED to SUCCESS",
                     current_node.id,
@@ -1120,7 +1151,19 @@ class PipelineEngine:
         Species S3 for context.
 
         Spec Section 5.3: Resume behavior, T2.4 (RunIdentity hard-fail).
+
+        NOTE: If ``_checkpoint_resume_enabled()`` returns False (the pipeline
+        graph has set ``resume_from_checkpoint="false"``), this method returns
+        False immediately so the engine always runs from Start.  The graph's
+        own resume node (e.g. ResumeGate) takes over all resume logic.
         """
+        if not self._checkpoint_resume_enabled():
+            logger.info(
+                "Checkpoint resume disabled for graph %s; running from Start",
+                self.graph.graph_attrs.get("label", "(unlabelled)"),
+            )
+            return False
+
         if self._checkpoint_path is None or not os.path.exists(self._checkpoint_path):
             return False
 
@@ -1198,6 +1241,28 @@ class PipelineEngine:
             cp.current_node,
         )
         return True
+
+    def _checkpoint_resume_enabled(self) -> bool:
+        """Return True unless the pipeline graph opts out of checkpoint-based resume.
+
+        Pipelines that manage their own resume signal (e.g., Design-A pipelines
+        that use a ResumeGate node reading committed STATE.yaml) should set::
+
+            graph [
+                resume_from_checkpoint = "false",
+            ]
+
+        This instructs the engine to skip the node-level checkpoint fast-forward
+        and run from Start on every launch, delegating all resume logic to the
+        graph itself.  The ``_resume_reexecuted`` dynamic-router safety net
+        (Patch #1) remains in place for graphs that do NOT set this flag.
+
+        Accepted falsy values: "false", "0", "no", "off" (case-insensitive).
+        Any other value, or absence of the attribute, is truthy (checkpoint resume
+        enabled).
+        """
+        raw = self.graph.graph_attrs.get("resume_from_checkpoint", "true")
+        return str(raw).strip().lower() not in {"false", "0", "no", "off"}
 
     def _save_checkpoint(self, current_node_id: str) -> None:
         """Save a checkpoint after a node execution.
@@ -1476,9 +1541,8 @@ class PipelineEngine:
 
         Returns the target Node or None if no valid target exists.
         """
-        target_id = (
-            node.attrs.get("retry_target")
-            or node.attrs.get("fallback_retry_target")
+        target_id = node.attrs.get("retry_target") or node.attrs.get(
+            "fallback_retry_target"
         )
         if target_id and target_id in self.graph.nodes:
             return self.graph.nodes[target_id]

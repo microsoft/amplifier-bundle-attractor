@@ -94,19 +94,20 @@ def test_terminate_pipeline_no_upstream_reason_uses_termination_reason():
 
 
 def test_terminate_pipeline_no_upstream_outcome():
-    """terminate_pipeline works with upstream_outcome=None (resume-path site).
+    """terminate_pipeline works with upstream_outcome=None.
 
-    The resume-path routing-termination site doesn't have an upstream
-    handler outcome, only a routing message.
+    When there is no upstream handler outcome (e.g. routing-termination
+    reached without a preceding handler), termination_reason becomes
+    the failure_reason directly.
     """
     engine = _make_engine()
     result = engine.terminate_pipeline(
         node_id="some_node",
         upstream_outcome=None,
-        termination_reason="No matching edge from resumed node 'some_node'",
+        termination_reason="No matching edge from node 'some_node'",
     )
     assert result.status == StageStatus.FAIL
-    assert result.failure_reason == "No matching edge from resumed node 'some_node'"
+    assert result.failure_reason == "No matching edge from node 'some_node'"
     assert result.notes is None
 
 
@@ -201,7 +202,6 @@ def test_no_inline_routing_termination_outcome_in_engine_py():
 
     _ROUTING_PATTERNS = (
         "No matching edge from",
-        "No matching edge from resumed node",
         "No matching edge from skipped node",
     )
 

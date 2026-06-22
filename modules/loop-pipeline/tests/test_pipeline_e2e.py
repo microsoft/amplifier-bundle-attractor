@@ -559,7 +559,6 @@ class TestGoalGate:
             cp = json.load(f)
 
         assert "implement" in cp["completed_nodes"]
-        assert cp["completed_nodes"]["implement"] == "success"
 
     @pytest.mark.asyncio
     async def test_context_has_goal(self, tmp_path):

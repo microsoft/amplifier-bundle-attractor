@@ -1,0 +1,161 @@
+// 12-graph-resume.dot -- Graph-level resume via file-state self-skip.
+//
+// PATTERN: Graph-level resume (the correct approach)
+//
+// The engine ALWAYS runs from Start on every invocation -- no goto, no
+// jump, no special "resume mode". Resume happens ENTIRELY at the graph
+// level: each check_* guard node (shape=parallelogram) tests for its
+// stage's artifact file and prints a routing token:
+//
+//   "done"  -> artifact exists -> skip this stage (jump to next check_*)
+//   "todo"  -> artifact missing -> run the work node
+//
+// To REWIND a stage: delete its artifact file and re-run. The engine
+// re-evaluates from Start and naturally re-executes only the rewound
+// stage and everything downstream from it.
+//
+// No engine resume support is needed or used. The engine does not know
+// or care about artifacts; it executes the graph exactly as written.
+//
+// Scenario: Safely refactor a Python module across 6 progressive stages.
+//
+// Artifacts and their guard files:
+//   Stage 1 - Smell analysis   : .ai/smells.md
+//   Stage 2 - Refactor plan    : .ai/refactor-plan.md
+//   Stage 3 - Snapshot tests   : .ai/snapshot.txt
+//   Stage 4/5 - Implement+test : .ai/STATE.json  { "tests_passed": true }
+//   Stage 6 - Diff review      : (always runs -- last step, no guard)
+//
+// Rewind examples:
+//   Delete .ai/refactor-plan.md  -> stages 2, 3, 4/5, 6 re-execute
+//   Delete .ai/STATE.json        -> stages 4/5 and 6 re-execute
+//   Delete .ai/smells.md         -> all stages re-execute
+
+digraph GraphResume {
+    graph [
+        goal="Refactor src/legacy.py to eliminate god-class anti-patterns",
+        label="Graph-Level Resume Pattern",
+        default_fidelity="full",
+        default_thread_id="graph-resume",
+        default_max_retry=2,
+        model_stylesheet=".reasoning { llm_provider: openai; llm_model: o3-mini; reasoning_effort: high }"
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    done  [shape=Msquare, label="Done"]
+
+    // ── Stage 1: Code smell analysis ──────────────────────────────────────────
+    // Guard: check for .ai/smells.md. If it exists the analysis already ran;
+    // skip directly to the plan guard. Otherwise run analyze_smells.
+    check_smells [
+        shape=parallelogram,
+        label="Smells done?",
+        tool_command="test -f .ai/smells.md && printf done || printf todo"
+    ]
+
+    analyze_smells [
+        label="Analyze Smells",
+        prompt="Analyze the code described in $goal for code smells: long methods, deep nesting, duplicated logic, god classes, feature envy, primitive obsession. Rank findings by impact and effort to fix. Write your complete findings to .ai/smells.md -- this file is the artifact that allows the resume guard to skip this stage on the next run."
+    ]
+
+    // ── Stage 2: Refactoring plan ─────────────────────────────────────────────
+    // Guard: check for .ai/refactor-plan.md.
+    // plan_refactor uses the .reasoning class (expensive model) -- deleting
+    // .ai/refactor-plan.md forces a fresh plan without modifying the graph.
+    check_plan [
+        shape=parallelogram,
+        label="Plan done?",
+        tool_command="test -f .ai/refactor-plan.md && printf done || printf todo"
+    ]
+
+    plan_refactor [
+        label="Plan Refactoring",
+        class="reasoning",
+        prompt="Read .ai/smells.md. Create a step-by-step refactoring plan for $goal. For each step: (1) what changes, (2) why it improves the code, (3) what could break. Order steps safest-first to minimize risk. Write the complete plan to .ai/refactor-plan.md -- this file is the artifact that allows the resume guard to skip this stage on the next run."
+    ]
+
+    // ── Stage 3: Snapshot baseline tests ──────────────────────────────────────
+    // Guard: check for .ai/snapshot.txt.
+    check_snapshot [
+        shape=parallelogram,
+        label="Snapshot done?",
+        tool_command="test -f .ai/snapshot.txt && printf done || printf todo"
+    ]
+
+    snapshot_tests [
+        label="Snapshot Tests",
+        prompt="Run the existing test suite (pytest -v --tb=short) and capture the full output as a regression baseline. If no tests exist, write characterization tests that capture the current behavior first, then run them. Write the captured output to .ai/snapshot.txt -- this file is the artifact that allows the resume guard to skip this stage on the next run."
+    ]
+
+    // ── Stage 4 + 5: Implement refactoring and verify tests ───────────────────
+    // Guard: check STATE.json for tests_passed=true.
+    //   tests_passed=true  -> implement and test loop already succeeded; skip to diff_review
+    //   tests_passed=false -> implement ran but tests still failing; re-enter the loop
+    //   file missing       -> implement has not run yet; enter the loop from the top
+    //
+    // STATE.json lifecycle:
+    //   implement_refactor writes: {"tests_passed": false}  (implementation done, not yet tested)
+    //   run_tests updates to:      {"tests_passed": true}   (only when ALL tests pass)
+    check_tests_done [
+        shape=parallelogram,
+        label="Tests passed?",
+        tool_command="python3 -c 'import json,sys; d=json.load(open(\".ai/STATE.json\")); sys.exit(0 if d.get(\"tests_passed\") else 1)' 2>/dev/null && printf done || printf todo"
+    ]
+
+    implement_refactor [
+        label="Implement Refactoring",
+        prompt="Read .ai/refactor-plan.md. Execute the refactoring plan step by step. Make small, atomic changes using edit_file -- do not rewrite entire files. After completing all steps, write the JSON object {\"tests_passed\": false} to .ai/STATE.json to record that implementation is complete but regression verification has not yet been run."
+    ]
+
+    run_tests [
+        label="Run Tests",
+        prompt="Run the full test suite (pytest -v --tb=short). Compare results against the baseline in .ai/snapshot.txt. All previously-passing tests must still pass. If ALL tests pass: update .ai/STATE.json to {\"tests_passed\": true} and report success. If any regression: leave .ai/STATE.json as {\"tests_passed\": false} and report failure with details of what broke."
+    ]
+
+    test_gate [shape=diamond, label="Tests Pass?"]
+
+    // ── Stage 6: Diff review ──────────────────────────────────────────────────
+    // No guard -- diff_review always runs if we reach this stage.
+    // To rewind the review (e.g. to re-examine after manual edits):
+    //   delete .ai/STATE.json and re-run; the implement+test loop re-executes,
+    //   and diff_review follows naturally.
+    diff_review [
+        label="Diff Review",
+        class="reasoning",
+        prompt="Run git diff and review all changes. Verify: (1) no behavior changes -- this is pure refactoring, (2) the code is genuinely simpler and clearer, (3) no accidental deletions or regressions introduced. Summarize the improvements achieved."
+    ]
+
+    // ── Flow ──────────────────────────────────────────────────────────────────
+
+    start -> check_smells
+
+    // Stage 1 guard: skip or work
+    check_smells -> analyze_smells [label="todo", condition="context.tool.last_line=todo"]
+    check_smells -> check_plan     [label="skip", condition="context.tool.last_line=done"]
+    analyze_smells -> check_plan
+
+    // Stage 2 guard: skip or work
+    check_plan -> plan_refactor  [label="todo", condition="context.tool.last_line=todo"]
+    check_plan -> check_snapshot [label="skip", condition="context.tool.last_line=done"]
+    plan_refactor -> check_snapshot
+
+    // Stage 3 guard: skip or work
+    check_snapshot -> snapshot_tests   [label="todo", condition="context.tool.last_line=todo"]
+    check_snapshot -> check_tests_done [label="skip", condition="context.tool.last_line=done"]
+    snapshot_tests -> check_tests_done
+
+    // Stage 4/5 guard: skip (all tests already passed) or run the loop
+    check_tests_done -> implement_refactor [label="todo", condition="context.tool.last_line=todo"]
+    check_tests_done -> diff_review        [label="skip", condition="context.tool.last_line=done"]
+
+    // Implement -> test -> gate: loop on failure, proceed to review on success
+    implement_refactor -> run_tests
+    run_tests -> test_gate
+
+    test_gate -> diff_review        [label="pass", condition="outcome=success"]
+    test_gate -> implement_refactor [label="fix",  condition="outcome!=success"]
+
+    // Stage 6 always leads to done
+    diff_review -> done
+}

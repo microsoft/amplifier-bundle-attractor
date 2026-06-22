@@ -46,7 +46,6 @@ from amplifier_module_loop_pipeline.transforms import (
     apply_transforms,
     expand_variables,
 )
-from amplifier_module_loop_pipeline.run_identity import RunIdentity
 from amplifier_module_loop_pipeline.validation import validate_or_raise
 from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
@@ -495,149 +494,6 @@ class TestM22FidelityValidation:
 
 
 # ===========================================================================
-# M-23: Checkpoint resume fidelity degradation
-# ===========================================================================
-
-
-class TestM23CheckpointFidelityDegradation:
-    """M-23: Resuming from checkpoint degrades 'full' fidelity to 'summary:high'."""
-
-    @pytest.mark.asyncio
-    async def test_full_fidelity_degraded_on_resume(self, tmp_path):
-        """When checkpoint has full fidelity, it degrades to summary:high for one hop then restores."""
-        dot_source = """
-            digraph {
-                goal = "build auth"
-                default_fidelity = "full"
-                start [shape=Mdiamond]
-                plan [prompt="Plan"]
-                implement [prompt="Build"]
-                exit [shape=Msquare]
-                start -> plan -> implement -> exit
-            }
-            """
-        identity = RunIdentity.from_graph(parse_dot(dot_source))
-
-        cp = Checkpoint(
-            current_node="plan",
-            completed_nodes={"start": "success", "plan": "success"},
-            context_snapshot={
-                "graph.goal": "build auth",
-                "outcome": "success",
-                "graph.default_fidelity": "full",
-            },
-            node_outcomes={
-                "start": {"status": "success"},
-                "plan": {"status": "success"},
-            },
-            timestamp="2025-01-01T00:00:00Z",
-            identity=identity,
-        )
-        save_checkpoint(cp, str(tmp_path / "checkpoint.json"))
-
-        engine = _make_engine(
-            dot_source=dot_source, backend=MockBackend(), logs_root=str(tmp_path)
-        )
-        await engine.run()
-        # After resume, fidelity is degraded for the first hop then restored to full
-        fidelity = engine.context.get("graph.default_fidelity")
-        assert fidelity == "full"
-
-    @pytest.mark.asyncio
-    async def test_non_full_fidelity_not_degraded_on_resume(self, tmp_path):
-        """When checkpoint has non-full fidelity, it's not changed."""
-        dot_source = """
-            digraph {
-                goal = "build auth"
-                default_fidelity = "compact"
-                start [shape=Mdiamond]
-                plan [prompt="Plan"]
-                implement [prompt="Build"]
-                exit [shape=Msquare]
-                start -> plan -> implement -> exit
-            }
-            """
-        identity = RunIdentity.from_graph(parse_dot(dot_source))
-
-        cp = Checkpoint(
-            current_node="plan",
-            completed_nodes={"start": "success", "plan": "success"},
-            context_snapshot={
-                "graph.goal": "build auth",
-                "outcome": "success",
-                "graph.default_fidelity": "compact",
-            },
-            node_outcomes={
-                "start": {"status": "success"},
-                "plan": {"status": "success"},
-            },
-            timestamp="2025-01-01T00:00:00Z",
-            identity=identity,
-        )
-        save_checkpoint(cp, str(tmp_path / "checkpoint.json"))
-
-        engine = _make_engine(
-            dot_source=dot_source, backend=MockBackend(), logs_root=str(tmp_path)
-        )
-        await engine.run()
-        fidelity = engine.context.get("graph.default_fidelity")
-        assert fidelity == "compact"
-
-    @pytest.mark.asyncio
-    async def test_fidelity_restored_after_first_node(self, tmp_path):
-        """Fidelity degraded to summary:high for first post-resume node, then restored to full."""
-        fidelities_seen: list[str] = []
-
-        class FidelityCapturingBackend:
-            async def run(self, node, prompt, context, incoming_edge=None, graph=None):
-                fidelity = context.get("graph.default_fidelity")
-                fidelities_seen.append(fidelity)
-                return "done"
-
-        dot_source = """
-            digraph {
-                goal = "build auth"
-                default_fidelity = "full"
-                start [shape=Mdiamond]
-                plan [prompt="Plan"]
-                implement [prompt="Build"]
-                review [prompt="Review"]
-                exit [shape=Msquare]
-                start -> plan -> implement -> review -> exit
-            }
-            """
-        identity = RunIdentity.from_graph(parse_dot(dot_source))
-
-        cp = Checkpoint(
-            current_node="plan",
-            completed_nodes={"start": "success", "plan": "success"},
-            context_snapshot={
-                "graph.goal": "build auth",
-                "outcome": "success",
-                "graph.default_fidelity": "full",
-            },
-            node_outcomes={
-                "start": {"status": "success"},
-                "plan": {"status": "success"},
-            },
-            timestamp="2025-01-01T00:00:00Z",
-            identity=identity,
-        )
-        save_checkpoint(cp, str(tmp_path / "checkpoint.json"))
-
-        engine = _make_engine(
-            dot_source=dot_source,
-            backend=FidelityCapturingBackend(),
-            logs_root=str(tmp_path),
-        )
-        await engine.run()
-        # First post-resume node (implement) should run at degraded fidelity
-        assert fidelities_seen[0] == "summary:high"
-        # Second post-resume node (review) should run at restored full fidelity
-        assert fidelities_seen[1] == "full"
-
-
-# ===========================================================================
 # M-24: Missing ConsoleInterviewer and RecordingInterviewer
 # ===========================================================================
 
@@ -716,9 +572,8 @@ class TestL7CheckpointLogs:
         """Checkpoint dataclass has a logs field."""
         cp = Checkpoint(
             current_node="step",
-            completed_nodes={},
+            completed_nodes=[],
             context_snapshot={},
-            node_outcomes={},
             timestamp="2025-01-01T00:00:00Z",
             logs=["Node start completed", "Node plan started"],
         )
@@ -728,9 +583,8 @@ class TestL7CheckpointLogs:
         """Checkpoint logs defaults to empty list."""
         cp = Checkpoint(
             current_node="step",
-            completed_nodes={},
+            completed_nodes=[],
             context_snapshot={},
-            node_outcomes={},
             timestamp="2025-01-01T00:00:00Z",
         )
         assert cp.logs == []
@@ -739,9 +593,8 @@ class TestL7CheckpointLogs:
         """Checkpoint logs are saved and loaded from JSON."""
         cp = Checkpoint(
             current_node="step",
-            completed_nodes={},
+            completed_nodes=[],
             context_snapshot={},
-            node_outcomes={},
             timestamp="2025-01-01T00:00:00Z",
             logs=["event1", "event2"],
         )
@@ -779,32 +632,29 @@ class TestL7CheckpointLogs:
 # ===========================================================================
 
 
-class TestL8CheckpointCompletedNodeList:
-    """L-8: Checkpoint provides a completed_node_list property."""
+class TestL8CheckpointCompletedNodes:
+    """L-8: Checkpoint.completed_nodes is spec-compliant List<String>."""
 
-    def test_completed_node_list_property(self):
-        """Checkpoint has completed_node_list property returning list of IDs."""
+    def test_completed_nodes_is_list(self):
+        """Spec §5.3: completed_nodes is a list of node IDs."""
         cp = Checkpoint(
             current_node="impl",
-            completed_nodes={"start": "success", "plan": "success"},
+            completed_nodes=["start", "plan"],
             context_snapshot={},
-            node_outcomes={},
             timestamp="2025-01-01T00:00:00Z",
         )
-        node_list = cp.completed_node_list
-        assert isinstance(node_list, list)
-        assert set(node_list) == {"start", "plan"}
+        assert isinstance(cp.completed_nodes, list)
+        assert set(cp.completed_nodes) == {"start", "plan"}
 
-    def test_completed_node_list_empty(self):
-        """completed_node_list returns empty list when no nodes."""
+    def test_completed_nodes_empty_list(self):
+        """completed_nodes defaults to empty list."""
         cp = Checkpoint(
             current_node="start",
-            completed_nodes={},
+            completed_nodes=[],
             context_snapshot={},
-            node_outcomes={},
             timestamp="2025-01-01T00:00:00Z",
         )
-        assert cp.completed_node_list == []
+        assert cp.completed_nodes == []
 
 
 # ===========================================================================

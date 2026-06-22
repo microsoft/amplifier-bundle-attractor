@@ -131,15 +131,21 @@ class RetryPolicy:
             "standard": cls(max_attempts=5),  # delays 200,400,800,1600,3200 ms
             "aggressive": cls(
                 max_attempts=5,
-                backoff=BackoffConfig(initial_delay_ms=500),  # delays 500,1000,2000,4000,8000 ms
+                backoff=BackoffConfig(
+                    initial_delay_ms=500
+                ),  # delays 500,1000,2000,4000,8000 ms
             ),
             "linear": cls(
                 max_attempts=3,
-                backoff=BackoffConfig(initial_delay_ms=500, backoff_factor=1.0),  # fixed 500ms
+                backoff=BackoffConfig(
+                    initial_delay_ms=500, backoff_factor=1.0
+                ),  # fixed 500ms
             ),
             "patient": cls(
                 max_attempts=3,
-                backoff=BackoffConfig(initial_delay_ms=2000, backoff_factor=3.0),  # delays 2000,6000,18000 ms
+                backoff=BackoffConfig(
+                    initial_delay_ms=2000, backoff_factor=3.0
+                ),  # delays 2000,6000,18000 ms
             ),
         }
         if name not in presets:

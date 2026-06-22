@@ -23,12 +23,9 @@ from typing import Any
 from .artifacts import ArtifactStore
 from .checkpoint import (
     Checkpoint,
-    CheckpointMismatchError,
-    load_checkpoint,
     save_checkpoint,
 )
 from .context import PipelineContext
-from .run_identity import RunIdentity
 from .edge_selection import select_all_matching_edges, select_edge
 from .graph import Graph, Node
 from .handlers import HandlerRegistry
@@ -58,8 +55,10 @@ class PipelineEngine:
     Walks the graph from start to exit, executing node handlers and
     selecting edges deterministically based on outcomes and context.
 
-    Saves a checkpoint after each node execution so the pipeline can
-    resume after crashes.
+    Saves a checkpoint after each node execution for crash observability.
+    The engine always starts from the graph's start node — graph-level
+    idempotency (checking state files, skipping completed work) is the
+    responsibility of individual node handlers, not the engine.
     """
 
     # Maximum number of goal-gate-driven retries before giving up.
@@ -87,7 +86,6 @@ class PipelineEngine:
         self._node_execution_counts: dict[
             str, int
         ] = {}  # per-node execution count (graph-level visits)
-        self._fidelity_degraded_hop: bool = False
         self._checkpoint_path: str | None = os.path.join(logs_root, "checkpoint.json")
         self.artifact_store = ArtifactStore(base_dir=logs_root)
 
@@ -121,7 +119,6 @@ class PipelineEngine:
             completed_nodes  — auto-fresh by __init__
             iteration_count  — auto-fresh by __init__
             _node_execution_counts — auto-fresh by __init__
-            _fidelity_degraded_hop — auto-fresh by __init__
             failed_outputs   — auto-fresh by __init__
 
           SHARED by reference (immutable or shared semantics):
@@ -187,9 +184,9 @@ class PipelineEngine:
     async def run(self, goal: str | None = None) -> Outcome:
         """Execute the pipeline from start to exit.
 
-        If a checkpoint exists at ``{logs_root}/checkpoint.json``, the
-        engine resumes from it, skipping already-completed nodes and
-        restoring context state.
+        Always starts from the graph's start node. Saves a checkpoint after
+        each node execution. Graph-level idempotency (skipping already-done
+        work) is the responsibility of individual node handlers, not the engine.
 
         Args:
             goal: Optional goal string to set in context. If not provided,
@@ -202,7 +199,7 @@ class PipelineEngine:
             RuntimeError: If called on a branch-clone engine (S5 guard).
                 Branch engines are driven by ``run_subgraph`` only; calling
                 ``run()`` on them would silently attempt checkpoint
-                resume/save against the shared ``logs_root``, corrupting
+                save against the shared ``logs_root``, corrupting
                 the parent engine's checkpoint state.
         """
         # S5: Branch-clone guard — run() must never be called on a branch engine.
@@ -240,10 +237,7 @@ class PipelineEngine:
             },
         )
 
-        # Check for existing checkpoint and restore state
-        resumed = self._try_resume_from_checkpoint()
-
-        # Find the start node
+        # Find the start node — engine always starts from Start
         current_node = self._find_start_node()
 
         # Bound goal-gate-driven retries to prevent infinite loops
@@ -350,38 +344,6 @@ class PipelineEngine:
                 # No retry target or retries exhausted — fail
                 await self._emit_complete(gate_result, pipeline_start_time)
                 return gate_result
-
-            # Step 1b: Skip already-completed nodes (resume path)
-            if resumed and current_node.id in {nid for nid in self.completed_nodes}:
-                # Re-select the edge this node used last time
-                edge = select_edge(
-                    current_node.id,
-                    self.node_outcomes.get(
-                        current_node.id, Outcome(status=StageStatus.SUCCESS)
-                    ),
-                    self.context,
-                    self.graph,
-                )
-                if edge is None:
-                    fail_outcome = self.terminate_pipeline(
-                        node_id=current_node.id,
-                        upstream_outcome=None,
-                        termination_reason=(
-                            f"No matching edge from resumed node '{current_node.id}'"
-                        ),
-                    )
-                    await self._emit(
-                        PIPELINE_ERROR,
-                        {
-                            "node_id": current_node.id,
-                            "error_type": "no_matching_edge",
-                            "message": fail_outcome.failure_reason or "",
-                        },
-                    )
-                    await self._emit_complete(fail_outcome, pipeline_start_time)
-                    return fail_outcome
-                current_node = self.graph.nodes[edge.to_node]
-                continue
 
             # M2/M3/M4: Eager reference scan — skip if a predecessor failed.
             # Must run BEFORE the handler is invoked so handlers never see
@@ -590,7 +552,10 @@ class PipelineEngine:
             # An explicit FAIL or RETRY must pass through unchanged (fail-loud).
             # Accept both bare true and the quoted string "true" (DOT parser
             # returns "true" for quoted attribute values).
-            if current_node.auto_status in (True, "true") and outcome.status == StageStatus.SKIPPED:
+            if (
+                current_node.auto_status in (True, "true")
+                and outcome.status == StageStatus.SKIPPED
+            ):
                 logger.debug(
                     "Node '%s' has auto_status=true; promoting SKIPPED to SUCCESS",
                     current_node.id,
@@ -643,16 +608,6 @@ class PipelineEngine:
             self.completed_nodes.append(current_node.id)
             self.node_outcomes[current_node.id] = outcome
             logger.debug("Node %s completed: %s", current_node.id, outcome.status.value)
-
-            # M-23: One-hop fidelity restoration
-            if self._fidelity_degraded_hop:
-                self.context.set("graph.default_fidelity", "full")
-                self._fidelity_degraded_hop = False
-                logger.info(
-                    "Checkpoint resume: restored fidelity to 'full' "
-                    "after one-hop degradation (node '%s')",
-                    current_node.id,
-                )
 
             # Step 3b: Write per-node status.json BEFORE emitting so hook bridge can copy it
             self._write_node_status(current_node.id, outcome, node_duration_ms)
@@ -1091,146 +1046,25 @@ class PipelineEngine:
             failure_reason=failure_reason,
         )
 
-    def _try_resume_from_checkpoint(self) -> bool:
-        """Try to load and restore state from an existing checkpoint.
-
-        Returns True if a checkpoint was loaded (resume mode), False otherwise.
-
-        Raises CheckpointMismatchError if the checkpoint belongs to a different
-        graph than the one currently running.  This is an intentional hard-fail:
-        silently restarting would re-execute side-effecting nodes (git pushes,
-        branch creates, file writes) that have already been applied.
-
-        Three checkpoint formats are handled:
-
-        1. Pre-identity (no ``identity`` field, no ``graph_fingerprint``):
-           One-time migration — discard with an info-level log message; treat as
-           "no checkpoint exists."  NOT a hard-fail: these checkpoints predate
-           the identity guard entirely.
-
-        2. Wave-0 #252 format (top-level ``graph_fingerprint`` string):
-           Promoted into a RunIdentity and checked normally.  Mismatch → hard-fail.
-
-        3. T2.4 format (``identity`` dict):
-           Standard path.  Mismatch → hard-fail.
-
-        Resume re-runs are scoped to nodes after the last completed_node.
-        Idempotency of side-effecting handlers is the handler's responsibility,
-        NOT the engine's.  See ``docs/designs/RECURRING-BUG-CLASSES.md``
-        Species S3 for context.
-
-        Spec Section 5.3: Resume behavior, T2.4 (RunIdentity hard-fail).
-        """
-        if self._checkpoint_path is None or not os.path.exists(self._checkpoint_path):
-            return False
-
-        try:
-            cp = load_checkpoint(self._checkpoint_path)
-        except (FileNotFoundError, KeyError, ValueError):
-            logger.warning("Failed to load checkpoint, starting fresh")
-            return False
-
-        # T2.4: Identity guard — must run BEFORE restoring context.
-        current_identity = RunIdentity.from_graph(self.graph)
-
-        if cp.identity is None:
-            # Pre-identity format (no identity field, no graph_fingerprint).
-            # This is a one-time migration: discard silently, start fresh.
-            # NOT a hard-fail — these checkpoints predate the identity guard.
-            logger.info(
-                "Pre-identity checkpoint format detected at %s; discarding "
-                "(one-time migration — new checkpoints will embed RunIdentity).",
-                self._checkpoint_path,
-            )
-            return False
-
-        if cp.identity != current_identity:
-            # Hard-fail: refuse to resume a checkpoint from a different graph.
-            # Silently restarting would re-apply side-effecting nodes.
-            raise CheckpointMismatchError(
-                f"Checkpoint identity mismatch at {self._checkpoint_path}.\n"
-                f"  Checkpoint identity : {cp.identity.graph_fingerprint[:12]}...\n"
-                f"  Current graph       : {current_identity.graph_fingerprint[:12]}...\n"
-                f"\n"
-                f"The pipeline graph has changed since this checkpoint was written.\n"
-                f"To avoid double-applying side-effecting nodes (git pushes,\n"
-                f"branch creation, file writes), resume is REFUSED.\n"
-                f"\n"
-                f"To start fresh: delete {self._checkpoint_path} and re-run."
-            )
-
-        # Identity matches — proceed with context restoration.
-
-        # Restore context from checkpoint
-        for key, value in cp.context_snapshot.items():
-            self.context.set(key, value)
-
-        # M-23: Degrade fidelity from "full" to "summary:high" on resume.
-        # The full session context is lost after a crash, so full fidelity
-        # cannot be honoured.  Other modes pass through unchanged.
-        restored_fidelity = self.context.get("graph.default_fidelity")
-        if restored_fidelity == "full":
-            self.context.set("graph.default_fidelity", "summary:high")
-            self._fidelity_degraded_hop = True
-            logger.info(
-                "Checkpoint resume: degraded fidelity from 'full' to "
-                "'summary:high' (full session context unavailable); "
-                "will restore after first node"
-            )
-
-        # Restore completed nodes and outcomes
-        for node_id, status_str in cp.completed_nodes.items():
-            if node_id not in self.completed_nodes:
-                self.completed_nodes.append(node_id)
-            # Reconstruct a minimal Outcome from saved status
-            self.node_outcomes[node_id] = Outcome(
-                status=StageStatus(status_str),
-                notes=cp.node_outcomes.get(node_id, {}).get("notes"),
-                failure_reason=cp.node_outcomes.get(node_id, {}).get("failure_reason"),
-                preferred_label=cp.node_outcomes.get(node_id, {}).get(
-                    "preferred_label"
-                ),
-            )
-
-        logger.info(
-            "Resumed from checkpoint: %d nodes completed, current=%s",
-            len(self.completed_nodes),
-            cp.current_node,
-        )
-        return True
-
     def _save_checkpoint(self, current_node_id: str) -> None:
         """Save a checkpoint after a node execution.
 
         Spec Section 5.3: Checkpoint.save.
+        The engine always runs from Start; this checkpoint is a crash-observability
+        record, not a resume marker. Graph-level idempotency is the handler's job.
         """
-        os.makedirs(self.logs_root, exist_ok=True)
+        if self._checkpoint_path is None:
+            return  # S5: branch clones never checkpoint
 
-        # Serialize node outcomes
-        serialized_outcomes: dict[str, dict[str, str | None]] = {}
-        for node_id, outcome in self.node_outcomes.items():
-            serialized_outcomes[node_id] = {
-                "status": outcome.status.value,
-                "notes": outcome.notes,
-                "failure_reason": outcome.failure_reason,
-                "preferred_label": outcome.preferred_label,
-            }
+        os.makedirs(self.logs_root, exist_ok=True)
 
         cp = Checkpoint(
             current_node=current_node_id,
-            completed_nodes={
-                nid: self.node_outcomes[nid].status.value
-                for nid in self.completed_nodes
-                if nid in self.node_outcomes
-            },
+            completed_nodes=list(self.completed_nodes),
             context_snapshot=self.context.snapshot(),
-            node_outcomes=serialized_outcomes,
             timestamp=datetime.now(timezone.utc).isoformat(),
             logs=self.context.get_logs(),  # L-7: include logs in checkpoint
-            identity=RunIdentity.from_graph(self.graph),  # T2.4: scope to this graph
         )
-        if self._checkpoint_path is None:
-            return  # S5: branch clones never checkpoint (run() guard prevents this)
         save_checkpoint(cp, self._checkpoint_path)
 
     # -- Run directory helpers -----------------------------------------------
@@ -1476,9 +1310,8 @@ class PipelineEngine:
 
         Returns the target Node or None if no valid target exists.
         """
-        target_id = (
-            node.attrs.get("retry_target")
-            or node.attrs.get("fallback_retry_target")
+        target_id = node.attrs.get("retry_target") or node.attrs.get(
+            "fallback_retry_target"
         )
         if target_id and target_id in self.graph.nodes:
             return self.graph.nodes[target_id]

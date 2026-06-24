@@ -196,6 +196,20 @@ class AnthropicAdapter:
     async def initialize(self) -> None:
         """Validate configuration on startup."""
 
+    async def list_models(self) -> list[str]:
+        """Return the live list of model ids served by this Anthropic client.
+
+        Uses the same ``self._client`` instance used for ``complete()`` and
+        ``stream()``, so the returned ids are in the same namespace as what
+        the adapter passes to ``messages.create(model=...)``.  This is the
+        foundation of the id-seam guarantee: the lister IS the generator.
+
+        Returns first page only (Anthropic serves all current models on
+        the first page — no autopagination needed in practice).
+        """
+        page = await self._client.models.list()
+        return [m.id for m in page.data]
+
     def supports_tool_choice(self, mode: str) -> bool:
         """Check if a particular tool choice mode is supported."""
         return mode in ("auto", "none", "required", "named")

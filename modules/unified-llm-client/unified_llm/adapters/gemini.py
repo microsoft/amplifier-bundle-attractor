@@ -186,6 +186,29 @@ class GeminiAdapter:
     async def initialize(self) -> None:
         """Validate configuration on startup."""
 
+    async def list_models(self) -> list[str]:
+        """Return the live list of model ids served by this Gemini client.
+
+        Uses the same ``self._client`` (``genai.Client``) instance used for
+        ``complete()`` and ``stream()``, so the returned ids are in the same
+        namespace as what the adapter passes to
+        ``aio.models.generate_content(model=...)``.  This is the foundation
+        of the id-seam guarantee: the lister IS the generator.
+
+        The google-genai SDK returns model names as ``"models/<id>"``
+        (e.g. ``"models/gemini-2.0-flash"``).  We strip the ``"models/"``
+        prefix to match the short form accepted by ``generate_content``.
+        """
+        ids: list[str] = []
+        pager = await self._client.aio.models.list()
+        async for model in pager:
+            name: str = getattr(model, "name", "") or ""
+            if name.startswith("models/"):
+                name = name[len("models/") :]
+            if name:
+                ids.append(name)
+        return ids
+
     def supports_tool_choice(self, mode: str) -> bool:
         """Check if a particular tool choice mode is supported."""
         return mode in ("auto", "none", "required")

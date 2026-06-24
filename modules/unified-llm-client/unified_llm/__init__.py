@@ -77,6 +77,9 @@ from unified_llm.retry import RetryPolicy
 # Catalog
 from unified_llm.catalog import get_latest_model, get_model_info, list_models
 
+# Resolver — live-backed model selection (eliminates id-seam)
+from unified_llm.resolver import resolve_latest, resolve_latest_for, select_latest
+
 # Adapters
 from unified_llm.adapters import ProviderAdapter
 
@@ -150,6 +153,10 @@ __all__ = [
     "get_model_info",
     "list_models",
     "get_latest_model",
+    # Resolver — live-backed model selection
+    "select_latest",
+    "resolve_latest",
+    "resolve_latest_for",
     # Adapter interface
     "ProviderAdapter",
 ]

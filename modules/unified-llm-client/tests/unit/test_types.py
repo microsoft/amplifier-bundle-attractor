@@ -657,6 +657,8 @@ class TestGenerateResult:
         assert result.output is None
 
 
+from datetime import date
+
 from unified_llm.types import AdapterTimeout, ModelInfo, TimeoutConfig
 
 
@@ -691,8 +693,10 @@ class TestModelInfo:
             supports_tools=True,
             supports_vision=True,
             supports_reasoning=True,
+            release_date=date(2025, 5, 14),
         )
         assert mi.id == "claude-sonnet-4-20250514"
+        assert mi.release_date == date(2025, 5, 14)
         assert mi.max_output is None
         assert mi.input_cost_per_million is None
         assert mi.aliases == []

@@ -3,6 +3,11 @@
 6 end-to-end tests that require real API keys.
 Run with: pytest tests/dod/test_8_10_integration_smoke.py -m integration
 Requires: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY (or GOOGLE_API_KEY)
+
+Also contains ``TestModelIdStalenessGuard``: per-provider, individually key-gated
+tests that verify ``get_latest_model(provider).id`` is a live, working model id.
+When a key is absent the test emits an explicit skip message stating that
+**model-id staleness was NOT validated** for that provider — no silent green.
 """
 
 from __future__ import annotations
@@ -286,3 +291,94 @@ class TestIntegrationSmoke:
                 max_retries=0,
                 max_tokens=100,
             )
+
+
+# ---------------------------------------------------------------------------
+# §8.10 model-id staleness guard — per-provider, individually key-gated
+# ---------------------------------------------------------------------------
+
+
+class TestModelIdStalenessGuard:
+    """Per-provider freshness guard.
+
+    Each test is individually key-gated and skips loudly when its API key is
+    absent, making it explicit that **model-id staleness was NOT validated**
+    for that provider.  When a key IS present the test proves that
+    ``get_latest_model(provider).id`` is a working, live model id by
+    performing a real 1-token completion — a dead id must fail here.
+
+    Run with: pytest tests/dod/test_8_10_integration_smoke.py -m integration -k staleness
+    """
+
+    @pytest.mark.asyncio(loop_scope="function")
+    @pytest.mark.integration
+    async def test_anthropic_model_id_is_live(self) -> None:
+        """§8.10 staleness guard — anthropic: get_latest_model().id must be a live model."""
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            pytest.skip(
+                "§8.10 anthropic smoke SKIPPED: ANTHROPIC_API_KEY not set "
+                "— model-id staleness NOT validated"
+            )
+        latest = get_latest_model("anthropic")
+        client = Client.from_env()
+        result = await generate(
+            model=latest.id,
+            prompt="Reply with just 'ok'.",
+            max_tokens=16,  # 16 avoids provider min-token floors on reasoning models
+            provider="anthropic",
+            client=client,
+            max_retries=0,
+        )
+        assert result.usage.output_tokens > 0, (
+            f"Zero output tokens from anthropic/{latest.id!r} — "
+            "model id may be stale or rejected by the endpoint"
+        )
+
+    @pytest.mark.asyncio(loop_scope="function")
+    @pytest.mark.integration
+    async def test_openai_model_id_is_live(self) -> None:
+        """§8.10 staleness guard — openai: get_latest_model().id must be a live model."""
+        if not os.environ.get("OPENAI_API_KEY"):
+            pytest.skip(
+                "§8.10 openai smoke SKIPPED: OPENAI_API_KEY not set "
+                "— model-id staleness NOT validated"
+            )
+        latest = get_latest_model("openai")
+        client = Client.from_env()
+        result = await generate(
+            model=latest.id,
+            prompt="Reply with just 'ok'.",
+            max_tokens=16,  # 16 satisfies o4-mini's minimum of 16 max_output_tokens
+            provider="openai",
+            client=client,
+            max_retries=0,
+        )
+        assert result.usage.output_tokens > 0, (
+            f"Zero output tokens from openai/{latest.id!r} — "
+            "model id may be stale or rejected by the endpoint"
+        )
+
+    @pytest.mark.asyncio(loop_scope="function")
+    @pytest.mark.integration
+    async def test_gemini_model_id_is_live(self) -> None:
+        """§8.10 staleness guard — gemini: get_latest_model().id must be a live model."""
+        key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not key:
+            pytest.skip(
+                "§8.10 gemini smoke SKIPPED: GEMINI_API_KEY / GOOGLE_API_KEY not set "
+                "— model-id staleness NOT validated"
+            )
+        latest = get_latest_model("gemini")
+        client = Client.from_env()
+        result = await generate(
+            model=latest.id,
+            prompt="Reply with just 'ok'.",
+            max_tokens=16,  # 16 avoids 0-output edge case from max_tokens=1 truncation
+            provider="gemini",
+            client=client,
+            max_retries=0,
+        )
+        assert result.usage.output_tokens > 0, (
+            f"Zero output tokens from gemini/{latest.id!r} — "
+            "model id may be stale or rejected by the endpoint"
+        )

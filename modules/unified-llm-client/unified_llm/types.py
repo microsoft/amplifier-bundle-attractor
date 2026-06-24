@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any
 
@@ -611,7 +611,13 @@ class AdapterTimeout:
 
 @dataclass
 class ModelInfo:
-    """A model catalog entry."""
+    """A model catalog entry.
+
+    ``release_date`` is the authoritative recency field used by
+    ``get_latest_model()`` to select the newest model without depending on
+    JSON file order.  It is typed, required (no default), and must be an ISO
+    8601 date string in the source ``models.json``.
+    """
 
     id: str
     provider: str
@@ -620,6 +626,7 @@ class ModelInfo:
     supports_tools: bool
     supports_vision: bool
     supports_reasoning: bool
+    release_date: date  # required; used for recency selection — no default
     max_output: int | None = None
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None

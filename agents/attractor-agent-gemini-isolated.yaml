@@ -41,5 +41,5 @@ tools:
 
 context:
   include:
-    - context/system-gemini.md
-    - context/isolated-environment-guidance.md
+    - ../context/system-gemini.md
+    - ../context/isolated-environment-guidance.md

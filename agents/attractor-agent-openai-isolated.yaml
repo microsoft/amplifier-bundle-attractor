@@ -35,5 +35,5 @@ session:
 
 context:
   include:
-    - context/system-openai.md
-    - context/isolated-environment-guidance.md
+    - ../context/system-openai.md
+    - ../context/isolated-environment-guidance.md

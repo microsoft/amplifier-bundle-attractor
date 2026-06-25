@@ -48,4 +48,4 @@ context:
   # loop-agent's AgentOrchestrator.execute() resolves the factory before creating the session
   # so the file content becomes session_config.system_prompt (Layer 1).
   include:
-    - context/system-anthropic.md
+    - ../context/system-anthropic.md

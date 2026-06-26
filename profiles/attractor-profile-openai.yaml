@@ -35,5 +35,6 @@ tools:
     source: git+https://github.com/microsoft/amplifier-module-tool-search@main
 
 context:
+  # '../context/' climbs from this YAML's dir to the bundle-root context/; idiomatic target is 'attractor:context/...' pending foundation namespaced-include support.
   include:
-    - context/system-openai.md
+    - ../context/system-openai.md

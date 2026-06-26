@@ -61,5 +61,6 @@ hooks:
         - "pipeline:stage_failed"
 
 context:
+  # '../context/' climbs from this YAML's dir to the bundle-root context/; idiomatic target is 'attractor:context/...' pending foundation namespaced-include support.
   include:
-    - context/system-gemini.md
+    - ../context/system-gemini.md

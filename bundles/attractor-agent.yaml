@@ -42,5 +42,6 @@ tools:
 
 # --- System prompt -----------------------------------------------------------
 context:
+  # '../context/' climbs from this YAML's dir to the bundle-root context/; idiomatic target is 'attractor:context/...' pending foundation namespaced-include support.
   include:
-    - context/system-anthropic.md
+    - ../context/system-anthropic.md

@@ -187,10 +187,21 @@ class MockCoordinator:
 
 
 class FailingCoordinator:
-    """Coordinator whose spawn raises an exception."""
+    """Coordinator whose spawn raises an exception.
+
+    Provides a minimal 'attractor-anthropic' agent with a non-pipeline
+    session.orchestrator so the identity recursion guard does not fire before
+    spawn is reached (the test exercises spawn-failure behavior, not guard behavior).
+    """
 
     session = _MockSession()
-    config: dict[str, Any] = {"agents": {}}
+    config: dict[str, Any] = {
+        "agents": {
+            "attractor-anthropic": {
+                "session": {"orchestrator": {"module": "loop-agent"}},
+            },
+        }
+    }
 
     def get_capability(self, name: str):
         if name == "session.spawn":
@@ -372,7 +383,14 @@ async def test_backend_passes_parent_session():
 @pytest.mark.asyncio
 async def test_backend_passes_agent_configs():
     """Spawn kwargs include agent_configs from coordinator.config."""
-    agents = {"my-agent": {"description": "Test agent"}}
+    # Include the resolved profile name ('attractor-anthropic') with a valid
+    # session.orchestrator so the identity recursion guard does not fire.
+    agents = {
+        "attractor-anthropic": {
+            "description": "Test agent",
+            "session": {"orchestrator": {"module": "loop-agent"}},
+        }
+    }
     coordinator = MockCoordinator(
         spawn_result={"output": "ok", "session_id": "c-1"},
         agents=agents,
@@ -383,6 +401,91 @@ async def test_backend_passes_agent_configs():
     )
     await backend.run(_make_node(attrs={}), "task", _make_context())
     assert coordinator.last_spawn_kwargs.get("agent_configs") == agents
+
+
+# ---------------------------------------------------------------------------
+# Recursion guard tests (identity-based)
+#
+# The guard lives in _run_with_spawn and checks the EFFECTIVE orchestrator
+# module of the child agent, not the presence of any bundle reference.
+# It fires when session.orchestrator.module is absent (None) or is
+# "loop-pipeline"; it passes when the module is any other string.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recursion_guard_raises_on_missing_session_orchestrator():
+    """Guard raises ValueError when child agent has no session.orchestrator.
+
+    A child with no session.orchestrator inherits the parent's loop-pipeline
+    orchestrator and re-executes the same DOT graph — infinite recursion.
+    """
+    # Agent config with no session key at all: effective module is None.
+    agents = {
+        "attractor-anthropic": {"description": "Agent missing session.orchestrator"},
+    }
+    coordinator = MockCoordinator(
+        spawn_result={"output": "ok", "session_id": "c-1"},
+        agents=agents,
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+    with pytest.raises(ValueError, match="recursion guard"):
+        await backend.run(_make_node(attrs={}), "task", _make_context())
+
+
+@pytest.mark.asyncio
+async def test_recursion_guard_raises_on_loop_pipeline_module():
+    """Guard raises ValueError when child agent explicitly sets loop-pipeline.
+
+    A child whose session.orchestrator.module is 'loop-pipeline' would
+    re-execute the same DOT graph — infinite recursion.
+    """
+    agents = {
+        "attractor-anthropic": {
+            "description": "Explicit self-nest",
+            "session": {"orchestrator": {"module": "loop-pipeline"}},
+        },
+    }
+    coordinator = MockCoordinator(
+        spawn_result={"output": "ok", "session_id": "c-1"},
+        agents=agents,
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+    with pytest.raises(ValueError, match="recursion guard"):
+        await backend.run(_make_node(attrs={}), "task", _make_context())
+
+
+@pytest.mark.asyncio
+async def test_recursion_guard_passes_on_non_pipeline_module():
+    """Guard does NOT raise when child has an explicit non-pipeline orchestrator.
+
+    A child with session.orchestrator.module='loop-agent' (or any module that
+    is not 'loop-pipeline') is safe to spawn.
+    """
+    agents = {
+        "attractor-anthropic": {
+            "description": "Safe child agent",
+            "session": {"orchestrator": {"module": "loop-agent"}},
+        },
+    }
+    coordinator = MockCoordinator(
+        spawn_result={"output": "ok", "session_id": "c-1"},
+        agents=agents,
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+    # Must not raise; spawn must be called normally.
+    result = await backend.run(_make_node(attrs={}), "task", _make_context())
+    assert coordinator.spawn_called
+    assert isinstance(result, Outcome)
 
 
 @pytest.mark.asyncio

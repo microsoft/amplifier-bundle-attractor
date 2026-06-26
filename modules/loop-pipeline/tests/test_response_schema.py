@@ -215,7 +215,15 @@ class _MockCoordinator:
 
     session = MagicMock()
     session.config = {}
-    config: dict[str, Any] = {"agents": {}}
+    # Include 'attractor-anthropic' with a non-pipeline session.orchestrator
+    # so the identity recursion guard in _run_with_spawn does not fire.
+    config: dict[str, Any] = {
+        "agents": {
+            "attractor-anthropic": {
+                "session": {"orchestrator": {"module": "loop-agent"}},
+            },
+        }
+    }
 
     def __init__(self, spawn_result: dict[str, Any] | None = None) -> None:
         self._spawn_result = spawn_result or {"output": "done", "session_id": "c-1"}

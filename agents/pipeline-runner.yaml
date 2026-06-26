@@ -53,10 +53,40 @@ tools:
     source: git+https://github.com/microsoft/amplifier-module-tool-search@main
 
 # Child agents (one per provider) — spawned by the pipeline engine per node.
+# IMPORTANT: inline session.orchestrator is REQUIRED here.  The spawn capability merges
+# the agent's session: key onto the parent config — it does NOT resolve a bundle: ref.
+# Without an explicit session.orchestrator the child inherits loop-pipeline and recurses.
 agents:
   attractor-agent-anthropic:
-    bundle: attractor:agents/attractor-agent-anthropic
+    description: >
+      Anthropic coding agent (Claude Code aligned).
+      Uses edit_file with old_string/new_string, 120s shell timeout.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 120000
   attractor-agent-openai:
-    bundle: attractor:agents/attractor-agent-openai
+    description: >
+      OpenAI coding agent (codex-rs aligned).
+      Uses native apply_patch (Responses API built-in), restricted filesystem, 10s shell timeout.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 10000
   attractor-agent-gemini:
-    bundle: attractor:agents/attractor-agent-gemini
+    description: >
+      Gemini coding agent (gemini-cli aligned).
+      Uses edit_file, includes web tools for grounding.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 10000

@@ -66,12 +66,54 @@ context:
     - ../context/dot-reference.md
 
 # Agents: pipeline runner + per-provider child agents
+# IMPORTANT: inline session.orchestrator is REQUIRED here.  The spawn capability merges
+# the agent's session: key onto the parent config — it does NOT resolve a bundle: ref.
+# Without an explicit session.orchestrator the child inherits the parent's orchestrator.
 agents:
   attractor-pipeline-runner:
-    bundle: attractor:agents/pipeline-runner
+    description: >
+      Pipeline execution agent. Spawned by the run_pipeline tool to execute
+      a DOT graph pipeline. Uses loop-pipeline orchestrator with all three
+      provider profiles available for model stylesheet routing.
+    session:
+      orchestrator:
+        module: loop-pipeline
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline
+        config:
+          profiles:
+            anthropic: attractor-agent-anthropic
+            openai: attractor-agent-openai
+            gemini: attractor-agent-gemini
   attractor-agent-anthropic:
-    bundle: attractor:agents/attractor-agent-anthropic
+    description: >
+      Anthropic coding agent (Claude Code aligned).
+      Uses edit_file with old_string/new_string, 120s shell timeout.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 120000
   attractor-agent-openai:
-    bundle: attractor:agents/attractor-agent-openai
+    description: >
+      OpenAI coding agent (codex-rs aligned).
+      Uses native apply_patch (Responses API built-in), restricted filesystem, 10s shell timeout.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 10000
   attractor-agent-gemini:
-    bundle: attractor:agents/attractor-agent-gemini
+    description: >
+      Gemini coding agent (gemini-cli aligned).
+      Uses edit_file, includes web tools for grounding.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 10000

@@ -33,7 +33,15 @@ class _SpawnCapture:
         self._session_id = session_id
         self.calls: list[dict] = []  # all spawn kwarg dicts in call order
         self.session = _MockSession()
-        self.config: dict = {"agents": {}}
+        # Include 'attractor-anthropic' with a non-pipeline session.orchestrator
+        # so the identity recursion guard in _run_with_spawn does not fire.
+        self.config: dict = {
+            "agents": {
+                "attractor-anthropic": {
+                    "session": {"orchestrator": {"module": "loop-agent"}},
+                },
+            }
+        }
 
     def get_capability(self, name: str):
         if name == "session.spawn":

@@ -35,9 +35,17 @@ class MockCoordinator:
         self.spawn_called = False
         self.spawn_call_count = 0
         self.last_spawn_kwargs: dict = {}
-        # Provide session and config like a real coordinator
+        # Provide session and config like a real coordinator.
+        # Include 'attractor-anthropic' with a non-pipeline session.orchestrator
+        # so the identity recursion guard in _run_with_spawn does not fire.
         self.session = _MockSession()
-        self.config: dict = {"agents": {}}
+        self.config: dict = {
+            "agents": {
+                "attractor-anthropic": {
+                    "session": {"orchestrator": {"module": "loop-agent"}},
+                },
+            }
+        }
 
     def get_capability(self, name: str):
         if name == "session.spawn":

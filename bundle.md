@@ -19,18 +19,46 @@ includes:
   - bundle: attractor:behaviors/attractor-core
 
 agents:
+  # IMPORTANT: these entries use inline session.orchestrator overrides, NOT bundle: refs.
+  # The spawn capability resolves agents by merging the agent's session: key onto the parent
+  # config — it does NOT load or resolve a bundle: reference.  Without an explicit
+  # session.orchestrator, the child would inherit the parent's orchestrator (which could be
+  # loop-pipeline) and recurse infinitely.  Always use an inline session.orchestrator here.
   attractor-profile-anthropic:
-    bundle: attractor:profiles/attractor-profile-anthropic
     description: Attractor coding agent with Anthropic provider
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          default_command_timeout_ms: 120000
   attractor-profile-openai:
-    bundle: attractor:profiles/attractor-profile-openai
     description: Attractor coding agent with OpenAI provider
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          default_command_timeout_ms: 10000
   attractor-profile-gemini:
-    bundle: attractor:profiles/attractor-profile-gemini
     description: Attractor coding agent with Gemini provider
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          default_command_timeout_ms: 10000
   attractor-pipeline-runner:
-    bundle: attractor:agents/pipeline-runner
     description: Pipeline execution agent spawned by run_pipeline tool
+    session:
+      orchestrator:
+        module: loop-pipeline
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline
+        config:
+          profiles:
+            anthropic: attractor-agent-anthropic
+            openai: attractor-agent-openai
+            gemini: attractor-agent-gemini
 ---
 
 # Attractor

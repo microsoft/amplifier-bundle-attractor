@@ -16,6 +16,13 @@ hooks:
     source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/hooks-pipeline-observability
 
 agents:
+  # IMPORTANT: inline session.orchestrator is REQUIRED here.  The spawn capability merges
+  # the agent's session: key onto the parent config — it does NOT resolve a bundle: ref.
+  # Without an explicit session.orchestrator the child inherits the parent's orchestrator.
+  # attractor-expert is a conversational knowledge agent; loop-agent is the right orchestrator.
   attractor-expert:
-    bundle: attractor:agents/attractor-expert
     description: Attractor pipeline design expert and DOT authoring consultant
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent

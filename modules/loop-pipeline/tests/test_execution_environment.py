@@ -285,7 +285,15 @@ def _make_backend_with_mock_spawn():
     coordinator = MagicMock()
     coordinator.get_capability = MagicMock(return_value=mock_spawn)
     coordinator.session = MagicMock()
-    coordinator.config = {"agents": {}}
+    # Include 'test-profile' (matching the profiles map) with a non-pipeline
+    # session.orchestrator so the identity recursion guard does not fire.
+    coordinator.config = {
+        "agents": {
+            "test-profile": {
+                "session": {"orchestrator": {"module": "loop-agent"}},
+            },
+        }
+    }
 
     backend = AmplifierBackend(
         coordinator=coordinator,

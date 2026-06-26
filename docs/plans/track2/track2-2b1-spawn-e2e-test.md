@@ -228,7 +228,7 @@ async def test_spawn_path_success():
     coordinator, spawn_fn = _make_coordinator(
         agents={
             "attractor-anthropic": {
-                "bundle": "attractor:profiles/attractor-profile-anthropic"
+                "session": {"orchestrator": {"module": "loop-agent"}}
             }
         }
     )

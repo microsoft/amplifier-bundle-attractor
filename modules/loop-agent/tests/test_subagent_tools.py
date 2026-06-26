@@ -437,7 +437,7 @@ class TestWait:
         coordinator = _make_coordinator(
             spawn_result={"output": "done", "session_id": "child-123"},
             session="parent-session-abc",
-            agents={"test-agent": {"bundle": "test:profile"}},
+            agents={"test-agent": {"session": {"orchestrator": {"module": "loop-agent"}}}},
         )
         mgr = SubagentManager(coordinator=coordinator)
         spawn_tool = _find_tool(mgr, "spawn_agent")
@@ -455,7 +455,7 @@ class TestWait:
         call_kwargs = coordinator._mock_spawn.call_args[1]
         assert call_kwargs["instruction"] == "Write hello.py"
         assert call_kwargs["parent_session"] == "parent-session-abc"
-        assert call_kwargs["agent_configs"] == {"test-agent": {"bundle": "test:profile"}}
+        assert call_kwargs["agent_configs"] == {"test-agent": {"session": {"orchestrator": {"module": "loop-agent"}}}}
         assert "agent_name" in call_kwargs
 
     @pytest.mark.asyncio

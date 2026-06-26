@@ -54,10 +54,10 @@ def test_profiles_auto_discovered_from_agents():
         has_spawn=True,
         agents={
             "attractor-anthropic": {
-                "bundle": "attractor:profiles/attractor-profile-anthropic"
+                "session": {"orchestrator": {"module": "loop-agent"}}
             },
             "attractor-openai": {
-                "bundle": "attractor:profiles/attractor-profile-openai"
+                "session": {"orchestrator": {"module": "loop-agent"}}
             },
         },
     )
@@ -74,7 +74,7 @@ def test_explicit_profiles_override_auto_discovery():
     """Explicit profiles should take priority over auto-discovery."""
     coordinator = _make_coordinator(
         has_spawn=True,
-        agents={"auto-agent": {"bundle": "something"}},
+        agents={"auto-agent": {"session": {"orchestrator": {"module": "loop-agent"}}}},
     )
     providers = {"anthropic": MagicMock()}
 

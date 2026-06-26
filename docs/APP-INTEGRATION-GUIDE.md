@@ -175,30 +175,17 @@ def register_spawn_capability(session: Any, prepared: PreparedBundle) -> None:
                 f"Agent '{agent_name}' not found. Available: {available}"
             )
 
-        # Agent configs arrive in two shapes -- build the child bundle for each:
-        #
-        #   1. Lazy bundle-ref: a single-key dict {"bundle": "<uri>"}. It has
-        #      no inline fields, so you MUST load_bundle() it. Building a
-        #      Bundle(...) from config.get(...) here would produce a
-        #      structurally empty child that inherits the parent's
-        #      orchestrator and falls to a no-tools backend (an
-        #      ImportError / silent fallback at runtime).
-        #
-        #   2. Inline config: a dict of bundle fields (tools/providers/
-        #      instruction/...). Build the child Bundle(...) from those fields.
-        if "bundle" in config and len(config) == 1:
-            child_bundle = await load_bundle(config["bundle"])
-        else:
-            child_bundle = Bundle(
-                name=agent_name,
-                version="1.0.0",
-                session=config.get("session", {}),
-                providers=config.get("providers", []),
-                tools=config.get("tools", []),
-                hooks=config.get("hooks", []),
-                instruction=config.get("instruction")
-                or config.get("system", {}).get("instruction"),
-            )
+        # Build child Bundle from inline agent overlay.
+        child_bundle = Bundle(
+            name=agent_name,
+            version="1.0.0",
+            session=config.get("session", {}),
+            providers=config.get("providers", []),
+            tools=config.get("tools", []),
+            hooks=config.get("hooks", []),
+            instruction=config.get("instruction")
+            or config.get("system", {}).get("instruction"),
+        )
 
         return await prepared.spawn(
             child_bundle=child_bundle,

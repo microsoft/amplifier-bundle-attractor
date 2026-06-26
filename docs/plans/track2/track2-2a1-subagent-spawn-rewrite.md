@@ -327,7 +327,7 @@ async def test_wait_uses_session_spawn_capability():
     coordinator = _make_coordinator(
         spawn_fn=mock_spawn,
         session="parent-session-abc",
-        agents={"test-agent": {"bundle": "test:profile"}},
+        agents={"test-agent": {"session": {"orchestrator": {"module": "loop-agent"}}}},
     )
 
     manager = SubagentManager(coordinator, max_depth=2, current_depth=0)
@@ -356,7 +356,7 @@ async def test_wait_uses_session_spawn_capability():
     call_kwargs = mock_spawn.call_args[1]
     assert call_kwargs["instruction"] == "Write hello.py"
     assert call_kwargs["parent_session"] == "parent-session-abc"
-    assert call_kwargs["agent_configs"] == {"test-agent": {"bundle": "test:profile"}}
+    assert call_kwargs["agent_configs"] == {"test-agent": {"session": {"orchestrator": {"module": "loop-agent"}}}}
 
 
 @pytest.mark.asyncio

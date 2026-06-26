@@ -114,24 +114,14 @@ def register_spawn_capability(session: Any, prepared: Any) -> None:
     amplifier-foundation/examples/07_full_workflow.py which handles
     additional kwargs (tool_inheritance, hook_inheritance, etc.).
 
-    Agent configs come in two shapes, and the child bundle must be built
-    differently for each:
-
-    1. Inline config -- a dict of bundle fields
-       (``{"tools": [...], "providers": [...], "instruction": "..."}``).
-       Build the child ``Bundle(...)`` directly from those fields.
-
-    2. Lazy bundle-ref -- a single-key dict ``{"bundle": "<uri>"}`` that
-       points at a bundle to load. You MUST ``load_bundle(...)`` it: a
-       bundle-ref has no inline fields, so ``config.get(...)`` would return
-       empty for everything, producing a structurally empty child that
-       inherits the parent's orchestrator and ends up on a no-tools backend
-       (an ImportError / silent fallback at runtime).
+    Agent configs are inline bundle overlays -- dicts of bundle fields
+    (``{"session": {...}, "providers": [...], "tools": [...], ...}``).
+    The child ``Bundle(...)`` is built directly from those fields.
 
     Note: hooks composed into the PARENT bundle auto-propagate to every
     spawned child via ``prepared.spawn(compose=True)`` (the default).
     """
-    from amplifier_foundation import Bundle, load_bundle
+    from amplifier_foundation import Bundle
     from amplifier_foundation.bundle import PreparedBundle
 
     assert isinstance(prepared, PreparedBundle)
@@ -157,29 +147,17 @@ def register_spawn_capability(session: Any, prepared: Any) -> None:
             available = list(agent_configs.keys()) + list(prepared.bundle.agents.keys())
             raise ValueError(f"Agent '{agent_name}' not found. Available: {available}")
 
-        # Two agent-config shapes -- build the child bundle accordingly:
-        #
-        #   1. Lazy bundle-ref: a single-key dict {"bundle": "<uri>"}. There
-        #      are NO inline fields, so we must load_bundle() it. Building a
-        #      Bundle(...) from config.get(...) here would yield a structurally
-        #      empty child that inherits the parent's orchestrator and falls to
-        #      a no-tools backend (ImportError / silent fallback at runtime).
-        #
-        #   2. Inline config: a dict of bundle fields (tools/providers/...).
-        #      Build the child Bundle(...) directly from those fields.
-        if "bundle" in config and len(config) == 1:
-            child_bundle = await load_bundle(config["bundle"])
-        else:
-            child_bundle = Bundle(
-                name=agent_name,
-                version="1.0.0",
-                session=config.get("session", {}),
-                providers=config.get("providers", []),
-                tools=config.get("tools", []),
-                hooks=config.get("hooks", []),
-                instruction=config.get("instruction")
-                or config.get("system", {}).get("instruction"),
-            )
+        # Build child Bundle from inline agent overlay.
+        child_bundle = Bundle(
+            name=agent_name,
+            version="1.0.0",
+            session=config.get("session", {}),
+            providers=config.get("providers", []),
+            tools=config.get("tools", []),
+            hooks=config.get("hooks", []),
+            instruction=config.get("instruction")
+            or config.get("system", {}).get("instruction"),
+        )
 
         return await prepared.spawn(
             child_bundle=child_bundle,

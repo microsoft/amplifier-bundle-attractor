@@ -1,3 +1,5 @@
+> **Superseded:** the `agents.<name>.bundle:` approach described here was abandoned (it caused pipeline recursion); the sanctioned mechanism is inline `session:` / `agents.include`.
+
 # Profile Agent Bundles Implementation Plan
 
 > **Execution:** Use the subagent-driven-development workflow to implement this plan.
@@ -200,9 +202,9 @@ With Tasks 1 and 2 applied, verify the config chain:
    provider = node.attrs.get("llm_provider", "anthropic")  # -> "anthropic"
    profile_name = self._profiles.get("anthropic", ...)      # -> "attractor-anthropic"
    ```
-3. Spawn call: `agent_name="attractor-anthropic"`, `agent_configs={"attractor-anthropic": {"bundle": "attractor:profiles/attractor-profile-anthropic", ...}}`
-4. App host resolves `"attractor-anthropic"` in configs -> loads `attractor:profiles/attractor-profile-anthropic`
-5. That bundle configures `loop-agent` + `provider-anthropic` + tools -> child session runs
+3. Spawn call: `agent_name="attractor-anthropic"`, `agent_configs={"attractor-anthropic": {"session": {"orchestrator": {"module": "loop-agent"}}, ...}}`
+4. App host resolves `"attractor-anthropic"` in configs -> builds inline child Bundle from agent overlay
+5. That overlay configures `loop-agent` + `provider-anthropic` + tools -> child session runs
 
 Run:
 ```bash

@@ -1662,7 +1662,16 @@ context:
 # The pipeline runner agent (spawned by tool-pipeline-run)
 agents:
   attractor-pipeline-runner:
-    bundle: attractor:agents/pipeline-runner
+    description: Pipeline execution agent spawned by run_pipeline tool
+    session:
+      orchestrator:
+        module: loop-pipeline
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline
+        config:
+          profiles:
+            anthropic: attractor-agent-anthropic
+            openai: attractor-agent-openai
+            gemini: attractor-agent-gemini
 ```
 
 Key points for the implementer:
@@ -1676,8 +1685,12 @@ In `bundle.md`, add the pipeline-runner agent to the `agents:` section in the YA
 
 ```yaml
   attractor-pipeline-runner:
-    bundle: attractor:agents/pipeline-runner
     description: Pipeline execution agent spawned by run_pipeline tool
+    session:
+      orchestrator:
+        module: loop-pipeline
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline
+        config: {profiles: {anthropic: attractor-agent-anthropic, openai: attractor-agent-openai, gemini: attractor-agent-gemini}}
 ```
 
 Also add the interactive bundle to the description's entry points list:

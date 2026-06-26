@@ -9,11 +9,10 @@ includes:
 agents:
   attractor-anthropic:
     description: Anthropic coding agent (Claude) for pipeline nodes
-    # CRITICAL: The spawner resolves agents by merging the agent's 'session:' override
-    # onto the parent config — it does NOT load a 'bundle:' reference.  A bare
-    # 'bundle:' key here (with no 'session:' key) causes the child to inherit the
-    # parent's loop-pipeline orchestrator and recurse infinitely.
-    # Fix: inline the orchestrator override so merge_configs sets the right module.
+    # CRITICAL: The spawner merges this agent's 'session:' override onto the parent
+    # config; without an inline session.orchestrator the child inherits the parent's
+    # loop-pipeline orchestrator and recurses infinitely.
+    # Each child agent MUST declare an explicit session.orchestrator (e.g. loop-agent).
     session:
       orchestrator:
         module: loop-agent

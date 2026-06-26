@@ -17,8 +17,8 @@ hooks:
 
 agents:
   # IMPORTANT: inline session.orchestrator is REQUIRED here.  The spawn capability merges
-  # the agent's session: key onto the parent config — it does NOT resolve a bundle: ref.
-  # Without an explicit session.orchestrator the child inherits the parent's orchestrator.
+  # the agent's session: key onto the parent config; without an explicit session.orchestrator
+  # the child inherits the parent's orchestrator and may recurse.
   # attractor-expert is a conversational knowledge agent; loop-agent is the right orchestrator.
   attractor-expert:
     description: Attractor pipeline design expert and DOT authoring consultant

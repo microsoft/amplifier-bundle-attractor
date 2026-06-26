@@ -19,11 +19,10 @@ includes:
   - bundle: attractor:behaviors/attractor-core
 
 agents:
-  # IMPORTANT: these entries use inline session.orchestrator overrides, NOT bundle: refs.
-  # The spawn capability resolves agents by merging the agent's session: key onto the parent
-  # config — it does NOT load or resolve a bundle: reference.  Without an explicit
-  # session.orchestrator, the child would inherit the parent's orchestrator (which could be
-  # loop-pipeline) and recurse infinitely.  Always use an inline session.orchestrator here.
+  # IMPORTANT: each child agent MUST declare an inline session.orchestrator running a
+  # non-pipeline loop (e.g. loop-agent).  The spawn capability merges this agent's session:
+  # key onto the parent config; without an explicit orchestrator the child would inherit the
+  # parent's orchestrator (e.g. loop-pipeline) and recurse infinitely.
   attractor-profile-anthropic:
     description: Attractor coding agent with Anthropic provider
     session:

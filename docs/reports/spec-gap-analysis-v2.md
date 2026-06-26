@@ -119,7 +119,13 @@ profile_name = self._profiles.get(provider, next(iter(self._profiles.values()), 
 ```yaml
 agents:
   attractor-anthropic:
-    bundle: attractor:profiles/attractor-profile-anthropic
+    description: Anthropic coding agent (Claude Code aligned)
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          default_command_timeout_ms: 120000
 session:
   orchestrator:
     module: loop-pipeline
@@ -151,14 +157,26 @@ includes:
 
 agents:
   attractor-anthropic:
-    bundle: attractor:profiles/attractor-profile-anthropic
     description: Anthropic coding agent for pipeline nodes
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config: {max_tool_rounds_per_input: 50, default_command_timeout_ms: 120000}
   attractor-openai:
-    bundle: attractor:profiles/attractor-profile-openai
     description: OpenAI coding agent for pipeline nodes
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config: {max_tool_rounds_per_input: 50, default_command_timeout_ms: 10000}
   attractor-gemini:
-    bundle: attractor:profiles/attractor-profile-gemini
     description: Gemini coding agent for pipeline nodes
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config: {max_tool_rounds_per_input: 50, default_command_timeout_ms: 10000}
 
 providers:
   - module: provider-anthropic

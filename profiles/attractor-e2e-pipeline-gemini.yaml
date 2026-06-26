@@ -9,10 +9,10 @@ includes:
 agents:
   attractor-gemini:
     description: Gemini coding agent for pipeline nodes
-    # CRITICAL: the spawner merges the agent's 'session:' override onto the parent
-    # config — it does NOT resolve a bare 'bundle:' reference. Without an inline
-    # session.orchestrator override the spawned child inherits the parent's
-    # loop-pipeline orchestrator and recurses infinitely. Inline loop-agent here.
+    # CRITICAL: the spawner merges this agent's 'session:' override onto the parent
+    # config; without an inline session.orchestrator override the spawned child
+    # inherits the parent's loop-pipeline orchestrator and recurses infinitely.
+    # Each child agent MUST declare an explicit session.orchestrator (e.g. loop-agent).
     session:
       orchestrator:
         module: loop-agent

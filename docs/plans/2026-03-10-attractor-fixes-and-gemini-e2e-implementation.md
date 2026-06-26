@@ -1376,8 +1376,12 @@ includes:
 
 agents:
   attractor-gemini:
-    bundle: attractor:profiles/attractor-profile-gemini
     description: Gemini coding agent for pipeline nodes
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config: {max_tool_rounds_per_input: 50, default_command_timeout_ms: 120000}
 
 providers:
   - module: provider-gemini

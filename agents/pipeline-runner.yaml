@@ -54,8 +54,8 @@ tools:
 
 # Child agents (one per provider) — spawned by the pipeline engine per node.
 # IMPORTANT: inline session.orchestrator is REQUIRED here.  The spawn capability merges
-# the agent's session: key onto the parent config — it does NOT resolve a bundle: ref.
-# Without an explicit session.orchestrator the child inherits loop-pipeline and recurses.
+# the agent's session: key onto the parent config; without an explicit session.orchestrator
+# the child inherits the parent's loop-pipeline orchestrator and recurses.
 agents:
   attractor-agent-anthropic:
     description: >

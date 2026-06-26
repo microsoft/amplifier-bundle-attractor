@@ -73,8 +73,12 @@ includes:
 
 agents:
   attractor-anthropic:
-    bundle: attractor:profiles/attractor-profile-anthropic
     description: Anthropic coding agent (Claude) for pipeline nodes
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config: {max_tool_rounds_per_input: 50, default_command_timeout_ms: 120000}
 
 providers:
   - module: provider-anthropic
@@ -255,11 +259,19 @@ includes:
 
 agents:
   attractor-anthropic:
-    bundle: attractor:profiles/attractor-profile-anthropic
     description: Anthropic coding agent (Claude) for pipeline nodes
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config: {max_tool_rounds_per_input: 50, default_command_timeout_ms: 120000}
   attractor-openai:
-    bundle: attractor:profiles/attractor-profile-openai
     description: OpenAI coding agent for pipeline nodes
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config: {max_tool_rounds_per_input: 50, default_command_timeout_ms: 10000}
 
 providers:
   - module: provider-anthropic

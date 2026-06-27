@@ -82,6 +82,7 @@ class DirectProviderBackend:
             _build_unified_tools,
             _find_report_outcome_call,
             _parse_outcome,
+            _resolve_concrete_model,
             _resolve_model,
             _STATUS_MAP,
             _MAX_TOOL_LOOP_ROUNDS,
@@ -99,12 +100,12 @@ class DirectProviderBackend:
             )
 
         # Resolve model, provider, tools, reasoning, max_agent_turns
-        model = _resolve_model(node)
         provider_name = (
             node.llm_provider
             if hasattr(node, "llm_provider") and node.llm_provider
             else node.attrs.get("llm_provider", "anthropic")
         )
+        model = await _resolve_concrete_model(provider_name, _resolve_model(node))
         reasoning_effort = node.attrs.get("reasoning_effort")
         max_agent_turns_raw = node.attrs.get("max_agent_turns")
         max_agent_turns = (

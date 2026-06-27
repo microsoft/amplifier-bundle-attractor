@@ -34,7 +34,7 @@ import copy
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, overload
 
 try:
     from amplifier_foundation import ProviderPreference as _ProviderPreference
@@ -227,6 +227,7 @@ class AmplifierBackend:
         # 2. Resolve provider and profile from node attributes
         provider = node.attrs.get("llm_provider", "anthropic")
         model = node.attrs.get("llm_model")
+        model = await _resolve_concrete_model(provider, model)
         reasoning_effort = node.attrs.get("reasoning_effort")
         max_agent_turns_raw = node.attrs.get("max_agent_turns")
         max_agent_turns = (
@@ -573,8 +574,8 @@ class AmplifierBackend:
         import unified_llm
 
         client = self._get_or_create_unified_client()
-        model = _resolve_model(node)
         provider_name = node.llm_provider or node.attrs.get("llm_provider", "anthropic")
+        model = await _resolve_concrete_model(provider_name, _resolve_model(node))
         tools = _build_unified_tools(self._tools)
 
         # EXT-23: Build response_format when response_schema is set
@@ -884,6 +885,79 @@ def _resolve_model(node: Node) -> str:
         f"No default model is provided — this prevents silently running "
         f"against a deprecated or unintended model."
     )
+
+
+# ---------------------------------------------------------------------------
+# Live model-token resolution (family token / glob -> concrete served id)
+# ---------------------------------------------------------------------------
+# Mirrors the proven wiki-weaver shim (wiki_weaver/model_resolver.py): an
+# explicit id is returned unchanged with NO network call; a family token or a
+# glob is resolved live against the provider's own served list via
+# unified_llm.resolve_latest_for, which closes the id-seam (lister and
+# generator share one adapter). Fail-loud: no match -> ValueError propagates.
+
+# The ONE place to extend family-name support. Exact, case-insensitive token
+# match only -- a concrete id that merely CONTAINS "sonnet"
+# (e.g. "claude-sonnet-4-5") is NOT a family token and passes through unchanged.
+_FAMILY_TOKENS: frozenset[str] = frozenset({"opus", "sonnet", "haiku"})
+
+# Per-process cache: (provider, raw_token) -> concrete served id. A given
+# pattern resolves at most once per run, so a run is deterministic and the
+# resolved id is stable across every node/loop iteration that uses it.
+_MODEL_RESOLUTION_CACHE: dict[tuple[str, str], str] = {}
+
+
+def _is_model_pattern(model: str) -> bool:
+    """True when *model* must be resolved (glob chars OR a known family token).
+
+    A concrete id (no glob chars, not a family token) returns False and is
+    passed straight through -- zero behavior change, no network call.
+    """
+    if any(ch in model for ch in "*?["):
+        return True
+    return model.strip().lower() in _FAMILY_TOKENS
+
+
+@overload
+async def _resolve_concrete_model(provider: str, model: str) -> str: ...
+@overload
+async def _resolve_concrete_model(provider: str, model: str | None) -> str | None: ...
+async def _resolve_concrete_model(provider: str, model: str | None) -> str | None:
+    """Resolve a node's ``llm_model`` token to a concrete served model id.
+
+    - ``None``/empty  -> returned unchanged (spawn path tolerates a missing
+      model; the direct paths have already fail-loud'd via ``_resolve_model``).
+    - concrete id     -> returned unchanged, NO network call (full back-compat).
+    - glob / family   -> resolved live via ``unified_llm.resolve_latest_for``
+      and cached per ``(provider, token)`` so the run resolves once.
+
+    Fail-loud: a no-match / unresolvable / missing-adapter condition raises
+    ``ValueError`` from the resolver -- never a silent default.
+    """
+    if not model or not _is_model_pattern(model):
+        return model
+
+    cache_key = (provider, model)
+    cached = _MODEL_RESOLUTION_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    # lazy import, matching the existing import idiom in this module
+    from unified_llm import resolve_latest_for
+
+    token = model.strip().lower()
+    pattern = f"*{token}*" if token in _FAMILY_TOKENS else model
+    concrete = await resolve_latest_for(provider, pattern, stable_only=True)
+
+    _MODEL_RESOLUTION_CACHE[cache_key] = concrete
+    logger.info(
+        "loop-pipeline resolved llm_model %r -> %r (provider=%s, pattern=%s)",
+        model,
+        concrete,
+        provider,
+        pattern,
+    )
+    return concrete
 
 
 def _make_tool_handler(pipeline_tool: Any) -> Any:

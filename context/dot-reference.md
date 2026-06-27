@@ -30,7 +30,7 @@ node_id [
     retry_target="node_id",      // Where to jump on gate failure
     fidelity="full",             // full|compact|summary:high|summary:low
     llm_provider="anthropic",    // Override provider for this node
-    llm_model="claude-sonnet-4-20250514", // Override model
+    llm_model="claude-sonnet-4-6", // Override model
     reasoning_effort="high",     // low|medium|high
     auto_status=true,            // Force success regardless of outcome
     timeout=30s                  // Per-node timeout
@@ -59,7 +59,7 @@ digraph MyPipeline {
         default_max_retry=3,
         retry_target="some_node",          // Retry target when exit has unsatisfied goal gates (spec §3.4); NOT a per-node failure catch-all
         max_pipeline_duration=5m,          // Abort if exceeded
-        model_stylesheet="box { llm_provider: anthropic; llm_model: claude-sonnet-4-20250514 }
+        model_stylesheet="box { llm_provider: anthropic; llm_model: claude-sonnet-4-6 }
                           .fast { llm_model: claude-haiku-3-5-20241022 }"
     ]
 }

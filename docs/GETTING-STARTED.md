@@ -171,7 +171,7 @@ tools), check for project-level overrides:
 # This overrides global settings for this project only
 settings:
   provider:
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4-6
 ```
 
 ### `last_response` is truncated to 200 characters

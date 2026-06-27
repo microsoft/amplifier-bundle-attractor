@@ -219,7 +219,7 @@ digraph {
         goal="Refactor legacy code to async patterns",
         model_stylesheet="
             * {
-                llm_model: claude-sonnet-4-20250514;
+                llm_model: claude-sonnet-4-6;
                 llm_provider: anthropic;
             }
             .planning {
@@ -512,8 +512,8 @@ Selector { property: value; property: value; }
 
 ```dot
 graph [model_stylesheet="
-    * { llm_model: claude-sonnet-4-20250514; llm_provider: anthropic; }
-    .code { llm_model: claude-sonnet-4-20250514; }
+    * { llm_model: claude-sonnet-4-6; llm_provider: anthropic; }
+    .code { llm_model: claude-sonnet-4-6; }
     .reasoning { llm_model: o3; llm_provider: openai; reasoning_effort: high; }
     #final_check { llm_model: claude-opus-4-20250514; reasoning_effort: high; }
 "]

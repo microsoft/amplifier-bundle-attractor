@@ -163,7 +163,7 @@ See [DOT Authoring Guide](docs/DOT-AUTHORING-GUIDE.md) for complete patterns and
 - **Model stylesheets** -- override provider, model, and reasoning effort per-node via CSS-like selectors:
   ```dot
   graph [model_stylesheet="
-      box { llm_provider: anthropic; llm_model: claude-sonnet-4-20250514 }
+      box { llm_provider: anthropic; llm_model: claude-sonnet-4-6 }
       .fast { llm_model: claude-haiku-3-5-20241022 }
   "]
   ```

@@ -72,7 +72,7 @@ digraph {
 
 ```dot
 graph [model_stylesheet="
-    box { llm_provider: anthropic; llm_model: claude-sonnet-4-20250514 }
+    box { llm_provider: anthropic; llm_model: claude-sonnet-4-6 }
     .fast { llm_model: claude-haiku-3-5-20241022 }
 "]
 ```
@@ -158,7 +158,7 @@ digraph {
 digraph {
     graph [
         goal="$goal",
-        model_stylesheet="box { llm_provider: anthropic; llm_model: claude-sonnet-4-20250514 }
+        model_stylesheet="box { llm_provider: anthropic; llm_model: claude-sonnet-4-6 }
                           .reasoning { llm_provider: openai; llm_model: o3-mini; reasoning_effort: high }"
     ]
     start [shape=Mdiamond]; done [shape=Msquare]

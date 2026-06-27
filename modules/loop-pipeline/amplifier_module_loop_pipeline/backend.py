@@ -414,6 +414,17 @@ class AmplifierBackend:
                 f"pipeline profile or bundle config."
             )
 
+        # Resolve runtime user_instructions override (Layer-5, highest precedence).
+        # Sources (first non-empty wins):
+        #   1. node.attrs["user_instructions"] — per-node DOT attribute
+        #   2. PipelineContext["user_instructions"] — per-run caller-supplied override
+        # See docs/designs/layer-1-profile-owned-system-prompt.md §B.
+        node_user_instructions: str | None = node.attrs.get("user_instructions") or None
+        ctx_user_instructions: str | None = (
+            (context.get("user_instructions") or None) if context is not None else None
+        )
+        user_instructions_override = node_user_instructions or ctx_user_instructions
+
         # Build spawn kwargs matching the CLI spawn_capability signature
         spawn_kwargs: dict[str, Any] = {
             "agent_name": profile_name,
@@ -429,6 +440,8 @@ class AmplifierBackend:
                 for k, v in {
                     "reasoning_effort": reasoning_effort,
                     "max_turns": max_agent_turns,
+                    # user_instructions (Layer-5): per-node or per-run override
+                    "user_instructions": user_instructions_override,
                 }.items()
                 if v is not None
             },

@@ -89,7 +89,7 @@ class TestConfigFlag:
     """Tests for the supports_parallel_tool_calls config field."""
 
     def test_default_is_true(self):
-        config = SessionConfig()
+        config = SessionConfig(system_prompt="You are a test coding agent.")
         assert config.supports_parallel_tool_calls is True
 
     def test_can_set_false(self):
@@ -128,7 +128,7 @@ async def test_sequential_when_parallel_disabled():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(supports_parallel_tool_calls=False),
+        config=SessionConfig(system_prompt="You are a test coding agent.", supports_parallel_tool_calls=False),
         provider=provider,
         tools={"tool_a": tool_a, "tool_b": tool_b},
         hooks=hooks,
@@ -165,7 +165,7 @@ async def test_sequential_preserves_order():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(supports_parallel_tool_calls=False),
+        config=SessionConfig(system_prompt="You are a test coding agent.", supports_parallel_tool_calls=False),
         provider=provider,
         tools=tools,
         hooks=hooks,
@@ -195,7 +195,7 @@ async def test_sequential_timing():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(supports_parallel_tool_calls=False),
+        config=SessionConfig(system_prompt="You are a test coding agent.", supports_parallel_tool_calls=False),
         provider=provider,
         tools={"tool_a": tool_a, "tool_b": tool_b},
         hooks=hooks,
@@ -235,7 +235,7 @@ async def test_parallel_when_enabled_and_multiple():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(supports_parallel_tool_calls=True),
+        config=SessionConfig(system_prompt="You are a test coding agent.", supports_parallel_tool_calls=True),
         provider=provider,
         tools={"tool_a": tool_a, "tool_b": tool_b},
         hooks=hooks,
@@ -268,7 +268,7 @@ async def test_single_tool_always_sequential():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(supports_parallel_tool_calls=True),
+        config=SessionConfig(system_prompt="You are a test coding agent.", supports_parallel_tool_calls=True),
         provider=provider,
         tools={"tool_a": tool_a},
         hooks=hooks,

@@ -560,7 +560,7 @@ class TestOrchestratorWiring:
         hooks = MagicMock()
         hooks.emit = AsyncMock(return_value=MagicMock(action="continue"))
 
-        orch = AgentOrchestrator(coordinator, {"max_subagent_depth": 1})
+        orch = AgentOrchestrator(coordinator, {"system_prompt": "You are a test coding agent.", "max_subagent_depth": 1})
         await orch.execute("hi", MagicMock(), {"test": provider}, {}, hooks)
 
         # Session should have the 4 subagent tools
@@ -590,7 +590,7 @@ class TestOrchestratorWiring:
 
         # current_depth=1, max_subagent_depth=1 => no subagent tools
         orch = AgentOrchestrator(
-            coordinator, {"max_subagent_depth": 1, "current_depth": 1}
+            coordinator, {"system_prompt": "You are a test coding agent.", "max_subagent_depth": 1, "current_depth": 1}
         )
         await orch.execute("hi", MagicMock(), {"test": provider}, {}, hooks)
 

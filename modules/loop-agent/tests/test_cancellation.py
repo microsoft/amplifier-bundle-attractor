@@ -82,7 +82,7 @@ async def test_checkpoint1_graceful_cancel_at_loop_top():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools=tools,
         hooks=hooks,
@@ -115,7 +115,7 @@ async def test_checkpoint2_immediate_cancel_after_provider():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools=tools,
         hooks=hooks,
@@ -150,7 +150,7 @@ async def test_checkpoint3_tool_results_added_on_cancel():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": tool},
         hooks=hooks,
@@ -183,7 +183,7 @@ async def test_tool_register_start_complete_called():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": tool},
         hooks=hooks,
@@ -205,7 +205,7 @@ async def test_no_coordinator_no_crash():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": _make_mock_tool("read_file")},
         hooks=hooks,

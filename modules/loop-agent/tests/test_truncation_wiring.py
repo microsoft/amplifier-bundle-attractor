@@ -84,7 +84,7 @@ async def test_tool_post_emitted_after_execution():
     hooks.emit = AsyncMock(side_effect=recording_emit)
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": tool},
         hooks=hooks,
@@ -123,7 +123,7 @@ async def test_truncated_output_sent_to_llm():
     hooks.emit = AsyncMock(side_effect=truncating_emit)
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": tool},
         hooks=hooks,
@@ -165,7 +165,7 @@ async def test_full_output_in_tool_call_end_event():
     hooks.emit = AsyncMock(side_effect=recording_emit)
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": tool},
         hooks=hooks,
@@ -197,7 +197,7 @@ async def test_no_truncation_when_hook_continues():
     hooks.emit = AsyncMock(side_effect=passthrough_emit)
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": tool},
         hooks=hooks,

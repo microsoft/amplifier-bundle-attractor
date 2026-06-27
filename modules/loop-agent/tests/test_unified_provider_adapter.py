@@ -985,7 +985,7 @@ async def test_orchestrator_injects_adapter_when_use_unified_llm():
     ) as MockClient:
         MockClient.from_env.return_value = mock_client
 
-        config = {"use_unified_llm": True, "model": "claude-sonnet-4-20250514"}
+        config = {"system_prompt": "You are a test coding agent.", "use_unified_llm": True, "model": "claude-sonnet-4-20250514"}
         coordinator = MagicMock()
         orchestrator = AgentOrchestrator(coordinator=coordinator, config=config)
 
@@ -1023,7 +1023,7 @@ async def test_orchestrator_skips_adapter_when_not_configured():
     native_provider = MagicMock()
     native_provider.complete = AsyncMock(return_value=text_response)
 
-    config = {"model": "claude-sonnet-4-20250514"}  # No use_unified_llm
+    config = {"system_prompt": "You are a test coding agent.", "model": "claude-sonnet-4-20250514"}  # No use_unified_llm
     coordinator = MagicMock()
     orchestrator = AgentOrchestrator(coordinator=coordinator, config=config)
 
@@ -1134,7 +1134,7 @@ async def test_end_to_end_adapter_with_agent_session():
     hooks.emit = AsyncMock(side_effect=_emit)
 
     # Create AgentSession with the ADAPTER as provider
-    config = SessionConfig()
+    config = SessionConfig(system_prompt="You are a test coding agent.")
     session = AgentSession(
         config=config,
         provider=adapter,  # <-- The adapter!

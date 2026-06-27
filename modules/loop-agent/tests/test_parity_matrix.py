@@ -80,7 +80,7 @@ def _make_harness(
 
     Returns (orchestrator, context, providers, tools, hooks).
     """
-    cfg = config or {}
+    cfg = {"system_prompt": "You are a test coding agent.", **(config or {})}
 
     provider = AsyncMock()
     provider.complete = AsyncMock(

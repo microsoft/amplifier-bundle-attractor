@@ -55,7 +55,7 @@ async def test_session_end_emitted_exactly_once_no_followups():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": _make_mock_tool("read_file")},
         hooks=hooks,
@@ -84,7 +84,7 @@ async def test_session_end_after_followups_drained():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": _make_mock_tool("read_file")},
         hooks=hooks,
@@ -118,7 +118,7 @@ async def test_session_end_is_last_lifecycle_event():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={},
         hooks=hooks,
@@ -160,7 +160,7 @@ async def test_multiple_followups_single_session_end():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={},
         hooks=hooks,

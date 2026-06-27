@@ -352,7 +352,7 @@ class TestSystemPromptFromConfig:
 
         orch = AgentOrchestrator(
             coordinator=coordinator,
-            config={"max_tool_rounds_per_input": 1},
+            config={"system_prompt": "You are a test coding agent.", "max_tool_rounds_per_input": 1},
         )
         await orch.execute("hello", MagicMock(), {"test": provider}, {}, hooks)
 
@@ -388,7 +388,7 @@ class TestOnlyMountedToolsInRequest:
 
         orch = AgentOrchestrator(
             coordinator=coordinator,
-            config={"max_tool_rounds_per_input": 1},
+            config={"system_prompt": "You are a test coding agent.", "max_tool_rounds_per_input": 1},
         )
         await orch.execute("hello", MagicMock(), {"openai": provider}, tools, hooks)
 
@@ -427,7 +427,7 @@ class TestOnlyMountedToolsInRequest:
 
         orch = AgentOrchestrator(
             coordinator=coordinator,
-            config={"max_tool_rounds_per_input": 1},
+            config={"system_prompt": "You are a test coding agent.", "max_tool_rounds_per_input": 1},
         )
         await orch.execute("hello", MagicMock(), {"anthropic": provider}, tools, hooks)
 
@@ -447,7 +447,7 @@ class TestOnlyMountedToolsInRequest:
         # Disable subagent tools by setting max_subagent_depth=0
         orch = AgentOrchestrator(
             coordinator=coordinator,
-            config={"max_tool_rounds_per_input": 1, "max_subagent_depth": 0},
+            config={"system_prompt": "You are a test coding agent.", "max_tool_rounds_per_input": 1, "max_subagent_depth": 0},
         )
         await orch.execute("hello", MagicMock(), {"test": provider}, {}, hooks)
 
@@ -464,7 +464,7 @@ class TestOnlyMountedToolsInRequest:
 
         orch = AgentOrchestrator(
             coordinator=coordinator,
-            config={"max_tool_rounds_per_input": 1},
+            config={"system_prompt": "You are a test coding agent.", "max_tool_rounds_per_input": 1},
         )
         await orch.execute("hello", MagicMock(), {"test": provider}, {}, hooks)
 
@@ -487,7 +487,7 @@ class TestOnlyMountedToolsInRequest:
 
         orch = AgentOrchestrator(
             coordinator=coordinator,
-            config={"max_tool_rounds_per_input": 1},
+            config={"system_prompt": "You are a test coding agent.", "max_tool_rounds_per_input": 1},
         )
         await orch.execute("hello", MagicMock(), {"openai": provider}, tools, hooks)
 
@@ -510,7 +510,7 @@ class TestOnlyMountedToolsInRequest:
 
         orch = AgentOrchestrator(
             coordinator=coordinator,
-            config={"max_tool_rounds_per_input": 1, "max_subagent_depth": 0},
+            config={"system_prompt": "You are a test coding agent.", "max_tool_rounds_per_input": 1, "max_subagent_depth": 0},
         )
         await orch.execute("hello", MagicMock(), {"openai": provider}, tools, hooks)
 

@@ -174,7 +174,7 @@ async def test_validation_error_sent_to_llm():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": tool},
         hooks=hooks,
@@ -208,7 +208,7 @@ async def test_validation_error_emits_tool_call_end():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"write_file": tool},
         hooks=hooks,

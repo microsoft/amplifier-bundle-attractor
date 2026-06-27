@@ -19,6 +19,10 @@ session:
     source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
     config:
       default_command_timeout_ms: 120000
+      # Layer-1 base prompt (nlspec §6.1: "Provider-specific base instructions from ProviderProfile").
+      # Path is relative to the bundle root; loop-agent resolves it at session init.
+      # See docs/designs/layer-1-profile-owned-system-prompt.md.
+      system_prompt_file: context/system-anthropic.md
 
 tools:
   - module: tool-filesystem
@@ -29,8 +33,3 @@ tools:
       timeout: 120
   - module: tool-search
     source: git+https://github.com/microsoft/amplifier-module-tool-search@main
-
-context:
-  # '../context/' climbs from this YAML's dir to the bundle-root context/; idiomatic target is 'attractor:context/...' pending foundation namespaced-include support.
-  include:
-    - ../context/system-anthropic.md

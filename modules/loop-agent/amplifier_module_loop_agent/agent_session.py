@@ -541,13 +541,21 @@ class AgentSession:
         # neither the factory nor the config provides content.
         base_prompt = self._config.system_prompt
         if not base_prompt:
-            logger.warning(
-                "Layer-1 base prompt is empty: no context._system_prompt_factory "
-                "contribution and no system_prompt in orchestrator config. "
-                "Falling back to stub. Set context.include in the bundle profile "
-                "or system_prompt in orchestrator config."
+            # Fail-loud: an empty Layer-1 is a configuration error, not a
+            # recoverable runtime condition.  The silent stub ("You are a
+            # coding agent.") was masking misconfiguration and causing
+            # hallucination + over-fragmentation in synthesis.
+            # Fix: add system_prompt_file: context/system-<provider>.md to
+            # session.orchestrator.config in the agent YAML or profile.
+            # See docs/designs/layer-1-profile-owned-system-prompt.md §C.
+            raise RuntimeError(
+                "Layer-1 base prompt is empty: session was created with no "
+                "system_prompt in orchestrator config and no system_prompt_file "
+                "that resolved to content. "
+                "Add system_prompt_file: context/system-<provider>.md to the "
+                "agent's session.orchestrator.config. "
+                "See docs/designs/layer-1-profile-owned-system-prompt.md."
             )
-            base_prompt = "You are a coding agent."
 
         # Layer 2: Environment context
         working_dir = self._config.working_dir or os.getcwd()

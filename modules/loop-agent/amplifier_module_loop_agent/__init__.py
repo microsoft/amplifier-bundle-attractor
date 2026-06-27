@@ -11,8 +11,8 @@ from __future__ import annotations
 # Amplifier module metadata
 __amplifier_module_type__ = "orchestrator"
 
-import inspect
 import logging
+from pathlib import Path
 from typing import Any
 
 from .agent_session import AgentSession
@@ -99,40 +99,39 @@ class AgentOrchestrator:
         if coordinator is not None:
             self._coordinator = coordinator
         if self._session is None:
-            # Deliver context.include as Layer-1 "provider base instructions" (nlspec §6.1).
+            # Load Layer-1 base prompt from profile-declared file (nlspec §6.1:
+            # "Provider-specific base instructions from ProviderProfile").
             #
-            # Foundation registers _system_prompt_factory on the context module when
-            # context.include is declared in a bundle profile (e.g. attractor-agent-anthropic
-            # includes context/system-anthropic.md).  loop-agent must resolve the factory
-            # here because it builds its own message list via _convert_history_to_messages()
-            # rather than delegating to context.get_messages_for_request() — so the factory
-            # is never called on the normal context-simple path.
+            # Design: docs/designs/layer-1-profile-owned-system-prompt.md
             #
-            # Guard: inspect.iscoroutinefunction avoids calling MagicMock auto-attributes
-            # that tests inject as a plain MagicMock context.
+            # The profile declares `system_prompt_file: context/system-<prov>.md`
+            # in session.orchestrator.config.  loop-agent resolves it here — before
+            # the session is created — so the text lands in SessionConfig.system_prompt
+            # (Layer-1) regardless of which spawn path was used.
+            #
+            # Path resolution: system_prompt_file is expressed relative to the bundle
+            # root.  Bundle root is 4 levels up from this file in an editable Amplifier
+            # install:
+            #   <bundle-root>/modules/loop-agent/amplifier_module_loop_agent/__init__.py
+            #
+            # If system_prompt is already set in config (e.g. injected by loop-pipeline's
+            # backend.py before spawn), the file is skipped — single owner, no conflict.
             config_dict = dict(self._config)
-            # Try the context module's factory first — it is the authoritative source for
-            # Layer-1 "Provider-specific base instructions" (nlspec §6.1).  The factory is
-            # registered by foundation when context.include is declared in the bundle profile
-            # (e.g. attractor-agent-anthropic includes context/system-anthropic.md).
-            # system_prompt config is a fallback; it is used only when the factory produces
-            # nothing (returns empty string) or is absent.
-            factory = getattr(context, "_system_prompt_factory", None)
-            if inspect.iscoroutinefunction(factory):
-                try:
-                    context_base = await factory()
-                except Exception as exc:  # noqa: BLE001
+            _spf = config_dict.get("system_prompt_file", "")
+            if _spf and not config_dict.get("system_prompt"):
+                _bundle_root = Path(__file__).parent.parent.parent.parent
+                _spf_path = (
+                    Path(_spf) if Path(_spf).is_absolute() else (_bundle_root / _spf)
+                )
+                if _spf_path.is_file():
+                    config_dict["system_prompt"] = _spf_path.read_text(encoding="utf-8")
+                else:
                     logger.warning(
-                        "context._system_prompt_factory raised; Layer-1 base prompt "
-                        "will fall back to system_prompt config or stub: %s",
-                        exc,
+                        "system_prompt_file %r not found at %s; "
+                        "Layer-1 base prompt will be empty.",
+                        _spf,
+                        _spf_path,
                     )
-                    context_base = ""
-                if context_base:
-                    # Factory wins: the bundle's context.include content is the canonical
-                    # Layer-1 base prompt.  Do not double-inject by also appending
-                    # system_prompt — the factory already incorporates the bundle instruction.
-                    config_dict["system_prompt"] = context_base
 
             config = SessionConfig.from_dict(config_dict)
             # Use the first available provider

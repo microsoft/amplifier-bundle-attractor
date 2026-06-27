@@ -81,7 +81,7 @@ def _make_harness(config=None, responses=None, tool_names=None):
 
     Returns (orchestrator, context, providers, tools, hooks).
     """
-    cfg = config or {}
+    cfg = {"system_prompt": "You are a test coding agent.", **(config or {})}
     provider = AsyncMock()
     provider.complete = AsyncMock(side_effect=responses or [_text_response("done")])
     providers = {"test": provider}
@@ -160,7 +160,7 @@ async def test_streaming_provider_emits_text_start_event():
     tools = {"read_file": _make_mock_tool("read_file")}
     hooks = _make_recording_hooks()
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     await orch.execute("hi", MagicMock(), providers, tools, hooks)
 
     event_names = [e[0] for e in hooks._emitted]
@@ -181,7 +181,7 @@ async def test_streaming_provider_emits_text_delta_events():
     tools = {"read_file": _make_mock_tool("read_file")}
     hooks = _make_recording_hooks()
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     await orch.execute("hi", MagicMock(), providers, tools, hooks)
 
     delta_events = [e for e in hooks._emitted if e[0] == AGENT_ASSISTANT_TEXT_DELTA]
@@ -202,7 +202,7 @@ async def test_streaming_provider_emits_text_end_with_full_text():
     tools = {"read_file": _make_mock_tool("read_file")}
     hooks = _make_recording_hooks()
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     await orch.execute("hi", MagicMock(), providers, tools, hooks)
 
     end_events = [e for e in hooks._emitted if e[0] == AGENT_ASSISTANT_TEXT_END]
@@ -221,7 +221,7 @@ async def test_streaming_returns_assembled_text():
     providers = {"test": provider}
     hooks = _make_recording_hooks()
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     result = await orch.execute("hi", MagicMock(), providers, {}, hooks)
     assert result == "Hello world"
 
@@ -237,7 +237,7 @@ async def test_streaming_does_not_call_provider_complete():
     providers = {"test": provider}
     hooks = _make_recording_hooks()
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     await orch.execute("hi", MagicMock(), providers, {}, hooks)
 
     provider.complete.assert_not_called()
@@ -294,7 +294,7 @@ async def test_streaming_with_tool_calls_then_text():
     tools = {"read_file": _make_mock_tool("read_file")}
     hooks = _make_recording_hooks()
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     result = await orch.execute("read it", MagicMock(), providers, tools, hooks)
 
     assert result == "All done"
@@ -322,7 +322,7 @@ async def test_streaming_event_order():
     providers = {"test": provider}
     hooks = _make_recording_hooks()
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     await orch.execute("hi", MagicMock(), providers, {}, hooks)
 
     event_names = [e[0] for e in hooks._emitted]
@@ -365,7 +365,7 @@ async def test_streaming_collects_usage():
     providers = {"test": provider}
     hooks = _make_recording_hooks()
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     result = await orch.execute("hi", MagicMock(), providers, {}, hooks)
 
     assert result == "Hi"

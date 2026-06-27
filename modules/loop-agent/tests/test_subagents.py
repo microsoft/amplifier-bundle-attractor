@@ -34,7 +34,7 @@ def _make_harness(
     config: dict | None = None,
     responses: list[ChatResponse] | None = None,
 ):
-    cfg = config or {}
+    cfg = {"system_prompt": "You are a test coding agent.", **(config or {})}
     provider = AsyncMock()
     provider.complete = AsyncMock(
         side_effect=responses or [_text_response("done")]

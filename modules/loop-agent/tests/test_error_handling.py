@@ -66,7 +66,7 @@ def _make_mock_tool(name: str, output: str = "ok") -> MagicMock:
 
 def _make_harness(config=None, responses=None, tool_names=None, provider_error=None):
     """Build orchestrator + mocks. If provider_error is set, provider.complete raises it."""
-    cfg = config or {}
+    cfg = {"system_prompt": "You are a test coding agent.", **(config or {})}
     provider = AsyncMock()
     if provider_error is not None:
         provider.complete = AsyncMock(side_effect=provider_error)

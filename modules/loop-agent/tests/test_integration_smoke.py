@@ -130,7 +130,7 @@ async def test_smoke_step1_file_creation():
         "delegate": _make_mock_tool("delegate"),
     }
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     result = await orch.execute(
         "Create a file called hello.py that prints 'Hello World'",
         MagicMock(),
@@ -217,7 +217,7 @@ async def test_smoke_step2_read_and_edit():
         "bash": _make_mock_tool("bash"),
     }
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
 
     # First call: create file
     r1 = await orch.execute(
@@ -281,7 +281,7 @@ async def test_smoke_step3_shell_execution():
         "read_file": _make_mock_tool("read_file"),
     }
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     await orch.execute(
         "Run hello.py and show the output",
         MagicMock(),
@@ -337,7 +337,7 @@ async def test_smoke_step4_truncation():
     )
     tools = {"read_file": big_tool}
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     result = await orch.execute(
         "Read big.txt",
         MagicMock(),
@@ -399,7 +399,7 @@ async def test_smoke_step5_steering():
         "read_file": _make_mock_tool("read_file"),
     }
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
 
     # Queue steering before execute
     orch.steer("Actually, just create a single /health endpoint for now")
@@ -476,7 +476,7 @@ async def test_smoke_step6_subagent():
         "read_file": _make_mock_tool("read_file"),
     }
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     result = await orch.execute(
         "Spawn a subagent to write tests for hello.py, then review its output",
         MagicMock(),
@@ -539,7 +539,7 @@ async def test_smoke_step7_timeout_handling():
     )
     tools = {"bash": bash_tool}
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     result = await orch.execute(
         "Run 'sleep 30' with the default timeout",
         MagicMock(),
@@ -657,7 +657,7 @@ async def test_smoke_full_sequence():
         "delegate": _make_mock_tool("delegate", "Tests created."),
     }
 
-    orch = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orch = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
 
     # Step 1: File creation
     r1 = await orch.execute(

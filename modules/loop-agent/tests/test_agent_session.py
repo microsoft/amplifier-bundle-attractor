@@ -65,7 +65,10 @@ def _make_harness(
 
     Returns (orchestrator, context, providers, tools, hooks).
     """
-    cfg = config or {}
+    # Provide a non-empty system_prompt by default so tests don't trip the
+    # fail-loud guard introduced in docs/designs/layer-1-profile-owned-system-prompt.md §C.
+    defaults = {"system_prompt": "You are a test coding agent."}
+    cfg = {**defaults, **(config or {})}
 
     # Provider mock
     provider = AsyncMock()

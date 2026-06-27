@@ -100,7 +100,7 @@ async def test_question_response_enters_awaiting_input():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": _make_mock_tool("read_file")},
         hooks=hooks,
@@ -121,7 +121,7 @@ async def test_statement_response_enters_idle():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": _make_mock_tool("read_file")},
         hooks=hooks,
@@ -142,7 +142,7 @@ async def test_awaiting_input_event_emitted():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": _make_mock_tool("read_file")},
         hooks=hooks,
@@ -166,7 +166,7 @@ async def test_session_end_not_emitted_for_question():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={},
         hooks=hooks,
@@ -195,7 +195,7 @@ async def test_resume_with_input_continues_session():
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=SessionConfig(),
+        config=SessionConfig(system_prompt="You are a test coding agent."),
         provider=provider,
         tools={"read_file": _make_mock_tool("read_file")},
         hooks=hooks,

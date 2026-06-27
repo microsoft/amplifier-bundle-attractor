@@ -43,6 +43,6 @@ async def test_orchestrator_has_execute_method():
     """AgentOrchestrator must have an execute method (Orchestrator protocol)."""
     from amplifier_module_loop_agent import AgentOrchestrator
 
-    orchestrator = AgentOrchestrator(coordinator=MagicMock(), config={})
+    orchestrator = AgentOrchestrator(coordinator=MagicMock(), config={"system_prompt": "You are a test coding agent."})
     assert hasattr(orchestrator, "execute")
     assert callable(orchestrator.execute)

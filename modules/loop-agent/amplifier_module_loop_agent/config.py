@@ -37,6 +37,9 @@ class SessionConfig:
     current_depth: int = 0  # Current subagent depth (set by parent for child sessions)
     context_window_size: int = 0  # 0 = unknown/unlimited
     system_prompt: str = ""  # Base system prompt (layer 1)
+    system_prompt_file: str = (
+        ""  # Path to base prompt file (layer 1, relative to bundle root)
+    )
     user_instructions: str = ""  # User instruction override (layer 5, highest priority)
     working_dir: str = ""  # Working directory for environment context and project docs
     max_tool_rounds_per_provider: dict[str, int] = field(default_factory=dict)

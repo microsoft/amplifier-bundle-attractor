@@ -66,7 +66,7 @@ def _make_mock_tool(name: str, output: str = "ok") -> MagicMock:
 
 def _make_harness(config=None, responses=None, tool_names=None):
     """Build orchestrator + mocks for testing events."""
-    cfg = config or {}
+    cfg = {"system_prompt": "You are a test coding agent.", **(config or {})}
     provider = AsyncMock()
     provider.complete = AsyncMock(
         side_effect=responses or [_text_response("done")]

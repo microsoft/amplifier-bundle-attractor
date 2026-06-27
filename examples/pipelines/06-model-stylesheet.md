@@ -23,9 +23,15 @@ start -> analyze -> refactor -> lint_check -> critical_review -> quick_fix -> do
 | Node | Class | Matching Rules | Winner (by specificity) | Final Model |
 |------|-------|----------------|------------------------|-------------|
 | `analyze` | `planning` | `*`(0), `.planning`(2) | `.planning` | `o3` (openai) |
-| `refactor` | `code` | `*`(0), `.code`(2) | `.code` | `claude-sonnet-4-6` (anthropic) |
+| `refactor` | `code` | `*`(0), `.code`(2) | `.code` | `claude-sonnet-4-*` (anthropic — resolves to latest) |
 | `lint_check` | `fast` | `*`(0), `.fast`(2) | `.fast` | `gemini-2.5-flash-preview-05-20` (gemini, low) |
-| `critical_review` | `code` | `*`(0), `.code`(2), `#critical_review`(3) | `#critical_review` | `claude-opus-4-20250514` (anthropic, high) |
+| `critical_review` | `code` | `*`(0), `.code`(2), `#critical_review`(3) | `#critical_review` | `claude-opus-4-*` (anthropic, high — resolves to latest) |
+
+> **Glob model ids.** The anthropic selectors use glob ids (`claude-sonnet-4-*`,
+> `claude-opus-4-*`). These are copied into `node.attrs["llm_model"]` verbatim by
+> the stylesheet, then resolved by the engine at run time to the newest stable
+> served model in that line — so they self-heal and never rot. Pin a concrete id
+> when you need a locked/reproducible evaluation.
 | `quick_fix` | `code` | `*`(0), `.code`(2) | `.code` BUT node has explicit `llm_model` | `gemini-2.5-flash-preview-05-20` (explicit override) |
 
 ## Expected Behavior
@@ -52,7 +58,7 @@ steps:
 
 - After stylesheet application, inspect node attrs:
   - `analyze.attrs["llm_model"]` == `"o3"`
-  - `critical_review.attrs["llm_model"]` == `"claude-opus-4-20250514"` (ID selector wins over .code class)
+  - `critical_review.attrs["llm_model"]` == `"claude-opus-4-*"` (ID selector wins over .code class; resolved to a concrete opus id at run time)
   - `quick_fix.attrs["llm_model"]` == `"gemini-2.5-flash-preview-05-20"` (explicit attribute wins)
 - Validation passes (stylesheet syntax is valid)
 - Each node's prompt.md is written with the correct model context

@@ -5,6 +5,11 @@
 // bare shape name.
 // Tests: stylesheet parsing, selector specificity, property application,
 //        explicit node attribute override, class attribute on nodes.
+//
+// Model selection note: the anthropic selectors below use GLOB model ids
+// (e.g. claude-sonnet-4-*) which the engine resolves to the newest stable
+// served model at run time -- so these pins self-heal and never rot. For a
+// locked/reproducible evaluation, pin a concrete id instead.
 
 digraph ModelStylesheet {
     graph [
@@ -12,7 +17,7 @@ digraph ModelStylesheet {
         label="Model Stylesheet Pipeline",
         model_stylesheet="
             * {
-                llm_model: claude-sonnet-4-6;
+                llm_model: claude-sonnet-4-*;
                 llm_provider: anthropic;
                 reasoning_effort: medium;
             }
@@ -22,7 +27,7 @@ digraph ModelStylesheet {
                 reasoning_effort: high;
             }
             .code {
-                llm_model: claude-sonnet-4-6;
+                llm_model: claude-sonnet-4-*;
                 llm_provider: anthropic;
             }
             .fast {
@@ -31,7 +36,7 @@ digraph ModelStylesheet {
                 reasoning_effort: low;
             }
             #critical_review {
-                llm_model: claude-opus-4-20250514;
+                llm_model: claude-opus-4-*;
                 llm_provider: anthropic;
                 reasoning_effort: high;
             }

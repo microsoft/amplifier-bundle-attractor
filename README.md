@@ -45,13 +45,21 @@ includes:
 
 Pick your provider: `attractor-profile-anthropic`, `attractor-profile-openai`, or `attractor-profile-gemini`.
 
-**2. Run a pipeline from the CLI:**
+**2. Point the pipeline orchestrator at a `.dot` file:**
 
-```bash
-amplifier run --agent attractor-profile-anthropic \
-    --goal "Add input validation to the login endpoint" \
-    --dot-file examples/pipelines/02-plan-implement-test.dot
+```yaml
+# .amplifier/config.yaml (or any bundle file)
+includes:
+  - bundle: attractor:bundles/attractor-pipeline
+session:
+  orchestrator:
+    config:
+      dot_file: examples/pipelines/02-plan-implement-test.dot   # or dot_source: "digraph { ... }"
 ```
+
+Then run the configured bundle -- there are no pipeline-specific CLI flags. The
+goal is carried by the DOT graph attribute `graph [goal="Add input validation to
+the login endpoint"]` (or via `params`), not a `--goal` flag.
 
 **3. Or just ask conversationally:**
 
@@ -64,24 +72,42 @@ The agent can generate pipelines on-the-fly or use any of the included examples.
 ## What Can It Do?
 
 **Fix a bug systematically** -- reproduce, diagnose, fix, regression test, verify:
-```bash
-amplifier run --dot-file examples/pipelines/practical/bug-fix.dot \
-    --goal "Fix the NullPointerError in UserService.getProfile()"
+```yaml
+# .amplifier/config.yaml (or any bundle file)
+includes:
+  - bundle: attractor:bundles/attractor-pipeline
+session:
+  orchestrator:
+    config:
+      dot_file: examples/pipelines/practical/bug-fix.dot
 ```
+The goal lives in the DOT itself: `graph [goal="Fix the NullPointerError in UserService.getProfile()"]` (or supply `params` for `$param` substitution).
 
 **Review a PR in parallel** -- analyze diff, then simultaneously check bugs, security,
 performance, and style -- then synthesize review comments:
-```bash
-amplifier run --dot-file examples/pipelines/practical/pr-review.dot \
-    --goal "Review PR #142"
+```yaml
+# .amplifier/config.yaml (or any bundle file)
+includes:
+  - bundle: attractor:bundles/attractor-pipeline
+session:
+  orchestrator:
+    config:
+      dot_file: examples/pipelines/practical/pr-review.dot
 ```
+The goal lives in the DOT itself: `graph [goal="Review PR #142"]` (or supply `params` for `$param` substitution).
 
 **Build a feature safely** -- parse spec, parallel implement (core, API, tests),
 integration test, human review gate:
-```bash
-amplifier run --dot-file examples/pipelines/practical/feature-build.dot \
-    --goal "Add user avatar upload with S3 storage"
+```yaml
+# .amplifier/config.yaml (or any bundle file)
+includes:
+  - bundle: attractor:bundles/attractor-pipeline
+session:
+  orchestrator:
+    config:
+      dot_file: examples/pipelines/practical/feature-build.dot
 ```
+The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 storage"]` (or supply `params` for `$param` substitution).
 
 ## Pipeline Gallery
 

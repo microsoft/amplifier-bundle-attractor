@@ -263,6 +263,32 @@ digraph {
 Explicit node attributes (`llm_model="..."` on the node) always override
 stylesheet values.
 
+### Model selection: family tokens and globs
+
+A node's `llm_model` -- whether set directly on the node or via
+`model_stylesheet` -- may take three forms:
+
+- a **concrete id**, e.g. `claude-sonnet-4-6`
+- a **family token**, e.g. `sonnet`, `haiku`, `opus`
+- an fnmatch **glob**, e.g. `claude-sonnet-4-*`
+
+Family tokens and globs are resolved at run time to the **newest stable served
+model** in that line, using the provider's live model list. They self-heal as
+providers ship new models and never rot. Resolution fails **loud** -- the node
+fails -- if nothing matches; there is no silent fallback to a default. Concrete
+ids pass through unchanged.
+
+**Caveat -- reproducibility.** Because resolution always picks the latest match,
+the chosen model drifts as providers release new ones. For a locked,
+reproducible evaluation, pin a concrete id (or capture the resolved id -- the
+engine emits a `model:resolved` event recording it). Prefer an explicit-major
+glob like `claude-sonnet-4-*` over a bare family token such as `sonnet`, so the
+major version stays fixed while only the point release floats.
+
+**Scope.** This resolution applies to a node's `llm_model` only. A provider's
+`default_model` (in the providers config) is passed to the SDK verbatim and is
+**not** resolved -- keep `default_model` a concrete served id.
+
 ### Human Approval Gate
 
 Use `shape=hexagon` for human-in-the-loop gates. Choices are derived from

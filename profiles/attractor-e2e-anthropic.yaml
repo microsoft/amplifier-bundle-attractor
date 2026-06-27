@@ -7,6 +7,11 @@ providers:
   - module: provider-anthropic
     source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
     config:
+      # Pinned to a concrete id on purpose: this is an E2E test profile and must
+      # be reproducible. A provider `default_model` is passed to the SDK verbatim
+      # (it is NOT routed through the engine's glob/family resolver), so it must
+      # always be a concrete served id. Self-healing globs (e.g. claude-sonnet-4-*)
+      # work on a node's `llm_model`; reproducible evals pin a concrete id.
       default_model: claude-sonnet-4-6
 
 session:

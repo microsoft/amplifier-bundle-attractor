@@ -24,47 +24,75 @@ Available profiles: `attractor-profile-anthropic`, `attractor-profile-openai`, `
 
 ## Run Your First Pipeline
 
-The simplest pipeline is a linear start-implement-done:
+The simplest pipeline is a linear start-implement-done. Point the pipeline
+orchestrator at a `.dot` file via bundle config:
 
-```bash
-amplifier run -B attractor:bundles/attractor-pipeline \
-    --goal "Create a Python script that prints hello world" \
-    --dot-file examples/pipelines/01-simple-linear.dot
+```yaml
+# .amplifier/config.yaml (or any bundle file)
+includes:
+  - bundle: attractor:bundles/attractor-pipeline
+session:
+  orchestrator:
+    config:
+      dot_file: examples/pipelines/01-simple-linear.dot   # or dot_source: "digraph { ... }"
 ```
 
-This parses the DOT graph, spawns an LLM agent for the `implement` node, and
-runs it to completion.
+Then run the configured bundle -- there are no pipeline-specific CLI flags. The
+goal is carried by the DOT graph attribute
+`graph [goal="Create a Python script that prints hello world"]` (or via
+`params`), not a `--goal` flag. Running parses the DOT graph, spawns an LLM agent
+for the `implement` node, and runs it to completion.
 
 ### Try a Multi-Stage Pipeline
 
-The plan-implement-test pipeline adds structure:
+The plan-implement-test pipeline adds structure -- point the orchestrator at its
+`.dot` file:
 
-```bash
-amplifier run -B attractor:bundles/attractor-pipeline \
-    --goal "Build a Python add(a,b) function with pytest tests" \
-    --dot-file examples/pipelines/02-plan-implement-test.dot
+```yaml
+# .amplifier/config.yaml (or any bundle file)
+includes:
+  - bundle: attractor:bundles/attractor-pipeline
+session:
+  orchestrator:
+    config:
+      dot_file: examples/pipelines/02-plan-implement-test.dot
 ```
+
+Set the goal in the DOT graph attribute
+`graph [goal="Build a Python add(a,b) function with pytest tests"]` (or via
+`params`).
 
 ### Try a Practical Pipeline
 
 Fix a bug systematically (reproduce, diagnose, fix, regression test, verify):
 
-```bash
-amplifier run -B attractor:bundles/attractor-pipeline \
-    --goal "Fix the NullPointerError in UserService.getProfile()" \
-    --dot-file examples/pipelines/practical/bug-fix.dot
+```yaml
+# .amplifier/config.yaml (or any bundle file)
+includes:
+  - bundle: attractor:bundles/attractor-pipeline
+session:
+  orchestrator:
+    config:
+      dot_file: examples/pipelines/practical/bug-fix.dot
 ```
+
+Set the goal in the DOT graph attribute
+`graph [goal="Fix the NullPointerError in UserService.getProfile()"]` (or via
+`params`).
 
 ## Run Interactively
 
 The interactive bundle gives you a conversational agent that can also invoke
-pipelines on demand via the `run_pipeline` tool:
+pipelines on demand via the `run_pipeline` tool. Compose it into your config:
 
-```bash
-amplifier run -B attractor:bundles/attractor-interactive
+```yaml
+# .amplifier/config.yaml (or any bundle file)
+includes:
+  - bundle: attractor:bundles/attractor-interactive
 ```
 
-Then talk to it:
+Then run the bundle and talk to it -- the agent drives pipelines for you via the
+`run_pipeline` tool:
 
 > "Run the plan-implement-test pipeline to add input validation to the login endpoint"
 
@@ -87,11 +115,18 @@ and a system prompt:
 For multi-provider pipelines (different models per node), use the pipeline
 bundle which wires all three:
 
-```bash
-amplifier run -B attractor:bundles/attractor-pipeline \
-    --dot-file examples/pipelines/06-model-stylesheet.dot \
-    --goal "Refactor the auth module"
+```yaml
+# .amplifier/config.yaml (or any bundle file)
+includes:
+  - bundle: attractor:bundles/attractor-pipeline
+session:
+  orchestrator:
+    config:
+      dot_file: examples/pipelines/06-model-stylesheet.dot
 ```
+
+Set the goal in the DOT graph attribute `graph [goal="Refactor the auth
+module"]` (or via `params`).
 
 See [DOT-AUTHORING-GUIDE.md](DOT-AUTHORING-GUIDE.md) for how model stylesheets
 route nodes to providers.

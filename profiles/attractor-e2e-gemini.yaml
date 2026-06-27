@@ -15,6 +15,9 @@ session:
     source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
     config:
       max_tool_rounds_per_input: 20
+      # Layer-1 base prompt (nlspec §6.1). Core 1.6.0: ONLY system_prompt_file
+      # populates Layer-1 — context.include does NOT — so the base MUST be here.
+      system_prompt_file: context/system-gemini.md
   context:
     module: context-simple
     source: git+https://github.com/microsoft/amplifier-module-context-simple@main
@@ -33,10 +36,9 @@ tools:
   - module: tool-report-outcome
     source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/tool-report-outcome
 
-context:
-  # '../context/' climbs from this YAML's dir to the bundle-root context/; idiomatic target is 'attractor:context/...' pending foundation namespaced-include support.
-  include:
-    - ../context/system-gemini.md
+# Layer-1 base is delivered via session.orchestrator.config.system_prompt_file
+# above (core 1.6.0: context.include does NOT populate Layer-1). No additive
+# context files needed, so the context.include block is intentionally absent.
 
 hooks:
   - module: hooks-tool-truncation

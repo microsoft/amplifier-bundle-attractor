@@ -28,6 +28,11 @@ session:
     source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
     config:
       default_command_timeout_ms: 120000
+      # Layer-1 base prompt (nlspec §6.1). In core 1.6.0 ONLY system_prompt /
+      # system_prompt_file populates Layer-1 — context.include does NOT — so the
+      # base MUST be delivered here. Resolved relative to bundle root by loop-agent.
+      # See docs/designs/layer-1-profile-owned-system-prompt.md.
+      system_prompt_file: context/system-anthropic.md
 
 # --- Tools (Anthropic/Claude Code aligned defaults) --------------------------
 tools:
@@ -41,7 +46,6 @@ tools:
     source: git+https://github.com/microsoft/amplifier-module-tool-search@main
 
 # --- System prompt -----------------------------------------------------------
-context:
-  # '../context/' climbs from this YAML's dir to the bundle-root context/; idiomatic target is 'attractor:context/...' pending foundation namespaced-include support.
-  include:
-    - ../context/system-anthropic.md
+# Layer-1 base is delivered via session.orchestrator.config.system_prompt_file
+# above (core 1.6.0: context.include does NOT populate Layer-1). No additive
+# context files needed here, so the context.include block is intentionally absent.

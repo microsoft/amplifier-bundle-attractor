@@ -34,6 +34,11 @@ session:
     config:
       max_tool_rounds_per_input: 50
       default_command_timeout_ms: 120000
+      # Layer-1 base prompt (nlspec §6.1). Core 1.6.0: ONLY system_prompt_file
+      # populates Layer-1 — context.include does NOT — so the base MUST be here.
+      # The additive context.include below (pipeline-awareness, dot-reference)
+      # remains as supplementary context, not as the base.
+      system_prompt_file: context/system-anthropic.md
   context:
     module: context-simple
     source: git+https://github.com/microsoft/amplifier-module-context-simple@main
@@ -57,11 +62,13 @@ tools:
         openai: attractor-agent-openai
         gemini: attractor-agent-gemini
 
-# Context: standard system prompt + pipeline awareness
+# Context: ADDITIVE supplementary context only. The Layer-1 base prompt is
+# delivered via session.orchestrator.config.system_prompt_file above
+# (core 1.6.0: context.include does NOT populate Layer-1). system-anthropic.md
+# is therefore NOT listed here — it is the base, owned by system_prompt_file.
 context:
   # '../context/' climbs from this YAML's dir to the bundle-root context/; idiomatic target is 'attractor:context/...' pending foundation namespaced-include support.
   include:
-    - ../context/system-anthropic.md
     - ../context/pipeline-awareness.md
     - ../context/dot-reference.md
 

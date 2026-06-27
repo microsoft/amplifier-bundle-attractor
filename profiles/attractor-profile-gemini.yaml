@@ -23,6 +23,12 @@ session:
       # Path is relative to the bundle root; loop-agent resolves it at session init.
       # See docs/designs/layer-1-profile-owned-system-prompt.md.
       system_prompt_file: context/system-gemini.md
+  # session.context is REQUIRED by core 1.6.0 ("Configuration must specify
+  # session.context"). This profile only includes attractor-core (which provides
+  # no context module), so it must be declared explicitly here.
+  context:
+    module: context-simple
+    source: git+https://github.com/microsoft/amplifier-module-context-simple@main
 
 tools:
   - module: tool-filesystem

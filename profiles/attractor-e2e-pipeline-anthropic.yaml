@@ -19,6 +19,11 @@ agents:
         source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
         config:
           default_command_timeout_ms: 120000
+          # Layer-1 base prompt delivered via profile-owned file (nlspec §6.1).
+          # Required: a loop-pipeline-spawned child fail-louds on an empty Layer-1
+          # (the top-level context.include below feeds the PIPELINE orchestrator,
+          # not this spawned child). See docs/designs/layer-1-profile-owned-system-prompt.md.
+          system_prompt_file: context/system-anthropic.md
 
 providers:
   - module: provider-anthropic

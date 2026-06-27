@@ -143,6 +143,9 @@ class PipelineRunState:
     # Subgraph execution (recursive — for nested DOT subgraphs)
     subgraph_runs: dict[str, Any] = field(default_factory=dict)
 
+    # Model token/glob resolutions: raw llm_model pattern -> concrete served id
+    resolved_models: dict[str, str] = field(default_factory=dict)
+
     # Human gate interactions
     human_interactions: list[HumanInteraction] = field(default_factory=list)
 

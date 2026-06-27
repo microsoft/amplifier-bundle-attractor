@@ -73,6 +73,19 @@ class StateAggregator:
         )
         return HookResult()
 
+    async def handle_model_resolved(
+        self, event: str, data: dict[str, Any]
+    ) -> HookResult:
+        """Handle model:resolved — record which concrete model a family-token /
+        glob ``llm_model`` resolved to, for audit / eval reproducibility."""
+        if self.state is None:
+            return HookResult()
+        raw = data.get("raw")
+        resolved = data.get("resolved")
+        if raw and resolved:
+            self.state.resolved_models[raw] = resolved
+        return HookResult()
+
     # -- Node lifecycle ----------------------------------------------------
 
     async def handle_node_start(self, event: str, data: dict[str, Any]) -> HookResult:

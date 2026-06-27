@@ -89,6 +89,10 @@ PIPELINE_STAGE_FAILED: str = "pipeline:stage_failed"
 PROVIDER_REQUEST: str = "provider:request"
 PROVIDER_RESPONSE: str = "provider:response"
 PROVIDER_ERROR: str = "provider:error"
+# Emitted when a node's llm_model family-token/glob is resolved to a concrete
+# served model id. Records {raw, resolved, provider, pattern} for audit /
+# eval reproducibility. Fires once per distinct resolution per run.
+MODEL_RESOLVED: str = "model:resolved"
 
 # ---------------------------------------------------------------------------
 # Subgraph execution (nested pipeline nodes)

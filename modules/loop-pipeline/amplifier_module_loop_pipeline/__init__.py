@@ -105,7 +105,9 @@ class DirectProviderBackend:
             if hasattr(node, "llm_provider") and node.llm_provider
             else node.attrs.get("llm_provider", "anthropic")
         )
-        model = await _resolve_concrete_model(provider_name, _resolve_model(node))
+        model = await _resolve_concrete_model(
+            provider_name, _resolve_model(node), emit=self._emit
+        )
         reasoning_effort = node.attrs.get("reasoning_effort")
         max_agent_turns_raw = node.attrs.get("max_agent_turns")
         max_agent_turns = (

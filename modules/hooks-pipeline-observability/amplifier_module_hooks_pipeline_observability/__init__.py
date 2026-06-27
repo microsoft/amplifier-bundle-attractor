@@ -33,6 +33,7 @@ _PIPELINE_EVENTS = [
     "pipeline:stage_retrying",
     "pipeline:stage_failed",
     "provider:response",
+    "model:resolved",
 ]
 
 # Map event names to StateAggregator handler method names
@@ -55,6 +56,7 @@ _AGGREGATOR_HANDLER_MAP: dict[str, str] = {
     "pipeline:stage_retrying": "handle_stage_retrying",
     "pipeline:stage_failed": "handle_stage_failed",
     "provider:response": "handle_provider_response",
+    "model:resolved": "handle_model_resolved",
 }
 
 

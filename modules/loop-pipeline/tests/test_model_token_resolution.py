@@ -102,3 +102,69 @@ def test_is_model_pattern_classification():
     assert not backend._is_model_pattern("claude-sonnet-4-5")
     assert not backend._is_model_pattern("claude-haiku-4-5-20251001")
     assert not backend._is_model_pattern("gpt-5.4")
+
+
+@pytest.mark.asyncio
+async def test_emit_fires_once_on_resolution(monkeypatch):
+    """A resolution emits a model:resolved event with the raw + concrete id."""
+    from amplifier_module_loop_pipeline.pipeline_events import MODEL_RESOLVED
+
+    async def _stub(provider, pattern, *, stable_only):
+        return "claude-sonnet-4-6"
+
+    monkeypatch.setattr("unified_llm.resolve_latest_for", _stub)
+
+    events = []
+
+    async def _emit(event_name, data):
+        events.append((event_name, data))
+
+    out = await backend._resolve_concrete_model(
+        "anthropic", "claude-sonnet-4-*", emit=_emit
+    )
+    assert out == "claude-sonnet-4-6"
+    assert len(events) == 1
+    name, data = events[0]
+    assert name == MODEL_RESOLVED
+    assert data == {
+        "raw": "claude-sonnet-4-*",
+        "resolved": "claude-sonnet-4-6",
+        "provider": "anthropic",
+        "pattern": "claude-sonnet-4-*",
+    }
+
+
+@pytest.mark.asyncio
+async def test_emit_not_called_for_concrete_id(monkeypatch):
+    async def _boom(*a, **k):
+        raise AssertionError("resolver must NOT be called for a concrete id")
+
+    monkeypatch.setattr("unified_llm.resolve_latest_for", _boom)
+
+    called = []
+
+    async def _emit(event_name, data):
+        called.append(event_name)
+
+    out = await backend._resolve_concrete_model(
+        "anthropic", "claude-sonnet-4-5", emit=_emit
+    )
+    assert out == "claude-sonnet-4-5"
+    assert called == []  # no resolution -> no event
+
+
+@pytest.mark.asyncio
+async def test_emit_not_called_on_cache_hit(monkeypatch):
+    async def _stub(provider, pattern, *, stable_only):
+        return "claude-sonnet-4-6"
+
+    monkeypatch.setattr("unified_llm.resolve_latest_for", _stub)
+
+    events = []
+
+    async def _emit(event_name, data):
+        events.append(event_name)
+
+    await backend._resolve_concrete_model("anthropic", "sonnet", emit=_emit)
+    await backend._resolve_concrete_model("anthropic", "sonnet", emit=_emit)
+    assert len(events) == 1  # second call served from cache, no re-emit

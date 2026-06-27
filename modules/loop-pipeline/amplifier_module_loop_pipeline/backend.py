@@ -55,7 +55,12 @@ from .fidelity import build_preamble, resolve_fidelity, resolve_thread_key
 from .graph import Edge, Graph, Node
 from .outcome import Outcome, StageStatus
 from .hook_bridge import _current_node_context, set_node_context
-from .pipeline_events import PROVIDER_ERROR, PROVIDER_REQUEST, PROVIDER_RESPONSE
+from .pipeline_events import (
+    MODEL_RESOLVED,
+    PROVIDER_ERROR,
+    PROVIDER_REQUEST,
+    PROVIDER_RESPONSE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +232,7 @@ class AmplifierBackend:
         # 2. Resolve provider and profile from node attributes
         provider = node.attrs.get("llm_provider", "anthropic")
         model = node.attrs.get("llm_model")
-        model = await _resolve_concrete_model(provider, model)
+        model = await _resolve_concrete_model(provider, model, emit=self._emit)
         reasoning_effort = node.attrs.get("reasoning_effort")
         max_agent_turns_raw = node.attrs.get("max_agent_turns")
         max_agent_turns = (
@@ -575,7 +580,9 @@ class AmplifierBackend:
 
         client = self._get_or_create_unified_client()
         provider_name = node.llm_provider or node.attrs.get("llm_provider", "anthropic")
-        model = await _resolve_concrete_model(provider_name, _resolve_model(node))
+        model = await _resolve_concrete_model(
+            provider_name, _resolve_model(node), emit=self._emit
+        )
         tools = _build_unified_tools(self._tools)
 
         # EXT-23: Build response_format when response_schema is set
@@ -919,10 +926,16 @@ def _is_model_pattern(model: str) -> bool:
 
 
 @overload
-async def _resolve_concrete_model(provider: str, model: str) -> str: ...
+async def _resolve_concrete_model(
+    provider: str, model: str, *, emit: Any = None
+) -> str: ...
 @overload
-async def _resolve_concrete_model(provider: str, model: str | None) -> str | None: ...
-async def _resolve_concrete_model(provider: str, model: str | None) -> str | None:
+async def _resolve_concrete_model(
+    provider: str, model: str | None, *, emit: Any = None
+) -> str | None: ...
+async def _resolve_concrete_model(
+    provider: str, model: str | None, *, emit: Any = None
+) -> str | None:
     """Resolve a node's ``llm_model`` token to a concrete served model id.
 
     - ``None``/empty  -> returned unchanged (spawn path tolerates a missing
@@ -957,6 +970,19 @@ async def _resolve_concrete_model(provider: str, model: str | None) -> str | Non
         provider,
         pattern,
     )
+    # Emit the resolution as a pipeline event so the run's event stream records
+    # exactly which concrete model a pattern/family token resolved to (audit /
+    # eval reproducibility). Fires once per distinct resolution (cache miss).
+    if emit is not None:
+        await emit(
+            MODEL_RESOLVED,
+            {
+                "raw": model,
+                "resolved": concrete,
+                "provider": provider,
+                "pattern": pattern,
+            },
+        )
     return concrete
 
 

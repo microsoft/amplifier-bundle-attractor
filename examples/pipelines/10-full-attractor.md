@@ -80,13 +80,13 @@ done       polish      fix_tests
 | Node | Class | Stylesheet Match | Resolved Model |
 |------|-------|-----------------|----------------|
 | `plan` | planning | `.planning` (specificity=2) | o3 (openai, high) |
-| `implement_backend` | code | `.code` (specificity=2) | claude-sonnet-4-20250514 (anthropic) |
-| `implement_frontend` | code | `.code` (specificity=2) | claude-sonnet-4-20250514 (anthropic) |
-| `integrate` | code | `.code` (specificity=2) | claude-sonnet-4-20250514 (anthropic) |
+| `implement_backend` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
+| `implement_frontend` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
+| `integrate` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
 | `test` | fast | `.fast` (specificity=2) | gemini-2.5-flash-preview-05-20 (gemini, low) |
-| `fix_tests` | code | `.code` (specificity=2) | claude-sonnet-4-20250514 (anthropic) |
+| `fix_tests` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
 | `final_review` | code | `#final_review` (specificity=3) | claude-opus-4-20250514 (anthropic, high) |
-| `polish` | code | `.code` (specificity=2) | claude-sonnet-4-20250514 (anthropic) |
+| `polish` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
 
 ## Expected Behavior
 

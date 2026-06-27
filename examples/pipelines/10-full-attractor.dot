@@ -18,7 +18,7 @@ digraph FullAttractor {
         fallback_retry_target="plan",
         model_stylesheet="
             * {
-                llm_model: claude-sonnet-4-20250514;
+                llm_model: claude-sonnet-4-6;
                 llm_provider: anthropic;
                 reasoning_effort: medium;
             }
@@ -28,7 +28,7 @@ digraph FullAttractor {
                 reasoning_effort: high;
             }
             .code {
-                llm_model: claude-sonnet-4-20250514;
+                llm_model: claude-sonnet-4-6;
                 llm_provider: anthropic;
             }
             .fast {

@@ -8,7 +8,7 @@ digraph PRReview {
     graph [
         goal="$goal",
         label="PR Review Pipeline",
-        model_stylesheet="box { llm_provider: anthropic; llm_model: claude-sonnet-4-20250514 }
+        model_stylesheet="box { llm_provider: anthropic; llm_model: claude-sonnet-4-6 }
                           .reasoning { llm_provider: openai; llm_model: o3-mini; reasoning_effort: high }",
         default_fidelity="full",
         default_thread_id="pr-review"

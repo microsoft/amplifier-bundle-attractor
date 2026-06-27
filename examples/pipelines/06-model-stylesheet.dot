@@ -12,7 +12,7 @@ digraph ModelStylesheet {
         label="Model Stylesheet Pipeline",
         model_stylesheet="
             * {
-                llm_model: claude-sonnet-4-20250514;
+                llm_model: claude-sonnet-4-6;
                 llm_provider: anthropic;
                 reasoning_effort: medium;
             }
@@ -22,7 +22,7 @@ digraph ModelStylesheet {
                 reasoning_effort: high;
             }
             .code {
-                llm_model: claude-sonnet-4-20250514;
+                llm_model: claude-sonnet-4-6;
                 llm_provider: anthropic;
             }
             .fast {

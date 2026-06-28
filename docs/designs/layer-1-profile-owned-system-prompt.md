@@ -63,3 +63,24 @@ loop-agent loads a **profile-declared base-prompt** directly into `SessionConfig
 1. **Fail-loud** changes attractor's documented fail-soft behavior (`:668-670,1408`) → amend the spec, or scope fail-loud to LLM nodes only.
 2. **`ProviderProfile` object:** keep the declarative (YAML profile) representation, or introduce the actual object the spec describes and the gap analyses flag as missing? (This design works either way; the base-prompt asset just needs an owner.)
 3. **Prompt versioning** (contract #1) is net-new surface — neither spec blesses nor forbids it.
+
+## Verification record (this effort)
+
+Verified on latest attractor main (`b50843c`), core 1.6.0, graded on raw LLM requests + CI session-tree inspection in DTUs. Branches (committed locally, NOT pushed): attractor `feat/profile-owned-system-prompt` (`4ebefb4`); dot-graph `fix/loop-agent-base-prompt` (`4ac6f38`).
+
+| Check | Result |
+|---|---|
+| Rebase onto latest main; suites | clean; #78 model-resolution interaction harmless; 483 + 1378 green |
+| Cross-provider (anthropic/openai/gemini) | PASS — each node carried ITS verbatim base header, no cross-contamination |
+| wiki-weaver (trivial ingest) | PASS |
+| app-cli attractor-tool (root→tool→node) | PASS — *after* completion fix (`5fd9a33`): main sessions also needed `system_prompt_file` (context.include does NOT feed loop-agent Layer-1) |
+| dot-graph resolver | PASS — two-link direct proof (PROOF A: injection emits per-provider `system_prompt_file`; PROOF B: real loop-agent + real Anthropic call → base sentinel on wire, no fail-loud; PROOF C: CWD-independent) |
+| Council | CONDITIONAL SHIP → must-fixes applied |
+
+**Key correction:** loop-agent Layer-1 comes ONLY from `system_prompt`/`system_prompt_file`; it never consumes the `context.include` factory (the old comment was stale). Blast radius of fail-loud is **loop-agent-local**: in-workspace only attractor (all 30 sessions fixed) and the dot-graph resolver (fixed) spawn loop-agent nodes.
+
+### Open follow-ups
+1. **ROOT-CAUSE (tracked):** wire loop-agent to read the kernel context manager's system-prompt factory so `context.include` works like every other orchestrator — then the 30-file `system_prompt_file` mechanism can retire. Until then the config approach is permanent-by-default.
+2. **Full DTU-hosted Resolve stack:** dot-graph proven via direct two-link proof, NOT a live worker-container spawn (stack repos absent from workspace). Closing it needs `amplifier-bundle-resolve` + `resolve-stack.sh --dev` with local overrides.
+3. **External consumers NOT in this workspace:** `amplifier-resolver-orchestrator` and `amplifier-resolver-understudy` must be checked for the same gap before "smooth for all" is fully true.
+4. **dot-graph live calls:** only the anthropic node path was exercised with a real LLM call; openai/gemini covered by mapping assertions only.

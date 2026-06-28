@@ -68,10 +68,6 @@ agents:
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 120000
-          # Layer-1 base prompt delivered via profile-owned file (nlspec §6.1).
-          # Resolved by loop-agent relative to bundle root at session init.
-          # See docs/designs/layer-1-profile-owned-system-prompt.md.
-          system_prompt_file: context/system-anthropic.md
   attractor-agent-openai:
     description: >
       OpenAI coding agent (codex-rs aligned).
@@ -83,8 +79,6 @@ agents:
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 10000
-          # Layer-1 base prompt delivered via profile-owned file (nlspec §6.1).
-          system_prompt_file: context/system-openai.md
   attractor-agent-gemini:
     description: >
       Gemini coding agent (gemini-cli aligned).
@@ -96,5 +90,3 @@ agents:
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 10000
-          # Layer-1 base prompt delivered via profile-owned file (nlspec §6.1).
-          system_prompt_file: context/system-gemini.md

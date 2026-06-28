@@ -19,10 +19,6 @@ session:
     source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
     config:
       default_command_timeout_ms: 120000
-      # Layer-1 base prompt (nlspec §6.1: "Provider-specific base instructions from ProviderProfile").
-      # Path is relative to the bundle root; loop-agent resolves it at session init.
-      # See docs/designs/layer-1-profile-owned-system-prompt.md.
-      system_prompt_file: context/system-anthropic.md
   # session.context is REQUIRED by core 1.6.0 ("Configuration must specify
   # session.context"). This profile only includes attractor-core (which provides
   # no context module) — unlike attractor-agent.yaml which pulls it from

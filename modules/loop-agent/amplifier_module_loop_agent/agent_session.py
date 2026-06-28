@@ -75,6 +75,27 @@ from .turns import (
 logger = logging.getLogger(__name__)
 
 
+# Canonical provider IDs, shared by AgentSession (project-doc / env-context
+# filtering) and AgentOrchestrator (provider-default base-prompt selection).
+KNOWN_PROVIDERS = ("anthropic", "openai", "gemini")
+
+
+def canonical_provider(raw: str | None) -> str | None:
+    """Normalise a raw provider name to a canonical ID (anthropic/openai/gemini).
+
+    Bundle composition may yield provider names like "provider-anthropic" or
+    "Provider-OpenAI"; this returns the canonical ID via case-insensitive
+    substring match, or None when the provider cannot be identified.
+    """
+    if not raw:
+        return None
+    lower = raw.lower()
+    for canonical in KNOWN_PROVIDERS:
+        if canonical in lower:
+            return canonical
+    return None
+
+
 class AgentSession:
     """Manages a single coding agent session with the core agentic loop.
 
@@ -493,7 +514,7 @@ class AgentSession:
     # ------------------------------------------------------------------
 
     # Canonical provider IDs for flexible matching
-    _KNOWN_PROVIDERS = ("anthropic", "openai", "gemini")
+    _KNOWN_PROVIDERS = KNOWN_PROVIDERS
 
     def _resolve_provider_id(self) -> str | None:
         """Resolve raw provider name to a canonical provider ID.
@@ -506,14 +527,7 @@ class AgentSession:
 
         Returns None when the provider cannot be identified.
         """
-        raw = self._provider_name
-        if not raw:
-            return None
-        lower = raw.lower()
-        for canonical in self._KNOWN_PROVIDERS:
-            if canonical in lower:
-                return canonical
-        return None
+        return canonical_provider(self._provider_name)
 
     # ------------------------------------------------------------------
     # System prompt assembly (spec PROV-002: rebuilt every LLM call)

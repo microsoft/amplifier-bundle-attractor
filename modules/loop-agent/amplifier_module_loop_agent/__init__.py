@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .agent_session import AgentSession
+from .agent_session import KNOWN_PROVIDERS, AgentSession, canonical_provider
 from .config import SessionConfig
 from .steering import FollowUpQueue, SteeringQueue
 from .subagent_tools import SubagentManager
@@ -144,6 +144,52 @@ class AgentOrchestrator:
         """
         self._follow_up_queue.follow_up(message)
 
+    def _resolve_base_prompt(
+        self, config_dict: dict[str, Any], provider_name: str
+    ) -> str:
+        """Resolve the Layer-1 base prompt with a 4-step precedence.
+
+        Precedence (first that applies wins):
+          1. explicit ``system_prompt`` in config        -> used as-is
+          2. explicit ``system_prompt_file`` in config   -> loaded (robust resolver)
+          3. provider DEFAULT ``context/system-<provider>.md`` -> loaded (robust
+             resolver), where ``<provider>`` is the canonical provider derived
+             from the agent's own mounted provider — the same provider used for
+             the actual completion, so the base always matches the model called.
+          4. unknown provider, or a configured/default file that does not exist
+             -> a CLEAR, ACTIONABLE error (never a silent wrong/empty base).
+
+        Explicit config (1, 2) always overrides the provider default (3), so a
+        non-coding agent (e.g. attractor-expert) can pin its own persona base.
+
+        See docs/designs/layer-1-profile-owned-system-prompt.md §Mechanism.
+        """
+        # (1) explicit inline system_prompt wins outright.
+        existing = config_dict.get("system_prompt")
+        if existing:
+            return existing
+
+        # (2) explicit system_prompt_file, else (3) provider default.
+        spf = config_dict.get("system_prompt_file", "")
+        if not spf:
+            canonical = canonical_provider(provider_name)
+            if canonical is None:
+                # (4) unknown provider — do NOT guess a base; fail loud and clear.
+                raise RuntimeError(
+                    f"loop-agent cannot select a Layer-1 base prompt: no "
+                    f"system_prompt or system_prompt_file is configured, and the "
+                    f"provider {provider_name!r} is not one of the known providers "
+                    f"{KNOWN_PROVIDERS} (so no default context/system-<provider>.md "
+                    f"applies). Set an explicit system_prompt_file in "
+                    f"session.orchestrator.config, or run under a known provider. "
+                    f"See docs/designs/layer-1-profile-owned-system-prompt.md."
+                )
+            spf = f"context/system-{canonical}.md"
+
+        # (2)/(3) load via the robust, CWD-independent resolver. A missing file
+        # raises a clear FileNotFoundError naming the value and path tried — (4).
+        return _resolve_system_prompt_file(spf).read_text(encoding="utf-8")
+
     async def execute(
         self,
         prompt: str,
@@ -174,34 +220,34 @@ class AgentOrchestrator:
         if coordinator is not None:
             self._coordinator = coordinator
         if self._session is None:
-            # Load Layer-1 base prompt from profile-declared file (nlspec §6.1:
-            # "Provider-specific base instructions from ProviderProfile").
+            # Resolve the Layer-1 base prompt (nlspec §6.1: "Provider-specific base
+            # instructions from ProviderProfile") with a 4-step precedence, BEFORE the
+            # session is created, so the text lands in SessionConfig.system_prompt
+            # (Layer-1) regardless of which spawn path was used:
+            #   1. explicit system_prompt config            -> use as-is
+            #   2. explicit system_prompt_file config       -> load
+            #   3. provider DEFAULT context/system-<prov>.md -> load (the common case:
+            #      agents need no per-YAML system_prompt_file; the provider supplies it)
+            #   4. unknown provider / missing file          -> fail-loud clear error
+            # See _resolve_base_prompt and docs/designs/layer-1-profile-owned-system-prompt.md.
             #
-            # Design: docs/designs/layer-1-profile-owned-system-prompt.md
-            #
-            # The profile declares `system_prompt_file: context/system-<prov>.md`
-            # in session.orchestrator.config.  loop-agent resolves it here — before
-            # the session is created — so the text lands in SessionConfig.system_prompt
-            # (Layer-1) regardless of which spawn path was used.
-            #
-            # Path resolution is delegated to _resolve_system_prompt_file, which is
+            # File loading is delegated to _resolve_system_prompt_file, which is
             # CWD-INDEPENDENT (anchored on this module's __file__, never the process
-            # working directory) and fail-loud: a configured-but-missing file raises
-            # a clear, actionable FileNotFoundError naming the value and the absolute
-            # path tried — rather than a silent empty Layer-1 that only trips the
-            # generic guard later. See docs/designs/layer-1-profile-owned-system-prompt.md.
-            #
-            # If system_prompt is already set in config (e.g. injected by loop-pipeline's
-            # backend.py before spawn), the file is skipped — single owner, no conflict.
+            # working directory) and fail-loud on a missing file.
             config_dict = dict(self._config)
-            _spf = config_dict.get("system_prompt_file", "")
-            if _spf and not config_dict.get("system_prompt"):
-                _spf_path = _resolve_system_prompt_file(_spf)
-                config_dict["system_prompt"] = _spf_path.read_text(encoding="utf-8")
+
+            # Derive the intended provider from the mounted providers. This is the
+            # SAME value used below for the actual completion (provider =
+            # providers[provider_name]), so a provider-derived default base prompt
+            # always matches the model that will actually be called — it is the
+            # agent's own configured provider, not a post-routing driver.
+            provider_name = next(iter(providers.keys()))
+
+            config_dict["system_prompt"] = self._resolve_base_prompt(
+                config_dict, provider_name
+            )
 
             config = SessionConfig.from_dict(config_dict)
-            # Use the first available provider
-            provider_name = next(iter(providers.keys()))
             provider = providers[provider_name]
 
             # Merge subagent lifecycle tools into the tools dict

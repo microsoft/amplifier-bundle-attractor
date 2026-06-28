@@ -255,7 +255,9 @@ async def test_orchestrator_passes_provider_name():
 
     orch = AgentOrchestrator(
         coordinator=coordinator,
-        config={"system_prompt": "Agent prompt.", "max_tool_rounds_per_input": 1},
+        # No system_prompt: the anthropic provider DEFAULT supplies Layer-1, so
+        # this test no longer needs a guard-satisfying dummy (ripple shrink).
+        config={"max_tool_rounds_per_input": 1},
     )
     await orch.execute("hi", MagicMock(), {"anthropic": provider}, {}, hooks)
 
@@ -477,11 +479,13 @@ async def test_system_prompt_takes_precedence_over_system_prompt_file(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_empty_system_prompt_raises_loud_error():
-    """Empty Layer-1 (no system_prompt, no resolvable system_prompt_file) raises RuntimeError.
+async def test_unknown_provider_with_no_base_raises_loud_error():
+    """Precedence (4): unknown provider + no explicit base raises a clear RuntimeError.
 
-    Design §C (fail-loud): an empty Layer-1 is a configuration error, not a
-    recoverable runtime condition.  The silent stub is gone.
+    With the provider-default in place, a KNOWN provider (anthropic/openai/gemini)
+    always resolves a default base. The fail-loud path is now an UNKNOWN provider
+    with no system_prompt / system_prompt_file: there is no default to apply and
+    we must NOT silently pick a wrong one.
     """
     context = MagicMock()
     provider = AsyncMock()
@@ -494,8 +498,62 @@ async def test_empty_system_prompt_raises_loud_error():
         coordinator=coordinator,
         config={"max_tool_rounds_per_input": 1},  # no system_prompt, no file
     )
-    with pytest.raises(RuntimeError, match="Layer-1 base prompt is empty"):
-        await orch.execute("hello", context, {"anthropic": provider}, {}, hooks)
+    with pytest.raises(RuntimeError, match="not one of the known providers"):
+        # "test" is not a known provider -> no default -> fail loud.
+        await orch.execute("hello", context, {"test": provider}, {}, hooks)
+
+
+@pytest.mark.asyncio
+async def test_provider_default_base_prompt_loaded_for_known_provider():
+    """Precedence (3): with no explicit base, a known provider loads its default.
+
+    An anthropic agent with NO system_prompt / system_prompt_file resolves the
+    bundle's context/system-anthropic.md provider default into Layer-1 — this is
+    what lets the 30 per-YAML system_prompt_file lines be removed.
+    """
+    context = MagicMock()
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={"max_tool_rounds_per_input": 1},  # no base configured at all
+    )
+    await orch.execute("hello", context, {"anthropic": provider}, {}, hooks)
+
+    request = provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+    # The real Anthropic provider base ships this sentinel heading.
+    assert "Anthropic Profile" in system_content or "Claude Code" in system_content, (
+        f"provider-default base not loaded into Layer-1. Got: {system_content[:200]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_explicit_config_overrides_provider_default():
+    """Precedence (1) beats (3): explicit system_prompt wins over the provider default."""
+    context = MagicMock()
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    SENTINEL = "EXPLICIT-OVERRIDE-WINS-Q7"
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={"system_prompt": SENTINEL, "max_tool_rounds_per_input": 1},
+    )
+    await orch.execute("hello", context, {"anthropic": provider}, {}, hooks)
+
+    request = provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+    assert SENTINEL in system_content
+    # The provider default must NOT have been loaded on top of the explicit base.
+    assert "Anthropic Profile" not in system_content
 
 
 # ---------------------------------------------------------------------------

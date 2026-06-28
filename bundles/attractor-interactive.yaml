@@ -34,11 +34,9 @@ session:
     config:
       max_tool_rounds_per_input: 50
       default_command_timeout_ms: 120000
-      # Layer-1 base prompt (nlspec §6.1). Core 1.6.0: ONLY system_prompt_file
-      # populates Layer-1 — context.include does NOT — so the base MUST be here.
-      # The additive context.include below (pipeline-awareness, dot-reference)
-      # remains as supplementary context, not as the base.
-      system_prompt_file: context/system-anthropic.md
+      # Layer-1 base comes from loop-agent's provider default
+      # (context/system-anthropic.md). The context.include below
+      # (pipeline-awareness, dot-reference) is ADDITIVE context, not the base.
   context:
     module: context-simple
     source: git+https://github.com/microsoft/amplifier-module-context-simple@main
@@ -62,10 +60,6 @@ tools:
         openai: attractor-agent-openai
         gemini: attractor-agent-gemini
 
-# Context: ADDITIVE supplementary context only. The Layer-1 base prompt is
-# delivered via session.orchestrator.config.system_prompt_file above
-# (core 1.6.0: context.include does NOT populate Layer-1). system-anthropic.md
-# is therefore NOT listed here — it is the base, owned by system_prompt_file.
 context:
   # '../context/' climbs from this YAML's dir to the bundle-root context/; idiomatic target is 'attractor:context/...' pending foundation namespaced-include support.
   include:
@@ -102,10 +96,6 @@ agents:
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 120000
-          # Layer-1 base prompt delivered via profile-owned file (nlspec §6.1).
-          # Required: loop-pipeline (spawned via run_pipeline) fail-louds on an
-          # empty Layer-1. See docs/designs/layer-1-profile-owned-system-prompt.md.
-          system_prompt_file: context/system-anthropic.md
   attractor-agent-openai:
     description: >
       OpenAI coding agent (codex-rs aligned).
@@ -117,8 +107,6 @@ agents:
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 10000
-          # Layer-1 base prompt delivered via profile-owned file (nlspec §6.1).
-          system_prompt_file: context/system-openai.md
   attractor-agent-gemini:
     description: >
       Gemini coding agent (gemini-cli aligned).
@@ -130,5 +118,3 @@ agents:
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 10000
-          # Layer-1 base prompt delivered via profile-owned file (nlspec §6.1).
-          system_prompt_file: context/system-gemini.md

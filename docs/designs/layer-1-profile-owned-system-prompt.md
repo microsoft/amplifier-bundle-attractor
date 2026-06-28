@@ -34,6 +34,18 @@ So the base prompt's correct home is the **provider profile**, delivered as loop
 **A. Base prompt = profile-owned → loop-agent Layer-1.**
 loop-agent loads a **profile-declared base-prompt** directly into `SessionConfig.system_prompt` (`config.py:39`). Insertion point: `__init__.py:113-137` (replace the factory-resolution block with a direct read of the profile's base-prompt path). Remove `context.include: ../context/system-<prov>.md` (the **base**) from the agent YAMLs + profiles. Consequence (confirmed): with no base `context.include`, foundation registers no base factory (`_prepared.py:656` guard), so `context._system_prompt_factory` is `None` and `config.system_prompt` flows straight through as Layer-1 — single owner, no precedence fight. `context.include` **remains** for genuine additive context (`@AGENTS.md` etc.), Layer 4 only.
 
+**A′. Mechanism (4-step precedence) — provider DEFAULT replaces the 30 hard-coded lines.**
+`AgentOrchestrator._resolve_base_prompt(config_dict, provider_name)` resolves Layer-1 once, before the session is created, with this precedence (first that applies wins):
+
+| Step | Source | Behaviour |
+|------|--------|-----------|
+| 1 | explicit `system_prompt` in orchestrator config | used as-is (e.g. injected by loop-pipeline before spawn) |
+| 2 | explicit `system_prompt_file` in config | loaded via the robust, CWD-independent resolver |
+| 3 | **provider DEFAULT** `context/system-<provider>.md` | loaded via the same resolver, where `<provider>` is the canonical provider derived from the agent's **own** mounted provider (`next(iter(providers.keys()))` → `canonical_provider()`) — the SAME value used for the actual completion, so the base always matches the model called |
+| 4 | unknown provider, or a configured/default file that does not exist | **fail-loud** clear error (never a silent wrong/empty base) |
+
+Step 3 is the common case and is why the per-YAML `system_prompt_file:` lines (30 across 18 YAMLs) were removed: a provider agent needs **no** base config at all — the provider supplies it. Explicit config (1, 2) still overrides the default, so a non-coding agent (`attractor-expert`) pins its own persona base via an explicit `system_prompt_file`. **Scope gate that made this safe:** loop-agent knows its intended provider at resolution time because the base default and the completion-provider selection read one source (`next(iter(providers.keys()))`); they cannot disagree, so a provider-default base is exactly as correct as the provider selection that already ships. Implementation: `__init__.py` `_resolve_base_prompt`; `agent_session.py` `canonical_provider()` / `KNOWN_PROVIDERS` (shared with project-doc / env-context filtering).
+
 **B. Runtime (per-invocation) override = Layer-5 `user_instructions` via the existing channel.**
 `orchestrator_config` is already an end-to-end per-invocation passthrough (loop-pipeline → spawn_fn → wiki-weaver `prepared.spawn` / app-cli `spawn_sub_session` → `session.orchestrator.config` → loop-agent `SessionConfig`). loop-agent already reads `user_instructions` (`config.py:40`) as Layer-5 (highest precedence, `system_prompt.py:93-95`). One small change: `loop-pipeline/backend.py` `_run_with_spawn` adds `user_instructions` (and/or `system_prompt_file`) to the per-spawn `orchestrator_config` dict (`:421-428`), sourced from `node.attrs` (per-graph) and/or `PipelineContext` (per-run, caller-supplied). **No app-cli / foundation / shared-contract change.**
 

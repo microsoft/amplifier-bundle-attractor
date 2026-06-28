@@ -21,9 +21,6 @@ session:
     config:
       max_tool_rounds_per_input: 20
       reasoning_effort: high
-      # Layer-1 base prompt (nlspec §6.1). Core 1.6.0: ONLY system_prompt_file
-      # populates Layer-1 — context.include does NOT — so the base MUST be here.
-      system_prompt_file: context/system-anthropic.md
   context:
     module: context-simple
     source: git+https://github.com/microsoft/amplifier-module-context-simple@main
@@ -39,10 +36,6 @@ tools:
     source: git+https://github.com/microsoft/amplifier-module-tool-search@main
   - module: tool-report-outcome
     source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/tool-report-outcome
-
-# Layer-1 base is delivered via session.orchestrator.config.system_prompt_file
-# above (core 1.6.0: context.include does NOT populate Layer-1). No additive
-# context files needed, so the context.include block is intentionally absent.
 
 hooks:
   - module: hooks-tool-truncation

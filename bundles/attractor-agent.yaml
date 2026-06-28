@@ -28,11 +28,6 @@ session:
     source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
     config:
       default_command_timeout_ms: 120000
-      # Layer-1 base prompt (nlspec §6.1). In core 1.6.0 ONLY system_prompt /
-      # system_prompt_file populates Layer-1 — context.include does NOT — so the
-      # base MUST be delivered here. Resolved relative to bundle root by loop-agent.
-      # See docs/designs/layer-1-profile-owned-system-prompt.md.
-      system_prompt_file: context/system-anthropic.md
 
 # --- Tools (Anthropic/Claude Code aligned defaults) --------------------------
 tools:
@@ -45,7 +40,6 @@ tools:
   - module: tool-search
     source: git+https://github.com/microsoft/amplifier-module-tool-search@main
 
-# --- System prompt -----------------------------------------------------------
-# Layer-1 base is delivered via session.orchestrator.config.system_prompt_file
-# above (core 1.6.0: context.include does NOT populate Layer-1). No additive
-# context files needed here, so the context.include block is intentionally absent.
+# Layer-1 base prompt is supplied by loop-agent's provider default
+# (context/system-anthropic.md for this Anthropic bundle); no system_prompt_file
+# or context.include base is needed. See docs/designs/layer-1-profile-owned-system-prompt.md.

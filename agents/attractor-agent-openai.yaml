@@ -28,10 +28,6 @@ session:
     config:
       max_tool_rounds_per_input: 50
       default_command_timeout_ms: 10000
-      # Layer-1 base prompt (nlspec §6.1: "Provider-specific base instructions from ProviderProfile").
-      # Path is relative to the bundle root; loop-agent resolves it at session init.
-      # See docs/designs/layer-1-profile-owned-system-prompt.md.
-      system_prompt_file: context/system-openai.md
   context:
     module: context-simple
     source: git+https://github.com/microsoft/amplifier-module-context-simple@main

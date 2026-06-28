@@ -57,8 +57,9 @@ tools:
 # the child inherits the parent's loop-pipeline orchestrator and recurses.
 agents:
   # Inline session.orchestrator is REQUIRED (passes the loop-pipeline recursion
-  # guard, which checks orchestrator.module). system_prompt_file delivers the
-  # provider base prompt as loop-agent Layer-1 (resolved relative to bundle root).
+  # guard, which checks orchestrator.module). The Layer-1 base prompt is supplied
+  # by loop-agent's provider default (context/system-<provider>.md), so no
+  # per-agent system_prompt_file is needed here.
   attractor-agent-anthropic:
     description: >
       Anthropic coding agent (Claude Code aligned).
@@ -70,7 +71,6 @@ agents:
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 120000
-          system_prompt_file: context/system-anthropic.md
   attractor-agent-openai:
     description: >
       OpenAI coding agent (codex-rs aligned).
@@ -82,7 +82,6 @@ agents:
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 10000
-          system_prompt_file: context/system-openai.md
   attractor-agent-gemini:
     description: >
       Gemini coding agent (gemini-cli aligned).
@@ -94,4 +93,3 @@ agents:
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 10000
-          system_prompt_file: context/system-gemini.md

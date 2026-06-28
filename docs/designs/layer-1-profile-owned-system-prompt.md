@@ -91,8 +91,21 @@ Verified on latest attractor main (`b50843c`), core 1.6.0, graded on raw LLM req
 
 **Key correction:** loop-agent Layer-1 comes ONLY from `system_prompt`/`system_prompt_file`; it never consumes the `context.include` factory (the old comment was stale). Blast radius of fail-loud is **loop-agent-local**: in-workspace only attractor (all 30 sessions fixed) and the dot-graph resolver (fixed) spawn loop-agent nodes.
 
+## Root-cause cleanup — Option A (DONE, proven config-free)
+
+`968fc62` replaced the per-session config duplication with a **provider DEFAULT in loop-agent**. Precedence: explicit `system_prompt` > explicit `system_prompt_file` > **provider default `context/system-<provider>.md`** > fail-loud (unknown provider only). The default keys on the SAME provider source loop-agent uses for the actual completion (`next(iter(providers.keys()))`), so the base can never disagree with the model being called. **24 hard-coded `system_prompt_file` lines removed** across 17 YAMLs (only `attractor-expert` keeps an explicit override — it's a non-coding persona). Suites 485 + 1378 green.
+
+**Consumer impact — PROVEN on raw requests (zero config / zero changes):**
+- **PROOF 1 (attractor users):** mirror confirmed provider agents carry NO `system_prompt_file`; a 3-provider run still delivered each provider's verbatim base header (anthropic/openai/gemini) via the default, on real LLM calls, no fail-loud, no cross-contamination.
+- **PROOF 2 (dot-graph / external users):** dot-graph reverted to `origin/main` **unchanged** (bare loop-agent injection, `config == {}`); against attractor `968fc62` the spawned node received the Anthropic base at Layer-1 offset 0 via the default, no fail-loud. **The `4ac6f38` dot-graph fix is now unnecessary** — external consumers need nothing.
+
+**Honest caveats:**
+- **Unknown-provider:** the default ships bases for anthropic/openai/gemini only. A consumer using any other provider hits fail-loud unless it sets an explicit base (by design — never silently pick a wrong base).
+- **Multi-provider fan-out routing (separate concern, NOT this feature):** when a parent mounts ALL providers and fans out, the per-node `llm_provider` was not promoted, so nodes routed to the first provider. loop-agent always matched the base to the provider actually used; dot-graph's path promotes `node.attrs["llm_provider"]` per child (`loop-pipeline backend.py:233,595`), so it is unaffected. Flagged for separate follow-up.
+- Full Resolve stack still not run (stack repos absent); dot-graph→loop-pipeline spawn plumbing verified by code-read. orchestrator/understudy resolvers remain unchecked (not in workspace).
+
 ### Open follow-ups
-1. **ROOT-CAUSE (tracked):** wire loop-agent to read the kernel context manager's system-prompt factory so `context.include` works like every other orchestrator — then the 30-file `system_prompt_file` mechanism can retire. Until then the config approach is permanent-by-default.
+1. **ROOT-CAUSE: DONE** via the provider default above (the 30-file mechanism is retired). Optional future nicety: also wire loop-agent to read the context-manager factory so bare `context.include` works too — not required now.
 2. **Full DTU-hosted Resolve stack:** dot-graph proven via direct two-link proof, NOT a live worker-container spawn (stack repos absent from workspace). Closing it needs `amplifier-bundle-resolve` + `resolve-stack.sh --dev` with local overrides.
 3. **External consumers NOT in this workspace:** `amplifier-resolver-orchestrator` and `amplifier-resolver-understudy` must be checked for the same gap before "smooth for all" is fully true.
 4. **dot-graph live calls:** only the anthropic node path was exercised with a real LLM call; openai/gemini covered by mapping assertions only.

@@ -26,3 +26,10 @@ agents:
       orchestrator:
         module: loop-agent
         source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          # Layer-1 base prompt. attractor-expert is provider-agnostic (a
+          # consultant, not a coding agent), so it gets its OWN persona base
+          # rather than a provider coding base. Required: loop-agent fail-louds
+          # on an empty Layer-1 if this agent is ever spawned as an LLM node.
+          # See docs/designs/layer-1-profile-owned-system-prompt.md.
+          system_prompt_file: context/system-attractor-expert.md

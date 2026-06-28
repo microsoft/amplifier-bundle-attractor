@@ -23,6 +23,81 @@ from .subagent_tools import SubagentManager
 logger = logging.getLogger(__name__)
 
 
+def _resolve_system_prompt_file(spf: str) -> Path:
+    """Resolve a configured ``system_prompt_file`` to an absolute, existing path.
+
+    Resolution is **CWD-INDEPENDENT**. It anchors on this module's installed
+    location (``__file__``), never on the process working directory — so the
+    same configured value resolves identically no matter where the process was
+    launched from (a different CWD, a container, a recipe that changes dirs) or
+    which consumer spawned the loop-agent node.
+
+    Rules:
+      (a) ABSOLUTE ``spf`` -> used as-is (must exist).
+      (b) RELATIVE ``spf`` -> resolved against the loop-agent module's owning
+          bundle root. The module installs (editable) at::
+
+              <bundle-root>/modules/loop-agent/amplifier_module_loop_agent/__init__.py
+
+          so the bundle root is ``parents[3]`` of this file. That is the
+          documented, primary anchor and is tried FIRST (deterministic in the
+          normal layout). As resilience against a future layout/nesting change,
+          if the primary anchor does not contain the file we then walk UP the
+          remaining ancestors and accept the first one under which the relative
+          path actually exists. Every candidate is anchored on ``__file__`` —
+          the current working directory is never consulted.
+      (c) If no candidate resolves to an existing file, raise a CLEAR, ACTIONABLE
+          ``FileNotFoundError`` naming the configured value AND the absolute path
+          tried — never a silent empty Layer-1.
+
+    Returns:
+        Absolute ``Path`` to an existing file.
+
+    Raises:
+        FileNotFoundError: when no existing file can be resolved.
+
+    See docs/designs/layer-1-profile-owned-system-prompt.md.
+    """
+    p = Path(spf)
+    if p.is_absolute():
+        if p.is_file():
+            return p
+        raise FileNotFoundError(
+            f"system_prompt_file {spf!r} (absolute path) does not exist at {p}. "
+            f"Point session.orchestrator.config.system_prompt_file at an existing "
+            f"file (e.g. context/system-<provider>.md). "
+            f"See docs/designs/layer-1-profile-owned-system-prompt.md."
+        )
+
+    pkg_file = Path(__file__).resolve()
+    ancestors = pkg_file.parents  # CWD-independent: anchored on __file__
+
+    # Build the candidate list: the documented bundle-root anchor (parents[3])
+    # FIRST for determinism, then every remaining ancestor as a resilience
+    # fallback. Preserve order, drop duplicates.
+    candidates: list[Path] = []
+    if len(ancestors) > 3:
+        candidates.append(ancestors[3] / p)
+    for ancestor in ancestors:
+        cand = ancestor / p
+        if cand not in candidates:
+            candidates.append(cand)
+
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+
+    primary = candidates[0] if candidates else (pkg_file.parent / p)
+    raise FileNotFoundError(
+        f"system_prompt_file {spf!r} (relative) could not be resolved to an "
+        f"existing file. Expected it at the bundle root: {primary}. "
+        f"Resolution is anchored on the loop-agent module location "
+        f"({pkg_file}) and is independent of the current working directory. "
+        f"Add the file, or fix session.orchestrator.config.system_prompt_file. "
+        f"See docs/designs/layer-1-profile-owned-system-prompt.md."
+    )
+
+
 async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> None:
     """Mount the loop-agent orchestrator."""
     cfg = config or {}
@@ -109,29 +184,20 @@ class AgentOrchestrator:
             # the session is created — so the text lands in SessionConfig.system_prompt
             # (Layer-1) regardless of which spawn path was used.
             #
-            # Path resolution: system_prompt_file is expressed relative to the bundle
-            # root.  Bundle root is 4 levels up from this file in an editable Amplifier
-            # install:
-            #   <bundle-root>/modules/loop-agent/amplifier_module_loop_agent/__init__.py
+            # Path resolution is delegated to _resolve_system_prompt_file, which is
+            # CWD-INDEPENDENT (anchored on this module's __file__, never the process
+            # working directory) and fail-loud: a configured-but-missing file raises
+            # a clear, actionable FileNotFoundError naming the value and the absolute
+            # path tried — rather than a silent empty Layer-1 that only trips the
+            # generic guard later. See docs/designs/layer-1-profile-owned-system-prompt.md.
             #
             # If system_prompt is already set in config (e.g. injected by loop-pipeline's
             # backend.py before spawn), the file is skipped — single owner, no conflict.
             config_dict = dict(self._config)
             _spf = config_dict.get("system_prompt_file", "")
             if _spf and not config_dict.get("system_prompt"):
-                _bundle_root = Path(__file__).parent.parent.parent.parent
-                _spf_path = (
-                    Path(_spf) if Path(_spf).is_absolute() else (_bundle_root / _spf)
-                )
-                if _spf_path.is_file():
-                    config_dict["system_prompt"] = _spf_path.read_text(encoding="utf-8")
-                else:
-                    logger.warning(
-                        "system_prompt_file %r not found at %s; "
-                        "Layer-1 base prompt will be empty.",
-                        _spf,
-                        _spf_path,
-                    )
+                _spf_path = _resolve_system_prompt_file(_spf)
+                config_dict["system_prompt"] = _spf_path.read_text(encoding="utf-8")
 
             config = SessionConfig.from_dict(config_dict)
             # Use the first available provider

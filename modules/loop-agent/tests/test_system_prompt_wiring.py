@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from amplifier_core.message_models import ChatResponse, Usage
 
-from amplifier_module_loop_agent import AgentOrchestrator
+from amplifier_module_loop_agent import AgentOrchestrator, _resolve_system_prompt_file
 from amplifier_module_loop_agent.agent_session import AgentSession
 from amplifier_module_loop_agent.config import SessionConfig
 
@@ -52,16 +52,21 @@ def _make_hooks():
 async def test_system_prompt_included_in_chat_request():
     """The first message in every ChatRequest must be a system message
     containing the base prompt from config."""
-    config = SessionConfig.from_dict({
-        "system_prompt": "You are a coding agent.",
-        "max_tool_rounds_per_input": 1,
-    })
+    config = SessionConfig.from_dict(
+        {
+            "system_prompt": "You are a coding agent.",
+            "max_tool_rounds_per_input": 1,
+        }
+    )
     provider = AsyncMock()
     provider.complete = AsyncMock(return_value=_text_response("done"))
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=config, provider=provider, tools={}, hooks=hooks,
+        config=config,
+        provider=provider,
+        tools={},
+        hooks=hooks,
     )
     await session.process_input("hello")
 
@@ -75,19 +80,26 @@ async def test_system_prompt_included_in_chat_request():
 @pytest.mark.asyncio
 async def test_system_prompt_rebuilt_every_iteration():
     """System prompt must be rebuilt every LLM call (spec PROV-002)."""
-    config = SessionConfig.from_dict({
-        "system_prompt": "Base prompt.",
-        "max_tool_rounds_per_input": 5,
-    })
+    config = SessionConfig.from_dict(
+        {
+            "system_prompt": "Base prompt.",
+            "max_tool_rounds_per_input": 5,
+        }
+    )
     provider = AsyncMock()
-    provider.complete = AsyncMock(side_effect=[
-        _text_response("first"),
-        _text_response("second"),
-    ])
+    provider.complete = AsyncMock(
+        side_effect=[
+            _text_response("first"),
+            _text_response("second"),
+        ]
+    )
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=config, provider=provider, tools={}, hooks=hooks,
+        config=config,
+        provider=provider,
+        tools={},
+        hooks=hooks,
     )
     # Two separate calls = two ChatRequests, each should have system prompt
     await session.process_input("hello")
@@ -108,17 +120,23 @@ async def test_system_prompt_rebuilt_every_iteration():
 @pytest.mark.asyncio
 async def test_environment_context_in_system_prompt():
     """System prompt must contain <environment> block with working dir."""
-    config = SessionConfig.from_dict({
-        "system_prompt": "Base prompt.",
-        "max_tool_rounds_per_input": 1,
-    })
+    config = SessionConfig.from_dict(
+        {
+            "system_prompt": "Base prompt.",
+            "max_tool_rounds_per_input": 1,
+        }
+    )
     provider = AsyncMock()
     provider.complete = AsyncMock(return_value=_text_response("done"))
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=config, provider=provider, tools={}, hooks=hooks,
-        provider_name="anthropic", model="claude-sonnet-4-5",
+        config=config,
+        provider=provider,
+        tools={},
+        hooks=hooks,
+        provider_name="anthropic",
+        model="claude-sonnet-4-5",
     )
     await session.process_input("hello")
 
@@ -131,17 +149,23 @@ async def test_environment_context_in_system_prompt():
 @pytest.mark.asyncio
 async def test_environment_context_includes_provider_and_model():
     """Environment block includes provider and model when supplied."""
-    config = SessionConfig.from_dict({
-        "system_prompt": "Base.",
-        "max_tool_rounds_per_input": 1,
-    })
+    config = SessionConfig.from_dict(
+        {
+            "system_prompt": "Base.",
+            "max_tool_rounds_per_input": 1,
+        }
+    )
     provider = AsyncMock()
     provider.complete = AsyncMock(return_value=_text_response("done"))
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=config, provider=provider, tools={}, hooks=hooks,
-        provider_name="openai", model="gpt-5",
+        config=config,
+        provider=provider,
+        tools={},
+        hooks=hooks,
+        provider_name="openai",
+        model="gpt-5",
     )
     await session.process_input("hi")
 
@@ -163,17 +187,22 @@ async def test_project_docs_discovered_for_provider(tmp_path):
     agents_md = tmp_path / "AGENTS.md"
     agents_md.write_text("# Project Rules\nAlways use TDD.")
 
-    config = SessionConfig.from_dict({
-        "system_prompt": "Base.",
-        "max_tool_rounds_per_input": 1,
-        "working_dir": str(tmp_path),
-    })
+    config = SessionConfig.from_dict(
+        {
+            "system_prompt": "Base.",
+            "max_tool_rounds_per_input": 1,
+            "working_dir": str(tmp_path),
+        }
+    )
     provider = AsyncMock()
     provider.complete = AsyncMock(return_value=_text_response("done"))
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=config, provider=provider, tools={}, hooks=hooks,
+        config=config,
+        provider=provider,
+        tools={},
+        hooks=hooks,
         provider_name="anthropic",
     )
     await session.process_input("hello")
@@ -186,17 +215,22 @@ async def test_project_docs_discovered_for_provider(tmp_path):
 @pytest.mark.asyncio
 async def test_no_project_docs_when_none_exist(tmp_path):
     """System prompt still works when no project doc files exist."""
-    config = SessionConfig.from_dict({
-        "system_prompt": "Base.",
-        "max_tool_rounds_per_input": 1,
-        "working_dir": str(tmp_path),
-    })
+    config = SessionConfig.from_dict(
+        {
+            "system_prompt": "Base.",
+            "max_tool_rounds_per_input": 1,
+            "working_dir": str(tmp_path),
+        }
+    )
     provider = AsyncMock()
     provider.complete = AsyncMock(return_value=_text_response("done"))
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=config, provider=provider, tools={}, hooks=hooks,
+        config=config,
+        provider=provider,
+        tools={},
+        hooks=hooks,
     )
     await session.process_input("hello")
 
@@ -239,17 +273,22 @@ async def test_orchestrator_passes_provider_name():
 @pytest.mark.asyncio
 async def test_user_instructions_appended_as_layer5():
     """Config with user_instructions → system prompt ends with that instruction."""
-    config = SessionConfig.from_dict({
-        "system_prompt": "Base prompt.",
-        "max_tool_rounds_per_input": 1,
-        "user_instructions": "Always respond in French",
-    })
+    config = SessionConfig.from_dict(
+        {
+            "system_prompt": "Base prompt.",
+            "max_tool_rounds_per_input": 1,
+            "user_instructions": "Always respond in French",
+        }
+    )
     provider = AsyncMock()
     provider.complete = AsyncMock(return_value=_text_response("done"))
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=config, provider=provider, tools={}, hooks=hooks,
+        config=config,
+        provider=provider,
+        tools={},
+        hooks=hooks,
     )
     await session.process_input("hello")
 
@@ -263,16 +302,21 @@ async def test_user_instructions_appended_as_layer5():
 @pytest.mark.asyncio
 async def test_no_user_instructions_omits_layer5():
     """No user_instructions config → no User Instructions section in prompt."""
-    config = SessionConfig.from_dict({
-        "system_prompt": "Base prompt.",
-        "max_tool_rounds_per_input": 1,
-    })
+    config = SessionConfig.from_dict(
+        {
+            "system_prompt": "Base prompt.",
+            "max_tool_rounds_per_input": 1,
+        }
+    )
     provider = AsyncMock()
     provider.complete = AsyncMock(return_value=_text_response("done"))
     hooks = _make_hooks()
 
     session = AgentSession(
-        config=config, provider=provider, tools={}, hooks=hooks,
+        config=config,
+        provider=provider,
+        tools={},
+        hooks=hooks,
     )
     await session.process_input("hello")
 
@@ -284,10 +328,12 @@ async def test_no_user_instructions_omits_layer5():
 @pytest.mark.asyncio
 async def test_tool_descriptions_in_system_prompt():
     """Mounted tools appear in the system prompt's tool descriptions layer."""
-    config = SessionConfig.from_dict({
-        "system_prompt": "Base.",
-        "max_tool_rounds_per_input": 1,
-    })
+    config = SessionConfig.from_dict(
+        {
+            "system_prompt": "Base.",
+            "max_tool_rounds_per_input": 1,
+        }
+    )
     provider = AsyncMock()
     provider.complete = AsyncMock(return_value=_text_response("done"))
     hooks = _make_hooks()
@@ -299,7 +345,8 @@ async def test_tool_descriptions_in_system_prompt():
     tool.input_schema = {"type": "object", "properties": {}}
 
     session = AgentSession(
-        config=config, provider=provider,
+        config=config,
+        provider=provider,
         tools={"read_file": tool},
         hooks=hooks,
     )
@@ -449,3 +496,97 @@ async def test_empty_system_prompt_raises_loud_error():
     )
     with pytest.raises(RuntimeError, match="Layer-1 base prompt is empty"):
         await orch.execute("hello", context, {"anthropic": provider}, {}, hooks)
+
+
+# ---------------------------------------------------------------------------
+# _resolve_system_prompt_file: CWD-independent, fail-loud path resolution
+# (must-fix 1 — council BLOCKER)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_relative_system_prompt_file_is_cwd_independent(monkeypatch):
+    """A RELATIVE system_prompt_file resolves to the bundle-root file regardless of CWD.
+
+    Council BLOCKER: resolution must anchor on the module's __file__, never the
+    process working directory. We prove this by chdir'ing to an unrelated dir
+    (/tmp) and confirming the attractor bundle's own context/system-anthropic.md
+    still resolves and is readable. This is exactly what lets a different consumer
+    (e.g. the dot-graph resolver), launched from anywhere, reuse attractor's prompts.
+    """
+    import os
+    import tempfile
+
+    # The loop-agent module installs editable inside the attractor bundle, so the
+    # bundle ships these provider base prompts at <bundle-root>/context/.
+    rel = "context/system-anthropic.md"
+
+    with tempfile.TemporaryDirectory() as other_cwd:
+        monkeypatch.chdir(other_cwd)
+        assert os.getcwd() == os.path.realpath(other_cwd) or os.getcwd() == other_cwd
+
+        resolved = _resolve_system_prompt_file(rel)
+
+        assert resolved.is_absolute()
+        assert resolved.is_file(), f"expected an existing file, got {resolved}"
+        assert resolved.name == "system-anthropic.md"
+        # Resolved against the module's bundle root, NOT the (temp) CWD.
+        assert str(other_cwd) not in str(resolved)
+        # And it is genuinely readable (the content becomes Layer-1).
+        assert resolved.read_text(encoding="utf-8").strip()
+
+
+def test_resolve_relative_system_prompt_file_same_from_any_cwd(monkeypatch):
+    """Resolution is deterministic: the same absolute path from two different CWDs."""
+    import tempfile
+
+    rel = "context/system-gemini.md"
+
+    with tempfile.TemporaryDirectory() as cwd_a:
+        monkeypatch.chdir(cwd_a)
+        resolved_a = _resolve_system_prompt_file(rel)
+    with tempfile.TemporaryDirectory() as cwd_b:
+        monkeypatch.chdir(cwd_b)
+        resolved_b = _resolve_system_prompt_file(rel)
+
+    assert resolved_a == resolved_b
+
+
+def test_resolve_missing_relative_file_raises_clear_actionable_error(monkeypatch):
+    """A missing RELATIVE file raises a clear error naming the value AND a tried path."""
+    import tempfile
+
+    bogus = "context/system-does-not-exist-zzz.md"
+
+    with tempfile.TemporaryDirectory() as other_cwd:
+        monkeypatch.chdir(other_cwd)
+        with pytest.raises(FileNotFoundError) as exc:
+            _resolve_system_prompt_file(bogus)
+
+    msg = str(exc.value)
+    # Names the configured value...
+    assert bogus in msg
+    # ...names an absolute path it tried (not a bare "not found")...
+    assert "system-does-not-exist-zzz.md" in msg
+    # ...and states it is CWD-independent (so the user doesn't chase a CWD red herring).
+    assert "working directory" in msg.lower()
+    # ...and points at the fix / design doc.
+    assert "system_prompt_file" in msg
+
+
+def test_resolve_missing_absolute_file_raises_clear_error(tmp_path):
+    """A missing ABSOLUTE file raises a clear error naming the path."""
+    missing = tmp_path / "nope" / "base.md"
+    with pytest.raises(FileNotFoundError) as exc:
+        _resolve_system_prompt_file(str(missing))
+    msg = str(exc.value)
+    assert str(missing) in msg
+    assert "system_prompt_file" in msg
+
+
+def test_resolve_existing_absolute_file_used_as_is(tmp_path):
+    """An existing ABSOLUTE file is returned unchanged."""
+    f = tmp_path / "base.md"
+    f.write_text("ABS-BASE", encoding="utf-8")
+    resolved = _resolve_system_prompt_file(str(f))
+    assert resolved == f
+    assert resolved.read_text(encoding="utf-8") == "ABS-BASE"

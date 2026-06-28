@@ -534,11 +534,14 @@ class AgentSession:
         # Resolve canonical provider ID for doc filtering
         provider_id = self._resolve_provider_id()
 
-        # Layer 1: Base prompt — resolved by AgentOrchestrator.execute() from the bundle's
-        # context._system_prompt_factory (which delivers context.include files per nlspec §6.1:
-        # "Provider-specific base instructions (from ProviderProfile)").
-        # Falls back to system_prompt config; falls through to a stub with a warning when
-        # neither the factory nor the config provides content.
+        # Layer 1: Base prompt — comes ONLY from config.system_prompt (set directly,
+        # or loaded by AgentOrchestrator.execute() from system_prompt_file before the
+        # session is created). loop-agent does NOT consume the bundle's context.include
+        # files for the base — that channel is for ADDITIVE context, not Layer-1
+        # (proven empirically in core 1.6.0; the prior assumption was wrong). The
+        # provider base prompt (nlspec §6.1 ProviderProfile) MUST therefore be supplied
+        # via system_prompt / system_prompt_file in session.orchestrator.config.
+        # See docs/designs/layer-1-profile-owned-system-prompt.md.
         base_prompt = self._config.system_prompt
         if not base_prompt:
             # Fail-loud: an empty Layer-1 is a configuration error, not a

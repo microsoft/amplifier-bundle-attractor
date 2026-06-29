@@ -557,6 +557,129 @@ async def test_explicit_config_overrides_provider_default():
 
 
 # ---------------------------------------------------------------------------
+# Bug B: per-node llm_provider selection (completion + base prompt, fail-loud)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_node_llm_provider_selects_completion_and_base():
+    """HAPPY PATH: orchestrator_config llm_provider drives BOTH arms.
+
+    With anthropic AND openai both mounted but the node requesting openai, the
+    COMPLETION provider selected must be openai AND the resolved Layer-1 base
+    must be context/system-openai.md. One selection feeds both — proving no
+    divergence between the model called and the base it was given.
+    """
+    context = MagicMock()
+    anthropic_provider = AsyncMock()
+    anthropic_provider.complete = AsyncMock(return_value=_text_response("a"))
+    openai_provider = AsyncMock()
+    openai_provider.complete = AsyncMock(return_value=_text_response("o"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        # llm_provider arrives via orchestrator_config -> raw self._config.
+        config={"llm_provider": "openai", "max_tool_rounds_per_input": 1},
+    )
+    # anthropic is FIRST in insertion order, so the legacy next(iter) would have
+    # (wrongly) picked it; the explicit llm_provider must override that.
+    await orch.execute(
+        "hello",
+        context,
+        {"anthropic": anthropic_provider, "openai": openai_provider},
+        {},
+        hooks,
+    )
+
+    # Completion arm: openai was called, anthropic was NOT.
+    assert openai_provider.complete.call_count == 1, "openai provider was not selected"
+    assert anthropic_provider.complete.call_count == 0, (
+        "anthropic provider was wrongly selected"
+    )
+
+    # Base-prompt arm: the openai provider default base reached Layer-1.
+    request = openai_provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+    assert "OpenAI Profile" in system_content, (
+        f"openai base not loaded into Layer-1. Got: {system_content[:200]}"
+    )
+    assert "Anthropic Profile" not in system_content, (
+        "anthropic base leaked in despite openai being requested"
+    )
+
+
+@pytest.mark.asyncio
+async def test_node_llm_provider_not_mounted_fails_loud():
+    """FAIL-LOUD: a requested provider that is not mounted raises a clear RuntimeError.
+
+    The message must name the requested provider AND list the actually-mounted
+    providers — never a silent fallback onto the wrong model.
+    """
+    context = MagicMock()
+    anthropic_provider = AsyncMock()
+    anthropic_provider.complete = AsyncMock(return_value=_text_response("a"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={"llm_provider": "openai", "max_tool_rounds_per_input": 1},
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        # openai requested, but only anthropic is mounted.
+        await orch.execute(
+            "hello", context, {"anthropic": anthropic_provider}, {}, hooks
+        )
+
+    msg = str(excinfo.value)
+    assert "openai" in msg, "requested provider not named in the error"
+    assert "anthropic" in msg, "available providers not listed in the error"
+
+
+@pytest.mark.asyncio
+async def test_unset_llm_provider_preserves_first_mounted():
+    """UNSET PRESERVED: absent llm_provider AND llm_provider='' both keep legacy behavior.
+
+    The truthiness guard means both None (absent) and "" fall through to the
+    unchanged next(iter(providers.keys())) selection: the first mounted provider,
+    no error.
+    """
+    for config in (
+        {"max_tool_rounds_per_input": 1},  # llm_provider absent (None)
+        {"llm_provider": "", "max_tool_rounds_per_input": 1},  # llm_provider == ""
+    ):
+        context = MagicMock()
+        anthropic_provider = AsyncMock()
+        anthropic_provider.complete = AsyncMock(return_value=_text_response("a"))
+        openai_provider = AsyncMock()
+        openai_provider.complete = AsyncMock(return_value=_text_response("o"))
+        hooks = _make_hooks()
+        coordinator = MagicMock()
+        coordinator.register_capability = MagicMock()
+
+        orch = AgentOrchestrator(coordinator=coordinator, config=config)
+        # anthropic is first in insertion order -> legacy next(iter) picks it.
+        await orch.execute(
+            "hello",
+            context,
+            {"anthropic": anthropic_provider, "openai": openai_provider},
+            {},
+            hooks,
+        )
+
+        assert anthropic_provider.complete.call_count == 1, (
+            f"first mounted provider not selected for config={config}"
+        )
+        assert openai_provider.complete.call_count == 0, (
+            f"non-first provider wrongly selected for config={config}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # _resolve_system_prompt_file: CWD-independent, fail-loud path resolution
 # (must-fix 1 — council BLOCKER)
 # ---------------------------------------------------------------------------

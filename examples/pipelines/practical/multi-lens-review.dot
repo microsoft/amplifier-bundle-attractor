@@ -1,0 +1,84 @@
+// multi-lens-review.dot -- Multi-PROVIDER, multi-LENS parallel code review.
+//
+// The idea: different model providers have different strengths, so instead of
+// asking one model to review everything, we fan out the SAME code to THREE
+// providers, each wearing a DIFFERENT review lens, then synthesize their
+// findings into one ranked verdict.
+//
+//   anthropic  -> SECURITY lens        (careful, safety-oriented reasoning)
+//   openai     -> ARCHITECTURE lens     (structured design / systems reasoning)
+//   gemini     -> PERFORMANCE/CORRECTNESS lens (fast, broad pattern matching)
+//
+// The provider<->lens mapping is illustrative and meant to be tuned to taste --
+// the point is that each branch pins its own `llm_provider`, so each lens runs
+// on a genuinely different model. (Per-node provider routing is what makes this
+// work; see loop-agent's per-node llm_provider selection.)
+//
+// This example is self-contained: it reviews a small flawed snippet embedded in
+// each branch, so it runs via `pipeline-run` with no repo or file dependencies.
+// To review real code, replace the embedded snippet with a `prepare` step that
+// loads a diff (see pr-review.dot) and have each lens review the shared context.
+
+digraph MultiLensReview {
+    graph [
+        goal="Review the code under review from three independent lenses, each on a different provider, then synthesize one ranked verdict.",
+        label="Multi-Provider Multi-Lens Code Review",
+        // Default for any unpinned `box` node (prepare/synthesize). Each lens
+        // branch overrides llm_provider inline to fan out across providers.
+        model_stylesheet="box { llm_provider: anthropic }",
+        default_fidelity="full",
+        default_thread_id="multi-lens-review"
+    ]
+
+    start [shape=Mdiamond, label="Start"]
+    done  [shape=Msquare,  label="Done"]
+
+    // Stage 1: Fan out the review across providers x lenses.
+    review_fanout [
+        shape=component,
+        label="Multi-Lens Review (Parallel)",
+        join_policy="wait_all",     // wait for every lens
+        error_policy="continue",    // one lens failing must not abort the others
+        max_parallel=3
+    ]
+
+    // --- Lens 1: SECURITY on anthropic ---------------------------------------
+    review_security [
+        label="Security Lens (anthropic)",
+        llm_provider="anthropic",
+        prompt="## Lens: SECURITY\nReview the code below ONLY for security issues: injection (SQL/command), auth bypasses, hardcoded secrets/credentials, insecure defaults, sensitive-data exposure. For each finding give a severity (critical/high/medium/low) and the offending line. Ignore style and performance -- another reviewer covers those.\n\nCode under review:\n```python\ndef get_user_orders(db, user_id):\n    query = \"SELECT * FROM orders WHERE user_id = \" + str(user_id)\n    orders = db.execute(query)\n    result = []\n    for o in orders:\n        user = db.execute(\"SELECT * FROM users WHERE id = \" + str(o.user_id))\n        for x in orders:\n            if x.product == o.product:\n                o.dupe = True\n    api_key = \"sk-live-1234567890abcdef\"\n    return result\n```"
+    ]
+
+    // --- Lens 2: ARCHITECTURE on openai --------------------------------------
+    review_architecture [
+        label="Architecture Lens (openai)",
+        llm_provider="openai",
+        prompt="## Lens: ARCHITECTURE\nReview the code below ONLY for design/architecture issues: separation of concerns, coupling, single-responsibility, abstraction boundaries, testability, dependency handling. For each finding name the principle violated and the offending line. Ignore security and micro-performance -- other reviewers cover those.\n\nCode under review:\n```python\ndef get_user_orders(db, user_id):\n    query = \"SELECT * FROM orders WHERE user_id = \" + str(user_id)\n    orders = db.execute(query)\n    result = []\n    for o in orders:\n        user = db.execute(\"SELECT * FROM users WHERE id = \" + str(o.user_id))\n        for x in orders:\n            if x.product == o.product:\n                o.dupe = True\n    api_key = \"sk-live-1234567890abcdef\"\n    return result\n```"
+    ]
+
+    // --- Lens 3: PERFORMANCE/CORRECTNESS on gemini ---------------------------
+    review_perf [
+        label="Performance/Correctness Lens (gemini)",
+        llm_provider="gemini",
+        prompt="## Lens: PERFORMANCE & CORRECTNESS\nReview the code below ONLY for performance and correctness bugs: N+1 query patterns, O(n^2) or worse loops, redundant work, and outright logic bugs (e.g. results that are computed but never used/returned). For each finding give the complexity/impact and the offending line. Ignore security and style -- other reviewers cover those.\n\nCode under review:\n```python\ndef get_user_orders(db, user_id):\n    query = \"SELECT * FROM orders WHERE user_id = \" + str(user_id)\n    orders = db.execute(query)\n    result = []\n    for o in orders:\n        user = db.execute(\"SELECT * FROM users WHERE id = \" + str(o.user_id))\n        for x in orders:\n            if x.product == o.product:\n                o.dupe = True\n    api_key = \"sk-live-1234567890abcdef\"\n    return result\n```"
+    ]
+
+    // Stage 2: Fan in -- collect all three lens reports.
+    reviews_join [shape=tripleoctagon, label="Collect Lens Reports"]
+
+    // Stage 3: Synthesize into one ranked verdict (back on the default provider).
+    synthesize [
+        label="Synthesize Verdict",
+        prompt="You are given three independent code reviews of the SAME snippet, each from a different lens (security, architecture, performance/correctness) produced by a different model provider. Synthesize them into ONE ranked verdict:\n(1) MUST-FIX (security holes, correctness bugs),\n(2) SHOULD-FIX (performance),\n(3) CONSIDER (architecture/design).\nNote explicitly where the reviewers AGREE and where they CONFLICT or only one caught something -- that cross-provider signal is the value of the panel.",
+        goal_gate=true
+    ]
+
+    start -> review_fanout
+    review_fanout -> review_security
+    review_fanout -> review_architecture
+    review_fanout -> review_perf
+    review_security     -> reviews_join
+    review_architecture -> reviews_join
+    review_perf         -> reviews_join
+    reviews_join -> synthesize -> done
+}

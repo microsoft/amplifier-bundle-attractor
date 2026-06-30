@@ -106,9 +106,16 @@ def _build_assistant_message(turn: AssistantTurn) -> Message:
 
     # Tool calls (passed as extra field via extra="allow")
     if turn.tool_calls:
+        # Emit the function name under BOTH "name" and "tool". Provider request
+        # builders disagree on the key: the OpenAI provider reads tc.get("name")
+        # (an empty name silently drops the function_call item from the Responses
+        # API input, orphaning its function_call_output), while the Anthropic
+        # provider reads tc.get("tool"). Carrying both keys is additive and keeps
+        # us compatible with both until the ecosystem canonicalizes on one key.
         kwargs["tool_calls"] = [
             {
                 "id": tc["id"],
+                "name": tc["name"],
                 "tool": tc["name"],
                 "arguments": tc["arguments"],
             }

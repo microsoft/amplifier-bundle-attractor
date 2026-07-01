@@ -442,11 +442,23 @@ class AmplifierBackend:
                     "max_turns": max_agent_turns,
                     # user_instructions (Layer-5): per-node or per-run override
                     "user_instructions": user_instructions_override,
+                    # llm_provider: the node's intended provider (Bug B). loop-agent
+                    # reads this from its raw orchestrator config to select BOTH the
+                    # completion provider and the matching Layer-1 base prompt, instead
+                    # of blindly taking the first mounted provider. `provider` is
+                    # computed at the top of this method (anthropic-defaulted, never
+                    # None), so it always survives the `v is not None` filter.
+                    "llm_provider": provider,
                 }.items()
                 if v is not None
             },
         }
         if model:
+            # provider_preferences carries the resolved concrete `model`: foundation's
+            # apply_provider_preferences_with_resolution promotes the matching provider
+            # and sets its default_model (spawn_utils._apply_single_override). That model
+            # delivery is load-bearing and has no other channel. Provider SELECTION,
+            # however, now flows via orchestrator_config["llm_provider"] above.
             spawn_kwargs["provider_preferences"] = [
                 _ProviderPreference(provider=provider, model=model)
             ]

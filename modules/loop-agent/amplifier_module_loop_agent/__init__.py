@@ -236,12 +236,42 @@ class AgentOrchestrator:
             # working directory) and fail-loud on a missing file.
             config_dict = dict(self._config)
 
-            # Derive the intended provider from the mounted providers. This is the
-            # SAME value used below for the actual completion (provider =
-            # providers[provider_name]), so a provider-derived default base prompt
-            # always matches the model that will actually be called — it is the
-            # agent's own configured provider, not a post-routing driver.
-            provider_name = next(iter(providers.keys()))
+            # Select the provider for this session (Bug B). This SINGLE assignment
+            # feeds BOTH the Layer-1 base-prompt default (_resolve_base_prompt below)
+            # AND the actual completion (providers[provider_name]), so base+completion
+            # can never diverge.
+            #
+            # An explicit per-node provider arrives via orchestrator_config and is read
+            # from the RAW self._config (NOT SessionConfig, which drops unknown keys).
+            # When set (truthy), it is resolved to a mounted providers key — exact key
+            # match first, else canonical match (anthropic/openai/gemini) — and a
+            # non-mounted request fails loud rather than silently running on the wrong
+            # model. When unset ("" or None), behavior is byte-for-byte the legacy
+            # default: the first mounted provider.
+            explicit = self._config.get("llm_provider")
+            if explicit:
+                if explicit in providers:
+                    provider_name = explicit
+                else:
+                    explicit_canonical = canonical_provider(explicit)
+                    provider_name = next(
+                        (
+                            k
+                            for k in providers
+                            if canonical_provider(k) == explicit_canonical
+                            and explicit_canonical is not None
+                        ),
+                        None,
+                    )
+                    if provider_name is None:
+                        raise RuntimeError(
+                            f"Pipeline node requested provider '{explicit}' but it is "
+                            f"not mounted. Available providers: "
+                            f"{sorted(providers.keys())}. Check the node's llm_provider "
+                            f"attribute and the bundle's mounted providers."
+                        )
+            else:
+                provider_name = next(iter(providers.keys()))
 
             config_dict["system_prompt"] = self._resolve_base_prompt(
                 config_dict, provider_name

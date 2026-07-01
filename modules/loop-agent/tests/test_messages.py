@@ -6,7 +6,6 @@ objects for ChatRequest, with system-first ordering, content blocks,
 ThinkingBlock preservation, and edge case handling.
 """
 
-
 from amplifier_core.message_models import TextBlock, ThinkingBlock
 from amplifier_core.models import ToolResult
 
@@ -293,3 +292,100 @@ def test_full_conversation_round_trip():
     # Then user, assistant, tool, steering(=user), assistant
     roles = [m.role for m in msgs]
     assert roles == ["system", "user", "assistant", "tool", "user", "assistant"]
+
+
+# ---------------------------------------------------------------------------
+# OpenAI multi-turn tool-use regression: assistant tool-call name must be
+# emitted under BOTH "name" (OpenAI provider reads this) and "tool" (Anthropic
+# provider reads this).  See A/B differential
+# .amplifier/evaluation/openai-ab-differential/20260630/VERDICT.md:
+# loop-agent emitted only "tool" -> OpenAI provider's tc.get("name") was empty
+# -> it dropped the function_call item -> orphaned function_call_output ->
+# Responses-API "No tool call found for function call output" hard error.
+# ---------------------------------------------------------------------------
+
+
+def test_assistant_tool_call_emits_name_and_tool_keys():
+    """Single tool call: serialized message carries name AND tool (both == fn name).
+
+    REQUIRED shape test (RED before the fix, GREEN after): the assistant
+    tool-call turn must serialize the function name under both keys, and the
+    assistant(tool_calls) message must sit immediately before the tool message
+    carrying the matching tool_call_id.
+    """
+    turns = [
+        UserTurn(content="create probe.txt"),
+        AssistantTurn(
+            content="",
+            tool_calls=[
+                {
+                    "id": "call_x",
+                    "name": "write_file",
+                    "arguments": '{"file_path":"./probe.txt","content":"hello world"}',
+                }
+            ],
+        ),
+        ToolResultsTurn(
+            results=[ToolResult(success=True, output='{"file_path":"./probe.txt"}')]
+        ),
+    ]
+    msgs = convert_history_to_messages(turns)
+
+    # Find the assistant message and its serialized tool_calls.
+    assistant_idx = next(i for i, m in enumerate(msgs) if m.role == "assistant")
+    assistant = msgs[assistant_idx]
+    dumped = assistant.model_dump()
+    tool_calls = dumped["tool_calls"]
+    assert len(tool_calls) == 1
+    # Both keys present, both equal to the function name (the regression assertion).
+    assert tool_calls[0]["name"] == "write_file"
+    assert tool_calls[0]["tool"] == "write_file"
+    assert tool_calls[0]["id"] == "call_x"
+
+    # The assistant(tool_calls) message is immediately before the tool message
+    # carrying the matching tool_call_id.
+    following = msgs[assistant_idx + 1]
+    assert following.role == "tool"
+    assert following.tool_call_id == "call_x"
+
+
+def test_assistant_multiple_tool_calls_emit_name_and_tool_keys():
+    """Multiple tool calls in one assistant turn: every call carries name AND tool."""
+    turns = [
+        UserTurn(content="read both files"),
+        AssistantTurn(
+            content="",
+            tool_calls=[
+                {"id": "call_a", "name": "read_file", "arguments": '{"path":"a.py"}'},
+                {"id": "call_b", "name": "write_file", "arguments": '{"path":"b.py"}'},
+            ],
+        ),
+        ToolResultsTurn(
+            results=[
+                ToolResult(success=True, output="a contents"),
+                ToolResult(success=True, output="b contents"),
+            ]
+        ),
+    ]
+    msgs = convert_history_to_messages(turns)
+
+    assistant = next(m for m in msgs if m.role == "assistant")
+    tool_calls = assistant.model_dump()["tool_calls"]
+    assert len(tool_calls) == 2
+    assert tool_calls[0]["name"] == tool_calls[0]["tool"] == "read_file"
+    assert tool_calls[1]["name"] == tool_calls[1]["tool"] == "write_file"
+    # Tool results pair to the calls by index/id (unaffected by the name key).
+    tool_msgs = [m for m in msgs if m.role == "tool"]
+    assert [m.tool_call_id for m in tool_msgs] == ["call_a", "call_b"]
+
+
+# NOTE: The provider-contract tests proposed in the fix plan
+# (provider-openai._convert_messages emits function_call before its
+# function_call_output; provider-anthropic still reads "tool") are intentionally
+# OMITTED here: neither amplifier_module_provider_openai nor
+# amplifier_module_provider_anthropic is importable in loop-agent's test
+# environment (verified), and adding them as test dependencies would be a heavy,
+# out-of-module dependency.  The shape tests above pin the loop-agent side of the
+# contract (the only side this module owns); the provider-side guarantees are
+# documented in the inline comment in messages.py and proven by the A/B
+# differential artifacts referenced above.

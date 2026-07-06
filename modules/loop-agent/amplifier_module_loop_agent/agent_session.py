@@ -79,6 +79,16 @@ logger = logging.getLogger(__name__)
 # filtering) and AgentOrchestrator (provider-default base-prompt selection).
 KNOWN_PROVIDERS = ("anthropic", "openai", "gemini")
 
+# Compound provider names that legitimately contain a KNOWN_PROVIDERS family
+# name as a substring, but identify a genuinely DISTINCT, differently
+# configured provider (different auth, different endpoint) that must never be
+# absorbed into that family's canonical identity. E.g. "azure-openai" contains
+# "openai" as a substring, but Azure OpenAI is not the same mounted provider as
+# plain OpenAI -- silently treating them as equivalent causes a wrong-provider
+# misroute. Checked before the substring scan below so these names resolve to
+# None (unrecognised) rather than a same-named but incorrect canonical family.
+_DISTINCT_COMPOUND_PROVIDERS = ("azure-openai", "azure_openai", "azureopenai")
+
 
 def canonical_provider(raw: str | None) -> str | None:
     """Normalise a raw provider name to a canonical ID (anthropic/openai/gemini).
@@ -86,10 +96,18 @@ def canonical_provider(raw: str | None) -> str | None:
     Bundle composition may yield provider names like "provider-anthropic" or
     "Provider-OpenAI"; this returns the canonical ID via case-insensitive
     substring match, or None when the provider cannot be identified.
+
+    Compound names that pair a KNOWN_PROVIDERS family name with a
+    distinguishing qualifier (e.g. "azure-openai") are deliberately excluded
+    from the substring match: they name a distinct, differently configured
+    provider and must not be silently absorbed into the base family's
+    canonical identity (see _DISTINCT_COMPOUND_PROVIDERS).
     """
     if not raw:
         return None
     lower = raw.lower()
+    if any(compound in lower for compound in _DISTINCT_COMPOUND_PROVIDERS):
+        return None
     for canonical in KNOWN_PROVIDERS:
         if canonical in lower:
             return canonical

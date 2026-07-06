@@ -679,6 +679,49 @@ async def test_unset_llm_provider_preserves_first_mounted():
         )
 
 
+@pytest.mark.asyncio
+async def test_node_llm_provider_azure_openai_does_not_misroute_to_openai():
+    """FAIL-LOUD (not silent misroute): "azure-openai" must never resolve to a
+    plainly-mounted "openai" provider.
+
+    canonical_provider() previously did a raw case-insensitive SUBSTRING
+    match against KNOWN_PROVIDERS, so canonical_provider("azure-openai")
+    incorrectly returned "openai" (the string "openai" is a substring of
+    "azure-openai"). With only "openai" mounted (not "azure-openai"), the
+    exact-match check failed, fell through to the canonical-match scan, and
+    WRONGLY resolved to the plain OpenAI-mounted instance -- a silent
+    wrong-provider misroute (different API, different auth, different
+    endpoint) with no error.
+
+    The correct behavior is the same fail-loud contract proven by
+    test_node_llm_provider_not_mounted_fails_loud above: a requested
+    provider that has no mounted match must raise, never silently resolve
+    to a differently-configured provider.
+    """
+    context = MagicMock()
+    openai_provider = AsyncMock()
+    openai_provider.complete = AsyncMock(return_value=_text_response("o"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={"llm_provider": "azure-openai", "max_tool_rounds_per_input": 1},
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        # azure-openai requested, but only a plain openai provider is mounted.
+        await orch.execute("hello", context, {"openai": openai_provider}, {}, hooks)
+
+    msg = str(excinfo.value)
+    assert "azure-openai" in msg, "requested provider not named in the error"
+    assert "openai" in msg, "available providers not listed in the error"
+    # The critical assertion: openai must NEVER have been silently called.
+    assert openai_provider.complete.call_count == 0, (
+        "azure-openai request was silently misrouted to the plain openai provider"
+    )
+
+
 # ---------------------------------------------------------------------------
 # _resolve_system_prompt_file: CWD-independent, fail-loud path resolution
 # (must-fix 1 — council BLOCKER)

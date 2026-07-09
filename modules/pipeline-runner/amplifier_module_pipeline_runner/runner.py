@@ -31,10 +31,11 @@ own ``loop-agent`` orchestrator + filesystem/bash/search tools) via the
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -78,6 +79,11 @@ class PipelineResult:
     Attributes:
         status: The pipeline outcome status string (e.g. "success", "fail").
         notes: Outcome notes, truncated to 4000 chars.
+        failure_reason: The outcome's ``failure_reason`` when the engine
+            terminated on a failure (e.g. no-matching-edge routing), else
+            ``None``. Surfaced so a consumer can distinguish/why a run failed
+            without re-parsing ``notes`` -- the direct-engine ``Outcome``
+            carries this where the old mounted-orchestrator JSON did.
         logs_dir: Directory containing this run's logs (including the
             written ``pipeline.dot`` source).
         raw: JSON-serialized ``{"status": ..., "notes": ...}``, truncated to
@@ -88,6 +94,7 @@ class PipelineResult:
     notes: str
     logs_dir: Path
     raw: str
+    failure_reason: str | None = None
 
 
 def seed_context(
@@ -231,50 +238,41 @@ async def drive_engine(
 async def _resolve_agent_bundle(agent_name: str, config: dict[str, Any]) -> Any:
     """Resolve a per-node agent into a full, self-contained child Bundle.
 
-    Adapted verbatim (structurally) from dot-graph-runner's
-    ``_resolve_agent_bundle``. The recursion-avoidance mechanism: every child
-    agent must carry an inline ``session.orchestrator`` set to a
-    NON-pipeline orchestrator (``loop-agent``). Without it the spawned child
-    inherits the parent's ``loop-pipeline`` orchestrator and re-runs the
-    whole DOT (infinite recursion).
+    Adapted structurally from dot-graph-runner's ``_resolve_agent_bundle``.
+    The recursion-avoidance mechanism: every child agent must carry an inline
+    ``session.orchestrator`` set to a NON-pipeline orchestrator
+    (``loop-agent``). Without it the spawned child inherits the parent's
+    ``loop-pipeline`` orchestrator and re-runs the whole DOT (infinite
+    recursion).
 
-    Two ``config`` shapes are accepted:
-    * Inline definition (current) -- a full agent dict with its own
-      ``session`` (inline ``loop-agent`` orchestrator), ``providers``,
-      ``tools``, ``hooks``, ``instruction``. This is what
-      attractor-pipeline's ``agents:`` block declares.
-    * ``{"bundle": "attractor:agents/<name>"}`` reference (legacy) --
-      resolved via ``load_bundle``.
+    Only the **inline** ``config`` shape is accepted -- a full agent dict with
+    its own ``session`` (inline ``loop-agent`` orchestrator), ``providers``,
+    ``tools``, ``hooks``, ``instruction``. This is what attractor-pipeline's
+    ``agents:`` block declares.
+
+    Layer-1 (the child's base/system prompt) is delivered by ``loop-agent``'s
+    provider-default selection (``context/system-<provider>.md``, chosen from
+    the child's ``providers``), or by an explicit ``system_prompt`` /
+    ``system_prompt_file`` in the child's orchestrator config. ``loop-agent``
+    is fail-loud on an empty Layer-1, so a successful spawn proves the real
+    prompt was resolved. Agent ``context.include`` is deliberately NOT
+    processed here -- ``loop-agent`` treats context includes as additive
+    context, never as Layer-1, and every attractor agent leans on the
+    provider default.
+
+    The legacy ``{"bundle": "attractor:agents/<name>"}`` reference shape is no
+    longer supported: attractor-pipeline's agents are all inline, so the
+    indirection was dead. It now fails loud with an actionable message rather
+    than silently carrying a resolution path no shipped config exercises.
     """
-    from amplifier_foundation import load_bundle
-
-    ref = config.get("bundle") if isinstance(config, dict) else None
-    if ref:
-        # e.g. "attractor:agents/attractor-agent-anthropic"
-        _ns, _, rel = str(ref).partition(":")
-        candidates: list[str] = []
-        if rel:
-            repo_root = _attractor_repo_root()
-            if repo_root is not None:
-                local = (repo_root / rel).with_suffix(".yaml")
-                candidates.append(str(local))
-            candidates.append(
-                "git+https://github.com/microsoft/amplifier-bundle-attractor@main"
-                f"#subdirectory={rel}.yaml"
-            )
-        else:
-            candidates = [str(ref)]
-        last_err: Exception | None = None
-        for src in candidates:
-            try:
-                return await load_bundle(src)
-            except Exception as e:  # noqa: BLE001
-                last_err = e
-        raise RuntimeError(
-            f"Could not resolve agent bundle '{agent_name}' ({ref}): {last_err}"
+    if isinstance(config, dict) and config.get("bundle"):
+        raise ValueError(
+            f"Agent '{agent_name}' uses the removed "
+            f'\'{{"bundle": "{config["bundle"]}"}}\' reference shape. '
+            "Inline the agent definition (session/providers/tools/instruction) "
+            "instead -- attractor agents are declared inline."
         )
 
-    # Inline config form (already a full agent definition).
     from amplifier_foundation import Bundle
 
     return Bundle(
@@ -289,7 +287,13 @@ async def _resolve_agent_bundle(agent_name: str, config: dict[str, Any]) -> Any:
     )
 
 
-def make_spawn_fn(prepared: Any, cwd: Path | None = None):
+def make_spawn_fn(
+    prepared: Any,
+    cwd: Path | None = None,
+    *,
+    child_constraint: Callable[[Any], Any] | None = None,
+    spawn_timeout: float | None = None,
+):
     """Build the ``session.spawn`` capability for a prepared bundle.
 
     Adapted from dot-graph-runner's ``make_spawn_fn``. Each pipeline node
@@ -310,6 +314,21 @@ def make_spawn_fn(prepared: Any, cwd: Path | None = None):
     working_dir, which is fragile and leaves box nodes writing to the
     process cwd instead of ``--cwd``. This is the load-bearing host/DTU cwd
     fix -- preserve the ``session_cwd=cwd`` argument exactly.
+
+    ``child_constraint`` (optional) is a caller-supplied hook that receives
+    the resolved child ``Bundle`` and returns a (possibly modified) child
+    ``Bundle`` -- the generic seam a consumer uses to constrain a spawned
+    agent (e.g. a filesystem sandbox that denies writes to protected paths,
+    or a read-only tool set for an ask-style pipeline). It is applied AFTER
+    the per-agent resolve cache, so the constraint can depend on run-scoped
+    state (the cache holds the unconstrained resolve; the constraint is
+    re-applied cheaply per spawn). The runner itself stays domain-agnostic --
+    it never inspects what the constraint does.
+
+    ``spawn_timeout`` (optional) wraps each child spawn in
+    ``asyncio.wait_for`` -- a long-running box node that hangs then fails
+    loud rather than blocking the whole pipeline forever. ``None`` (default)
+    means no timeout.
     """
     _agent_cache: dict[str, Any] = {}
 
@@ -337,7 +356,10 @@ def make_spawn_fn(prepared: Any, cwd: Path | None = None):
             _agent_cache[agent_name] = await _resolve_agent_bundle(agent_name, config)
         child_bundle = _agent_cache[agent_name]
 
-        return await prepared.spawn(
+        if child_constraint is not None:
+            child_bundle = child_constraint(child_bundle)
+
+        spawn_coro = prepared.spawn(
             child_bundle=child_bundle,
             instruction=instruction,
             session_id=sub_session_id,
@@ -348,22 +370,11 @@ def make_spawn_fn(prepared: Any, cwd: Path | None = None):
             self_delegation_depth=self_delegation_depth,
             session_cwd=cwd,
         )
+        if spawn_timeout is not None:
+            return await asyncio.wait_for(spawn_coro, timeout=spawn_timeout)
+        return await spawn_coro
 
     return spawn_capability
-
-
-def _attractor_repo_root() -> Path | None:
-    """Best-effort local checkout root for ``attractor:agents/...`` refs.
-
-    Only meaningful when the base bundle was resolved from a local sibling
-    path (see ``_load_base_bundle``); otherwise agent bundle refs fall
-    through to the git URL candidate in ``_resolve_agent_bundle``.
-    """
-    local = _local_bundle_path()
-    if local is not None and local.exists():
-        # bundles/attractor-pipeline.yaml -> repo root is parent.parent
-        return local.resolve().parent.parent
-    return None
 
 
 def _local_bundle_path() -> Path:
@@ -425,6 +436,7 @@ async def _build_prepared(
     *,
     params: dict[str, str] | None,
     profiles: dict[str, str] | None,
+    extra_overlays: Sequence[Any] | None = None,
 ) -> Any:
     """Compose base + a minimal orchestrator overlay, then prepare.
 
@@ -440,6 +452,12 @@ async def _build_prepared(
     forwarded into its config for parity/possible future use, but are
     otherwise inert for the direct-engine path (``drive_engine`` re-parses
     ``dot_source`` and re-seeds params itself).
+
+    ``extra_overlays`` (optional) are additional ``Bundle`` overlays composed
+    AFTER the runtime orchestrator overlay, in order. This is the generic
+    seam a consumer uses to add cross-cutting configuration to every session
+    and spawned child -- e.g. mounting an observability hook -- without the
+    runner needing to know what the overlay contains.
     """
     global _DEPS_INSTALLED
     from amplifier_foundation import Bundle
@@ -467,6 +485,8 @@ async def _build_prepared(
     )
 
     composed = base.compose(overlay)
+    for extra in extra_overlays or ():
+        composed = composed.compose(extra)
 
     # First prepare in this process resolves/installs modules (slow, first
     # run only); subsequent ones take the offline path. Override with
@@ -494,6 +514,9 @@ async def run_pipeline(
     interviewer: Any = None,
     transform: bool = True,
     validate: bool = True,
+    extra_overlays: Sequence[Any] | None = None,
+    child_constraint: Callable[[Any], Any] | None = None,
+    spawn_timeout: float | None = None,
 ) -> PipelineResult:
     """Run a DOT pipeline through the attractor engine, standalone.
 
@@ -543,10 +566,17 @@ async def run_pipeline(
         logs_dir,
         params=dict(params) if params else None,
         profiles=resolved_profiles,
+        extra_overlays=extra_overlays,
     )
     session = await prepared.create_session(session_cwd=cwd_path)
     session.coordinator.register_capability(
-        "session.spawn", make_spawn_fn(prepared, cwd=cwd_path)
+        "session.spawn",
+        make_spawn_fn(
+            prepared,
+            cwd=cwd_path,
+            child_constraint=child_constraint,
+            spawn_timeout=spawn_timeout,
+        ),
     )
 
     async with session:
@@ -563,6 +593,7 @@ async def run_pipeline(
             validate=validate,
         )
 
+    failure_reason = getattr(outcome, "failure_reason", None)
     data = {
         "status": outcome.status.value,
         "notes": outcome.notes or "",
@@ -574,4 +605,5 @@ async def run_pipeline(
         notes=str(data["notes"])[:4000],
         logs_dir=logs_dir,
         raw=text[:4000],
+        failure_reason=str(failure_reason) if failure_reason else None,
     )

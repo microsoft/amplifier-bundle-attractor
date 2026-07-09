@@ -64,7 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "working directory for the pipeline -- where box-node agents and "
             "tool-node commands write files (default: current directory; "
-            "created if it doesn't exist)"
+            "created if it doesn't exist). NOTE: for pipelines with box/agent "
+            "nodes, run from within this directory (e.g. `cd <dir> && attractor "
+            "run pipeline.dot --cwd .`) -- see KNOWN_ISSUES.md (loop-agent cwd)."
         ),
     )
 

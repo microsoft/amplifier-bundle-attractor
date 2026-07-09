@@ -1,0 +1,48 @@
+[project]
+name = "amplifier-module-pipeline-runner"
+version = "0.1.0"
+description = "Reusable engine-driving library + CLI for standalone attractor DOT pipeline runs"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Microsoft MADE:Explorations Team" },
+]
+dependencies = [
+    "amplifier-core>=0.1.0",
+    "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation@main",
+    "amplifier-module-loop-pipeline @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline",
+]
+
+[project.scripts]
+attractor = "amplifier_module_pipeline_runner.cli:main"
+
+[build-system]
+requires = [
+    "hatchling",
+]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+amplifier-module-loop-pipeline = { path = "../loop-pipeline" }
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "amplifier_module_pipeline_runner",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=1.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+asyncio_mode = "strict"

@@ -491,6 +491,7 @@ async def run_pipeline(
     provider: str = "anthropic",
     profiles: Mapping[str, str] | None = None,
     hooks: Any = None,
+    interviewer: Any = None,
     transform: bool = True,
     validate: bool = True,
 ) -> PipelineResult:
@@ -557,6 +558,7 @@ async def run_pipeline(
             logs_root=logs_dir,
             hooks=hooks,
             profiles=resolved_profiles,
+            interviewer=interviewer,
             transform=transform,
             validate=validate,
         )

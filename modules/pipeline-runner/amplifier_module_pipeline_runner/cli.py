@@ -69,6 +69,18 @@ def build_parser() -> argparse.ArgumentParser:
             "run pipeline.dot --cwd .`) -- see KNOWN_ISSUES.md (loop-agent cwd)."
         ),
     )
+    run.add_argument(
+        "--on-human-gate",
+        choices=("fail", "auto-approve"),
+        default="fail",
+        help=(
+            "how to handle a human-gate (hexagon) node. 'fail' (default): "
+            "fail loud -- a pipeline that needs a human decision terminates "
+            "with a clear error (run it where a human/UI can answer, or pass "
+            "auto-approve). 'auto-approve': supply an auto-approving interviewer "
+            "that selects the first choice at each gate (opt-in, non-interactive)."
+        ),
+    )
 
     sub.add_parser("doctor", help="environment diagnostics")
 
@@ -129,6 +141,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         cwd = Path.cwd()
 
+    # --- Human-gate policy: default fail-loud; auto-approve is opt-in ---
+    interviewer = None
+    if args.on_human_gate == "auto-approve":
+        from amplifier_module_loop_pipeline.interviewer import AutoApproveInterviewer
+
+        interviewer = AutoApproveInterviewer()
+
     print(f"attractor: running pipeline (cwd: {cwd}, logs: {logs_root})")
 
     try:
@@ -139,6 +158,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 provider=args.provider,
                 logs_root=logs_root,
                 cwd=cwd,
+                interviewer=interviewer,
             )
         )
     except Exception as e:  # noqa: BLE001 -- fail loud with the real error, no fallback
@@ -162,6 +182,15 @@ def cmd_run(args: argparse.Namespace) -> int:
             }
         )
     )
+
+    if result.status != "success" and args.on_human_gate == "fail":
+        print(
+            "attractor: hint -- if this pipeline has a human-gate (hexagon) node, "
+            "it fails loud by default. Re-run with --on-human-gate auto-approve to "
+            "auto-approve gates non-interactively, or run it where a human/UI can "
+            "answer the gate.",
+            file=sys.stderr,
+        )
 
     return 0 if result.status == "success" else 1
 

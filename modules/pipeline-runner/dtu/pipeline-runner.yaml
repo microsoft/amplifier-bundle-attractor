@@ -1,0 +1,91 @@
+# pipeline-runner Digital Twin profile -- SHIPPED WITH THE MODULE.
+#
+# Stands up an isolated Ubuntu env with a working Amplifier install + the
+# `attractor` CLI (this module), so anyone can run standalone attractor .dot
+# pipelines in a reproducible place -- and so the runner can be smoke-tested
+# before/after changes.
+#
+# Portable by design (unlike a personal, host-tied profile): it installs the
+# runner from its GitHub remote at @main, NOT from a local absolute path, so it
+# works on any machine that has the `amplifier-digital-twin` CLI.
+#
+# PREREQUISITES:
+#   - ANTHROPIC_API_KEY in the host env (forwarded via passthrough.services);
+#     required only for the box-node (agent) smoke, not the tool-node smoke.
+#   - Network on first run: `uv tool install` + the first `attractor run`
+#     resolve amplifier-foundation + the attractor bundle from github.com (can
+#     take several minutes).
+#   - To validate LOCAL, unpushed changes instead of published @main, use the
+#     amplifier-gitea + amplifier-tester flow to mirror the working tree -- do
+#     NOT re-point this profile at a host path.
+#
+# Launch:
+#   amplifier-digital-twin launch dtu/pipeline-runner.yaml --name pipeline-runner
+name: pipeline-runner
+description: >
+  Isolated env with a working Amplifier install + the attractor CLI, for
+  running standalone attractor .dot pipelines (smoke: the shipped runner
+  fixtures under modules/pipeline-runner/tests/fixtures/).
+
+base:
+  image: ubuntu:24.04
+
+passthrough:
+  allow_external: true
+  services:
+    - name: anthropic
+      key_env: ANTHROPIC_API_KEY
+
+provision:
+  setup_cmds:
+    # System deps
+    - apt-get update && apt-get install -y git curl
+
+    # Install uv
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Install Amplifier from upstream (creates ~/.amplifier; provides the
+    # ecosystem + the interpreter the attractor engine composes agents from).
+    - uv tool install -vv git+https://github.com/microsoft/amplifier
+
+    # Configure the Anthropic provider so Amplifier sessions can reach the LLM.
+    # ANTHROPIC_API_KEY is forwarded via passthrough.services.
+    - |
+      mkdir -p /root/.amplifier
+      cat > /root/.amplifier/settings.yaml << EOF
+      config:
+        providers:
+          - module: provider-anthropic
+            source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
+            config:
+              api_key: $ANTHROPIC_API_KEY
+      EOF
+
+    # Sanity check amplifier
+    - amplifier --version
+
+    # Install the attractor CLI (this module). It declares
+    # amplifier-module-loop-pipeline as a real dependency, so a plain install
+    # pulls the attractor engine.
+    - uv tool install -vv "git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/pipeline-runner"
+
+    # Verify the CLI is on PATH
+    - attractor doctor
+
+    # Get the shipped runner fixtures (the installed wheel doesn't ship tests/).
+    # Fixtures then live at /root/attractor-src/modules/pipeline-runner/tests/fixtures/
+    # e.g. cd /root/attractor-src/modules/pipeline-runner/tests/fixtures
+    #      attractor run fixture_box_writes_cwd.dot --cwd /root/attractor-out
+    - git clone --depth 1 https://github.com/microsoft/amplifier-bundle-attractor /root/attractor-src
+
+update:
+  cmds:
+    # Pull the latest published runner (and its @main deps).
+    - uv tool install --reinstall -vv "git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/pipeline-runner"
+    - attractor doctor
+
+readiness:
+  - name: attractor-installed
+    command: "command -v attractor"
+  - name: amplifier-installed
+    command: "command -v amplifier"

@@ -554,9 +554,27 @@ async def run_pipeline(
         profiles: llm_provider -> agent-name routing map. Defaults to
             ``DEFAULT_PROFILES`` if not given.
         hooks: Optional hooks object forwarded to the engine.
+        interviewer: Optional interviewer object forwarded to the handler
+            registry (human-in-the-loop gate seam).
         transform: If True (default), run ``apply_transforms`` before
             validation/execution.
         validate: If True (default), run ``validate_or_raise`` before execution.
+        extra_overlays: Additional ``Bundle`` overlays composed AFTER the
+            runtime orchestrator overlay, in order. The generic seam a
+            consumer uses to add cross-cutting configuration to every
+            session and spawned child -- e.g. mounting an observability
+            hook -- without the runner needing to know what the overlay
+            contains.
+        child_constraint: Optional caller-supplied hook that receives the
+            resolved child ``Bundle`` for each spawned agent and returns a
+            (possibly modified) child ``Bundle`` -- the generic seam a
+            consumer uses to constrain a spawned agent (e.g. a filesystem
+            sandbox that denies writes to protected paths, or a read-only
+            tool set for an ask-style pipeline).
+        spawn_timeout: Optional timeout (seconds) wrapping each child spawn
+            in ``asyncio.wait_for`` -- a long-running box node that hangs
+            then fails loud rather than blocking the whole pipeline
+            forever. ``None`` (default) means no timeout.
 
     Returns:
         A ``PipelineResult`` with status, notes, logs_dir, and raw JSON.

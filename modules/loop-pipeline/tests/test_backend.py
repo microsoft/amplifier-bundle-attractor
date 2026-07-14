@@ -1465,18 +1465,22 @@ async def test_build_unified_tools_falls_back_to_input_schema():
 
 
 @pytest.mark.asyncio
-async def test_tool_loop_report_outcome_json_text_wins_over_last_outcome():
-    """JSON text response takes precedence over last_outcome; stale tool state is reset.
+async def test_tool_loop_report_outcome_call_wins_over_trailing_json_text():
+    """A valid report_outcome tool call is authoritative over trailing JSON-shaped text.
 
-    A model without extended thinking may call report_outcome AND produce a JSON
-    text response.  The text is authoritative; last_outcome from the tool call
-    must be discarded (reset to None) and not returned as the outcome.
+    Reordered priority (see the report_outcome-priority-inversion fix): a model
+    that correctly calls report_outcome and then ALSO emits unrelated JSON-shaped
+    text (e.g. habitually summarizing in JSON, or echoing part of a written
+    artifact) must have its real tool-call verdict honored, not silently
+    discarded in favor of whatever the trailing text says. Prior to this fix,
+    the trailing JSON text won -- fail-UNSAFE, since a plausible-looking but
+    wrong verdict could silently override a correct one.
     """
     report_tool = _MockReportOutcomeTool()
 
     mock_client = _MockUnifiedClient(
         [
-            # Round 1: model calls report_outcome (sets last_outcome via execute())
+            # Round 1: model calls report_outcome with the real verdict
             _make_tool_call_response(
                 [
                     {
@@ -1486,9 +1490,9 @@ async def test_tool_loop_report_outcome_json_text_wins_over_last_outcome():
                     }
                 ]
             ),
-            # Round 2: model also produces a JSON text response — this must win
+            # Round 2: model also produces unrelated JSON-shaped text -- must NOT win
             _make_text_response(
-                json.dumps({"status": "success", "notes": "text wins"})
+                json.dumps({"status": "success", "notes": "unrelated trailing json"})
             ),
         ]
     )
@@ -1504,9 +1508,61 @@ async def test_tool_loop_report_outcome_json_text_wins_over_last_outcome():
     node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model"})
     result = await backend.run(node, "evaluate", _make_context())
 
-    # Text JSON wins — must not return the "fail" from the tool call args
+    # The report_outcome tool call wins — must return "fail" from the tool call,
+    # not "success" from the unrelated trailing JSON text.
+    assert result.status == StageStatus.FAIL
+    assert result.failure_reason == "from tool call"
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_report_outcome_last_call_wins_over_first():
+    """When report_outcome is called more than once in a turn, the LAST call wins.
+
+    A model may call report_outcome tentatively and then again with its final,
+    corrected verdict (e.g. after reconsidering). _find_report_outcome_call
+    must honor the last call, not the first, since the last call reflects the
+    model's actual final intent.
+    """
+    report_tool = _MockReportOutcomeTool()
+
+    mock_client = _MockUnifiedClient(
+        [
+            # Both report_outcome calls happen in the same round (same step).
+            _make_tool_call_response(
+                [
+                    {
+                        "id": "tc-1",
+                        "name": "report_outcome",
+                        "args": {
+                            "status": "fail",
+                            "failure_reason": "tentative first call",
+                        },
+                    },
+                    {
+                        "id": "tc-2",
+                        "name": "report_outcome",
+                        "args": {"status": "success", "notes": "corrected final call"},
+                    },
+                ]
+            ),
+            _make_text_response(""),
+        ]
+    )
+
+    coordinator = NoSpawnCoordinator()
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={},
+        provider=object(),
+        tools={"report_outcome": report_tool},
+        unified_client=mock_client,
+    )
+    node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model"})
+    result = await backend.run(node, "evaluate", _make_context())
+
+    # The LAST report_outcome call wins, not the first.
     assert result.status == StageStatus.SUCCESS
-    assert result.notes == "text wins"
+    assert result.notes == "corrected final call"
 
 
 def test_clone_isolates_stateful_tool_instances():

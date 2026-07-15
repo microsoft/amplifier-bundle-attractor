@@ -744,21 +744,22 @@ class AmplifierBackend:
 
         # Map GenerateResult → Outcome
         #
-        # Priority order (see issue #238):
-        #   1. result.text contains JSON-like content → authoritative, use it
-        #   2. result.text is plain prose or empty → fall back to report_outcome tool call args
-        #      (extracted from result.steps — immutable, race-free; avoids the last_outcome
-        #       shared-state bug when backend instances are cloned for parallel branches)
-        #   3. No tool call either → plain prose → SUCCESS (spec 4.5), or empty → SUCCESS
-        if result.text:
-            stripped = result.text.strip()
-            _fence_match = re.match(
-                r"^```(?:json)?\s*([\s\S]*?)\s*```$", stripped, re.DOTALL
-            )
-            if bool(_fence_match) or stripped.startswith("{"):
-                return _parse_outcome(result.text)
-
-        # Text is plain prose or empty — check if report_outcome was called
+        # Priority order (reordered — see the report_outcome-priority-inversion fix;
+        # original order was issue #238):
+        #   1. report_outcome tool call was made → authoritative, use it
+        #      UNCONDITIONALLY, regardless of what result.text also contains. A
+        #      model that correctly calls report_outcome and then ALSO emits
+        #      JSON-shaped trailing text (e.g. echoing part of a written artifact,
+        #      or habitually summarizing in JSON) must not have its real verdict
+        #      silently discarded in favor of that trailing text — that would be
+        #      fail-UNSAFE (a plausible-looking but wrong verdict wins) instead of
+        #      fail-safe. Extracted from result.steps — immutable, race-free;
+        #      avoids the last_outcome shared-state bug when backend instances
+        #      are cloned for parallel branches.
+        #   2. No report_outcome call → result.text (JSON, fenced JSON, embedded
+        #      JSON, or plain prose) → _parse_outcome handles all of these,
+        #      falling back to SUCCESS for plain prose per spec 4.5.
+        #   3. No text at all → SUCCESS.
         lo = _find_report_outcome_call(result)
         if lo is not None:
             return Outcome(
@@ -771,7 +772,7 @@ class AmplifierBackend:
             )
 
         if result.text:
-            return _parse_outcome(result.text)  # plain prose → SUCCESS per spec 4.5
+            return _parse_outcome(result.text)
         return Outcome(
             status=StageStatus.SUCCESS,
             notes=f"Stage completed: {node.id}",
@@ -1066,12 +1067,19 @@ def _find_report_outcome_call(result: Any) -> dict[str, Any] | None:
     copies self._tools, so parallel branches share the same tool object and
     would race on last_outcome.  result.steps is created fresh per generate()
     call and is never shared between branches.
+
+    Returns the LAST matching call (across all steps, in step/tool_calls
+    order), not the first.  A model that calls report_outcome more than once
+    in a single turn -- e.g. a tentative call followed by a corrected final
+    call -- intends its last call to be the real verdict; honoring the first
+    call instead would silently lock in a superseded decision.
     """
+    found: dict[str, Any] | None = None
     for step in getattr(result, "steps", []) or []:
         for tc in getattr(step, "tool_calls", []) or []:
             if getattr(tc, "name", None) == "report_outcome":
-                return getattr(tc, "arguments", {}) or {}
-    return None
+                found = getattr(tc, "arguments", {}) or {}
+    return found
 
 
 # Spawn-result status strings that count as a real, non-failing completion.

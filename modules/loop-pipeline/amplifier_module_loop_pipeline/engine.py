@@ -814,6 +814,19 @@ class PipelineEngine:
                 self.failed_outputs.clear()  # M2 R12: clear skip-propagation table
                 goal_gate_retries = 0
                 failure_routing_retries = 0
+                # Bug fix: clear stale per-cycle routing signal so a prior
+                # cycle's preferred_label (e.g. "converged") cannot leak into
+                # this restarted cycle's edge-selection when the new cycle's
+                # outcome doesn't set its own preferred_label (see
+                # docs/designs/... loop_restart context leak). This is the
+                # only outcome-derived key resolved by condition evaluation
+                # (conditions.py _resolve_key: "outcome" and "preferred_label")
+                # that is written conditionally on truthiness elsewhere in
+                # this file (Step 4 above, and the run_subgraph mirror), so
+                # it is the only one that can go stale here. context_updates
+                # are pipeline-declared outputs=, not per-cycle routing
+                # signals, and are intentionally left untouched.
+                self.context.set("preferred_label", None)
 
             # Step 7: Advance to next node
             current_node = self.graph.nodes[edge.to_node]

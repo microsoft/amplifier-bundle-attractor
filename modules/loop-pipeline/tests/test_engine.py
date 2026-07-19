@@ -25,7 +25,14 @@ class MockBackend:
         self._return_value = return_value
         self.calls: list[str] = []
 
-    async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
+    async def run(
+        self,
+        node: Node,
+        prompt: str,
+        context: PipelineContext,
+        incoming_edge=None,
+        graph=None,
+    ) -> str:
         self.calls.append(node.id)
         return self._return_value
 
@@ -38,7 +45,12 @@ class SequenceBackend:
         self.calls: list[str] = []
 
     async def run(
-        self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None
+        self,
+        node: Node,
+        prompt: str,
+        context: PipelineContext,
+        incoming_edge=None,
+        graph=None,
     ) -> str | Outcome:
         self.calls.append(node.id)
         return self._outcomes.get(node.id, "ok")
@@ -667,6 +679,238 @@ async def test_loop_restart_increments_iteration_counter(tmp_path):
     assert engine.iteration_count == 1
     # A fresh log subdirectory should have been created
     assert (tmp_path / "iteration_1").is_dir()
+
+
+class StaleLabelBackend:
+    """Cycle 1 sets preferred_label='refine' (triggers loop_restart); every
+    subsequent call to 'work' returns an outcome with NO preferred_label at
+    all -- simulating the known, separate model-reliability bug where an
+    LLM's report_outcome call omits the label. Used to prove the engine
+    does not let cycle 1's label leak into cycle 2's routing decision.
+    """
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    async def run(self, node, prompt, context, incoming_edge=None, graph=None):
+        self.calls.append(node.id)
+        if node.id == "work" and self.calls.count("work") == 1:
+            return Outcome(status=StageStatus.SUCCESS, preferred_label="refine")
+        return Outcome(status=StageStatus.SUCCESS)
+
+
+def _make_stale_label_graph() -> Graph:
+    """Mirrors synthesize.dot's assess/feedback shape: a converged edge and
+    a refine (loop_restart) edge both gated on context.preferred_label,
+    plus an unconditional 'else' fallback (the fail-safe direction).
+
+    ``mark_converged``/``mark_pending`` are deterministic no-op tool nodes
+    (not exit nodes) so the taken path is visible in ``completed_nodes`` --
+    exit nodes (shape=Msquare) terminate the run loop at Step 1, before
+    ``completed_nodes`` is ever appended to, so they cannot be used to
+    observe which branch was actually taken.
+    """
+    return Graph(
+        name="test-stale-label",
+        nodes={
+            "start": Node(id="start", shape="Mdiamond"),
+            "work": Node(id="work", shape="box", prompt="Do work"),
+            "mark_converged": Node(
+                id="mark_converged",
+                shape="parallelogram",
+                attrs={"tool_command": "true"},
+            ),
+            "mark_pending": Node(
+                id="mark_pending", shape="parallelogram", attrs={"tool_command": "true"}
+            ),
+            "exit": Node(id="exit", shape="Msquare"),
+        },
+        edges=[
+            Edge(from_node="start", to_node="work"),
+            Edge(
+                from_node="work",
+                to_node="work",
+                label="refine",
+                condition="context.preferred_label=refine",
+                loop_restart=True,
+            ),
+            Edge(
+                from_node="work",
+                to_node="mark_converged",
+                label="converged",
+                condition="context.preferred_label=converged",
+            ),
+            # Unconditional fallback -- fail-safe direction (more work,
+            # never premature "done"), matching synthesize.dot's else edge.
+            Edge(from_node="work", to_node="mark_pending", label="else"),
+            Edge(from_node="mark_converged", to_node="exit"),
+            Edge(from_node="mark_pending", to_node="exit"),
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_loop_restart_clears_stale_preferred_label_within_source(tmp_path):
+    """loop_restart clears context.preferred_label so a prior cycle's label
+    cannot leak into a later cycle whose own outcome omits the label.
+
+    Cycle 1: work returns preferred_label="refine" -> context.preferred_label
+    is set to "refine" -> the work->work[condition="context.preferred_label=
+    refine"] edge matches -> loop_restart fires.
+
+    Cycle 2: work returns an outcome with NO preferred_label (the known
+    model-reliability omission bug). Without the fix, context.preferred_label
+    would still read "refine" from cycle 1, so the SAME loop_restart edge
+    would incorrectly match again using stale state (an infinite stale-label
+    loop) -- or, in the sibling scenario where cycle 1 set "converged"
+    instead, a stale "converged" would falsely route straight to "done".
+    With the fix, the context key is cleared at the loop_restart point, so
+    cycle 2's unlabeled outcome falls through to the safe, unconditional
+    "else" fallback instead.
+    """
+    backend = StaleLabelBackend()
+    graph = _make_stale_label_graph()
+    context = PipelineContext()
+    registry = HandlerRegistry(HandlerContext(backend=backend))
+    engine = PipelineEngine(
+        graph=graph,
+        context=context,
+        handler_registry=registry,
+        logs_root=str(tmp_path),
+    )
+    outcome = await engine.run()
+
+    assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
+    # "work" executed exactly twice: cycle 1 (refine) + cycle 2 (no label).
+    # If the stale label leaked, cycle 2 would re-match "refine" and loop
+    # forever instead of terminating after two calls.
+    assert backend.calls.count("work") == 2
+    # THE FIX: cycle 1's "refine" must not survive the loop_restart.
+    assert engine.context.get("preferred_label") is None
+    # Cycle 2 must fall through to the safe unconditional fallback, not the
+    # stale-matched "refine" loop or a falsely-matched "converged" path.
+    # mark_pending/mark_converged are tool nodes (not exit nodes), so they
+    # ARE recorded in completed_nodes -- unlike the shared "exit" node,
+    # which (being shape=Msquare) short-circuits the run loop at Step 1
+    # before completed_nodes is ever appended to.
+    assert "mark_pending" in engine.completed_nodes
+    assert "mark_converged" not in engine.completed_nodes
+
+
+class SourceAssessBackend:
+    """Shared backend across two folder-node (sub-pipeline) invocations.
+
+    Mirrors synthesize.dot's assess node: source A converges cleanly on its
+    first assess call (preferred_label="converged"); source B's assess call
+    reports NO preferred_label at all -- the known model-reliability
+    omission bug. Used to prove a fresh child context for source B does not
+    inherit source A's stale "converged" left in the parent context.
+    """
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    async def run(self, node, prompt, context, incoming_edge=None, graph=None):
+        self.calls.append(node.id)
+        if node.id != "assess":
+            return Outcome(status=StageStatus.SUCCESS)
+        if self.calls.count("assess") == 1:
+            # Source A: converges cleanly.
+            return Outcome(
+                status=StageStatus.SUCCESS,
+                preferred_label="converged",
+                context_updates={"more_sources": "true"},
+            )
+        # Source B: assess omits preferred_label entirely this cycle.
+        return Outcome(
+            status=StageStatus.SUCCESS,
+            context_updates={"more_sources": "false"},
+        )
+
+
+CHILD_SOURCE_DOT = """
+digraph childsrc {
+    start [shape=Mdiamond]
+    assess [shape=box, prompt="Assess this source"]
+    done [shape=Msquare]
+    pending [shape=Msquare]
+    start -> assess
+    assess -> done    [condition="context.preferred_label=converged"]
+    assess -> pending
+}
+"""
+
+
+@pytest.mark.asyncio
+async def test_folder_loop_restart_does_not_leak_preferred_label_across_sources(
+    tmp_path,
+):
+    """Cross-source leak: a folder sub-pipeline's converged outcome must not
+    survive the parent's loop_restart and pollute the NEXT sub-pipeline's
+    cloned context.
+
+    Mirrors ingest.dot + synthesize.dot: a parent drain loop runs a child
+    DOT (synthesize.dot) per source via a shape=folder node, looping back
+    to the SAME folder node via a loop_restart edge for the next source.
+
+    Source A's child pipeline converges (preferred_label="converged"),
+    which the parent engine writes into ITS OWN context (engine.py:647-648)
+    when the folder node's outcome propagates up. Source B's child
+    pipeline is then entered via PipelineHandler.execute()'s
+    ``context.clone()`` (handlers/pipeline.py:163) of that SAME parent
+    context.
+
+    Without the fix, the parent's context.preferred_label would still read
+    "converged" from source A at the moment of the clone, so source B's
+    freshly-cloned child context would start already "converged" --
+    meaning if source B's own assess call also omits preferred_label (the
+    known model-reliability bug), its very first assess routes straight to
+    "done" without ever having been judged -- a silent false success.
+
+    With the fix, the parent's loop_restart (executed by the SAME engine.py
+    code path, once for the parent's own restart edge) clears
+    preferred_label before source B's folder-node clone happens, so source
+    B's child context starts clean and correctly falls through to the safe
+    "pending" fallback instead of a false "done".
+    """
+    child_dot_path = tmp_path / "child.dot"
+    child_dot_path.write_text(CHILD_SOURCE_DOT)
+
+    parent_dot = f"""
+    digraph parentsrc {{
+        start [shape=Mdiamond]
+        run_synthesize [shape=folder, dot_file="{child_dot_path}", outputs="more_sources"]
+        done [shape=Msquare]
+        start -> run_synthesize
+        run_synthesize -> run_synthesize [loop_restart="true", condition="context.more_sources=true"]
+        run_synthesize -> done [condition="context.more_sources=false"]
+    }}
+    """
+    graph = parse_dot(parent_dot)
+    validate_or_raise(graph)
+    graph.source_dir = str(tmp_path)
+
+    backend = SourceAssessBackend()
+    context = PipelineContext()
+    registry = HandlerRegistry(HandlerContext(backend=backend))
+    engine = PipelineEngine(
+        graph=graph,
+        context=context,
+        handler_registry=registry,
+        logs_root=str(tmp_path),
+    )
+    outcome = await engine.run()
+
+    assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
+    # assess was invoked exactly twice: source A, then source B.
+    assert backend.calls.count("assess") == 2
+    # THE FIX: source A's "converged" must not survive the parent's
+    # loop_restart, so it cannot be present at source B's context.clone().
+    assert engine.context.get("preferred_label") is None
+    # The pipeline correctly reflects that source B never actually
+    # converged (its own assess omitted the label) -- it drained via the
+    # "false" branch, not a leaked-true one.
+    assert engine.context.get("more_sources") == "false"
 
 
 @pytest.mark.asyncio

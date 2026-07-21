@@ -4,13 +4,30 @@ Generate tests, run them, and fix failures in a self-healing retry loop.
 
 ## Usage
 
+This example ships a target: `examples/pipelines/practical/sample/` contains a
+`user_service.py` with only happy-path tests -- the None-avatar path, the
+missing-user path, and all of `validate_user()` are uncovered. Run the block
+below **from the attractor repo root** and it works walk-up, no setup:
+
 ```bash
-attractor run examples/pipelines/practical/test-gen.dot \
-    --param goal="<describe what to test, e.g. the authentication module>" \
+DOT="$PWD/examples/pipelines/practical/test-gen.dot"
+cp -r examples/pipelines/practical/sample /tmp/attractor-testgen-demo
+cd /tmp/attractor-testgen-demo
+attractor run "$DOT" \
+    --param goal="Expand test coverage for user_service.py. The existing suite only covers the happy path -- add tests for the untested paths: get_display_name() with a None avatar, get_user() for an unknown username, and the validate_user() rules (short/empty/non-alphanumeric username, missing/malformed email)." \
     --cwd .
 ```
 
-Point this at your own repo: `cd` into it, replace the goal with the module you want tested, and keep `--cwd .` (that's where the pipeline reads and writes). This example doesn't ship a target codebase. Running from the repo root also keeps box-node agents rooted correctly (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
+We copy the sample to a temp dir first so the committed fixture stays pristine
+and every run starts clean. `$DOT` captures the pipeline's absolute path before
+`cd`, because the `.dot` path is resolved from your current directory while
+`--cwd` is where the pipeline reads and writes. Process cwd must equal `--cwd`
+for box-node (agent) pipelines -- that's why we `cd` into the copy (see
+`modules/pipeline-runner/KNOWN_ISSUES.md`).
+
+**Point it at your own repo instead:** replace the `cp`/`cd` with `cd /path/to/your/repo`, keep `$DOT` absolute, keep `--cwd .`, and swap in the module you want tested.
+
+**Verify the result:** `cd /tmp/attractor-testgen-demo && pytest -v` -- the suite grows well past the original 2 happy-path tests and stays green.
 
 ## What It Does
 

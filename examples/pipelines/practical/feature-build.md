@@ -11,7 +11,9 @@ attractor run examples/pipelines/practical/feature-build.dot \
     --on-human-gate auto-approve
 ```
 
-`--on-human-gate auto-approve` is required to run non-interactively: this pipeline has a human-review gate (hexagon) that otherwise waits for a person. Point it at your own repo: `cd` in, replace the goal, and keep `--cwd .` (that's where the pipeline reads and writes). This example doesn't ship a target codebase. Running from the repo root also keeps box-node agents rooted correctly (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
+**About `--on-human-gate auto-approve`:** this pipeline has a human-review gate (hexagon) that blocks a non-interactive run. `auto-approve` unblocks it by always taking the gate's **first** option — which here is **Ship** — so it *never* exercises the Rework path. It lets the demo run to completion, but the review checkpoint becomes a no-op that ships every time. Drop the flag and run interactively if you actually want the gate to mean something.
+
+**Pointing at your own repo:** the `.dot` path is resolved relative to your *current* directory, while `--cwd` is where the pipeline reads and writes code. Give the pipeline file an absolute (or attractor-repo-relative) path and point `--cwd` at your repo — e.g. `attractor run /path/to/attractor/examples/pipelines/practical/feature-build.dot --cwd /path/to/your/repo`. This example doesn't ship a target codebase. See `modules/pipeline-runner/KNOWN_ISSUES.md` for the box-node cwd caveat.
 
 ## What It Does
 

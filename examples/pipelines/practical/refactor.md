@@ -4,13 +4,31 @@ Analyze code smells, plan refactoring, execute with snapshot test safety net.
 
 ## Usage
 
+This example ships a target: `examples/pipelines/practical/sample/` contains a
+`user_service.py` whose `validate_user()` is a long, deeply-nested method with
+duplicated validation blocks -- and a green test suite to prove the refactor
+preserves behavior. Run the block below **from the attractor repo root** and it
+works walk-up, no setup:
+
 ```bash
-attractor run examples/pipelines/practical/refactor.dot \
-    --param goal="<describe the refactor, e.g. reduce complexity in a module and extract helpers>" \
+DOT="$PWD/examples/pipelines/practical/refactor.dot"
+cp -r examples/pipelines/practical/sample /tmp/attractor-refactor-demo
+cd /tmp/attractor-refactor-demo
+attractor run "$DOT" \
+    --param goal="Refactor validate_user() in user_service.py: remove the deep nesting and the duplicated username/email validation blocks by extracting a helper. Preserve behavior exactly -- the existing tests must still pass." \
     --cwd .
 ```
 
-Point this at your own repo: `cd` into it, replace the goal with the code you want refactored, and keep `--cwd .` (that's where the pipeline reads and writes). This example doesn't ship a target codebase. Running from the repo root also keeps box-node agents rooted correctly (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
+We copy the sample to a temp dir first so the committed fixture stays pristine
+and every run starts clean. `$DOT` captures the pipeline's absolute path before
+`cd`, because the `.dot` path is resolved from your current directory while
+`--cwd` is where the pipeline reads and writes. Process cwd must equal `--cwd`
+for box-node (agent) pipelines -- that's why we `cd` into the copy (see
+`modules/pipeline-runner/KNOWN_ISSUES.md`).
+
+**Point it at your own repo instead:** replace the `cp`/`cd` with `cd /path/to/your/repo`, keep `$DOT` absolute, keep `--cwd .`, and swap in your refactor goal.
+
+**Verify the result:** `cd /tmp/attractor-refactor-demo && pytest -v` -- the suite stays green (behavior preserved), and `validate_user()` is flatter with the duplication extracted.
 
 ## What It Does
 

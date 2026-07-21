@@ -4,13 +4,24 @@ Multi-dimensional pull request review with parallel analysis streams.
 
 ## Usage
 
+Unlike bug-fix/refactor/test-gen, this pipeline is inherently **bring-your-own**:
+it reviews `git diff main...HEAD`, so it needs a real repo with a feature branch
+to review. Point it at your repo:
+
 ```bash
-attractor run examples/pipelines/practical/pr-review.dot \
+DOT="/path/to/attractor/examples/pipelines/practical/pr-review.dot"
+cd /path/to/your/repo          # checked out on the feature branch to review
+attractor run "$DOT" \
     --param goal="Review the changes on this branch for quality and security" \
     --cwd .
 ```
 
-Run from the root of your repo, checked out on the feature branch you want reviewed: the pipeline reviews `git diff main...HEAD`, so it needs a `main` branch to diff against and a non-empty diff. If your default branch isn't `main` (or you're sitting on `main`), edit the `git diff` command in `pr-review.dot`. `--cwd .` is where box-node agents read and write (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
+The `.dot` path is resolved from your *current* directory, but you need to `cd`
+into your repo so process cwd equals `--cwd` (required for box-node agents -- see
+`modules/pipeline-runner/KNOWN_ISSUES.md`). So give `$DOT` an absolute (or
+attractor-repo-relative) path, `cd` into your repo, and keep `--cwd .`.
+
+Requirements: a `main` branch to diff against and a non-empty `git diff main...HEAD`. If your default branch isn't `main` (or you're sitting on `main`), edit the `git diff` command in `pr-review.dot`.
 
 Or via the interactive agent:
 > "Run the PR review pipeline on the current branch"

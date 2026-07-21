@@ -6,11 +6,11 @@ Systematic debugging: reproduce, diagnose, fix, write regression test, verify.
 
 ```bash
 attractor run examples/pipelines/practical/bug-fix.dot \
-    --param goal="Fix the NullPointerError in UserService.getProfile() when user has no avatar" \
+    --param goal="<describe the bug to fix, e.g. a crash when a user has no avatar>" \
     --cwd .
 ```
 
-Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
+Point this at your own repo: `cd` into it, replace the goal with your bug, and keep `--cwd .` (that's where the pipeline reads and writes). This example doesn't ship a target codebase. Running from the repo root also keeps box-node agents rooted correctly (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
 
 ## What It Does
 

@@ -6,11 +6,12 @@ Parse a spec, break into subtasks, implement in parallel, integration test, huma
 
 ```bash
 attractor run examples/pipelines/practical/feature-build.dot \
-    --param goal="Add user avatar upload with S3 storage and thumbnail generation" \
-    --cwd .
+    --param goal="<describe the feature to build, e.g. avatar upload with thumbnails>" \
+    --cwd . \
+    --on-human-gate auto-approve
 ```
 
-Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`). This pipeline has a human-gate (hexagon) node; add `--on-human-gate auto-approve` to run it non-interactively.
+`--on-human-gate auto-approve` is required to run non-interactively: this pipeline has a human-review gate (hexagon) that otherwise waits for a person. Point it at your own repo: `cd` in, replace the goal, and keep `--cwd .` (that's where the pipeline reads and writes). This example doesn't ship a target codebase. Running from the repo root also keeps box-node agents rooted correctly (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
 
 ## What It Does
 

@@ -6,11 +6,11 @@ Generate tests, run them, and fix failures in a self-healing retry loop.
 
 ```bash
 attractor run examples/pipelines/practical/test-gen.dot \
-    --param goal="Generate comprehensive tests for the user authentication module in src/auth/" \
+    --param goal="<describe what to test, e.g. the authentication module>" \
     --cwd .
 ```
 
-Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
+Point this at your own repo: `cd` into it, replace the goal with the module you want tested, and keep `--cwd .` (that's where the pipeline reads and writes). This example doesn't ship a target codebase. Running from the repo root also keeps box-node agents rooted correctly (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
 
 ## What It Does
 

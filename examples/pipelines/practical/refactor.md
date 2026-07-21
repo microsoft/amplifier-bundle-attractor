@@ -6,11 +6,11 @@ Analyze code smells, plan refactoring, execute with snapshot test safety net.
 
 ```bash
 attractor run examples/pipelines/practical/refactor.dot \
-    --param goal="Refactor src/auth/handler.py to reduce complexity and extract helper functions" \
+    --param goal="<describe the refactor, e.g. reduce complexity in a module and extract helpers>" \
     --cwd .
 ```
 
-Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
+Point this at your own repo: `cd` into it, replace the goal with the code you want refactored, and keep `--cwd .` (that's where the pipeline reads and writes). This example doesn't ship a target codebase. Running from the repo root also keeps box-node agents rooted correctly (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
 
 ## What It Does
 

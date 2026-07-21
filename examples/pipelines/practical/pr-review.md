@@ -6,11 +6,11 @@ Multi-dimensional pull request review with parallel analysis streams.
 
 ```bash
 attractor run examples/pipelines/practical/pr-review.dot \
-    --param goal="Review the changes in this PR for quality and security" \
+    --param goal="Review the changes on this branch for quality and security" \
     --cwd .
 ```
 
-Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
+Run from the root of your repo, checked out on the feature branch you want reviewed: the pipeline reviews `git diff main...HEAD`, so it needs a `main` branch to diff against and a non-empty diff. If your default branch isn't `main` (or you're sitting on `main`), edit the `git diff` command in `pr-review.dot`. `--cwd .` is where box-node agents read and write (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
 
 Or via the interactive agent:
 > "Run the PR review pipeline on the current branch"

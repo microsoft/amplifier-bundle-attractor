@@ -38,6 +38,19 @@ _NODE_FIELD_MAP = {"label", "shape", "type", "prompt"}
 # Edge attributes that get promoted to Edge fields
 _EDGE_FIELD_MAP = {"label", "condition", "weight"}
 
+# Node attributes whose value is a duration where a BARE integer (no unit
+# suffix) means SECONDS. Suffixed values (e.g. "300s", "2m") are normalized to
+# milliseconds by _try_parse_duration; a bare "300" would otherwise be stored
+# as the raw int 300, and the engine's `/1000` timeout enforcement would treat
+# it as 0.3s. Treating bare integers as seconds matches the documented node
+# `timeout` contract ("Node execution timeout in seconds, e.g. 600") and
+# Python's own timeout convention (time.sleep / asyncio.timeout take bare
+# seconds). Applied in _parse_attr_block at parse time, where the unit suffix
+# is still visible. Do NOT generalize this into _try_parse_duration: that helper
+# runs on every attribute value, and bare integers like max_agent_turns="22"
+# must stay 22, not become a duration.
+_SECONDS_IF_BARE_DURATION_ATTRS = {"timeout"}
+
 # Known graph-level attribute names (not node IDs)
 _KNOWN_GRAPH_ATTRS = {
     "goal",
@@ -547,7 +560,14 @@ def _parse_attr_block(tokens: list[str], pos: int) -> dict[str, Any]:
                 found_missing_comma = True
             key = _unquote_key(tokens[i])
             raw_val = tokens[i + 2]
-            attrs[key] = _parse_value(raw_val)
+            value = _parse_value(raw_val)
+            if key in _SECONDS_IF_BARE_DURATION_ATTRS and _is_bare_integer(raw_val):
+                # Bare integer duration -> interpret as seconds and store as
+                # milliseconds (consistent with suffixed durations like "300s")
+                # so the engine's `/1000` enforcement yields the intended
+                # wall-clock seconds. Suffixed values are already ms here.
+                value = int(value) * _DURATION_UNITS["s"]
+            attrs[key] = value
             prev_was_value = True
             i += 3
         else:
@@ -672,6 +692,20 @@ def _try_parse_duration(s: str) -> int | None:
         unit = m.group(2)
         return value * _DURATION_UNITS[unit]
     return None
+
+
+def _is_bare_integer(raw: str) -> bool:
+    """Return True if a raw DOT attribute value is an integer with no unit suffix.
+
+    Handles both quoted (``"300"``) and unquoted (``300``) forms. A suffixed
+    duration such as ``"300s"`` or ``"2m"`` is NOT bare -- it carries a unit and
+    is converted to milliseconds by :func:`_try_parse_duration`. A bare float
+    (``"300.5"``) is also not a bare integer and is left untouched.
+    """
+    s = raw
+    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+        s = s[1:-1]
+    return re.match(r"^-?\d+$", s) is not None
 
 
 # --- Comment stripping ---

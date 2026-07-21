@@ -82,3 +82,88 @@ def test_max_pipeline_duration_stored_as_milliseconds():
     """
     graph = parse_dot('digraph { max_pipeline_duration="5m" }')
     assert graph.max_pipeline_duration == 300_000  # 5 * 60 * 1_000 ms
+
+
+# ---------------------------------------------------------------------------
+# Regression: BARE-INTEGER timeout means SECONDS (Fix B)
+#
+# A bare integer (no unit suffix) is the form every shipped pipeline actually
+# uses (e.g. dot-graph pr_feedback.dot timeout="300"). Before this fix the
+# parser stored it as the raw int 300 and the engine's /1000 enforcement made
+# it 0.3s, killing every LLM/tool node on arrival. A bare integer must be
+# interpreted as SECONDS and stored as milliseconds, exactly like "300s".
+#
+# This is the test gap that let the original regression ship: the suite only
+# ever exercised suffixed values.
+# ---------------------------------------------------------------------------
+
+
+def test_bare_integer_timeout_stored_as_milliseconds():
+    """Parser treats bare '300' as 300 seconds -> 300000 ms (like '300s')."""
+    graph = parse_dot('digraph { A [timeout="300"] }')
+    node = graph.nodes["A"]
+    assert node.timeout == 300_000  # 300 seconds * 1_000
+
+
+def test_bare_integer_timeout_yields_effective_300_seconds():
+    """timeout='300' (bare) must yield 300 effective seconds after /1000."""
+    graph = parse_dot('digraph { A [timeout="300"] }')
+    node = graph.nodes["A"]
+    assert node.timeout is not None
+    timeout_s = float(node.timeout) / 1000.0
+    assert timeout_s == 300.0  # NOT 0.3
+
+
+def test_bare_integer_600_matches_documented_600s_intent():
+    """pr_feedback.dot's Decide node 'timeout=\"600\"' must mean 600s, not 0.6s."""
+    graph = parse_dot('digraph { Decide [timeout="600"] }')
+    node = graph.nodes["Decide"]
+    assert node.timeout is not None
+    assert float(node.timeout) / 1000.0 == 600.0
+
+
+def test_bare_integer_unquoted_timeout_is_seconds():
+    """An unquoted bare integer timeout is also seconds."""
+    graph = parse_dot("digraph { A [timeout=300] }")
+    node = graph.nodes["A"]
+    assert node.timeout is not None
+    assert float(node.timeout) / 1000.0 == 300.0
+
+
+def test_suffixed_and_bare_agree_for_same_number():
+    """'300' and '300s' must produce identical effective timeouts."""
+    bare = parse_dot('digraph { A [timeout="300"] }').nodes["A"].timeout
+    suffixed = parse_dot('digraph { A [timeout="300s"] }').nodes["A"].timeout
+    assert bare == suffixed == 300_000
+
+
+def test_subsecond_suffixed_timeout_preserved():
+    """Sub-second suffixed values (e.g. '250ms') are NOT rescaled to seconds."""
+    graph = parse_dot('digraph { A [timeout="250ms"] }')
+    node = graph.nodes["A"]
+    assert node.timeout == 250  # 0.25s — a real, intended sub-second value
+
+
+def test_node_default_bare_integer_timeout_is_seconds():
+    """A bare integer node-default timeout is normalized to seconds too."""
+    graph = parse_dot('digraph { node [timeout="120"]; A; B [timeout="900s"] }')
+    a_timeout = graph.nodes["A"].timeout
+    b_timeout = graph.nodes["B"].timeout
+    assert a_timeout is not None and b_timeout is not None
+    assert float(a_timeout) / 1000.0 == 120.0  # inherited default
+    assert float(b_timeout) / 1000.0 == 900.0  # explicit suffix
+
+
+# ---------------------------------------------------------------------------
+# Guard: the bare-integer rule is TIMEOUT-SPECIFIC and must not leak to other
+# integer-valued attributes (e.g. max_agent_turns), which would be corrupted
+# if _try_parse_duration started treating bare ints as durations globally.
+# ---------------------------------------------------------------------------
+
+
+def test_non_timeout_integer_attr_not_rescaled():
+    """max_agent_turns='22' must stay 22, not become 22000."""
+    graph = parse_dot('digraph { A [timeout="300", max_agent_turns="22"] }')
+    node = graph.nodes["A"]
+    assert str(node.attrs.get("max_agent_turns")) == "22"
+    assert node.timeout == 300_000

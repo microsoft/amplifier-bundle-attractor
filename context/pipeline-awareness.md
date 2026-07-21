@@ -85,6 +85,7 @@ Run a simple inline pipeline:
 - `@attractor:examples/pipelines/practical/bug-fix.dot` — Systematic reproduce -> diagnose -> fix -> verify
 - `@attractor:examples/pipelines/practical/feature-build.dot` — Parallel implementation with human review gate
 - `@attractor:examples/pipelines/practical/refactor.dot` — Safe refactoring with snapshot tests
+- `@attractor:examples/pipelines/practical/multi-lens-review.dot` — Self-contained 3-provider (anthropic/openai/gemini) parallel review panel with fan-in synthesis
 
 ## After a Pipeline Completes
 

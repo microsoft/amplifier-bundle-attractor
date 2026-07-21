@@ -5,23 +5,25 @@ Analyze code smells, plan refactoring, execute with snapshot test safety net.
 ## Usage
 
 ```bash
-amp run --dot-file examples/pipelines/practical/refactor.dot \
-    --goal "Refactor src/auth/handler.py to reduce complexity and extract helper functions"
+attractor run examples/pipelines/practical/refactor.dot \
+    --param goal="Refactor src/auth/handler.py to reduce complexity and extract helper functions" \
+    --cwd .
 ```
+
+Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
 
 ## What It Does
 
 1. **Analyze Smells** -- Identifies code smells ranked by impact
-2. **Plan Refactoring** -- Creates a risk-ordered plan using o3-mini (reasoning-heavy)
+2. **Plan Refactoring** -- Creates a risk-ordered plan (reasoning-heavy step)
 3. **Snapshot Tests** -- Captures baseline test results (or writes characterization tests)
 4. **Implement** -- Executes the plan with small, atomic edits
 5. **Run Tests** -- Verifies no regressions against baseline (retries if failures, max 2 attempts)
-6. **Diff Review** -- Uses o3-mini to verify behavior preservation
+6. **Diff Review** -- Verifies behavior preservation
 
-## Model Stylesheet
+## Models
 
-- **.reasoning class** (plan_refactor, diff_review): o3-mini with high reasoning effort -- planning and verification
-- **box nodes** (all others): Default provider (Claude Sonnet recommended) -- code analysis and modification
+Model-agnostic -- every node runs on your configured default provider/model. To route the reasoning-heavy steps (`plan_refactor`, `diff_review`) to a stronger model, add a `model_stylesheet` and tag those nodes with a class (see `examples/pipelines/06-model-stylesheet.dot`).
 
 ## Key Feature: Snapshot Safety Net
 

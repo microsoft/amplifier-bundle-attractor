@@ -5,9 +5,12 @@ Multi-dimensional pull request review with parallel analysis streams.
 ## Usage
 
 ```bash
-amp run --dot-file examples/pipelines/practical/pr-review.dot \
-    --goal "Review the changes in this PR for quality and security"
+attractor run examples/pipelines/practical/pr-review.dot \
+    --param goal="Review the changes in this PR for quality and security" \
+    --cwd .
 ```
+
+Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
 
 Or via the interactive agent:
 > "Run the PR review pipeline on the current branch"
@@ -19,10 +22,9 @@ Or via the interactive agent:
 3. **Prioritize** -- Ranks all findings by severity (must-fix -> should-fix -> consider)
 4. **Generate Comments** -- Creates actionable PR review comments with file paths and suggested fixes
 
-## Model Stylesheet
+## Models
 
-- **box nodes** (review_bugs, review_style, review_security, review_perf, generate_comments): Claude Sonnet -- strong at code reading and tool use
-- **.reasoning class** (prioritize): o3-mini with high reasoning effort -- better at ranking and prioritization tasks
+Model-agnostic -- every node runs on your configured default provider/model. To route the reasoning-heavy `prioritize` step to a stronger model, add a `model_stylesheet` and tag the node with a class (see `examples/pipelines/06-model-stylesheet.dot`).
 
 ## Expected Behavior
 

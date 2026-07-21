@@ -5,22 +5,24 @@ Systematic debugging: reproduce, diagnose, fix, write regression test, verify.
 ## Usage
 
 ```bash
-amp run --dot-file examples/pipelines/practical/bug-fix.dot \
-    --goal "Fix the NullPointerError in UserService.getProfile() when user has no avatar"
+attractor run examples/pipelines/practical/bug-fix.dot \
+    --param goal="Fix the NullPointerError in UserService.getProfile() when user has no avatar" \
+    --cwd .
 ```
+
+Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
 
 ## What It Does
 
 1. **Reproduce** -- Writes and runs a minimal reproduction script
-2. **Diagnose** -- Analyzes root cause using o3-mini (reasoning-heavy, via model stylesheet class)
+2. **Diagnose** -- Analyzes the root cause (reasoning-heavy step)
 3. **Implement Fix** -- Makes the minimal code change to resolve the issue
 4. **Regression Test** -- Writes a test that proves the fix works
 5. **Run Tests** -- Verifies all tests pass (retries fix if not)
 
-## Model Stylesheet
+## Models
 
-- **.reasoning class** (diagnose): o3-mini with high reasoning effort -- deep root cause analysis
-- **box nodes** (all others): Default provider (Claude Sonnet recommended) -- code modification and tool use
+Model-agnostic -- every node runs on your configured default provider/model. To route the reasoning-heavy `diagnose` step to a stronger model, add a `model_stylesheet` and tag the node with a class (see `examples/pipelines/06-model-stylesheet.dot`).
 
 ## Key Feature: Disciplined Workflow
 

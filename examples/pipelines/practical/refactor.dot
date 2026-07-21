@@ -2,14 +2,13 @@
 //
 // Analyze smells, plan refactoring, capture baseline tests,
 // implement changes, verify no regressions, review diff.
-// Uses o3-mini for planning and diff review (reasoning-heavy) via class.
+// Model-agnostic: every node runs on your configured default provider/model.
 
 digraph Refactor {
     graph [
         goal="$goal",
         label="Safe Refactoring Pipeline",
         default_max_retry=3,
-        model_stylesheet=".reasoning { llm_provider: openai; llm_model: o3-mini; reasoning_effort: high }",
         default_fidelity="full",
         default_thread_id="refactor"
     ]
@@ -23,10 +22,11 @@ digraph Refactor {
         prompt="Analyze the code specified in the goal for code smells: long methods, deep nesting, duplicated logic, god classes, feature envy, primitive obsession. Rank by impact and effort to fix."
     ]
 
-    // Stage 2: Plan the refactoring (reasoning-heavy)
+    // Stage 2: Plan the refactoring (reasoning-heavy).
+    // To route reasoning-heavy steps (plan, diff review) to a stronger model,
+    // add a model_stylesheet -- see examples/pipelines/06-model-stylesheet.dot.
     plan_refactor [
         label="Plan Refactoring",
-        class="reasoning",
         prompt="Create a step-by-step refactoring plan that preserves behavior. For each step: (1) what changes, (2) why it improves the code, (3) what could break. Order steps to minimize risk -- easiest/safest first."
     ]
 
@@ -56,7 +56,6 @@ digraph Refactor {
     // Stage 7: Diff review (reasoning-heavy)
     diff_review [
         label="Diff Review",
-        class="reasoning",
         prompt="Run git diff and review all changes. Verify: (1) no behavior changes (pure refactoring), (2) code is genuinely simpler/clearer, (3) no accidental deletions or regressions. Summarize the improvements."
     ]
 

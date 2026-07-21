@@ -5,9 +5,12 @@ Generate tests, run them, and fix failures in a self-healing retry loop.
 ## Usage
 
 ```bash
-amp run --dot-file examples/pipelines/practical/test-gen.dot \
-    --goal "Generate comprehensive tests for the user authentication module in src/auth/"
+attractor run examples/pipelines/practical/test-gen.dot \
+    --param goal="Generate comprehensive tests for the user authentication module in src/auth/" \
+    --cwd .
 ```
+
+Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`).
 
 ## What It Does
 
@@ -21,6 +24,6 @@ amp run --dot-file examples/pipelines/practical/test-gen.dot \
 
 The retry loop between `run_tests` and `fix_failures` means the pipeline doesn't just generate tests -- it validates them and fixes failures automatically. Up to 3 retry cycles.
 
-## Model Recommendation
+## Models
 
-Claude Sonnet for all nodes (strong at code generation and tool use). No model stylesheet needed -- the default provider works well for all stages.
+Model-agnostic -- every node runs on your configured default provider/model. Add a `model_stylesheet` only if you want to route specific steps to specific models (see `examples/pipelines/06-model-stylesheet.dot`).

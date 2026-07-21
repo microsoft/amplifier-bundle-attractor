@@ -1,14 +1,13 @@
 // bug-fix.dot -- Systematic bug fix pipeline.
 //
 // Reproduce, diagnose, fix, write regression test, verify.
-// Uses o3-mini for diagnosis (reasoning-heavy) via model stylesheet class.
+// Model-agnostic: every node runs on your configured default provider/model.
 
 digraph BugFix {
     graph [
         goal="$goal",
         label="Bug Fix Pipeline",
         default_max_retry=3,
-        model_stylesheet=".reasoning { llm_provider: openai; llm_model: o3-mini; reasoning_effort: high }",
         default_fidelity="full",
         default_thread_id="bug-fix"
     ]
@@ -22,10 +21,11 @@ digraph BugFix {
         prompt="Attempt to reproduce the bug described in the goal. Write a minimal reproduction script and run it. Capture the error output. If you cannot reproduce it, document what you tried."
     ]
 
-    // Stage 2: Diagnose the root cause (reasoning-heavy -- uses o3-mini via class)
+    // Stage 2: Diagnose the root cause (reasoning-heavy).
+    // Want a stronger reasoning model just for this step? Add a model_stylesheet
+    // and tag this node with a class -- see examples/pipelines/06-model-stylesheet.dot.
     diagnose [
         label="Diagnose",
-        class="reasoning",
         prompt="Analyze the reproduction results and the relevant source code. Identify the root cause. Explain: (1) what is happening, (2) why it is happening, (3) which file(s) and line(s) are responsible."
     ]
 

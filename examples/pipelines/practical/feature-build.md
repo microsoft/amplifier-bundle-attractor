@@ -5,9 +5,12 @@ Parse a spec, break into subtasks, implement in parallel, integration test, huma
 ## Usage
 
 ```bash
-amp run --dot-file examples/pipelines/practical/feature-build.dot \
-    --goal "Add user avatar upload with S3 storage and thumbnail generation"
+attractor run examples/pipelines/practical/feature-build.dot \
+    --param goal="Add user avatar upload with S3 storage and thumbnail generation" \
+    --cwd .
 ```
+
+Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`). This pipeline has a human-gate (hexagon) node; add `--on-human-gate auto-approve` to run it non-interactively.
 
 ## What It Does
 
@@ -24,6 +27,6 @@ amp run --dot-file examples/pipelines/practical/feature-build.dot \
 - **Human gate** before finalization gives the developer a review checkpoint
 - **Integration test retry** catches cross-branch issues automatically
 
-## Model Recommendation
+## Models
 
-Claude Sonnet for all implementation nodes (strong tool use). Optionally add a model stylesheet with o3-mini for parse_spec if you want stronger planning.
+Model-agnostic -- every node runs on your configured default provider/model. To route the planning step (`parse_spec`) to a stronger model, add a `model_stylesheet` (see `examples/pipelines/06-model-stylesheet.dot`).

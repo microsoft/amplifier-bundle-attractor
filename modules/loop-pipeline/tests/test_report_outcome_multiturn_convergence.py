@@ -11,12 +11,15 @@ that simulates 3 assess-node visits: refine -> refine -> converged.
 
 The critical assertion is on turn 3: the model calls
 ``report_outcome(preferred_label="converged")`` as a tool call AND THEN
-emits non-empty trailing prose in its follow-up turn ("Great, this source
-is well integrated..."). Per ``backend.py::_find_report_outcome_call`` /
-``_run_with_tool_loop``, the report_outcome tool call must win the routing
-decision regardless of that trailing text -- this is the exact
-priority-ordering behavior PR #88 fixed (issue #238: report_outcome
-priority inversion).
+emits a JSON-shaped CONTRADICTORY verdict as trailing text in its
+follow-up turn ({"status": "success", "preferred_label": "refine"}). Per
+``backend.py::_find_report_outcome_call`` / ``_run_with_tool_loop``, the
+report_outcome tool call must win the routing decision regardless of that
+trailing text -- this is the exact priority-ordering behavior PR #88 fixed
+(issue #238: report_outcome priority inversion). Under the pre-#88
+text-first semantics the trailing JSON would parse to "refine" and win,
+looping the engine back to assess -- so this test FAILS on pre-#88 code
+and genuinely pins the regression.
 
 Spec coverage: companion to PR #38 (wiki-weaver) / PR #88 (this repo,
 commit 74a743a).
@@ -219,10 +222,17 @@ _FIXTURE = (
     Path(__file__).parent / "fixtures" / "report_outcome_convergence.dot"
 ).read_text()
 
-# Non-empty trailing prose the model emits AFTER its turn-3 report_outcome
-# tool call. Per backend.py's priority-ordering fix (#88 / issue #238), this
-# text must NOT override the tool call's "converged" verdict.
-_TURN_3_TRAILING_PROSE = "Great, this source is well integrated. All checks pass."
+# JSON-shaped CONTRADICTORY verdict the model emits as trailing text AFTER
+# its turn-3 report_outcome(preferred_label="converged") tool call. This is
+# deliberately contradictory JSON (not prose) so the test pins #88's
+# priority order: under pre-#88 text-first semantics, JSON-shaped trailing
+# text was parsed and returned BEFORE the report_outcome tool call was ever
+# checked -- so "refine" would win and the engine would loop back to assess
+# (test fails). Under post-#88 tool-call-first semantics the tool call's
+# "converged" wins (test passes). Plain prose would NOT discriminate: prose
+# isn't JSON-shaped, so it falls through to the tool call under BOTH
+# orderings.
+_TURN_3_TRAILING_TEXT = '{"status": "success", "preferred_label": "refine"}'
 
 
 def _make_engine(backend: AmplifierBackend, logs_root: str) -> PipelineEngine:
@@ -249,8 +259,11 @@ async def test_report_outcome_wins_over_trailing_prose_across_three_turns(tmp_pa
 
     Turn 3 specifically exercises the priority-ordering fix: the model
     calls report_outcome(preferred_label="converged") as a tool call, then
-    its follow-up turn emits non-empty trailing prose. The trailing prose
-    must NOT override the tool call's verdict.
+    its follow-up turn emits a JSON-shaped CONTRADICTORY verdict
+    ({"status": "success", "preferred_label": "refine"}) as trailing text.
+    The trailing JSON must NOT override the tool call's verdict. Under
+    pre-#88 text-first semantics it WOULD (JSON-shaped text was parsed
+    before the tool call was checked), so this test fails on pre-#88 code.
     """
     report_tool = _MockReportOutcomeTool()
 
@@ -286,8 +299,9 @@ async def test_report_outcome_wins_over_trailing_prose_across_three_turns(tmp_pa
                 ]
             ),
             _make_text_response(""),
-            # Turn 3: assess calls report_outcome(converged), THEN emits
-            # non-empty trailing prose. The tool call must still win.
+            # Turn 3: assess calls report_outcome(converged), THEN emits a
+            # JSON-shaped CONTRADICTORY verdict ("refine") as trailing text.
+            # The tool call must still win (#88 tool-call-first priority).
             _make_tool_call_response(
                 [
                     {
@@ -301,7 +315,7 @@ async def test_report_outcome_wins_over_trailing_prose_across_three_turns(tmp_pa
                     }
                 ]
             ),
-            _make_text_response(_TURN_3_TRAILING_PROSE),
+            _make_text_response(_TURN_3_TRAILING_TEXT),
         ]
     )
 
@@ -332,20 +346,28 @@ async def test_report_outcome_wins_over_trailing_prose_across_three_turns(tmp_pa
     )
 
     # 3. Prove the priority-ordering fix was actually exercised, not just
-    # trivially satisfied. Turn 3's follow-up round was queued with
-    # non-empty trailing prose (_TURN_3_TRAILING_PROSE) -- confirm that text
-    # was genuinely non-empty (i.e. this scenario really did test the
-    # "prose alongside a tool call" case, not the degenerate empty-text
-    # case already covered by turns 1-2). Combined with assertions 1-2
-    # above -- SUCCESS reached in exactly 6 calls -- this proves the
-    # report_outcome tool call's "converged" verdict won the routing
-    # decision despite the trailing prose. Had the trailing prose
-    # incorrectly overridden the tool call (the #238 priority-inversion
-    # bug #88 fixed), condition="outcome=refine" would never see
-    # "converged" and the engine would loop back to "assess" indefinitely
-    # instead of terminating in 6 calls with SUCCESS.
-    assert _TURN_3_TRAILING_PROSE.strip(), (
-        "Test setup error: turn 3's trailing prose must be non-empty to "
-        "exercise the priority-ordering fix (empty-text case is already "
-        "covered by turns 1-2)."
+    # trivially satisfied. Turn 3's follow-up round was queued with a
+    # JSON-shaped trailing verdict (_TURN_3_TRAILING_TEXT) that CONTRADICTS
+    # the tool call: tool call says "converged", trailing text says
+    # "refine". Confirm the setup really is discriminating: the text must
+    # be JSON-shaped (so pre-#88 text-first extraction would parse it and
+    # return early) and must carry the contradictory label (so if it wins,
+    # routing observably diverges). Combined with assertions 1-2 above --
+    # SUCCESS reached in exactly 6 calls -- this proves the report_outcome
+    # tool call's "converged" verdict won the routing decision despite the
+    # trailing JSON. Under the pre-#88 priority inversion (#238) the
+    # trailing JSON's "refine" would win, the engine would loop back to
+    # "assess", and assertions 1-2 would fail -- so this test genuinely
+    # pins #88's tool-call-first priority order.
+    _trailing = _TURN_3_TRAILING_TEXT.strip()
+    assert _trailing.startswith("{"), (
+        "Test setup error: turn 3's trailing text must be JSON-shaped so "
+        "that pre-#88 text-first extraction would have parsed it -- "
+        "otherwise this test does not pin the #88 priority order."
+    )
+    assert '"preferred_label": "refine"' in _trailing, (
+        "Test setup error: turn 3's trailing JSON must carry a verdict "
+        "that CONTRADICTS the tool call's 'converged' label -- otherwise "
+        "both priority orders yield the same routing and the test cannot "
+        "discriminate pre-#88 from post-#88 behavior."
     )

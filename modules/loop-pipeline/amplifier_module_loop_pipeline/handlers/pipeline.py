@@ -162,6 +162,16 @@ class PipelineHandler:
         # (6) Clone parent context
         child_context = context.clone()
 
+        # (6a) Clear the per-cycle routing signal so the child pipeline starts
+        # with NO inherited routing verdict. A stale preferred_label (e.g.
+        # "converged" from a previous iteration's child) would otherwise be
+        # matched by the child's own `context.preferred_label=` edge
+        # conditions when a child node produces no verdict of its own.
+        # Symmetric with the loop_restart clear in engine.py run(). Done
+        # BEFORE the context.* attr injection below so deliberate seeding
+        # via a `context.preferred_label` node attribute still works.
+        child_context.set("preferred_label", None)
+
         # (6b) Inject context.* attributes from this folder node into child context.
         for attr_key, attr_value in node.attrs.items():
             if attr_key.startswith("context."):

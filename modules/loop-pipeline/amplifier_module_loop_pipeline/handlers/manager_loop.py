@@ -179,6 +179,13 @@ class ManagerLoopHandler:
             # 1. OBSERVE — build child context and run child subgraph
             child_context = context.clone()
 
+            # (1a) Clear the per-cycle routing signal so the child starts with
+            # NO inherited routing verdict (symmetric with the loop_restart
+            # clear in engine.py run(); see handlers/pipeline.py step 6a).
+            # Done BEFORE the context.* attr injection below so deliberate
+            # seeding via a `context.preferred_label` attribute still works.
+            child_context.set("preferred_label", None)
+
             # (1b) Inject context.* attributes from this house node into child context.
             for attr_key, attr_value in node.attrs.items():
                 if attr_key.startswith("context."):

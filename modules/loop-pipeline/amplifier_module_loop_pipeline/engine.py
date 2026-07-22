@@ -1158,6 +1158,10 @@ class PipelineEngine:
 
         async def run_branch(target_node_id: str) -> dict[str, Any]:
             branch_context = self.context.clone()
+            # Clear the per-cycle routing signal so the branch starts with NO
+            # inherited routing verdict (symmetric with the loop_restart clear
+            # in run(); see handlers/pipeline.py step 6a).
+            branch_context.set("preferred_label", None)
             # Move 1: give each branch its own engine so run_subgraph uses an
             # isolated handler_registry (and therefore isolated backend state).
             branch_engine = self.clone_for_branch(context=branch_context)

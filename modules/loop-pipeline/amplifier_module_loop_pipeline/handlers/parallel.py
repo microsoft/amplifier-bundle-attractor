@@ -132,6 +132,10 @@ class ParallelHandler:
 
                 branch_start = time.monotonic()
                 branch_context = context.clone()
+                # Clear the per-cycle routing signal so the branch starts with
+                # NO inherited routing verdict (symmetric with the loop_restart
+                # clear in engine.py run(); see handlers/pipeline.py step 6a).
+                branch_context.set("preferred_label", None)
                 if engine is None:
                     outcome = Outcome(
                         status=StageStatus.FAIL,

@@ -37,8 +37,7 @@ digraph GraphResume {
         label="Graph-Level Resume Pattern",
         default_fidelity="full",
         default_thread_id="graph-resume",
-        default_max_retry=2,
-        model_stylesheet=".reasoning { llm_provider: openai; llm_model: o3-mini; reasoning_effort: high }"
+        default_max_retry=2
     ]
     rankdir=LR
 
@@ -61,8 +60,8 @@ digraph GraphResume {
 
     // ── Stage 2: Refactoring plan ─────────────────────────────────────────────
     // Guard: check for .ai/refactor-plan.md.
-    // plan_refactor uses the .reasoning class (expensive model) -- deleting
-    // .ai/refactor-plan.md forces a fresh plan without modifying the graph.
+    // plan_refactor is a reasoning-heavy node -- deleting .ai/refactor-plan.md
+    // forces a fresh (full-cost) plan without modifying the graph.
     check_plan [
         shape=parallelogram,
         label="Plan done?",
@@ -71,7 +70,6 @@ digraph GraphResume {
 
     plan_refactor [
         label="Plan Refactoring",
-        class="reasoning",
         prompt="Read .ai/smells.md. Create a step-by-step refactoring plan for $goal. For each step: (1) what changes, (2) why it improves the code, (3) what could break. Order steps safest-first to minimize risk. Write the complete plan to .ai/refactor-plan.md -- this file is the artifact that allows the resume guard to skip this stage on the next run."
     ]
 
@@ -122,7 +120,6 @@ digraph GraphResume {
     //   and diff_review follows naturally.
     diff_review [
         label="Diff Review",
-        class="reasoning",
         prompt="Run git diff and review all changes. Verify: (1) no behavior changes -- this is pure refactoring, (2) the code is genuinely simpler and clearer, (3) no accidental deletions or regressions introduced. Summarize the improvements achieved."
     ]
 

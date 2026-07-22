@@ -126,14 +126,17 @@ causing the work node to re-execute. All downstream guards inherit fresh artifac
 re-execute their work nodes as well.
 
 ```bash
+# ($DOT and the goal are as set in "How to Run" below; run these from your repo
+#  so the .ai/ artifacts and --cwd . line up.)
+
 # Re-run only the plan stage and everything after it:
-rm .ai/refactor-plan.md && amplifier run ...
+rm .ai/refactor-plan.md && attractor run "$DOT" --param goal="..." --cwd .
 
 # Re-run the implement+test loop and diff review only:
-rm .ai/STATE.json && amplifier run ...
+rm .ai/STATE.json && attractor run "$DOT" --param goal="..." --cwd .
 
 # Start completely fresh:
-rm -rf .ai/ && amplifier run ...
+rm -rf .ai/ && attractor run "$DOT" --param goal="..." --cwd .
 ```
 
 ## How to Run
@@ -147,13 +150,22 @@ steps:
       goal: "Refactor src/legacy.py to eliminate god-class anti-patterns"
 ```
 
-Or with the CLI directly:
+Or with the `attractor run` CLI directly. This example refactors a real module
+(`src/legacy.py`) in **your own repo**, so point it there -- capture the pipeline's
+absolute path, `cd` into your repo, and keep `--cwd .`:
 
 ```bash
-amplifier run \
-  --dot-file examples/pipelines/12-graph-resume.dot \
-  --goal "Refactor src/legacy.py to eliminate god-class anti-patterns"
+DOT="/path/to/attractor/examples/pipelines/12-graph-resume.dot"
+cd /path/to/your/repo        # must contain src/legacy.py and a test suite
+attractor run "$DOT" \
+    --param goal="Refactor src/legacy.py to eliminate god-class anti-patterns" \
+    --cwd .
 ```
+
+The `.dot` path resolves from your current directory, but box-node (agent) pipelines
+need process cwd to equal `--cwd` -- so `cd` into your repo, give `$DOT` an absolute
+path, and keep `--cwd .` (see [`../../modules/pipeline-runner/KNOWN_ISSUES.md`](../../modules/pipeline-runner/KNOWN_ISSUES.md)).
+The resume artifacts (`.ai/`) are written under `--cwd`.
 
 ## What to Look For
 

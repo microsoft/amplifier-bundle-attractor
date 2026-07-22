@@ -219,21 +219,21 @@ digraph {
         goal="Refactor legacy code to async patterns",
         model_stylesheet="
             * {
-                llm_model: claude-sonnet-4-6;
+                llm_model: claude-sonnet-*;
                 llm_provider: anthropic;
             }
             .planning {
-                llm_model: o3;
+                llm_model: gpt-[5-9]*;
                 llm_provider: openai;
                 reasoning_effort: high;
             }
             .fast {
-                llm_model: gemini-2.5-flash-preview-05-20;
+                llm_model: gemini-*-flash;
                 llm_provider: gemini;
                 reasoning_effort: low;
             }
             #critical_review {
-                llm_model: claude-opus-4-20250514;
+                llm_model: claude-opus-*;
                 llm_provider: anthropic;
                 reasoning_effort: high;
             }
@@ -263,31 +263,54 @@ digraph {
 Explicit node attributes (`llm_model="..."` on the node) always override
 stylesheet values.
 
-### Model selection: family tokens and globs
+### Model selection: globs and evergreen forms
 
 A node's `llm_model` -- whether set directly on the node or via
-`model_stylesheet` -- may take three forms:
+`model_stylesheet` -- may take two useful forms:
 
-- a **concrete id**, e.g. `claude-sonnet-4-6`
-- a **family token**, e.g. `sonnet`, `haiku`, `opus`
-- an fnmatch **glob**, e.g. `claude-sonnet-4-*`
+- an fnmatch **glob**, e.g. `claude-sonnet-*` -- resolved at run time against the
+  provider's **live** model list (its `/models` endpoint), newest **stable** match
+  wins.
+- a **concrete id**, e.g. `claude-sonnet-4-6` -- **not** resolved; passed to the
+  provider verbatim (and 404s once that id is retired).
 
-Family tokens and globs are resolved at run time to the **newest stable served
-model** in that line, using the provider's live model list. They self-heal as
-providers ship new models and never rot. Resolution fails **loud** -- the node
-fails -- if nothing matches; there is no silent fallback to a default. Concrete
-ids pass through unchanged.
+Only a glob gets live resolution, and it fails **loud** (the node fails) if
+nothing matches -- there is no silent fallback. Concrete ids are the rot vector:
+they look precise but go stale.
 
-**Caveat -- reproducibility.** Because resolution always picks the latest match,
-the chosen model drifts as providers release new ones. For a locked,
-reproducible evaluation, pin a concrete id (or capture the resolved id -- the
-engine emits a `model:resolved` event recording it). Prefer an explicit-major
-glob like `claude-sonnet-4-*` over a bare family token such as `sonnet`, so the
-major version stays fixed while only the point release floats.
+**How evergreen a glob is depends on the provider's naming.** A glob tracks new
+generations only if the provider keeps a stable *tier name*:
+
+| Provider | Persistent tier? | Evergreen form |
+|----------|------------------|----------------|
+| Anthropic | yes (`sonnet`/`opus`/`haiku`) | `claude-sonnet-*`, `claude-opus-*` |
+| Gemini | yes (`flash`/`pro`) | `gemini-*-flash`, `gemini-*-pro` |
+| OpenAI | **no** -- the generation *is* the name | `gpt-[5-9]*` (a range) |
+
+- Widen to the **whole family**: `claude-sonnet-*` tracks Sonnet 4 -> 5 -> ...
+  A version-pinned glob like `claude-sonnet-4-*` is **frozen to gen-4** and misses
+  Sonnet 5 -- avoid it unless you deliberately want to pin the major.
+- OpenAI has no tier that survives `gpt-5 -> gpt-6`, and a bare `gpt-*` matches
+  junk (embeddings, audio, realtime). Use the generation **range** `gpt-[5-9]*`:
+  it tracks the newest through gpt-9 and needs a one-character bump at gpt-10.
+- Prefer an explicit family glob over a bare token like `sonnet`: the glob is
+  unambiguous about provider and family and resolves reliably.
+
+**Overriding a model on a node? Override the provider too.** A glob resolves
+against the node's `llm_provider`, so `llm_model="gemini-*-flash"` needs
+`llm_provider="gemini"` alongside it -- otherwise it inherits the class/default
+provider (e.g. anthropic) and matches nothing. (Concrete ids bypass resolution
+and are provider-inferred, which masks this.)
+
+**Reproducibility.** Because a glob always picks the latest match, the chosen
+model drifts as providers ship new ones. For a locked, reproducible evaluation,
+pin a concrete id (or capture the resolved id -- the engine emits a
+`model:resolved` event recording it).
 
 **Scope.** This resolution applies to a node's `llm_model` only. A provider's
-`default_model` (in the providers config) is passed to the SDK verbatim and is
-**not** resolved -- keep `default_model` a concrete served id.
+`default_model` (providers config) and `provider_preferences` overrides are
+passed to the SDK verbatim and are **not** resolved -- keep those a concrete
+served id.
 
 ### Human Approval Gate
 
@@ -487,7 +510,8 @@ plan [prompt="Plan the implementation of: $goal"]
 // Expands to: "Plan the implementation of: Create a REST API with authentication"
 ```
 
-The `goal` value is passed at runtime via the `--goal` CLI flag or the `goal`
+The `goal` value comes from the graph-level `goal` attribute. Override it at run
+time with `--param goal="..."` on the `attractor run` CLI, or the `goal`
 parameter in `run_pipeline`.
 
 ## Fidelity Modes
@@ -538,10 +562,10 @@ Selector { property: value; property: value; }
 
 ```dot
 graph [model_stylesheet="
-    * { llm_model: claude-sonnet-4-6; llm_provider: anthropic; }
-    .code { llm_model: claude-sonnet-4-6; }
-    .reasoning { llm_model: o3; llm_provider: openai; reasoning_effort: high; }
-    #final_check { llm_model: claude-opus-4-20250514; reasoning_effort: high; }
+    * { llm_model: claude-sonnet-*; llm_provider: anthropic; }
+    .code { llm_model: claude-sonnet-*; }
+    .reasoning { llm_model: gpt-[5-9]*; llm_provider: openai; reasoning_effort: high; }
+    #final_check { llm_model: claude-opus-*; reasoning_effort: high; }
 "]
 ```
 

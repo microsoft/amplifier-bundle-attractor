@@ -1,5 +1,18 @@
 # 06 - Model Stylesheet Pipeline
 
+## Run it
+
+Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.
+From the **attractor repo root**:
+
+```bash
+DOT="$PWD/examples/pipelines/06-model-stylesheet.dot"
+mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+attractor run "$DOT" --cwd .
+```
+
+See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
+
 ## What This Exercises
 
 - **Stylesheet parsing**: The `model_stylesheet` graph attribute is parsed into `StyleRule` objects with selectors, specificity, and properties
@@ -44,7 +57,7 @@ start -> analyze -> refactor -> lint_check -> critical_review -> quick_fix -> do
 3. During execution, each node's `llm_model`, `llm_provider`, and `reasoning_effort` are available in `node.attrs` for the backend to use
 4. The codergen handler passes these to the backend via the `node` parameter
 
-## How to Run
+## Or run from a bundle / recipe
 
 ```yaml
 steps:

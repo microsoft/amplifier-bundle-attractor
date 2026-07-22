@@ -1,5 +1,20 @@
 # 10 - Full Attractor (Kitchen Sink)
 
+## Run it
+
+Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.
+From the **attractor repo root**:
+
+```bash
+DOT="$PWD/examples/pipelines/10-full-attractor.dot"
+mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+attractor run "$DOT" --cwd . --on-human-gate auto-approve
+```
+
+`--on-human-gate auto-approve` always takes the gate's first option so the run completes non-interactively; drop it and run interactively if you want the gate to actually branch.
+
+See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
+
 ## What This Exercises
 
 This is a realistic "build a feature" pipeline that exercises **every Attractor feature** together.
@@ -123,7 +138,7 @@ When reaching `done`:
 - If either failed: engine jumps to their `retry_target="plan"` for a fresh attempt
 - Graph-level `fallback_retry_target="plan"` provides a last resort
 
-## How to Run
+## Or run from a bundle / recipe
 
 ```yaml
 steps:

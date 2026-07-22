@@ -1,5 +1,18 @@
 # 05 - Parallel Fan-Out Pipeline
 
+## Run it
+
+Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.
+From the **attractor repo root**:
+
+```bash
+DOT="$PWD/examples/pipelines/05-parallel-fan-out.dot"
+mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+attractor run "$DOT" --cwd .
+```
+
+See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
+
 ## What This Exercises
 
 - **Parallel handler** (`shape=component`): Fans out to multiple branches concurrently
@@ -56,7 +69,7 @@ start -> plan -> parallel +--> test_trig --------+--> collect_results -> summari
 | `fail_fast` | Cancel remaining branches on first failure |
 | `ignore` | Filter out failed branches from results entirely |
 
-## How to Run
+## Or run from a bundle / recipe
 
 ```yaml
 steps:

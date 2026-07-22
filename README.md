@@ -136,16 +136,18 @@ The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 s
 
 | Pipeline | Pattern | Use Case |
 |----------|---------|----------|
-| [Simple Linear](examples/pipelines/01-simple-linear.dot) | `A -> B -> C` | Quick single-task |
-| [Plan-Implement-Test](examples/pipelines/02-plan-implement-test.dot) | `plan -> impl -> test` | Standard dev workflow |
-| [Conditional Routing](examples/pipelines/03-conditional-routing.dot) | `if/else` branches | Outcome-based flow |
-| [Retry with Fallback](examples/pipelines/04-retry-with-fallback.dot) | Retry loop | Resilient execution |
-| [Parallel Fan-Out](examples/pipelines/05-parallel-fan-out.dot) | Fork/join | Concurrent work |
-| [Model Stylesheet](examples/pipelines/06-model-stylesheet.dot) | CSS-like config | Multi-provider |
-| [Fidelity Modes](examples/pipelines/07-fidelity-modes.dot) | Context control | Execution fidelity |
-| [Human Gate](examples/pipelines/08-human-gate.dot) | Approval gate | Human-in-the-loop |
-| [Manager-Supervisor](examples/pipelines/09-manager-supervisor.dot) | Hierarchical | Agent supervision |
-| [Full Attractor](examples/pipelines/10-full-attractor.dot) | All features | Complete pipeline |
+| [Simple Linear](examples/pipelines/01-simple-linear.md) | `A -> B -> C` | Quick single-task |
+| [Plan-Implement-Test](examples/pipelines/02-plan-implement-test.md) | `plan -> impl -> test` | Standard dev workflow |
+| [Conditional Routing](examples/pipelines/03-conditional-routing.md) | `if/else` branches | Outcome-based flow |
+| [Retry with Fallback](examples/pipelines/04-retry-with-fallback.md) | Retry loop | Resilient execution |
+| [Parallel Fan-Out](examples/pipelines/05-parallel-fan-out.md) | Fork/join | Concurrent work |
+| [Model Stylesheet](examples/pipelines/06-model-stylesheet.md) | CSS-like config | Multi-provider |
+| [Fidelity Modes](examples/pipelines/07-fidelity-modes.md) | Context control | Execution fidelity |
+| [Human Gate](examples/pipelines/08-human-gate.md) | Approval gate | Human-in-the-loop |
+| [Manager-Supervisor](examples/pipelines/09-manager-supervisor.md) | Hierarchical | Agent supervision |
+| [Full Attractor](examples/pipelines/10-full-attractor.md) | All features | Complete pipeline |
+| [Manager Child + HITL](examples/pipelines/11-manager-child-dotfile-hitl/) | Nested pipeline + gate | Supervised sub-pipeline |
+| [Graph Resume](examples/pipelines/12-graph-resume.md) | File-state guards | Resumable / rewindable |
 | [PR Review](examples/pipelines/practical/pr-review.md) | Parallel analysis | Code review |
 | [Test Generation](examples/pipelines/practical/test-gen.md) | Retry loop | Test authoring |
 | [Bug Fix](examples/pipelines/practical/bug-fix.md) | Diagnose + verify | Debugging |

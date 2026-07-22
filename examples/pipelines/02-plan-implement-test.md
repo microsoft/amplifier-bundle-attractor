@@ -1,5 +1,18 @@
 # 02 - Plan-Implement-Test Pipeline
 
+## Run it
+
+Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.
+From the **attractor repo root**:
+
+```bash
+DOT="$PWD/examples/pipelines/02-plan-implement-test.dot"
+mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+attractor run "$DOT" --cwd .
+```
+
+See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
+
 ## What This Exercises
 
 - **Multi-node traversal**: Three codergen nodes executed sequentially
@@ -34,7 +47,7 @@ start --> plan --> implement --> test --> done
 - At the exit, goal gate check would find `implement` unsatisfied
 - With no `retry_target` configured, the pipeline would fail with "Unsatisfied goal gates: ['implement']"
 
-## How to Run
+## Or run from a bundle / recipe
 
 ```yaml
 steps:

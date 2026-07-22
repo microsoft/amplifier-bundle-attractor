@@ -25,7 +25,7 @@ Each pipeline is a pair: a `.dot` (the graph) and a `.md` (the guide -- start th
 | 08 | [08-human-gate.md](08-human-gate.md) | `hexagon` human-approval gate |
 | 09 | [09-manager-supervisor.md](09-manager-supervisor.md) | `house` manager/supervisor loop |
 | 10 | [10-full-attractor.md](10-full-attractor.md) | Kitchen-sink -- every feature together |
-| 11 | [11-manager-child-dotfile-hitl/](11-manager-child-dotfile-hitl/) | Multi-file: a parent pipeline spawns a child pipeline with its own gate |
+| 11 | [11-manager-child-dotfile-hitl/](11-manager-child-dotfile-hitl/) | Multi-file: a parent pipeline spawns a child pipeline with its own gate. **Regression fixture -- known to fail via standalone `attractor run`; see its README.** |
 | 12 | [12-graph-resume.md](12-graph-resume.md) | Graph-level resume via file-state guard nodes |
 
 ## Run any example from the CLI

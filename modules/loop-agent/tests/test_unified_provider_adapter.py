@@ -1150,3 +1150,111 @@ async def test_end_to_end_adapter_with_agent_session():
     assert result == "The file contains hello world."
     assert call_count == 2
     mock_tool.execute.assert_called_once_with({"path": "/tmp/test.py"})
+
+
+# ---------------------------------------------------------------------------
+# Regression: empty/whitespace text content must never reach the provider
+# as a TEXT content part. Anthropic rejects "text content blocks must be
+# non-empty" -- this surfaced when an assistant turn contained ONLY tool
+# calls (no prose). This is the defense-in-depth guard at the shared
+# translation boundary (feeds Anthropic/OpenAI/Gemini alike via the
+# unified LLM client), backstopping the fix at messages.py (the cause).
+# ---------------------------------------------------------------------------
+
+
+def test_translate_content_empty_string_returns_no_parts():
+    """Bare "" content translates to zero ContentParts, not an empty TEXT part."""
+    parts = UnifiedProviderAdapter._translate_content("")
+    assert parts == []
+
+
+def test_translate_content_whitespace_only_string_returns_no_parts():
+    """Whitespace-only content is treated the same as empty."""
+    parts = UnifiedProviderAdapter._translate_content("   \n\t  ")
+    assert parts == []
+
+
+def test_translate_content_empty_text_block_is_filtered():
+    """An empty TextBlock alongside a ThinkingBlock is dropped; only the
+    THINKING part survives."""
+    parts = UnifiedProviderAdapter._translate_content(
+        [
+            ThinkingBlock(thinking="reasoning...", signature="sig1"),
+            TextBlock(text=""),
+        ]
+    )
+    assert len(parts) == 1
+    assert parts[0].kind == ContentKind.THINKING
+
+
+def test_translate_content_whitespace_text_block_is_filtered():
+    """A whitespace-only TextBlock is filtered the same as an empty one."""
+    parts = UnifiedProviderAdapter._translate_content(
+        [TextBlock(text="   \n  ")]
+    )
+    assert parts == []
+
+
+def test_translate_content_nonempty_text_still_passes_through():
+    """Regression guard: real text content is unaffected by the filter."""
+    parts = UnifiedProviderAdapter._translate_content("Hello there")
+    assert len(parts) == 1
+    assert parts[0].kind == ContentKind.TEXT
+    assert parts[0].text == "Hello there"
+
+
+def test_translate_message_drops_assistant_message_with_zero_blocks():
+    """An assistant CoreMessage with empty content and no tool calls
+    translates to None -- the caller must drop it rather than send an
+    empty content array (every provider rejects that)."""
+    adapter = UnifiedProviderAdapter(
+        provider_name="anthropic",
+        model="claude-sonnet-4-20250514",
+        client=MagicMock(),
+    )
+    msg = CoreMessage(role="assistant", content="")
+    assert adapter._translate_message(msg) is None
+
+
+def test_translate_request_drops_zero_block_messages():
+    """_translate_request filters out messages that translate to None,
+    keeping only messages that carry real content."""
+    adapter = UnifiedProviderAdapter(
+        provider_name="anthropic",
+        model="claude-sonnet-4-20250514",
+        client=MagicMock(),
+    )
+    request = ChatRequest(
+        messages=[
+            CoreMessage(role="user", content="Hello"),
+            CoreMessage(role="assistant", content=""),  # dropped: zero blocks
+            CoreMessage(role="assistant", content="Hi there"),
+        ],
+        tools=None,
+    )
+    ulm_request = adapter._translate_request(request)
+    assert len(ulm_request.messages) == 2
+    assert ulm_request.messages[0].content[0].text == "Hello"
+    assert ulm_request.messages[1].content[0].text == "Hi there"
+
+
+def test_translate_tool_result_message_empty_output_gets_placeholder():
+    """A tool_result message is a REQUIRED slot -- it is never dropped, but
+    an empty tool output is substituted with a placeholder so the message
+    still carries a non-empty content block."""
+    adapter = UnifiedProviderAdapter(
+        provider_name="anthropic",
+        model="claude-sonnet-4-20250514",
+        client=MagicMock(),
+    )
+    request = ChatRequest(
+        messages=[
+            CoreMessage(role="tool", content="", tool_call_id="tc_1"),
+        ],
+        tools=None,
+    )
+    ulm_request = adapter._translate_request(request)
+    assert len(ulm_request.messages) == 1
+    msg = ulm_request.messages[0]
+    assert msg.content[0].kind == ContentKind.TOOL_RESULT
+    assert msg.content[0].tool_result.content == "(no output)"

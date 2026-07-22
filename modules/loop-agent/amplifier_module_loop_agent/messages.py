@@ -83,12 +83,27 @@ def _build_assistant_message(turn: AssistantTurn) -> Message:
     """Build a Message from an AssistantTurn with proper content blocks.
 
     If the turn has reasoning, content is a list of blocks:
-        [ThinkingBlock(...), TextBlock(...)]
-    Otherwise content is the text string directly.
+        [ThinkingBlock(...), TextBlock(...)] -- the TextBlock is OMITTED
+        when there is no non-whitespace text (see below).
+    Otherwise content is the text string directly, or an empty list when
+    there is no text but the turn issued tool calls.
+
+    Anthropic's Messages API rejects ANY text content block whose text is
+    empty ("messages: text content blocks must be non-empty"). This bites
+    exactly when the model's response is tool-call-only -- no prose at all
+    (e.g. its very first action is a bash tool_use). Previously this
+    produced content="" (bare string) or
+    content=[ThinkingBlock(...), TextBlock(text="")], and BOTH shapes get
+    unconditionally wrapped/serialized into an empty text content part
+    downstream, which providers reject on the request that follows (once
+    the tool result turn is appended). Omitting the empty/whitespace-only
+    text block here is the fix at the cause: history assembly never
+    produces the invalid shape in the first place.
 
     Tool calls are passed as extra kwargs (Message uses extra="allow").
     """
     kwargs: dict[str, Any] = {"role": "assistant"}
+    has_text = bool(turn.content and turn.content.strip())
 
     # Build content: use blocks when reasoning is present
     if turn.reasoning:
@@ -98,11 +113,25 @@ def _build_assistant_message(turn: AssistantTurn) -> Message:
         if turn.reasoning_signature:
             thinking_kwargs["signature"] = turn.reasoning_signature
         blocks.append(ThinkingBlock(**thinking_kwargs))
-        # Then text
-        blocks.append(TextBlock(text=turn.content or ""))
+        # Then text -- only when there is actual (non-whitespace) text.
+        # An empty TextBlock alongside a tool-call-only response is
+        # exactly the invalid shape described above.
+        if has_text:
+            blocks.append(TextBlock(text=turn.content))
         kwargs["content"] = blocks
+    elif has_text:
+        kwargs["content"] = turn.content
+    elif turn.tool_calls:
+        # No text, no reasoning, but this turn issued tool calls: use an
+        # empty content list rather than a bare "" string. A bare ""
+        # string is auto-wrapped downstream into a TEXT content part with
+        # empty text -- the same bug, one layer up (see
+        # unified_provider_adapter.py::_translate_content).
+        kwargs["content"] = []
     else:
-        kwargs["content"] = turn.content or ""
+        # Genuinely empty turn (no text, no reasoning, no tool calls):
+        # preserve existing behavior of an empty string.
+        kwargs["content"] = ""
 
     # Tool calls (passed as extra field via extra="allow")
     if turn.tool_calls:

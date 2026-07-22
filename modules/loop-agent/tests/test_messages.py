@@ -389,3 +389,144 @@ def test_assistant_multiple_tool_calls_emit_name_and_tool_keys():
 # contract (the only side this module owns); the provider-side guarantees are
 # documented in the inline comment in messages.py and proven by the A/B
 # differential artifacts referenced above.
+
+
+# ---------------------------------------------------------------------------
+# Regression: assistant turn with ONLY tool calls (no prose) must never
+# serialize with an empty text content block.  Anthropic's Messages API
+# rejects any text content block whose text is empty ("messages: text
+# content blocks must be non-empty").  This surfaced when the model's
+# response was tool-call-only (e.g. its very first action is a bash
+# tool_use): the assistant turn's empty content was previously carried as
+# a bare "" string (or an empty TextBlock alongside a ThinkingBlock), and
+# BOTH shapes get unconditionally wrapped into a TEXT content part
+# downstream (unified_provider_adapter.py::_translate_content), producing
+# the exact rejected shape observed in the field:
+#   [{"type": "text", "text": ""}, {"type": "tool_use", ...}]
+# See messages.py::_build_assistant_message for the fix at the cause.
+# ---------------------------------------------------------------------------
+
+
+def test_assistant_tool_call_only_no_reasoning_has_no_empty_text_block():
+    """AssistantTurn with tool calls, empty text, no reasoning -> content
+    carries NO text block at all (not even an empty-string block)."""
+    turns = [
+        AssistantTurn(
+            content="",
+            tool_calls=[
+                {"id": "tc1", "name": "bash", "arguments": {"command": "ls"}},
+            ],
+        )
+    ]
+    msgs = convert_history_to_messages(turns)
+    assistant = next(m for m in msgs if m.role == "assistant")
+    content = assistant.content
+    if isinstance(content, list):
+        text_blocks = [b for b in content if isinstance(b, TextBlock)]
+        assert text_blocks == []
+    else:
+        # If content is a bare string, it must not be an empty string --
+        # a bare "" gets auto-wrapped into an empty TEXT content part
+        # downstream, reproducing the bug one layer up.
+        assert content != ""
+
+
+def test_assistant_tool_call_only_whitespace_text_has_no_empty_text_block():
+    """Whitespace-only text alongside tool calls is treated as empty too."""
+    turns = [
+        AssistantTurn(
+            content="   \n\t  ",
+            tool_calls=[
+                {"id": "tc1", "name": "bash", "arguments": {"command": "ls"}},
+            ],
+        )
+    ]
+    msgs = convert_history_to_messages(turns)
+    assistant = next(m for m in msgs if m.role == "assistant")
+    content = assistant.content
+    if isinstance(content, list):
+        text_blocks = [b for b in content if isinstance(b, TextBlock)]
+        assert text_blocks == []
+    else:
+        assert content.strip() == "" and content != "   \n\t  "
+
+
+def test_assistant_tool_call_only_content_is_not_bare_empty_string():
+    """The content field itself must not be the bare "" string when tool
+    calls are present: a bare "" gets auto-wrapped downstream into a TEXT
+    content part with empty text (unified_provider_adapter.py
+    ::_translate_content), reproducing the exact same bug one layer up.
+    """
+    turns = [
+        AssistantTurn(
+            content="",
+            tool_calls=[
+                {"id": "tc1", "name": "bash", "arguments": {"command": "ls"}},
+            ],
+        )
+    ]
+    msgs = convert_history_to_messages(turns)
+    assistant = next(m for m in msgs if m.role == "assistant")
+    assert assistant.content != ""
+
+
+def test_assistant_reasoning_plus_tool_calls_no_text_omits_empty_text_block():
+    """Reasoning present + no text + tool calls -> content has the
+    ThinkingBlock only; no empty TextBlock is appended alongside it."""
+    turns = [
+        AssistantTurn(
+            content="",
+            reasoning="Let me check the files first.",
+            tool_calls=[
+                {"id": "tc1", "name": "bash", "arguments": {"command": "ls"}},
+            ],
+        )
+    ]
+    msgs = convert_history_to_messages(turns)
+    assistant = next(m for m in msgs if m.role == "assistant")
+    content = assistant.content
+    assert isinstance(content, list)
+    thinking_blocks = [b for b in content if isinstance(b, ThinkingBlock)]
+    text_blocks = [b for b in content if isinstance(b, TextBlock)]
+    assert len(thinking_blocks) == 1
+    assert text_blocks == []
+
+
+def test_assistant_text_plus_tool_calls_keeps_text_block():
+    """Positive/pinned case: non-empty text + tool_calls keeps BOTH the
+    text content and the tool call -- the fix must not over-omit."""
+    turns = [
+        AssistantTurn(
+            content="Let me check that.",
+            tool_calls=[
+                {"id": "tc1", "name": "bash", "arguments": {"command": "ls"}},
+            ],
+        )
+    ]
+    msgs = convert_history_to_messages(turns)
+    assistant = next(m for m in msgs if m.role == "assistant")
+    content = assistant.content
+    if isinstance(content, list):
+        text_blocks = [b for b in content if isinstance(b, TextBlock)]
+        assert len(text_blocks) == 1
+        assert text_blocks[0].text == "Let me check that."
+    else:
+        assert content == "Let me check that."
+    tool_calls = assistant.model_dump()["tool_calls"]
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["name"] == "bash"
+
+
+def test_assistant_reasoning_with_text_still_keeps_text_block():
+    """Reasoning + non-empty text (no tool calls) -> both blocks kept.
+
+    Regression guard against over-aggressive omission: the fix must only
+    omit the TextBlock when there is truly no non-whitespace text.
+    """
+    turns = [AssistantTurn(content="Answer", reasoning="Thinking...")]
+    msgs = convert_history_to_messages(turns)
+    content = msgs[0].content
+    assert isinstance(content, list)
+    text_blocks = [b for b in content if isinstance(b, TextBlock)]
+    assert len(text_blocks) == 1
+    assert text_blocks[0].text == "Answer"

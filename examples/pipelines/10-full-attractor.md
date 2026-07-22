@@ -49,7 +49,7 @@ This is a realistic "build a feature" pipeline that exercises **every Attractor 
 start
   |
   v
-plan (.planning, truncate fidelity, o3 model)
+plan (.planning, truncate fidelity, gpt-[5-9]* model)
   |
   v
 parallel_impl (component, wait_all, max_parallel=2)
@@ -94,19 +94,23 @@ done       polish      fix_tests
 
 | Node | Class | Stylesheet Match | Resolved Model |
 |------|-------|-----------------|----------------|
-| `plan` | planning | `.planning` (specificity=2) | o3 (openai, high) |
-| `implement_backend` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
-| `implement_frontend` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
-| `integrate` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
-| `test` | fast | `.fast` (specificity=2) | gemini-2.5-flash-preview-05-20 (gemini, low) |
-| `fix_tests` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
-| `final_review` | code | `#final_review` (specificity=3) | claude-opus-4-20250514 (anthropic, high) |
-| `polish` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
+| `plan` | planning | `.planning` (specificity=2) | gpt-[5-9]* (openai, high) |
+| `implement_backend` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
+| `implement_frontend` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
+| `integrate` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
+| `test` | fast | `.fast` (specificity=2) | gemini-*-flash (gemini, low) |
+| `fix_tests` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
+| `final_review` | code | `#final_review` (specificity=3) | claude-opus-* (anthropic, high) |
+| `polish` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
+
+> These are evergreen glob ids resolved against each provider's live model list at
+> run time. See [06-model-stylesheet.md](06-model-stylesheet.md) for how the forms
+> stay current across generations (and why OpenAI uses the `gpt-[5-9]*` range).
 
 ## Expected Behavior
 
 ### Happy Path
-1. `plan` creates the implementation plan (o3 with high reasoning, truncate fidelity)
+1. `plan` creates the implementation plan (gpt-[5-9]* with high reasoning, truncate fidelity)
 2. `parallel_impl` fans out to 2 branches:
    - `implement_backend` runs with full fidelity on thread "backend-impl"
    - `implement_frontend` runs with full fidelity on thread "frontend-impl"

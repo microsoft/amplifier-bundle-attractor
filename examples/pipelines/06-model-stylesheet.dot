@@ -6,10 +6,17 @@
 // Tests: stylesheet parsing, selector specificity, property application,
 //        explicit node attribute override, class attribute on nodes.
 //
-// Model selection note: the anthropic selectors below use GLOB model ids
-// (e.g. claude-sonnet-4-*) which the engine resolves to the newest stable
-// served model at run time -- so these pins self-heal and never rot. For a
-// locked/reproducible evaluation, pin a concrete id instead.
+// Model selection note: these selectors use GLOB model ids, which the engine
+// resolves against the provider's LIVE model list at run time (newest stable
+// match wins) -- NOT a static/hardcoded list. How evergreen a glob is depends on
+// whether the provider keeps a stable TIER NAME across generations:
+//   - Anthropic (claude-sonnet-*, claude-opus-*) and Gemini (gemini-*-flash):
+//     the tier name persists, so the glob tracks new generations forever.
+//   - OpenAI has NO persistent tier -- the generation IS the name (gpt-5, gpt-6...),
+//     so the .planning selector below uses a generation RANGE (gpt-[5-9]*) that
+//     tracks the newest through gpt-9 and needs a one-char bump at gpt-10.
+// A bare concrete id (e.g. claude-sonnet-4-6) is NOT resolved -- it is sent to the
+// provider as-is and 404s once retired. Pin a concrete id only for locked evals.
 
 digraph ModelStylesheet {
     graph [
@@ -17,26 +24,26 @@ digraph ModelStylesheet {
         label="Model Stylesheet Pipeline",
         model_stylesheet="
             * {
-                llm_model: claude-sonnet-4-*;
+                llm_model: claude-sonnet-*;
                 llm_provider: anthropic;
                 reasoning_effort: medium;
             }
             .planning {
-                llm_model: o3;
+                llm_model: gpt-[5-9]*;
                 llm_provider: openai;
                 reasoning_effort: high;
             }
             .code {
-                llm_model: claude-sonnet-4-*;
+                llm_model: claude-sonnet-*;
                 llm_provider: anthropic;
             }
             .fast {
-                llm_model: gemini-2.5-flash-preview-05-20;
+                llm_model: gemini-*-flash;
                 llm_provider: gemini;
                 reasoning_effort: low;
             }
             #critical_review {
-                llm_model: claude-opus-4-*;
+                llm_model: claude-opus-*;
                 llm_provider: anthropic;
                 reasoning_effort: high;
             }
@@ -50,7 +57,7 @@ digraph ModelStylesheet {
     start [shape=Mdiamond, label="Start"]
     done  [shape=Msquare, label="Done"]
 
-    // Planning node -- .planning class -> gets o3 with high reasoning
+    // Planning node -- .planning class -> gets a GPT-5-class model, high reasoning
     analyze [
         label="Analyze Codebase",
         class="planning",
@@ -79,11 +86,16 @@ digraph ModelStylesheet {
         prompt="Perform a thorough code review of the async refactoring. Check for race conditions, missing error handling, and proper resource cleanup. This is a critical gate."
     ]
 
-    // Node with explicit attribute override -- node attrs beat stylesheet
+    // Node with explicit attribute override -- node attrs beat stylesheet.
+    // NOTE: override BOTH llm_model and llm_provider together. A glob is resolved
+    // against the node's provider, so a gemini model glob needs llm_provider=gemini
+    // here (the .code class would otherwise supply anthropic and the glob would
+    // match nothing). Concrete ids bypass resolution; globs do not.
     quick_fix [
         label="Quick Fix",
         class="code",
-        llm_model="gemini-2.5-flash-preview-05-20",
+        llm_model="gemini-*-flash",
+        llm_provider="gemini",
         prompt="Apply quick fixes for any issues found in the critical review."
     ]
 

@@ -35,17 +35,30 @@ start -> analyze -> refactor -> lint_check -> critical_review -> quick_fix -> do
 
 | Node | Class | Matching Rules | Winner (by specificity) | Final Model |
 |------|-------|----------------|------------------------|-------------|
-| `analyze` | `planning` | `*`(0), `.planning`(2) | `.planning` | `o3` (openai) |
-| `refactor` | `code` | `*`(0), `.code`(2) | `.code` | `claude-sonnet-4-*` (anthropic — resolves to latest) |
-| `lint_check` | `fast` | `*`(0), `.fast`(2) | `.fast` | `gemini-2.5-flash-preview-05-20` (gemini, low) |
-| `critical_review` | `code` | `*`(0), `.code`(2), `#critical_review`(3) | `#critical_review` | `claude-opus-4-*` (anthropic, high — resolves to latest) |
+| `analyze` | `planning` | `*`(0), `.planning`(2) | `.planning` | `gpt-[5-9]*` (openai) |
+| `refactor` | `code` | `*`(0), `.code`(2) | `.code` | `claude-sonnet-*` (anthropic) |
+| `lint_check` | `fast` | `*`(0), `.fast`(2) | `.fast` | `gemini-*-flash` (gemini, low) |
+| `critical_review` | `code` | `*`(0), `.code`(2), `#critical_review`(3) | `#critical_review` | `claude-opus-*` (anthropic, high) |
 
-> **Glob model ids.** The anthropic selectors use glob ids (`claude-sonnet-4-*`,
-> `claude-opus-4-*`). These are copied into `node.attrs["llm_model"]` verbatim by
-> the stylesheet, then resolved by the engine at run time to the newest stable
-> served model in that line — so they self-heal and never rot. Pin a concrete id
-> when you need a locked/reproducible evaluation.
-| `quick_fix` | `code` | `*`(0), `.code`(2) | `.code` BUT node has explicit `llm_model` | `gemini-2.5-flash-preview-05-20` (explicit override) |
+> **How these globs resolve — and how evergreen they are.** Each glob is copied into
+> `node.attrs["llm_model"]` verbatim, then the engine resolves it against the
+> provider's LIVE model list at run time (newest stable match wins). Evergreen-ness
+> depends on whether the provider keeps a stable TIER NAME across generations:
+> - Anthropic (`claude-sonnet-*`, `claude-opus-*`) and Gemini (`gemini-*-flash`) —
+>   the tier persists, so the glob tracks new generations indefinitely.
+> - OpenAI has no persistent tier (the generation *is* the name), so `.planning`
+>   uses a generation RANGE `gpt-[5-9]*` — tracks the newest through gpt-9, and needs
+>   a one-char bump at gpt-10.
+>
+> A bare concrete id (e.g. `claude-sonnet-4-6`) is NOT resolved — it's passed to the
+> provider as-is and 404s once retired. Pin a concrete id only for locked evals.
+| `quick_fix` | `code` | `*`(0), `.code`(2) | `.code` BUT node has explicit `llm_model` + `llm_provider` | `gemini-*-flash` on `gemini` (explicit override) |
+
+> **Overriding a model glob on a node?** Override the **provider too**. A glob is
+> resolved against the node's provider, so `llm_model="gemini-*-flash"` needs
+> `llm_provider="gemini"` alongside it — otherwise it inherits `anthropic` from the
+> `.code` class and matches nothing. (Concrete ids bypass resolution and are
+> provider-inferred; globs are not.)
 
 ## Expected Behavior
 
@@ -70,9 +83,9 @@ steps:
 ## What to Look For
 
 - After stylesheet application, inspect node attrs:
-  - `analyze.attrs["llm_model"]` == `"o3"`
-  - `critical_review.attrs["llm_model"]` == `"claude-opus-4-*"` (ID selector wins over .code class; resolved to a concrete opus id at run time)
-  - `quick_fix.attrs["llm_model"]` == `"gemini-2.5-flash-preview-05-20"` (explicit attribute wins)
+  - `analyze.attrs["llm_model"]` == `"gpt-[5-9]*"`
+  - `critical_review.attrs["llm_model"]` == `"claude-opus-*"` (ID selector wins over .code class; resolved to a concrete opus id at run time)
+  - `quick_fix.attrs["llm_model"]` == `"gemini-*-flash"` (explicit attribute wins)
 - Validation passes (stylesheet syntax is valid)
 - Each node's prompt.md is written with the correct model context
 - No stylesheet properties are applied to start/exit nodes (they have no LLM interaction)

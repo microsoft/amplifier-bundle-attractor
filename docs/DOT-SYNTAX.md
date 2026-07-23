@@ -72,8 +72,8 @@ digraph {
 
 ```dot
 graph [model_stylesheet="
-    box { llm_provider: anthropic; llm_model: claude-sonnet-4-6 }
-    .fast { llm_model: claude-haiku-3-5-20241022 }
+    box { llm_provider: anthropic; llm_model: claude-sonnet-* }
+    .fast { llm_model: claude-haiku-* }
 "]
 ```
 
@@ -158,8 +158,8 @@ digraph {
 digraph {
     graph [
         goal="$goal",
-        model_stylesheet="box { llm_provider: anthropic; llm_model: claude-sonnet-4-6 }
-                          .reasoning { llm_provider: openai; llm_model: o3-mini; reasoning_effort: high }"
+        model_stylesheet="box { llm_provider: anthropic; llm_model: claude-sonnet-* }
+                          .reasoning { llm_provider: openai; llm_model: gpt-[5-9]*; reasoning_effort: high }"
     ]
     start [shape=Mdiamond]; done [shape=Msquare]
     plan [class="reasoning", prompt="Create a plan for: $goal"]

@@ -4,24 +4,44 @@ Analyze code smells, plan refactoring, execute with snapshot test safety net.
 
 ## Usage
 
+This example ships a target: `examples/pipelines/practical/sample/` contains a
+`user_service.py` whose `validate_user()` is a long, deeply-nested method with
+duplicated validation blocks -- and a green test suite to prove the refactor
+preserves behavior. Run the block below **from the attractor repo root** and it
+works walk-up, no setup:
+
 ```bash
-amp run --dot-file examples/pipelines/practical/refactor.dot \
-    --goal "Refactor src/auth/handler.py to reduce complexity and extract helper functions"
+DOT="$PWD/examples/pipelines/practical/refactor.dot"
+cp -r examples/pipelines/practical/sample /tmp/attractor-refactor-demo
+cd /tmp/attractor-refactor-demo
+attractor run "$DOT" \
+    --param goal="Refactor validate_user() in user_service.py: remove the deep nesting and the duplicated username/email validation blocks by extracting a helper. Preserve behavior exactly -- the existing tests must still pass." \
+    --cwd .
 ```
+
+We copy the sample to a temp dir first so the committed fixture stays pristine
+and every run starts clean. `$DOT` captures the pipeline's absolute path before
+`cd`, because the `.dot` path is resolved from your current directory while
+`--cwd` is where the pipeline reads and writes. Process cwd must equal `--cwd`
+for box-node (agent) pipelines -- that's why we `cd` into the copy (see
+`modules/pipeline-runner/KNOWN_ISSUES.md`).
+
+**Point it at your own repo instead:** replace the `cp`/`cd` with `cd /path/to/your/repo`, keep `$DOT` absolute, keep `--cwd .`, and swap in your refactor goal.
+
+**Verify the result:** `cd /tmp/attractor-refactor-demo && pytest -v` -- the suite stays green (behavior preserved), and `validate_user()` is flatter with the duplication extracted.
 
 ## What It Does
 
 1. **Analyze Smells** -- Identifies code smells ranked by impact
-2. **Plan Refactoring** -- Creates a risk-ordered plan using o3-mini (reasoning-heavy)
+2. **Plan Refactoring** -- Creates a risk-ordered plan (reasoning-heavy step)
 3. **Snapshot Tests** -- Captures baseline test results (or writes characterization tests)
 4. **Implement** -- Executes the plan with small, atomic edits
 5. **Run Tests** -- Verifies no regressions against baseline (retries if failures, max 2 attempts)
-6. **Diff Review** -- Uses o3-mini to verify behavior preservation
+6. **Diff Review** -- Verifies behavior preservation
 
-## Model Stylesheet
+## Models
 
-- **.reasoning class** (plan_refactor, diff_review): o3-mini with high reasoning effort -- planning and verification
-- **box nodes** (all others): Default provider (Claude Sonnet recommended) -- code analysis and modification
+Model-agnostic -- every node runs on your configured default provider/model. To route the reasoning-heavy steps (`plan_refactor`, `diff_review`) to a stronger model, add a `model_stylesheet` and tag those nodes with a class (see `examples/pipelines/06-model-stylesheet.dot`).
 
 ## Key Feature: Snapshot Safety Net
 

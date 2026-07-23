@@ -1,5 +1,18 @@
 # 07 - Fidelity Modes Pipeline
 
+## Run it
+
+Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.
+From the **attractor repo root**:
+
+```bash
+DOT="$PWD/examples/pipelines/07-fidelity-modes.dot"
+mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+attractor run "$DOT" --cwd .
+```
+
+See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
+
 ## What This Exercises
 
 - **Fidelity attribute on nodes**: Each node explicitly sets how much prior context to carry
@@ -46,7 +59,7 @@ Key: Edge fidelity on `integration_test -> final_review` overrides `final_review
 - `implement_rate_limit` **reuses** that same session -- it sees the full conversation from `implement_auth`
 - This is powerful for multi-step implementations where each step builds on the previous one's context
 
-## How to Run
+## Or run from a bundle / recipe
 
 ```yaml
 steps:

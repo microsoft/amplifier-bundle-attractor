@@ -4,10 +4,24 @@ Multi-dimensional pull request review with parallel analysis streams.
 
 ## Usage
 
+Unlike bug-fix/refactor/test-gen, this pipeline is inherently **bring-your-own**:
+it reviews `git diff main...HEAD`, so it needs a real repo with a feature branch
+to review. Point it at your repo:
+
 ```bash
-amp run --dot-file examples/pipelines/practical/pr-review.dot \
-    --goal "Review the changes in this PR for quality and security"
+DOT="/path/to/attractor/examples/pipelines/practical/pr-review.dot"
+cd /path/to/your/repo          # checked out on the feature branch to review
+attractor run "$DOT" \
+    --param goal="Review the changes on this branch for quality and security" \
+    --cwd .
 ```
+
+The `.dot` path is resolved from your *current* directory, but you need to `cd`
+into your repo so process cwd equals `--cwd` (required for box-node agents -- see
+`modules/pipeline-runner/KNOWN_ISSUES.md`). So give `$DOT` an absolute (or
+attractor-repo-relative) path, `cd` into your repo, and keep `--cwd .`.
+
+Requirements: a `main` branch to diff against and a non-empty `git diff main...HEAD`. If your default branch isn't `main` (or you're sitting on `main`), edit the `git diff` command in `pr-review.dot`.
 
 Or via the interactive agent:
 > "Run the PR review pipeline on the current branch"
@@ -19,10 +33,9 @@ Or via the interactive agent:
 3. **Prioritize** -- Ranks all findings by severity (must-fix -> should-fix -> consider)
 4. **Generate Comments** -- Creates actionable PR review comments with file paths and suggested fixes
 
-## Model Stylesheet
+## Models
 
-- **box nodes** (review_bugs, review_style, review_security, review_perf, generate_comments): Claude Sonnet -- strong at code reading and tool use
-- **.reasoning class** (prioritize): o3-mini with high reasoning effort -- better at ranking and prioritization tasks
+Model-agnostic -- every node runs on your configured default provider/model. To route the reasoning-heavy `prioritize` step to a stronger model, add a `model_stylesheet` and tag the node with a class (see `examples/pipelines/06-model-stylesheet.dot`).
 
 ## Expected Behavior
 

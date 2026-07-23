@@ -18,26 +18,26 @@ digraph FullAttractor {
         fallback_retry_target="plan",
         model_stylesheet="
             * {
-                llm_model: claude-sonnet-4-6;
+                llm_model: claude-sonnet-*;
                 llm_provider: anthropic;
                 reasoning_effort: medium;
             }
             .planning {
-                llm_model: o3;
+                llm_model: gpt-[5-9]*;
                 llm_provider: openai;
                 reasoning_effort: high;
             }
             .code {
-                llm_model: claude-sonnet-4-6;
+                llm_model: claude-sonnet-*;
                 llm_provider: anthropic;
             }
             .fast {
-                llm_model: gemini-2.5-flash-preview-05-20;
+                llm_model: gemini-*-flash;
                 llm_provider: gemini;
                 reasoning_effort: low;
             }
             #final_review {
-                llm_model: claude-opus-4-20250514;
+                llm_model: claude-opus-*;
                 llm_provider: anthropic;
                 reasoning_effort: high;
             }

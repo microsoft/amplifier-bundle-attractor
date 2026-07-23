@@ -1,5 +1,18 @@
 # 09 - Manager Supervisor Pipeline
 
+## Run it
+
+Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.
+From the **attractor repo root**:
+
+```bash
+DOT="$PWD/examples/pipelines/09-manager-supervisor.dot"
+mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+attractor run "$DOT" --cwd .
+```
+
+See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
+
 ## What This Exercises
 
 - **Manager loop handler** (`shape=house`): Orchestrates an observe/evaluate/act cycle over a child subgraph
@@ -58,7 +71,7 @@ If all 5 cycles fail, the manager returns FAIL with:
 | `steer` | Inject `manager.steering` context with failure details from previous cycle |
 | `wait` | Sleep for `poll_interval` between cycles |
 
-## How to Run
+## Or run from a bundle / recipe
 
 ```yaml
 steps:

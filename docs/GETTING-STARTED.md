@@ -43,6 +43,27 @@ goal is carried by the DOT graph attribute
 `params`), not a `--goal` flag. Running parses the DOT graph, spawns an LLM agent
 for the `implement` node, and runs it to completion.
 
+### Or run standalone with the CLI
+
+If you have the `attractor` CLI (from the `pipeline-runner` module), you can run a
+`.dot` directly -- no config file needed. The practical examples ship a runnable
+sample, so this works walk-up from a clone of the repo:
+
+```bash
+DOT="$PWD/examples/pipelines/practical/bug-fix.dot"
+cp -r examples/pipelines/practical/sample /tmp/attractor-demo
+cd /tmp/attractor-demo
+attractor run "$DOT" \
+    --param goal="Fix the TypeError in get_display_name when avatar is None" \
+    --cwd .
+```
+
+The goal defaults to the graph's `goal=` attribute; override it with
+`--param goal="..."`. Run from a scratch dir whose path equals `--cwd` (box-node
+pipelines root their writes at the process cwd). See
+[examples/pipelines/](../examples/pipelines/) for the full run pattern and every
+example's walk-up guide.
+
 ### Try a Multi-Stage Pipeline
 
 The plan-implement-test pipeline adds structure -- point the orchestrator at its
@@ -206,7 +227,7 @@ tools), check for project-level overrides:
 # This overrides global settings for this project only
 settings:
   provider:
-    model: claude-sonnet-4-6
+    model: claude-sonnet-5
 ```
 
 ### `last_response` is truncated to 200 characters
@@ -239,7 +260,7 @@ excludes superpowers, or update your foundation bundle.
 - [DOT-AUTHORING-GUIDE.md](DOT-AUTHORING-GUIDE.md) -- How to design effective pipelines
 - [DOT-SYNTAX.md](DOT-SYNTAX.md) -- Complete DOT syntax reference
 - [APP-INTEGRATION-GUIDE.md](APP-INTEGRATION-GUIDE.md) -- Using pipelines from Python applications
-- [examples/pipelines/](../examples/pipelines/) -- 15 example pipelines to study and reuse
+- [examples/pipelines/](../examples/pipelines/) -- 12 tutorial + 6 practical pipelines to study and reuse
 - [examples/programmatic_usage.py](../examples/programmatic_usage.py) -- Programmatic integration example
 
 ## Development

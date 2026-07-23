@@ -69,6 +69,29 @@ the login endpoint"]` (or via `params`), not a `--goal` flag.
 
 The agent can generate pipelines on-the-fly or use any of the included examples.
 
+**4. Or run an example directly from the CLI:**
+
+The `attractor run` CLI executes a `.dot` with no config file. The
+`bug-fix` / `refactor` / `test-gen` [practical examples](examples/pipelines/practical/)
+ship a runnable sample target, so they work walk-up. From a clone of this repo:
+
+```bash
+DOT="$PWD/examples/pipelines/practical/bug-fix.dot"
+cp -r examples/pipelines/practical/sample /tmp/attractor-demo
+cd /tmp/attractor-demo
+attractor run "$DOT" \
+    --param goal="Fix the TypeError in get_display_name when a user's avatar is None" \
+    --cwd .
+```
+
+Then `pytest -v` in the copy to see the fix + regression test. The sample is
+copied to a temp dir so the committed fixture stays pristine; `$DOT` is captured
+absolute before `cd` because the `.dot` path resolves from your current directory
+while `--cwd` is where the pipeline reads and writes (the two must match for
+agent pipelines -- see
+[modules/pipeline-runner/KNOWN_ISSUES.md](modules/pipeline-runner/KNOWN_ISSUES.md)).
+See the [practical examples guide](examples/pipelines/practical/) for the full set.
+
 ## What Can It Do?
 
 **Fix a bug systematically** -- reproduce, diagnose, fix, regression test, verify:
@@ -113,21 +136,26 @@ The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 s
 
 | Pipeline | Pattern | Use Case |
 |----------|---------|----------|
-| [Simple Linear](examples/pipelines/01-simple-linear.dot) | `A -> B -> C` | Quick single-task |
-| [Plan-Implement-Test](examples/pipelines/02-plan-implement-test.dot) | `plan -> impl -> test` | Standard dev workflow |
-| [Conditional Routing](examples/pipelines/03-conditional-routing.dot) | `if/else` branches | Outcome-based flow |
-| [Retry with Fallback](examples/pipelines/04-retry-with-fallback.dot) | Retry loop | Resilient execution |
-| [Parallel Fan-Out](examples/pipelines/05-parallel-fan-out.dot) | Fork/join | Concurrent work |
-| [Model Stylesheet](examples/pipelines/06-model-stylesheet.dot) | CSS-like config | Multi-provider |
-| [Fidelity Modes](examples/pipelines/07-fidelity-modes.dot) | Context control | Execution fidelity |
-| [Human Gate](examples/pipelines/08-human-gate.dot) | Approval gate | Human-in-the-loop |
-| [Manager-Supervisor](examples/pipelines/09-manager-supervisor.dot) | Hierarchical | Agent supervision |
-| [Full Attractor](examples/pipelines/10-full-attractor.dot) | All features | Complete pipeline |
-| [PR Review](examples/pipelines/practical/pr-review.dot) | Parallel analysis | Code review |
-| [Test Generation](examples/pipelines/practical/test-gen.dot) | Retry loop | Test authoring |
-| [Bug Fix](examples/pipelines/practical/bug-fix.dot) | Diagnose + verify | Debugging |
-| [Feature Build](examples/pipelines/practical/feature-build.dot) | Parallel + gate | Feature development |
-| [Refactoring](examples/pipelines/practical/refactor.dot) | Snapshot safety | Code improvement |
+| [Simple Linear](examples/pipelines/01-simple-linear.md) | `A -> B -> C` | Quick single-task |
+| [Plan-Implement-Test](examples/pipelines/02-plan-implement-test.md) | `plan -> impl -> test` | Standard dev workflow |
+| [Conditional Routing](examples/pipelines/03-conditional-routing.md) | `if/else` branches | Outcome-based flow |
+| [Retry with Fallback](examples/pipelines/04-retry-with-fallback.md) | Retry loop | Resilient execution |
+| [Parallel Fan-Out](examples/pipelines/05-parallel-fan-out.md) | Fork/join | Concurrent work |
+| [Model Stylesheet](examples/pipelines/06-model-stylesheet.md) | CSS-like config | Multi-provider |
+| [Fidelity Modes](examples/pipelines/07-fidelity-modes.md) | Context control | Execution fidelity |
+| [Human Gate](examples/pipelines/08-human-gate.md) | Approval gate | Human-in-the-loop |
+| [Manager-Supervisor](examples/pipelines/09-manager-supervisor.md) | Hierarchical | Agent supervision |
+| [Full Attractor](examples/pipelines/10-full-attractor.md) | All features | Complete pipeline |
+| [Manager Child + HITL](examples/pipelines/11-manager-child-dotfile-hitl/) | Nested pipeline + gate | Supervised sub-pipeline |
+| [Graph Resume](examples/pipelines/12-graph-resume.md) | File-state guards | Resumable / rewindable |
+| [PR Review](examples/pipelines/practical/pr-review.md) | Parallel analysis | Code review |
+| [Test Generation](examples/pipelines/practical/test-gen.md) | Retry loop | Test authoring |
+| [Bug Fix](examples/pipelines/practical/bug-fix.md) | Diagnose + verify | Debugging |
+| [Feature Build](examples/pipelines/practical/feature-build.md) | Parallel + gate | Feature development |
+| [Refactoring](examples/pipelines/practical/refactor.md) | Snapshot safety | Code improvement |
+| [Multi-Lens Review](examples/pipelines/practical/multi-lens-review.md) | 3 providers × 3 lenses | Multi-perspective review |
+
+The bottom six are [**practical** task pipelines](examples/pipelines/practical/) -- links go to each one's walk-up guide. `Bug Fix`, `Test Generation`, and `Refactoring` ship a runnable sample, so they work with no setup.
 
 ## How It Works
 

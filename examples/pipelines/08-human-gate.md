@@ -1,5 +1,20 @@
 # 08 - Human Gate Pipeline
 
+## Run it
+
+Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.
+From the **attractor repo root**:
+
+```bash
+DOT="$PWD/examples/pipelines/08-human-gate.dot"
+mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+attractor run "$DOT" --cwd . --on-human-gate auto-approve
+```
+
+`--on-human-gate auto-approve` always takes the gate's first option so the run completes non-interactively; drop it and run interactively if you want the gate to actually branch.
+
+See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
+
 ## What This Exercises
 
 - **Human handler** (`shape=hexagon`): Blocks execution until a human selects an option
@@ -59,7 +74,7 @@ start -> implement -> test -> review_gate --[A] Approve--> deploy_staging -> pro
 | `[N] No, rollback staging` | `N` | `[X] Label` bracket pattern |
 | `[F] Fix issues first` | `F` | `[X] Label` bracket pattern |
 
-## How to Run
+## Or run from a bundle / recipe
 
 ```yaml
 # Interactive mode (will prompt in terminal):

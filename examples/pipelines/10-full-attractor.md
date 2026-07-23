@@ -1,5 +1,20 @@
 # 10 - Full Attractor (Kitchen Sink)
 
+## Run it
+
+Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.
+From the **attractor repo root**:
+
+```bash
+DOT="$PWD/examples/pipelines/10-full-attractor.dot"
+mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+attractor run "$DOT" --cwd . --on-human-gate auto-approve
+```
+
+`--on-human-gate auto-approve` always takes the gate's first option so the run completes non-interactively; drop it and run interactively if you want the gate to actually branch.
+
+See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
+
 ## What This Exercises
 
 This is a realistic "build a feature" pipeline that exercises **every Attractor feature** together.
@@ -34,7 +49,7 @@ This is a realistic "build a feature" pipeline that exercises **every Attractor 
 start
   |
   v
-plan (.planning, truncate fidelity, o3 model)
+plan (.planning, truncate fidelity, gpt-[5-9]* model)
   |
   v
 parallel_impl (component, wait_all, max_parallel=2)
@@ -79,19 +94,23 @@ done       polish      fix_tests
 
 | Node | Class | Stylesheet Match | Resolved Model |
 |------|-------|-----------------|----------------|
-| `plan` | planning | `.planning` (specificity=2) | o3 (openai, high) |
-| `implement_backend` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
-| `implement_frontend` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
-| `integrate` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
-| `test` | fast | `.fast` (specificity=2) | gemini-2.5-flash-preview-05-20 (gemini, low) |
-| `fix_tests` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
-| `final_review` | code | `#final_review` (specificity=3) | claude-opus-4-20250514 (anthropic, high) |
-| `polish` | code | `.code` (specificity=2) | claude-sonnet-4-6 (anthropic) |
+| `plan` | planning | `.planning` (specificity=2) | gpt-[5-9]* (openai, high) |
+| `implement_backend` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
+| `implement_frontend` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
+| `integrate` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
+| `test` | fast | `.fast` (specificity=2) | gemini-*-flash (gemini, low) |
+| `fix_tests` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
+| `final_review` | code | `#final_review` (specificity=3) | claude-opus-* (anthropic, high) |
+| `polish` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
+
+> These are evergreen glob ids resolved against each provider's live model list at
+> run time. See [06-model-stylesheet.md](06-model-stylesheet.md) for how the forms
+> stay current across generations (and why OpenAI uses the `gpt-[5-9]*` range).
 
 ## Expected Behavior
 
 ### Happy Path
-1. `plan` creates the implementation plan (o3 with high reasoning, truncate fidelity)
+1. `plan` creates the implementation plan (gpt-[5-9]* with high reasoning, truncate fidelity)
 2. `parallel_impl` fans out to 2 branches:
    - `implement_backend` runs with full fidelity on thread "backend-impl"
    - `implement_frontend` runs with full fidelity on thread "frontend-impl"
@@ -123,7 +142,7 @@ When reaching `done`:
 - If either failed: engine jumps to their `retry_target="plan"` for a fresh attempt
 - Graph-level `fallback_retry_target="plan"` provides a last resort
 
-## How to Run
+## Or run from a bundle / recipe
 
 ```yaml
 steps:

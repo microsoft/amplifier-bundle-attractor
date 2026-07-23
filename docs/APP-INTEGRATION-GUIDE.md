@@ -335,8 +335,10 @@ To override the default model at runtime:
 ```python
 session = await prepared.create_session(
     session_cwd=Path.cwd(),
+    # provider_preferences takes a CONCRETE model id -- it's passed to the SDK
+    # verbatim, not glob-resolved like a node's llm_model -- so keep it current.
     provider_preferences=[
-        {"provider": "anthropic", "model": "claude-opus-4-20250514"},
+        {"provider": "anthropic", "model": "claude-opus-4-8"},
     ],
 )
 ```

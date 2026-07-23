@@ -1,5 +1,18 @@
 # 04 - Retry with Fallback Pipeline
 
+## Run it
+
+Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.
+From the **attractor repo root**:
+
+```bash
+DOT="$PWD/examples/pipelines/04-retry-with-fallback.dot"
+mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+attractor run "$DOT" --cwd .
+```
+
+See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
+
 ## What This Exercises
 
 - **`max_retries` attribute**: `implement` has `max_retries=2` meaning up to 3 total executions (1 initial + 2 retries)
@@ -52,7 +65,7 @@ When reaching `done`, the engine checks:
 - Or was `simple_implement`'s outcome SUCCESS or PARTIAL_SUCCESS?
 - If neither goal gate is satisfied, the engine uses the retry target chain
 
-## How to Run
+## Or run from a bundle / recipe
 
 ```yaml
 steps:

@@ -1,5 +1,18 @@
 # 01 - Simple Linear Pipeline
 
+## Run it
+
+Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.
+From the **attractor repo root**:
+
+```bash
+DOT="$PWD/examples/pipelines/01-simple-linear.dot"
+mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+attractor run "$DOT" --cwd .
+```
+
+See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
+
 ## What This Exercises
 
 - **Basic DOT parsing**: digraph with graph-level attributes, node declarations, edge chains
@@ -30,7 +43,7 @@ start --> implement --> done
 6. Exit handler returns SUCCESS
 7. No goal gates exist, so pipeline completes successfully
 
-## How to Run
+## Or run from a bundle / recipe
 
 ```yaml
 # In your bundle YAML or recipe step:

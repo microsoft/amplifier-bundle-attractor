@@ -79,8 +79,16 @@ class UnifiedProviderAdapter:
     # ------------------------------------------------------------------
 
     def _translate_request(self, request: ChatRequest) -> ULMRequest:
-        """Translate ChatRequest -> unified_llm.Request."""
-        messages = [self._translate_message(m) for m in request.messages]
+        """Translate ChatRequest -> unified_llm.Request.
+
+        Messages that translate to zero content blocks are dropped (see
+        ``_translate_message``); only messages with real content are sent.
+        """
+        messages = [
+            translated
+            for m in request.messages
+            if (translated := self._translate_message(m)) is not None
+        ]
         return ULMRequest(
             model=self._model,
             messages=messages,
@@ -90,15 +98,28 @@ class UnifiedProviderAdapter:
             # We only do single LLM calls via client.complete().
         )
 
-    def _translate_message(self, msg: CoreMessage) -> ULMMessage:
-        """Translate a single amplifier-core Message to unified-llm Message."""
+    def _translate_message(self, msg: CoreMessage) -> ULMMessage | None:
+        """Translate a single amplifier-core Message to unified-llm Message.
+
+        Returns None when the message would serialize to zero content
+        blocks (e.g. a message with only empty/whitespace text and no
+        other content) -- see ``_translate_content`` for why an empty
+        content list must never reach the provider. The one exception is
+        the TOOL_RESULT slot: it is REQUIRED (every tool_use must be
+        paired with exactly one tool_result), so an empty tool output is
+        substituted with a placeholder rather than dropped.
+        """
         role = self._translate_role(msg.role)
 
-        # Tool result messages: wrap string content as TOOL_RESULT part
+        # Tool result messages: wrap string content as TOOL_RESULT part.
+        # This slot is required and is never dropped, even when the tool
+        # produced no output.
         if msg.role == "tool" and msg.tool_call_id:
             content_str = (
                 msg.content if isinstance(msg.content, str) else str(msg.content)
             )
+            if not content_str or not content_str.strip():
+                content_str = "(no output)"
             content = [
                 ContentPart(
                     kind=ContentKind.TOOL_RESULT,
@@ -111,6 +132,12 @@ class UnifiedProviderAdapter:
             return ULMMessage(role=role, content=content, tool_call_id=msg.tool_call_id)
 
         content = self._translate_content(msg.content)
+        if not content:
+            # Zero content blocks after filtering empty/whitespace text --
+            # drop the message. Sending an empty content array is rejected
+            # by every provider; a dropped non-tool-result message carries
+            # no information the model needs anyway.
+            return None
         return ULMMessage(role=role, content=content, tool_call_id=msg.tool_call_id)
 
     @staticmethod
@@ -128,14 +155,31 @@ class UnifiedProviderAdapter:
 
     @staticmethod
     def _translate_content(content: str | list) -> list[ContentPart]:
-        """Translate message content to unified-llm ContentParts."""
+        """Translate message content to unified-llm ContentParts.
+
+        Empty/whitespace-only text is NEVER emitted as a TEXT content
+        part. Anthropic's Messages API rejects any text content block
+        whose text is empty ("messages: text content blocks must be
+        non-empty"), which previously surfaced when an assistant turn
+        contained ONLY tool calls (no prose at all): the bare "" string
+        -- or an empty TextBlock alongside a ThinkingBlock -- was
+        unconditionally wrapped into a TEXT ContentPart here. This guard
+        is the shared/provider-agnostic boundary: every provider routed
+        through the unified LLM client (Anthropic, OpenAI, Gemini) gets
+        its ContentParts built by this one function, so filtering once
+        here gives all of them the same guarantee.
+        """
         if isinstance(content, str):
+            if not content.strip():
+                return []
             return [ContentPart(kind=ContentKind.TEXT, text=content)]
 
         parts: list[ContentPart] = []
         for block in content:
             if isinstance(block, TextBlock):
-                parts.append(ContentPart(kind=ContentKind.TEXT, text=block.text))
+                if block.text and block.text.strip():
+                    parts.append(ContentPart(kind=ContentKind.TEXT, text=block.text))
+                # Empty/whitespace-only TextBlock intentionally omitted.
             elif isinstance(block, ThinkingBlock):
                 parts.append(
                     ContentPart(
@@ -148,7 +192,7 @@ class UnifiedProviderAdapter:
                 )
             # Other block types fall through gracefully.
 
-        return parts or [ContentPart(kind=ContentKind.TEXT, text="")]
+        return parts
 
     # ------------------------------------------------------------------
     # Response translation (non-streaming)

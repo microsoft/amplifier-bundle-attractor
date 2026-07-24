@@ -35,7 +35,7 @@ addopts = "--import-mode=importlib"
 asyncio_mode = "strict"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*.py" = ["E402"]
+"tests/*.py" = ["E402", "E741"]
 
 [dependency-groups]
 dev = [

@@ -1,5 +1,6 @@
-"""Cross-consumer proof: a remote git+https:// pipeline runs through the engine
-with NO resolve platform. Real execution — env-gated + offline-skippable."""
+"""Standalone proof: a remote git+https:// pipeline runs through the engine with
+only the loop-pipeline module loaded — no external resolver or orchestrator.
+Real execution — env-gated + offline-skippable."""
 
 import os
 from pathlib import Path

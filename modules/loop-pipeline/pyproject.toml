@@ -19,6 +19,14 @@ dependencies = [
     "amplifier-unified-llm-client @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/unified-llm-client",
 ]
 
+[project.optional-dependencies]
+# Layer A fetcher — pulled in only when remote git+https:// sources are used.
+# Direct git ref survives `--no-sources`; the [tool.uv.sources] path below is
+# for local editable dev (mirrors the amplifier-unified-llm-client pattern).
+remote = [
+    "amplifier-module-remote-source @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/remote-source",
+]
+
 [project.entry-points."amplifier.modules"]
 loop-pipeline = "amplifier_module_loop_pipeline:mount"
 
@@ -33,6 +41,7 @@ package = true
 
 [tool.uv.sources]
 amplifier-unified-llm-client = { path = "../unified-llm-client" }
+amplifier-module-remote-source = { path = "../remote-source" }
 
 [tool.hatch.build.targets.wheel]
 packages = [
@@ -46,6 +55,7 @@ allow-direct-references = true
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=1.0.0",
+    "respx>=0.22",
 ]
 
 [tool.pytest.ini_options]

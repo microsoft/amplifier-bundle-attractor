@@ -71,20 +71,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--on-human-gate",
-        choices=("fail", "auto-approve"),
+        choices=("fail", "auto-approve", "console"),
         default="fail",
         help=(
             "how to handle a human-gate (hexagon) node. 'fail' (default): "
             "fail loud -- a pipeline that needs a human decision terminates "
             "with a clear error (run it where a human/UI can answer, or pass "
-            "auto-approve). 'auto-approve': supply an auto-approving interviewer "
-            "that selects the first choice at each gate (opt-in, non-interactive)."
+            "auto-approve or console). 'auto-approve': supply an "
+            "auto-approving interviewer that selects the first choice at "
+            "each gate (opt-in, non-interactive). 'console': answer gates "
+            "interactively in this terminal (wires the engine's "
+            "ConsoleInterviewer; requires a usable stdin)."
         ),
     )
 
     sub.add_parser("doctor", help="environment diagnostics")
 
     return parser
+
+
+def _stdin_is_usable() -> bool:
+    """Return True if ``sys.stdin`` is present and safe to read from.
+
+    Piped (non-tty) stdin is explicitly allowed -- scripted/non-interactive
+    answers via a pipe are a legitimate way to drive ``--on-human-gate
+    console`` (e.g. in a script or a test). This function deliberately does
+    NOT call ``isatty()`` -- a non-tty stream is not the same as an unusable
+    one. Only a genuinely absent or closed stdin fails this check.
+    """
+    stdin = sys.stdin
+    if stdin is None:
+        return False
+    try:
+        if stdin.closed:
+            return False
+    except ValueError:
+        # Some closed-stream implementations raise on `.closed` access.
+        return False
+    readable = getattr(stdin, "readable", None)
+    if readable is None:
+        return True
+    try:
+        return bool(readable())
+    except ValueError:
+        return False
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -141,12 +171,46 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         cwd = Path.cwd()
 
-    # --- Human-gate policy: default fail-loud; auto-approve is opt-in ---
+    # --- Human-gate policy: default fail-loud; auto-approve/console are opt-in ---
+    #
+    # Spec basis (specs/canonical/attractor-spec-canonical.md -- identical to
+    # the fresh upstream clone at attractor/attractor-spec.md):
+    #   Section 6.1 -- Interviewer interface (ask/ask_multiple/inform).
+    #   Section 6.4 -- "ConsoleInterviewer (CLI): Reads from standard input.
+    #     Displays formatted prompts with option keys."
+    #   Conformance checklist (~line 1865): "ConsoleInterviewer prompts in
+    #     terminal and reads user input."
+    #   Section 9.5 -- human gates must be operable via CLI (web controls are
+    #     additive on top of that baseline).
+    # ConsoleInterviewer is an existing, public, spec-conformant
+    # implementation (amplifier_module_loop_pipeline.interviewer); this wires
+    # it into the runner the same way --on-human-gate auto-approve already
+    # wires AutoApproveInterviewer -- no new interviewer behavior is added.
+    # Freeform gate text (specs/EXTENSIONS.md Section 19, a declared bundle
+    # extension) is already handled by ConsoleInterviewer.ask()'s FREEFORM
+    # branch; nothing further to wire for it here.
     interviewer = None
     if args.on_human_gate == "auto-approve":
         from amplifier_module_loop_pipeline.interviewer import AutoApproveInterviewer
 
         interviewer = AutoApproveInterviewer()
+    elif args.on_human_gate == "console":
+        from amplifier_module_loop_pipeline.interviewer import ConsoleInterviewer
+
+        # Fail loud at startup -- not at the first gate -- when stdin can't be
+        # read at all. A piped, non-tty stdin is explicitly fine (scripted
+        # answers are a legitimate way to drive this mode).
+        if not _stdin_is_usable():
+            print(
+                "attractor: --on-human-gate console requires a usable stdin, "
+                "but stdin is closed or unavailable. Run interactively, pipe "
+                "scripted answers in (e.g. `printf 'A\\n' | attractor run "
+                "... --on-human-gate console`), or use --on-human-gate "
+                "auto-approve instead.",
+                file=sys.stderr,
+            )
+            return 1
+        interviewer = ConsoleInterviewer()
 
     print(f"attractor: running pipeline (cwd: {cwd}, logs: {logs_root})")
 
@@ -187,8 +251,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(
             "attractor: hint -- if this pipeline has a human-gate (hexagon) node, "
             "it fails loud by default. Re-run with --on-human-gate auto-approve to "
-            "auto-approve gates non-interactively, or run it where a human/UI can "
-            "answer the gate.",
+            "auto-approve gates non-interactively, --on-human-gate console to "
+            "answer gates interactively in this terminal, or run it where a "
+            "human/UI can answer the gate.",
             file=sys.stderr,
         )
 

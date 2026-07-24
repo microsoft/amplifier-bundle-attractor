@@ -147,7 +147,9 @@ async def _load_graph(graph_or_dot: "Graph | str"):
 
         entry_path, cleanup = await materialize_remote_dot(graph_or_dot)
         try:
-            return parse_dot(entry_path.read_text(encoding="utf-8")), cleanup
+            graph = parse_dot(entry_path.read_text(encoding="utf-8"))
+            graph.source_dir = str(entry_path.parent)
+            return graph, cleanup
         except BaseException:
             cleanup()
             raise

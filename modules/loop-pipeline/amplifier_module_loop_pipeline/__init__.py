@@ -498,6 +498,7 @@ class PipelineOrchestrator:
             entry_path, _source_cleanup = await materialize_remote_dot(dot_source)
             try:
                 graph = parse_dot(entry_path.read_text(encoding="utf-8"))
+                graph.source_dir = str(entry_path.parent)
             except BaseException:
                 _source_cleanup()
                 raise

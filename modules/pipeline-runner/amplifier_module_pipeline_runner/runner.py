@@ -217,7 +217,6 @@ async def drive_engine(
     """
     from amplifier_module_loop_pipeline.backend import AmplifierBackend
     from amplifier_module_loop_pipeline.context import PipelineContext
-    from amplifier_module_loop_pipeline.dot_parser import parse_dot
     from amplifier_module_loop_pipeline.engine import PipelineEngine
     from amplifier_module_loop_pipeline.handlers import HandlerContext, HandlerRegistry
     from amplifier_module_loop_pipeline.transforms import apply_transforms

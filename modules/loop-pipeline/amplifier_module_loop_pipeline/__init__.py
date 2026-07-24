@@ -496,7 +496,11 @@ class PipelineOrchestrator:
             from .remote_dot import materialize_remote_dot  # lazy: keeps import net-free
 
             entry_path, _source_cleanup = await materialize_remote_dot(dot_source)
-            graph = parse_dot(entry_path.read_text(encoding="utf-8"))
+            try:
+                graph = parse_dot(entry_path.read_text(encoding="utf-8"))
+            except BaseException:
+                _source_cleanup()
+                raise
         else:
             graph = parse_dot(dot_source)
 

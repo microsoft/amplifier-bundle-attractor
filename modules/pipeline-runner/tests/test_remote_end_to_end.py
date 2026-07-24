@@ -21,6 +21,6 @@ async def test_remote_pipeline_runs_standalone(tmp_path: Path):
         logs_root=tmp_path / "logs",
         transform=False,
     )
-    assert result.status in {"success", "partial_success"}, result
-    assert not (tmp_path / "logs" / "pipeline.dot").exists() or \
-        "git+https://" not in (tmp_path / "logs" / "pipeline.dot").read_text()
+    assert result.status == "success", result
+    if (tmp_path / "logs" / "pipeline.dot").exists():
+        assert "git+https://" not in (tmp_path / "logs" / "pipeline.dot").read_text()

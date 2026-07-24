@@ -31,12 +31,45 @@ class Origin:
         return (self.host, self.owner, self.repo, self.ref, self.path)
 
 
+def _reject_single_segment_traversal(uri: str, name: str, value: str) -> None:
+    """Validate a single path-tree component (host/owner/repo) — no '/'."""
+    if not value or value in (".", ".."):
+        raise RemoteFetchPathError(f"Invalid {name} segment {value!r} in {uri!r}")
+    if "\x00" in value or "\\" in value:
+        raise RemoteFetchPathError(f"Invalid characters in {name} {value!r} in {uri!r}")
+
+
+def _reject_multi_segment_traversal(uri: str, name: str, value: str) -> None:
+    """Validate a possibly multi-segment (POSIX '/'-separated) field.
+
+    Rejects absolute paths, NUL/backslash, and any '..' path segment. Plain
+    '/'-separated relative paths like ``a/b/c.dot`` remain valid.
+    """
+    if not value:
+        raise RemoteFetchPathError(f"Missing {name} in {uri!r}")
+    if value.startswith("/"):
+        raise RemoteFetchPathError(f"{name} must be relative, got {value!r} in {uri!r}")
+    if "\x00" in value or "\\" in value:
+        raise RemoteFetchPathError(f"Invalid characters in {name} {value!r} in {uri!r}")
+    for seg in value.split("/"):
+        if seg == "..":
+            raise RemoteFetchPathError(
+                f"Path traversal ('..') rejected in {name} {value!r} of {uri!r}"
+            )
+
+
 def parse_uri(uri: str) -> Origin:
     """Parse ``git+https://<host>/<owner>/<repo>[@<ref>]#subdirectory=<file-path>``.
 
     ``ref`` defaults to ``main``. Raises ``RemoteFetchPathError`` on malformed
     input. Any well-formed host is accepted (host allow-listing is not done
     here — the fetch layer controls which base URL is actually contacted).
+
+    Every component (host, owner, repo, ref, path) is validated to reject
+    path traversal ('..' segments), absolute paths, and NUL/backslash
+    characters before an ``Origin`` is constructed — those components are
+    later joined directly into cache filesystem paths (see ``cache.py``), so
+    they must never be able to escape the cache root.
     """
     if not uri.startswith(GIT_HTTPS_PREFIX):
         raise RemoteFetchPathError(f"Not a git+https:// URI: {uri!r}")
@@ -63,10 +96,21 @@ def parse_uri(uri: str) -> Origin:
             raise RemoteFetchPathError(
                 f"Only #subdirectory= is supported, got {fragment!r} in {uri!r}"
             )
-        path = unquote(value).lstrip("/")
+        raw_path = unquote(value)
+        if raw_path.startswith("/"):
+            raise RemoteFetchPathError(
+                f"subdirectory path must be relative, got {raw_path!r} in {uri!r}"
+            )
+        path = raw_path.lstrip("/")
     if not path:
         raise RemoteFetchPathError(
             f"Entry URI must name a file via #subdirectory=: {uri!r}"
         )
+
+    _reject_single_segment_traversal(uri, "host", host)
+    _reject_single_segment_traversal(uri, "owner", owner)
+    _reject_single_segment_traversal(uri, "repo", repo)
+    _reject_multi_segment_traversal(uri, "ref", ref)
+    _reject_multi_segment_traversal(uri, "path", path)
 
     return Origin(host=host, owner=owner, repo=repo, ref=ref, path=path)

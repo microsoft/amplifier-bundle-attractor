@@ -39,3 +39,37 @@ def test_key_includes_host():
 def test_parse_rejects_malformed(bad):
     with pytest.raises(RemoteFetchPathError):
         parse_uri(bad)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "git+https://../evil/widgets#subdirectory=a.dot",
+        "git+https://github.com/../widgets#subdirectory=a.dot",
+        "git+https://github.com/acme/..#subdirectory=a.dot",
+    ],
+)
+def test_parse_rejects_traversal_in_host_owner_repo(bad):
+    with pytest.raises(RemoteFetchPathError):
+        parse_uri(bad)
+
+
+def test_parse_rejects_traversal_in_ref():
+    with pytest.raises(RemoteFetchPathError):
+        parse_uri("git+https://github.com/acme/widgets@../../etc#subdirectory=a.dot")
+
+
+def test_parse_rejects_traversal_in_path_segment():
+    with pytest.raises(RemoteFetchPathError):
+        parse_uri("git+https://github.com/acme/widgets#subdirectory=a/../../etc/passwd")
+
+
+def test_parse_rejects_absolute_path():
+    with pytest.raises(RemoteFetchPathError):
+        parse_uri("git+https://github.com/acme/widgets#subdirectory=/etc/passwd")
+
+
+def test_parse_allows_normal_multi_segment_path():
+    o = parse_uri("git+https://github.com/acme/widgets#subdirectory=a/b/c.dot")
+    assert o.path == "a/b/c.dot"
+

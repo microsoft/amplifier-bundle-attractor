@@ -9,7 +9,13 @@ Freshness:
   * mutable ref (branch/tag name) -> revalidated via If-None-Match (304 = reuse)
   * $ATTRACTOR_RELOAD forces revalidation even for immutable entries
 Integrity: fetched bytes MUST hash to the server-declared sha, else rejected.
-Concurrency: per-blob lock file + atomic rename.
+Concurrency: per-blob lock file + atomic rename. Only the process that
+  successfully creates the lock file (the winner) ever deletes it; a losing
+  writer (lock already held) returns without touching the winner's lock/tmp.
+Containment: every filesystem path derived from an Origin (refs/*) or a
+  blob-sha (blobs/*) is verified to stay under ``self.root`` before any
+  read/write/mkdir — defense in depth against a crafted Origin escaping the
+  cache root (see uri.py's traversal rejection for the first line of defense).
 """
 
 from __future__ import annotations
@@ -21,7 +27,7 @@ import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from .errors import RemoteFetchError
+from .errors import RemoteFetchError, RemoteFetchPathError
 from .fetch import FetchResult, fetch_blob, git_blob_sha
 from .uri import Origin
 
@@ -47,14 +53,32 @@ class BlobCache:
     def __init__(self, root: Path | None = None) -> None:
         self.root = Path(root) if root is not None else default_cache_root()
 
+    def _ensure_within_root(self, path: Path) -> Path:
+        """Containment check: reject any path that resolves outside ``root``.
+
+        Belt-and-suspenders alongside uri.py's traversal rejection — this
+        catches any Origin/blob-sha that somehow still produces an escaping
+        path (e.g. a future caller that bypasses ``parse_uri``). ``resolve()``
+        normalizes '..' segments and symlinks without requiring the path to
+        exist; we compare against it but return the original (unresolved)
+        path so callers still mkdir/read/write at the intended location.
+        """
+        root_resolved = self.root.resolve()
+        resolved = path.resolve()
+        if resolved != root_resolved and not resolved.is_relative_to(root_resolved):
+            raise RemoteFetchPathError(f"Path escapes cache root: {path} (root={self.root})")
+        return path
+
     def _blob_path(self, blob_sha: str) -> Path:
-        return self.root / "blobs" / blob_sha
+        p = self.root / "blobs" / blob_sha
+        return self._ensure_within_root(p)
 
     def _ref_path(self, origin: Origin) -> Path:
-        return (
+        p = (
             self.root / "refs" / origin.host / origin.owner / origin.repo
             / origin.ref / (origin.path + ".json")
         )
+        return self._ensure_within_root(p)
 
     def _read_ref(self, origin: Origin) -> dict | None:
         p = self._ref_path(origin)
@@ -76,18 +100,23 @@ class BlobCache:
         p.parent.mkdir(parents=True, exist_ok=True)
         lock = p.with_suffix(".lock")
         tmp = p.with_suffix(f".tmp.{os.getpid()}")
+        acquired = False
         try:
-            # per-blob lock: exclusive create; if held, another writer wins.
+            # per-blob lock: exclusive create; if held, another writer wins
+            # and will produce the blob (content is identical by hash).
             try:
                 fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 os.close(fd)
+                acquired = True
             except FileExistsError:
-                return
+                return  # loser: do NOT touch the winner's lock or tmp file
             tmp.write_bytes(content)
             os.replace(tmp, p)  # atomic rename
         finally:
-            tmp.unlink(missing_ok=True)
-            lock.unlink(missing_ok=True)
+            # Only the winner (lock acquired) cleans up its own lock/tmp.
+            if acquired:
+                tmp.unlink(missing_ok=True)
+                lock.unlink(missing_ok=True)
 
     def _write_ref(self, origin: Origin, blob_sha: str, etag: str | None) -> None:
         p = self._ref_path(origin)

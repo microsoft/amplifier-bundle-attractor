@@ -1,12 +1,19 @@
 import base64
 import os
+import posixpath
+import re
 
 import httpx
 import pytest
 import respx
 
 from amplifier_module_loop_pipeline.remote_dot import materialize_remote_dot
-from amplifier_module_remote_source import BlobCache, FetchLimits, RemoteFetchPathError
+from amplifier_module_remote_source import (
+    BlobCache,
+    FetchLimits,
+    RemoteFetchPathError,
+    parse_uri,
+)
 
 API = "https://api.github.com/repos"
 
@@ -76,10 +83,37 @@ async def test_cross_repo_rewrite(tmp_path):
     entry_path, cleanup = await materialize_remote_dot(ENTRY, cache=BlobCache(tmp_path))
     try:
         text = entry_path.read_text()
-        assert other not in text                 # the URL was rewritten...
-        assert 'dot_file="' in text and ".dot" in text  # ...to a local relpath
+        assert other not in text  # the URL was rewritten...
+
+        match = re.search(r'dot_file\s*=\s*"([^"]+)"', text)
+        assert match, f"expected a rewritten dot_file= attribute, got: {text!r}"
+        rewritten_ref = match.group(1)
+        assert not rewritten_ref.startswith("git+https://")  # ...to a local relpath
+
+        # Resolve the rewritten ref exactly as the engine will: relative to the
+        # entry file's own directory.
+        rewritten_path = (entry_path.parent / rewritten_ref).resolve()
+        assert rewritten_path.exists()
+
+        # Derive the per-run view root from the entry's own repo-root-relative
+        # path (owner/repo/ref/path) instead of a hardcoded parents[N] index, so
+        # this stays correct regardless of how deep the entry's `path` is.
+        entry_origin = parse_uri(ENTRY)
+        entry_relpath = posixpath.join(
+            entry_origin.owner, entry_origin.repo, entry_origin.ref, entry_origin.path
+        )
+        view_dir = entry_path.parents[len(entry_relpath.split("/")) - 1]
+
         # the cross-repo file exists under the mirrored layout
-        assert (entry_path.parents[3] / "acme" / "lib" / "main" / "shared" / "util.dot").exists()
+        expected_cross_repo_path = (
+            view_dir / "acme" / "lib" / "main" / "shared" / "util.dot"
+        )
+        assert expected_cross_repo_path.exists()
+
+        # The rewritten ref must point at exactly that file, not just *some* file,
+        # so this genuinely proves the cross-repo rewrite rather than merely that
+        # a file happens to exist somewhere.
+        assert rewritten_path == expected_cross_repo_path.resolve()
     finally:
         cleanup()
 

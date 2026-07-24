@@ -136,6 +136,26 @@ def seed_context(
     context.set("context.target_dir", str(cwd))
 
 
+async def _load_graph(graph_or_dot: "Graph | str"):
+    """Return (graph, cleanup). If graph_or_dot is a git+https:// URL, materialize
+    the remote tree (async, before parse) and parse the local entry; otherwise
+    behave exactly as before. cleanup() removes any per-run materialized view."""
+    from amplifier_module_loop_pipeline.dot_parser import parse_dot
+
+    if isinstance(graph_or_dot, str) and graph_or_dot.startswith("git+https://"):
+        from amplifier_module_loop_pipeline.remote_dot import materialize_remote_dot
+
+        entry_path, cleanup = await materialize_remote_dot(graph_or_dot)
+        try:
+            return parse_dot(entry_path.read_text(encoding="utf-8")), cleanup
+        except BaseException:
+            cleanup()
+            raise
+
+    graph = parse_dot(graph_or_dot) if isinstance(graph_or_dot, str) else graph_or_dot
+    return graph, (lambda: None)
+
+
 async def drive_engine(
     graph_or_dot: "Graph | str",
     coordinator: Any,
@@ -203,7 +223,7 @@ async def drive_engine(
     from amplifier_module_loop_pipeline.transforms import apply_transforms
     from amplifier_module_loop_pipeline.validation import validate_or_raise
 
-    graph = parse_dot(graph_or_dot) if isinstance(graph_or_dot, str) else graph_or_dot
+    graph, _source_cleanup = await _load_graph(graph_or_dot)
 
     resolved_cwd = Path(cwd) if cwd is not None else Path.cwd()
 
@@ -247,7 +267,10 @@ async def drive_engine(
         hooks=effective_hooks,
     )
 
-    return await engine.run()
+    try:
+        return await engine.run()
+    finally:
+        _source_cleanup()
 
 
 async def _resolve_agent_bundle(agent_name: str, config: dict[str, Any]) -> Any:
@@ -590,7 +613,10 @@ async def run_pipeline(
     cwd_path = Path(cwd).expanduser().resolve() if cwd is not None else Path.cwd()
     cwd_path.mkdir(parents=True, exist_ok=True)
 
-    (logs_dir / "pipeline.dot").write_text(dot_source, encoding="utf-8")
+    # A git+https:// entry is a URL, not DOT -- don't write it as pipeline.dot.
+    # (drive_engine materializes it; the resolved graph is logged by the engine.)
+    if not dot_source.startswith("git+https://"):
+        (logs_dir / "pipeline.dot").write_text(dot_source, encoding="utf-8")
 
     resolved_profiles = dict(profiles) if profiles else dict(DEFAULT_PROFILES)
 

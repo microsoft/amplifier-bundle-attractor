@@ -19,9 +19,11 @@ class FakeFetcher:
         self.etag = etag
         self.calls = 0
         self.next_not_modified = False
+        self.seen_limits = []
 
-    async def __call__(self, origin, *, token=None, base_url=None, etag=None):
+    async def __call__(self, origin, *, token=None, base_url=None, etag=None, limits=None):
         self.calls += 1
+        self.seen_limits.append(limits)
         if self.next_not_modified:
             return FetchResult(None, None, None, etag, not_modified=True)
         return FetchResult(self.content, git_blob_sha(self.content), self.server_sha, self.etag)
@@ -85,6 +87,19 @@ async def test_reload_forces_revalidation(tmp_path):
     assert f.calls == 2  # reload bypasses the immutable fast path
 
 
+@pytest.mark.asyncio
+async def test_limits_passed_through_to_fetch_fn(tmp_path):
+    """A caller-supplied FetchLimits must reach fetch_fn -- not be dropped
+    silently on the way through BlobCache.get()."""
+    from amplifier_module_remote_source.limits import FetchLimits
+
+    cache = BlobCache(tmp_path)
+    f = FakeFetcher()
+    custom_limits = FetchLimits(per_request_timeout=5.0)
+    await cache.get(_origin(ref="main"), fetch_fn=f, limits=custom_limits)
+    assert f.seen_limits == [custom_limits]
+
+
 def _assert_nothing_escaped(tmp_path, cache_root):
     """Every file under tmp_path must remain inside cache_root."""
     cache_root_str = str(cache_root)
@@ -128,33 +143,47 @@ async def test_traversal_via_crafted_path_rejected(tmp_path):
     _assert_nothing_escaped(tmp_path, cache_root)
 
 
-def test_write_blob_loser_does_not_delete_winner_lock(tmp_path):
-    """Simulate a losing writer: pre-create the lock file (as if another
-    process holds it), then call _write_blob. The loser must return without
-    deleting the lock or writing the blob — it must not tear down a lock it
-    does not own.
-    """
+def test_write_blob_concurrent_identical_writes_produce_one_blob(tmp_path):
+    """Two writes of identical content must not raise and must produce
+    exactly one blob file on disk (atomic os.replace, no lock needed —
+    blobs are content-addressed so concurrent writers of the same blob_sha
+    are writing byte-identical content by construction)."""
     cache = BlobCache(tmp_path)
     content = b"digraph G {}"
     sha = git_blob_sha(content)
     blob_path = cache._blob_path(sha)
-    blob_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = blob_path.with_suffix(".lock")
-    lock_path.write_text("held-by-winner")
 
-    # Loser attempts to write while the lock is held.
+    # Simulate two "concurrent" writers racing to write the same blob —
+    # both must succeed without raising, and no stray tmp files remain.
+    cache._write_blob(sha, content)
     cache._write_blob(sha, content)
 
-    # The loser must not have deleted the winner's lock, nor written the blob.
-    assert lock_path.exists(), "loser deleted the winner's lock file"
-    assert not blob_path.exists(), "loser wrote the blob despite losing the lock"
-
-    # Now the "winner" finishes: releases the lock and writes the blob itself.
-    lock_path.unlink()
-    cache._write_blob(sha, content)
     assert blob_path.exists()
     assert blob_path.read_bytes() == content
-    # Lock and tmp are cleaned up after a real winning write.
-    assert not lock_path.exists()
-    tmp_candidates = list(blob_path.parent.glob(f"{sha}.tmp.*"))
-    assert tmp_candidates == []
+    tmp_candidates = list(blob_path.parent.glob(f"{sha}.*.tmp"))
+    assert tmp_candidates == [], "no tmp files should remain after writes"
+    blob_candidates = [p for p in blob_path.parent.iterdir() if p.is_file()]
+    assert blob_candidates == [blob_path], "exactly one blob file, no duplicates"
+
+
+@pytest.mark.asyncio
+async def test_get_never_writes_ref_pointing_at_missing_blob(tmp_path, monkeypatch):
+    """If the blob write somehow leaves no file on disk (e.g. a crash
+    mid-write in another process), get() must NOT write a ref pointing at
+    that missing blob — a dangling ref would permanently poison the cache
+    (the is_immutable() fast path would keep resolving to a blob_sha with
+    no backing file, forever).
+    """
+    cache = BlobCache(tmp_path)
+    f = FakeFetcher()
+
+    # Simulate _write_blob silently failing to persist the blob (e.g. a
+    # concurrent crash-mid-write elsewhere left nothing on disk).
+    monkeypatch.setattr(cache, "_write_blob", lambda blob_sha, content: None)
+
+    with pytest.raises(RemoteFetchError):
+        await cache.get(_origin(ref=IMMUT), fetch_fn=f)
+
+    # No ref file should exist pointing at the (non-existent) blob.
+    ref_path = cache._ref_path(_origin(ref=IMMUT))
+    assert not ref_path.exists(), "a ref must never be written for a missing blob"

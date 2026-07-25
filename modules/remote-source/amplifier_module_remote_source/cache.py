@@ -9,9 +9,13 @@ Freshness:
   * mutable ref (branch/tag name) -> revalidated via If-None-Match (304 = reuse)
   * $ATTRACTOR_RELOAD forces revalidation even for immutable entries
 Integrity: fetched bytes MUST hash to the server-declared sha, else rejected.
-Concurrency: per-blob lock file + atomic rename. Only the process that
-  successfully creates the lock file (the winner) ever deletes it; a losing
-  writer (lock already held) returns without touching the winner's lock/tmp.
+Concurrency: blobs are content-addressed (path == blob sha; bytes are
+  identical by construction), so no lock is needed for correctness -- every
+  writer writes to its own unique temp path, then ``os.replace``s it into
+  place atomically. Concurrent writers of identical content race harmlessly;
+  the last ``os.replace`` wins and produces byte-identical content. A ref is
+  only ever written after its blob is confirmed present on disk, so a
+  crash mid-write can never leave a dangling ref pointing at a missing blob.
 Containment: every filesystem path derived from an Origin (refs/*) or a
   blob-sha (blobs/*) is verified to stay under ``self.root`` before any
   read/write/mkdir — defense in depth against a crafted Origin escaping the
@@ -23,12 +27,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from .errors import RemoteFetchError, RemoteFetchPathError
 from .fetch import FetchResult, fetch_blob, git_blob_sha
+from .limits import FetchLimits
 from .uri import Origin
 
 _IMMUTABLE_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -94,29 +100,24 @@ class BlobCache:
         return p.read_bytes() if p.exists() else None
 
     def _write_blob(self, blob_sha: str, content: bytes) -> None:
+        """Write ``content`` to the content-addressed blob path.
+
+        No lock is needed: blobs are content-addressed, so any concurrent
+        writer of this ``blob_sha`` is writing byte-identical content by
+        construction. Each writer writes to its own unique temp path, then
+        atomically ``os.replace``s it into place -- concurrent writers race
+        harmlessly and the last rename simply wins with identical bytes.
+        """
         p = self._blob_path(blob_sha)
         if p.exists():
             return  # content-addressed: identical bytes stored once
         p.parent.mkdir(parents=True, exist_ok=True)
-        lock = p.with_suffix(".lock")
-        tmp = p.with_suffix(f".tmp.{os.getpid()}")
-        acquired = False
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
         try:
-            # per-blob lock: exclusive create; if held, another writer wins
-            # and will produce the blob (content is identical by hash).
-            try:
-                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.close(fd)
-                acquired = True
-            except FileExistsError:
-                return  # loser: do NOT touch the winner's lock or tmp file
             tmp.write_bytes(content)
-            os.replace(tmp, p)  # atomic rename
+            os.replace(tmp, p)  # atomic rename; idempotent across writers
         finally:
-            # Only the winner (lock acquired) cleans up its own lock/tmp.
-            if acquired:
-                tmp.unlink(missing_ok=True)
-                lock.unlink(missing_ok=True)
+            tmp.unlink(missing_ok=True)
 
     def _write_ref(self, origin: Origin, blob_sha: str, etag: str | None) -> None:
         p = self._ref_path(origin)
@@ -136,8 +137,14 @@ class BlobCache:
         base_url: str | None = None,
         fetch_fn: FetchFn | None = None,
         reload: bool | None = None,
+        limits: FetchLimits | None = None,
     ) -> tuple[bytes, str]:
-        """Return (content, blob_sha) for ``origin``, honoring the cache."""
+        """Return (content, blob_sha) for ``origin``, honoring the cache.
+
+        ``limits`` (e.g. ``per_request_timeout``) is forwarded to ``fetch_fn``
+        so a caller-configured safety envelope actually reaches the HTTP
+        request, not just the fetch-walk's own depth/file/byte bookkeeping.
+        """
         fetch_fn = fetch_fn or fetch_blob
         reload = reload if reload is not None else bool(os.environ.get("ATTRACTOR_RELOAD"))
         entry = self._read_ref(origin)
@@ -149,7 +156,9 @@ class BlobCache:
                 return blob, entry["blob_sha"]
 
         etag = entry["etag"] if entry else None
-        result = await fetch_fn(origin, token=token, base_url=base_url, etag=etag)
+        result = await fetch_fn(
+            origin, token=token, base_url=base_url, etag=etag, limits=limits
+        )
 
         if result.not_modified and entry:
             blob = self._read_blob(entry["blob_sha"])
@@ -170,5 +179,14 @@ class BlobCache:
             raise RemoteFetchError(f"blob-sha recompute mismatch for {origin.key()}")
 
         self._write_blob(result.blob_sha, result.content)
+        # Only write the ref once the blob is confirmed present on disk --
+        # never write a ref pointing at a blob that isn't there (a dangling
+        # ref would poison the cache permanently: is_immutable() fast-path
+        # reads would keep resolving to a blob_sha with no file).
+        if not self._blob_path(result.blob_sha).exists():
+            raise RemoteFetchError(
+                f"blob {result.blob_sha} missing on disk after write for "
+                f"{origin.key()}; refusing to write a dangling ref"
+            )
         self._write_ref(origin, result.blob_sha, result.etag)
         return result.content, result.blob_sha

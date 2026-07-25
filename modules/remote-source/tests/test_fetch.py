@@ -7,6 +7,7 @@ import respx
 
 from amplifier_module_remote_source.errors import (
     RemoteFetchAuthError,
+    RemoteFetchError,
     RemoteFetchNotFound,
 )
 from amplifier_module_remote_source.fetch import (
@@ -14,6 +15,7 @@ from amplifier_module_remote_source.fetch import (
     git_blob_sha,
     resolve_token,
 )
+from amplifier_module_remote_source.limits import FetchLimits
 from amplifier_module_remote_source.uri import Origin
 
 O = Origin("github.com", "acme", "widgets", "main", "a.dot")
@@ -80,6 +82,112 @@ async def test_base_url_reaches_non_github_host():
     ).mock(return_value=httpx.Response(200, json=_json_body(b"x", "s")))
     await fetch_blob(O, token=None, base_url="https://gitea.example.com/api/v1")
     assert route.called
+
+
+_NON_GITHUB_ORIGIN = Origin("gitea.example.com", "acme", "widgets", "main", "a.dot")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_non_github_host_with_no_override_fails_loud(monkeypatch):
+    """A non-github.com host with no base_url/$GITHUB_API_URL must never
+    silently fall through to api.github.com -- it must fail loud instead."""
+    monkeypatch.delenv("GITHUB_API_URL", raising=False)
+    github_route = respx.get(url__regex=r"https://api\.github\.com/.*").mock(
+        return_value=httpx.Response(200, json=_json_body(b"x", "s"))
+    )
+    with pytest.raises(RemoteFetchError, match="gitea.example.com"):
+        await fetch_blob(_NON_GITHUB_ORIGIN, token=None)
+    assert not github_route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_non_github_host_routes_via_github_api_url_env(monkeypatch):
+    """$GITHUB_API_URL is an operator-level override honored for ANY host,
+    not just github.com."""
+    monkeypatch.setenv("GITHUB_API_URL", "https://gitea.example.com/api/v1")
+    route = respx.get(
+        url__regex=r"https://gitea.example.com/api/v1/repos/acme/widgets/contents/a.dot"
+    ).mock(return_value=httpx.Response(200, json=_json_body(b"x", "s")))
+    res = await fetch_blob(_NON_GITHUB_ORIGIN, token=None)
+    assert route.called
+    assert res.content == b"x"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_github_com_defaults_to_api_github_com(monkeypatch):
+    """github.com origin with no override defaults to api.github.com."""
+    monkeypatch.delenv("GITHUB_API_URL", raising=False)
+    route = respx.get(url__regex=CONTENTS_RE).mock(
+        return_value=httpx.Response(200, json=_json_body(b"digraph G {}", "s"))
+    )
+    res = await fetch_blob(O, token=None)
+    assert route.called
+    assert res.content == b"digraph G {}"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_per_request_timeout_reaches_httpx_call(monkeypatch):
+    """A custom FetchLimits.per_request_timeout must actually be applied to
+    the httpx request, not just carried around unused."""
+    respx.get(url__regex=CONTENTS_RE).mock(
+        return_value=httpx.Response(200, json=_json_body(b"x", "s"))
+    )
+
+    seen_timeouts = []
+    real_get = httpx.AsyncClient.get
+
+    async def _spy_get(self, *args, **kwargs):
+        seen_timeouts.append(kwargs.get("timeout"))
+        return await real_get(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", _spy_get)
+
+    custom_limits = FetchLimits(per_request_timeout=7.5)
+    await fetch_blob(O, token=None, limits=custom_limits)
+
+    assert seen_timeouts == [7.5]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_directory_response_raises_not_found():
+    """A 200 response with a JSON list body means the path resolves to a
+    directory, not a file -- must raise RemoteFetchNotFound."""
+    respx.get(url__regex=CONTENTS_RE).mock(
+        return_value=httpx.Response(200, json=[{"name": "sub.dot", "type": "file"}])
+    )
+    with pytest.raises(RemoteFetchNotFound, match="directory"):
+        await fetch_blob(O, token=None)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_missing_inline_content_raises_error():
+    """A 200 response with no inline content (e.g. file over the Contents
+    API's 1MB inline limit) must raise RemoteFetchError, not KeyError/TypeError."""
+    respx.get(url__regex=CONTENTS_RE).mock(
+        return_value=httpx.Response(
+            200, json={"name": "a.dot", "encoding": "none", "content": None, "sha": "s"}
+        )
+    )
+    with pytest.raises(RemoteFetchError, match="1MB inline limit"):
+        await fetch_blob(O, token=None)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_non_json_body_raises_error():
+    """A non-JSON 200 response body must raise RemoteFetchError, not
+    propagate the raw json.JSONDecodeError."""
+    respx.get(url__regex=CONTENTS_RE).mock(
+        return_value=httpx.Response(200, content=b"not json", headers={"content-type": "text/plain"})
+    )
+    with pytest.raises(RemoteFetchError, match="a.dot"):
+        await fetch_blob(O, token=None)
 
 
 def test_resolve_token_prefers_github_token(monkeypatch):

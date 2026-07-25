@@ -63,7 +63,11 @@ def parse_uri(uri: str) -> Origin:
 
     ``ref`` defaults to ``main``. Raises ``RemoteFetchPathError`` on malformed
     input. Any well-formed host is accepted (host allow-listing is not done
-    here — the fetch layer controls which base URL is actually contacted).
+    here) -- the host is captured on the ``Origin``, but the fetch layer does
+    NOT auto-derive a per-host API base URL. For ``github.com`` it defaults to
+    the public GitHub API; for any other host it requires an explicit base
+    URL (``$GITHUB_API_URL`` or ``base_url=``) and raises loudly otherwise --
+    it never silently falls back to contacting github.com.
 
     Every component (host, owner, repo, ref, path) is validated to reject
     path traversal ('..' segments), absolute paths, and NUL/backslash

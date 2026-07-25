@@ -29,6 +29,31 @@ class FakeFetcher:
         return FetchResult(self.content, git_blob_sha(self.content), self.server_sha, self.etag)
 
 
+class ThreeOhFourThenContentFetcher:
+    """304 when an etag is sent (any etag), full 200+content when etag is None.
+
+    Models a server that still has the ref unchanged (etag matches) but is
+    used to exercise the self-heal path where the cached blob file has been
+    externally deleted -- the cache must force a no-etag refetch to recover
+    real bytes rather than raising on the empty 304 result.
+    """
+
+    def __init__(self, content=b"digraph G {}", server_sha=None, etag='"e1"'):
+        self.content = content
+        self.server_sha = server_sha if server_sha is not None else git_blob_sha(content)
+        self.etag = etag
+        self.calls = 0
+        self.etags_seen = []
+        self.always_not_modified = False
+
+    async def __call__(self, origin, *, token=None, base_url=None, etag=None, limits=None):
+        self.calls += 1
+        self.etags_seen.append(etag)
+        if self.always_not_modified or etag is not None:
+            return FetchResult(None, None, None, etag, not_modified=True)
+        return FetchResult(self.content, git_blob_sha(self.content), self.server_sha, self.etag)
+
+
 def test_is_immutable():
     assert is_immutable(IMMUT)
     assert not is_immutable("main")
@@ -57,6 +82,63 @@ async def test_mutable_revalidates_but_reuses_on_304(tmp_path):
     content, _ = await cache.get(_origin(ref="main"), fetch_fn=f)
     assert content == f.content       # served from cache
     assert f.calls == 2               # but it DID revalidate
+
+
+@pytest.mark.asyncio
+async def test_reuses_on_304_even_when_cached_blob_deleted_by_self_heal(tmp_path):
+    """304 + externally-deleted blob must self-heal via a forced no-etag
+    refetch, not raise RemoteFetchError("empty fetch result...").
+
+    Fail-before: with the old code, deleting the blob file and then hitting
+    the 304 branch would call _read_blob() -> None and fall through to
+    ``raise RemoteFetchError("empty fetch result...")`` because ``result``
+    still carries ``content=None`` from the 304 response.
+    """
+    cache = BlobCache(tmp_path)
+    f = ThreeOhFourThenContentFetcher()
+
+    # Prime the cache: first fetch (no etag on disk yet) gets full content.
+    content, sha = await cache.get(_origin(ref="main"), fetch_fn=f)
+    assert content == f.content
+    assert f.calls == 1
+    assert f.etags_seen == [None]
+
+    blob_path = cache._blob_path(sha)
+    assert blob_path.exists()
+
+    # Externally delete the blob file -- ref on disk still points at it.
+    blob_path.unlink()
+    assert not blob_path.exists()
+
+    # get() must self-heal: revalidation request (with etag) returns 304,
+    # then a forced no-etag refetch returns full content, which gets
+    # rewritten to disk. No RemoteFetchError.
+    content2, sha2 = await cache.get(_origin(ref="main"), fetch_fn=f)
+
+    assert content2 == f.content
+    assert sha2 == sha
+    assert f.calls == 3  # 1 (prime) + 1 (etag'd 304) + 1 (forced no-etag refetch)
+    assert f.etags_seen == [None, '"e1"', None]
+    assert blob_path.exists(), "blob must be rewritten to disk after self-heal"
+    assert blob_path.read_bytes() == f.content
+
+
+@pytest.mark.asyncio
+async def test_second_fetch_still_empty_after_self_heal_raises(tmp_path):
+    """If the forced no-etag refetch ALSO yields no content, get() must
+    still raise -- self-heal is a single attempt, not a retry loop."""
+    cache = BlobCache(tmp_path)
+    f = ThreeOhFourThenContentFetcher()
+
+    await cache.get(_origin(ref="main"), fetch_fn=f)
+    blob_path = cache._blob_path(f.server_sha)
+    blob_path.unlink()
+
+    # Force even the no-etag refetch to return not_modified/empty.
+    f.always_not_modified = True
+
+    with pytest.raises(RemoteFetchError):
+        await cache.get(_origin(ref="main"), fetch_fn=f)
 
 
 @pytest.mark.asyncio

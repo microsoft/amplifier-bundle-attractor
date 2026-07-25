@@ -122,7 +122,7 @@ class BlobCache:
     def _write_ref(self, origin: Origin, blob_sha: str, etag: str | None) -> None:
         p = self._ref_path(origin)
         p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(f".tmp.{os.getpid()}")
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
         tmp.write_text(
             json.dumps({"blob_sha": blob_sha, "etag": etag, "fetched_at": time.time()}),
             encoding="utf-8",
@@ -164,6 +164,15 @@ class BlobCache:
             blob = self._read_blob(entry["blob_sha"])
             if blob is not None:
                 return blob, entry["blob_sha"]
+            # Cached ref says "not modified" but the blob file is gone from
+            # disk (e.g. externally deleted). Self-heal with a single forced
+            # refetch that skips the etag, guaranteeing a full 200 with
+            # content instead of another 304. No loop: if this second fetch
+            # still yields no content, fall through to the empty-result
+            # error below.
+            result = await fetch_fn(
+                origin, token=token, base_url=base_url, etag=None, limits=limits
+            )
 
         if result.content is None or result.blob_sha is None:
             raise RemoteFetchError(f"empty fetch result for {origin.key()}")

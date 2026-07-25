@@ -132,7 +132,7 @@ async def materialize_remote_dot(
     async def _guarded(origin) -> bytes:
         async with sem:
             content, _sha = await cache.get(
-                origin, token=token, base_url=base_url
+                origin, token=token, base_url=base_url, limits=limits
             )
             return content
 
@@ -146,6 +146,11 @@ async def materialize_remote_dot(
                 raise RemoteFetchLimitError(
                     f"max_depth={limits.max_depth} exceeded at {frontier[0].path!r}"
                 )
+            # `frontier` is already deduped (via the `deduped`/`queued` pass at
+            # the end of the previous iteration, and the initial `[entry]`
+            # list has no duplicates to begin with), so this `not in seen`
+            # filter is a defensive no-op in the current control flow -- kept
+            # as belt-and-suspenders in case that invariant ever changes.
             batch = [o for o in frontier if o.key() not in seen]
             results = await asyncio.gather(*(_guarded(o) for o in batch))
 

@@ -153,6 +153,54 @@ async def test_depth_limit_fail_fast(tmp_path):
         )
 
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_diamond_dependency_fetched_once(tmp_path):
+    """main.dot -> {a.dot, b.dot}; both a.dot and b.dot -> shared.dot (same
+    origin+path). shared.dot must be fetched exactly once, and both
+    rewritten dot_file= refs must resolve to the identical materialized path.
+    """
+    main_route = _contents(
+        "acme", "samples", "pipelines/main.dot",
+        'digraph G { a [dot_file="a.dot"]; b [dot_file="b.dot"]; }',
+    )
+    a_route = _contents(
+        "acme", "samples", "pipelines/a.dot",
+        'digraph G { s [dot_file="shared.dot"]; }',
+    )
+    b_route = _contents(
+        "acme", "samples", "pipelines/b.dot",
+        'digraph G { s [dot_file="shared.dot"]; }',
+    )
+    shared_route = _contents(
+        "acme", "samples", "pipelines/shared.dot", "digraph G { leaf; }"
+    )
+
+    entry_path, cleanup = await materialize_remote_dot(ENTRY, cache=BlobCache(tmp_path))
+    try:
+        # shared.dot must be fetched exactly once despite two referrers.
+        assert shared_route.call_count == 1
+        assert main_route.call_count == 1
+        assert a_route.call_count == 1
+        assert b_route.call_count == 1
+
+        a_text = (entry_path.parent / "a.dot").read_text()
+        b_text = (entry_path.parent / "b.dot").read_text()
+
+        match_a = re.search(r'dot_file\s*=\s*"([^"]+)"', a_text)
+        match_b = re.search(r'dot_file\s*=\s*"([^"]+)"', b_text)
+        assert match_a and match_b
+
+        # Both refs are same-origin (in-repo relative refs), left as-is;
+        # both must resolve (relative to their own file) to the same file.
+        resolved_from_a = (entry_path.parent / match_a.group(1)).resolve()
+        resolved_from_b = (entry_path.parent / match_b.group(1)).resolve()
+        assert resolved_from_a == resolved_from_b
+        assert resolved_from_a.exists()
+    finally:
+        cleanup()
+
+
 # --- ONE REAL recursive fetch against a PINNED public fixture -----------------
 # Fill ATTRACTOR_TEST_REMOTE_ENTRY with a real, immutable (SHA-pinned) entry URI
 # whose tree fetches cleanly. Skipped when unset.

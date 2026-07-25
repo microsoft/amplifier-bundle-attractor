@@ -226,49 +226,49 @@ async def drive_engine(
 
     graph, _source_cleanup = await _load_graph(graph_or_dot)
 
-    resolved_cwd = Path(cwd) if cwd is not None else Path.cwd()
-
-    context = PipelineContext()
-    seed_context(context, params, resolved_cwd)
-
-    if transform:
-        graph = apply_transforms(graph, context)
-
-    if validate:
-        # Fail loud on graph-shape problems before spending an LLM call.
-        validate_or_raise(graph)
-
-    # Default engine/handler observability to the coordinator's own hook stack
-    # when the caller didn't supply hooks. A mounted observability hook (e.g.
-    # a session-level logging/telemetry hook composed onto the bundle) lives on
-    # ``coordinator.hooks``; the mounted-orchestrator path reaches it because
-    # the session hands the orchestrator ``coordinator.hooks`` and it forwards
-    # that same object into ``PipelineEngine(hooks=...)``. Driving the engine
-    # directly, we must do the same, or the engine's ``pipeline:*`` events (and
-    # handler-emitted ``provider:*``/``tool:*`` events) are emitted into nothing
-    # and never reach the session's observers. ``getattr(..., None)`` keeps
-    # bare test-stub coordinators (which may lack ``.hooks``) safe, and the
-    # ``hooks is not None`` guard preserves an explicit caller override.
-    effective_hooks = hooks if hooks is not None else getattr(coordinator, "hooks", None)
-
-    backend = AmplifierBackend(
-        coordinator=coordinator,
-        profiles=dict(profiles or DEFAULT_PROFILES),
-    )
-    registry = HandlerRegistry(
-        HandlerContext(
-            backend=backend, hooks=effective_hooks, interviewer=interviewer
-        )
-    )
-    engine = PipelineEngine(
-        graph=graph,
-        context=context,
-        handler_registry=registry,
-        logs_root=str(logs_root),
-        hooks=effective_hooks,
-    )
-
     try:
+        resolved_cwd = Path(cwd) if cwd is not None else Path.cwd()
+
+        context = PipelineContext()
+        seed_context(context, params, resolved_cwd)
+
+        if transform:
+            graph = apply_transforms(graph, context)
+
+        if validate:
+            # Fail loud on graph-shape problems before spending an LLM call.
+            validate_or_raise(graph)
+
+        # Default engine/handler observability to the coordinator's own hook stack
+        # when the caller didn't supply hooks. A mounted observability hook (e.g.
+        # a session-level logging/telemetry hook composed onto the bundle) lives on
+        # ``coordinator.hooks``; the mounted-orchestrator path reaches it because
+        # the session hands the orchestrator ``coordinator.hooks`` and it forwards
+        # that same object into ``PipelineEngine(hooks=...)``. Driving the engine
+        # directly, we must do the same, or the engine's ``pipeline:*`` events (and
+        # handler-emitted ``provider:*``/``tool:*`` events) are emitted into nothing
+        # and never reach the session's observers. ``getattr(..., None)`` keeps
+        # bare test-stub coordinators (which may lack ``.hooks``) safe, and the
+        # ``hooks is not None`` guard preserves an explicit caller override.
+        effective_hooks = hooks if hooks is not None else getattr(coordinator, "hooks", None)
+
+        backend = AmplifierBackend(
+            coordinator=coordinator,
+            profiles=dict(profiles or DEFAULT_PROFILES),
+        )
+        registry = HandlerRegistry(
+            HandlerContext(
+                backend=backend, hooks=effective_hooks, interviewer=interviewer
+            )
+        )
+        engine = PipelineEngine(
+            graph=graph,
+            context=context,
+            handler_registry=registry,
+            logs_root=str(logs_root),
+            hooks=effective_hooks,
+        )
+
         return await engine.run()
     finally:
         _source_cleanup()

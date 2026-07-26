@@ -12,12 +12,19 @@ Quick reference for generating Attractor DOT pipelines.
 | `component` | parallel | Fan-out: runs all outgoing edges concurrently |
 | `tripleoctagon` | parallel.fan_in | Fan-in: collects parallel branch results |
 | `parallelogram` | tool | Direct tool invocation (no LLM) |
+| `diamond` | conditional | Explicit routing point -- no-op handler; the engine's edge selection does the work |
 | `hexagon` | wait.human | Pauses for human approval before proceeding |
-| `house` | stack.manager_loop | Nested sub-pipeline (advanced) |
+| `folder` | pipeline | Nested sub-pipeline -- runs a child DOT via `dot_file=` [EXTENSION] |
+| `house` | stack.manager_loop | Supervisor loop over a child pipeline (experimental) |
 
-**Routing via edge conditions:** There is no separate routing/diamond shape.
-Use `condition=` attributes on outgoing edges from any node to control flow.
-Put your logic in a `box` node, then attach conditional edges to route on outcome.
+Source of truth: `SHAPE_TO_HANDLER` in `modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py`.
+
+**Routing via edge conditions.** `diamond` exists and is the conventional marker for a branch
+point, but it does **no work** -- its handler is a no-op and the actual routing is performed by
+the engine's edge-selection algorithm. So routing is always the same mechanism regardless of
+shape: a node writes a value into context, and `condition=` on the outgoing edges selects the
+path. Use `diamond` when you want the branch to be visually obvious; omit it when the branch
+hangs directly off the node that produced the value.
 
 ## Essential Node Attributes
 
@@ -31,7 +38,7 @@ node_id [
     fidelity="full",             // full|compact|summary:high|summary:low
     llm_provider="anthropic",    // Override provider for this node
     llm_model="claude-sonnet-4-6", // Override model
-    reasoning_effort="high",     // low|medium|high
+    reasoning_effort="high",     // low|medium|high -- NO DEFAULT: unset unless you set it
     auto_status=true,            // Force success regardless of outcome
     timeout=30s                  // Per-node timeout
 ]
@@ -74,7 +81,9 @@ shape_or_class { property: value; property: value; }
 ```
 
 Selectors: `box`, `hexagon`, `parallelogram`, or any shape name; `.my_class` (via `class="my_class"` on node).
-Properties: `llm_provider`, `llm_model`, `reasoning_effort`, `max_retries`, `fidelity`.
+Properties: `llm_provider`, `llm_model`, `reasoning_effort` -- **these three only.**
+Any other property (e.g. `max_retries`, `fidelity`) is **silently ignored**: set those as node
+attributes instead. See `_RECOGNIZED_PROPERTIES` in `stylesheet.py`.
 
 ## Condition Expression Syntax
 

@@ -4,6 +4,8 @@ Covers spec Section 7 (Validation and Linting): diagnostic model,
 built-in lint rules, and validate/validate_or_raise API.
 """
 
+import re
+
 import pytest
 
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
@@ -658,12 +660,44 @@ def test_extra_rules_multiple():
 # --- SHAPE_TO_HANDLER / _LLM_SHAPES completeness ---
 
 
-def test_ellipse_removed_from_shape_to_handler():
-    """ellipse shape must NOT be in SHAPE_TO_HANDLER (removed — was never used)."""
+# Shapes this implementation adds beyond the upstream nlspec §2.8 table.
+# Every entry here MUST have a corresponding record in specs/EXTENSIONS.md.
+_INTENTIONAL_SHAPE_EXTENSIONS = {"folder": "pipeline"}
+
+
+def test_shape_to_handler_conforms_to_upstream_nlspec():
+    """SHAPE_TO_HANDLER must equal the upstream §2.8 table plus recorded extensions.
+
+    This is the guard that was missing.  In 2026-04 `diamond`/`conditional` was
+    deleted from SHAPE_TO_HANDLER on the reasoning that a no-op handler is
+    redundant -- but upstream §2.8 lists it and §4.7 specifies it, and being a
+    no-op is the design.  Nothing caught the divergence.  The consequence
+    (found six weeks later, in the commit that restored it): `shape=diamond`
+    silently fell through to the codergen LLM handler, so every routing node
+    became a paid model call.
+
+    Deriving from the spec makes that class of drift impossible to land
+    quietly: remove a spec-mandated shape and this test names it.  Add a new
+    one and you must record it in _INTENTIONAL_SHAPE_EXTENSIONS *and*
+    specs/EXTENSIONS.md.  It also subsumes every "shape X must not exist"
+    assertion -- phantom vocabulary fails set equality without being named.
+    """
     from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
 
-    assert "ellipse" not in SHAPE_TO_HANDLER, (
-        "ellipse should be removed from SHAPE_TO_HANDLER"
+    spec = (_repo_root() / "specs" / "canonical" / "attractor-spec-canonical.md").read_text()
+    rows = re.findall(r"^\|\s*`([A-Za-z]+)`\s*\|\s*`([a-z_.]+)`", spec, re.M)
+    upstream = {shape: handler for shape, handler in rows}
+    assert upstream, "could not parse the §2.8 shape table from the canonical spec"
+
+    expected = {**upstream, **_INTENTIONAL_SHAPE_EXTENSIONS}
+    assert SHAPE_TO_HANDLER == expected, (
+        f"SHAPE_TO_HANDLER diverges from upstream nlspec §2.8.\n"
+        f"  missing (spec requires): {sorted(set(expected) - set(SHAPE_TO_HANDLER))}\n"
+        f"  unrecorded extras:       {sorted(set(SHAPE_TO_HANDLER) - set(expected))}\n"
+        f"  handler mismatches:      "
+        f"{ {k: (expected[k], SHAPE_TO_HANDLER[k]) for k in set(expected) & set(SHAPE_TO_HANDLER) if expected[k] != SHAPE_TO_HANDLER[k]} }\n"
+        f"An intentional addition must be recorded in _INTENTIONAL_SHAPE_EXTENSIONS "
+        f"and specs/EXTENSIONS.md."
     )
 
 
@@ -919,40 +953,49 @@ def _repo_root():
     return Path(__file__).parent.parent.parent.parent
 
 
-def test_doc_diamond_not_in_dot_reference_shape_table():
-    """context/dot-reference.md must NOT list diamond as a supported shape (D-128).
+def test_doc_shape_tables_match_shape_to_handler():
+    """Agent-visible shape tables must match SHAPE_TO_HANDLER exactly.
 
-    diamond was removed from SHAPE_TO_HANDLER; listing it in the agent-visible
-    reference card causes agents to generate invalid pipelines.
+    Derived from ground truth rather than a hardcoded snapshot, because the
+    hardcoded form went stale and became a guard protecting a false claim:
+
+      2026-04-11  diamond/conditional removed from SHAPE_TO_HANDLER
+      2026-04-17  test added asserting "diamond must NOT appear in docs"
+      2026-05-23  ConditionalHandler implemented -- diamond RE-ADDED
+
+    For two months the test enforced the April state against May's code, so
+    the reference card silently under-documented a supported shape and any
+    attempt to correct it hit a red bar.  A derived assertion cannot drift:
+    add or remove a shape in SHAPE_TO_HANDLER and this test tells you which
+    doc to update.
     """
+    from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
+
     doc = (_repo_root() / "context" / "dot-reference.md").read_text()
-    # Match a markdown table row whose first cell is exactly `diamond`
-    assert "| `diamond` |" not in doc, (
-        "context/dot-reference.md still lists 'diamond' as a shape in the "
-        "handler table — remove it (D-128)"
+    documented = set(re.findall(r"^\| `([A-Za-z]+)` \|", doc, re.M))
+    assert documented == set(SHAPE_TO_HANDLER), (
+        f"context/dot-reference.md shape table diverges from SHAPE_TO_HANDLER.\n"
+        f"  omitted (a capability agents will never use): "
+        f"{sorted(set(SHAPE_TO_HANDLER) - documented)}\n"
+        f"  phantom (vocabulary the engine rejects):      "
+        f"{sorted(documented - set(SHAPE_TO_HANDLER))}"
     )
 
 
-def test_doc_ellipse_not_in_dot_reference_shape_table():
-    """context/dot-reference.md must NOT list ellipse as a supported shape (D-129).
+def test_readme_shape_table_matches_shape_to_handler():
+    """README.md's shape table must not omit a supported shape.
 
-    ellipse was removed from SHAPE_TO_HANDLER; documenting it as an alias
-    is misleading even though it falls through to the default codergen handler.
+    Superseded D-127, whose premise ("diamond has no registered handler") was
+    invalidated when ConditionalHandler landed -- see
+    test_doc_shape_tables_match_shape_to_handler for the full timeline.
     """
-    doc = (_repo_root() / "context" / "dot-reference.md").read_text()
-    assert "| `ellipse` |" not in doc, (
-        "context/dot-reference.md still lists 'ellipse' as a shape in the "
-        "handler table — remove it (D-129)"
-    )
+    from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
 
-
-def test_doc_diamond_not_in_readme_shape_table():
-    """README.md must NOT list diamond as a supported shape (D-127).
-
-    Same root cause as D-128 — diamond has no registered handler.
-    """
     doc = (_repo_root() / "README.md").read_text()
-    assert "| `diamond` |" not in doc, (
-        "README.md still lists 'diamond' as a shape in the handler table "
-        "— remove it (D-127)"
+    table = doc.split("| Shape |")[1].split("\n\n")[0] if "| Shape |" in doc else doc
+    documented = set(re.findall(r"^\| `([A-Za-z]+)` \|", table, re.M))
+    assert documented == set(SHAPE_TO_HANDLER), (
+        f"README.md shape table diverges from SHAPE_TO_HANDLER.\n"
+        f"  omitted: {sorted(set(SHAPE_TO_HANDLER) - documented)}\n"
+        f"  phantom: {sorted(documented - set(SHAPE_TO_HANDLER))}"
     )

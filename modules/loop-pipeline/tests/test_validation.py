@@ -4,6 +4,8 @@ Covers spec Section 7 (Validation and Linting): diagnostic model,
 built-in lint rules, and validate/validate_or_raise API.
 """
 
+import re
+
 import pytest
 
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
@@ -658,12 +660,44 @@ def test_extra_rules_multiple():
 # --- SHAPE_TO_HANDLER / _LLM_SHAPES completeness ---
 
 
-def test_ellipse_removed_from_shape_to_handler():
-    """ellipse shape must NOT be in SHAPE_TO_HANDLER (removed — was never used)."""
+# Shapes this implementation adds beyond the upstream nlspec §2.8 table.
+# Every entry here MUST have a corresponding record in specs/EXTENSIONS.md.
+_INTENTIONAL_SHAPE_EXTENSIONS = {"folder": "pipeline"}
+
+
+def test_shape_to_handler_conforms_to_upstream_nlspec():
+    """SHAPE_TO_HANDLER must equal the upstream §2.8 table plus recorded extensions.
+
+    This is the guard that was missing.  In 2026-04 `diamond`/`conditional` was
+    deleted from SHAPE_TO_HANDLER on the reasoning that a no-op handler is
+    redundant -- but upstream §2.8 lists it and §4.7 specifies it, and being a
+    no-op is the design.  Nothing caught the divergence.  The consequence
+    (found six weeks later, in the commit that restored it): `shape=diamond`
+    silently fell through to the codergen LLM handler, so every routing node
+    became a paid model call.
+
+    Deriving from the spec makes that class of drift impossible to land
+    quietly: remove a spec-mandated shape and this test names it.  Add a new
+    one and you must record it in _INTENTIONAL_SHAPE_EXTENSIONS *and*
+    specs/EXTENSIONS.md.  It also subsumes every "shape X must not exist"
+    assertion -- phantom vocabulary fails set equality without being named.
+    """
     from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
 
-    assert "ellipse" not in SHAPE_TO_HANDLER, (
-        "ellipse should be removed from SHAPE_TO_HANDLER"
+    spec = (_repo_root() / "specs" / "canonical" / "attractor-spec-canonical.md").read_text()
+    rows = re.findall(r"^\|\s*`([A-Za-z]+)`\s*\|\s*`([a-z_.]+)`", spec, re.M)
+    upstream = {shape: handler for shape, handler in rows}
+    assert upstream, "could not parse the §2.8 shape table from the canonical spec"
+
+    expected = {**upstream, **_INTENTIONAL_SHAPE_EXTENSIONS}
+    assert SHAPE_TO_HANDLER == expected, (
+        f"SHAPE_TO_HANDLER diverges from upstream nlspec §2.8.\n"
+        f"  missing (spec requires): {sorted(set(expected) - set(SHAPE_TO_HANDLER))}\n"
+        f"  unrecorded extras:       {sorted(set(SHAPE_TO_HANDLER) - set(expected))}\n"
+        f"  handler mismatches:      "
+        f"{ {k: (expected[k], SHAPE_TO_HANDLER[k]) for k in set(expected) & set(SHAPE_TO_HANDLER) if expected[k] != SHAPE_TO_HANDLER[k]} }\n"
+        f"An intentional addition must be recorded in _INTENTIONAL_SHAPE_EXTENSIONS "
+        f"and specs/EXTENSIONS.md."
     )
 
 
@@ -938,25 +972,13 @@ def test_doc_shape_tables_match_shape_to_handler():
     from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
 
     doc = (_repo_root() / "context" / "dot-reference.md").read_text()
-    documented = {s for s in SHAPE_TO_HANDLER if f"| `{s}` |" in doc}
-    missing = set(SHAPE_TO_HANDLER) - documented
-    assert not missing, (
-        f"context/dot-reference.md omits supported shape(s) {sorted(missing)} "
-        f"from its handler table. Agents read this file; an omitted shape is a "
-        f"capability they will never use. Add a row for each."
-    )
-
-
-def test_doc_ellipse_not_in_dot_reference_shape_table():
-    """context/dot-reference.md must NOT list ellipse as a supported shape (D-129).
-
-    ellipse was removed from SHAPE_TO_HANDLER; documenting it as an alias
-    is misleading even though it falls through to the default codergen handler.
-    """
-    doc = (_repo_root() / "context" / "dot-reference.md").read_text()
-    assert "| `ellipse` |" not in doc, (
-        "context/dot-reference.md still lists 'ellipse' as a shape in the "
-        "handler table — remove it (D-129)"
+    documented = set(re.findall(r"^\| `([A-Za-z]+)` \|", doc, re.M))
+    assert documented == set(SHAPE_TO_HANDLER), (
+        f"context/dot-reference.md shape table diverges from SHAPE_TO_HANDLER.\n"
+        f"  omitted (a capability agents will never use): "
+        f"{sorted(set(SHAPE_TO_HANDLER) - documented)}\n"
+        f"  phantom (vocabulary the engine rejects):      "
+        f"{sorted(documented - set(SHAPE_TO_HANDLER))}"
     )
 
 
@@ -970,8 +992,10 @@ def test_readme_shape_table_matches_shape_to_handler():
     from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
 
     doc = (_repo_root() / "README.md").read_text()
-    documented = {s for s in SHAPE_TO_HANDLER if f"| `{s}` |" in doc}
-    missing = set(SHAPE_TO_HANDLER) - documented
-    assert not missing, (
-        f"README.md omits supported shape(s) {sorted(missing)} from its shape table."
+    table = doc.split("| Shape |")[1].split("\n\n")[0] if "| Shape |" in doc else doc
+    documented = set(re.findall(r"^\| `([A-Za-z]+)` \|", table, re.M))
+    assert documented == set(SHAPE_TO_HANDLER), (
+        f"README.md shape table diverges from SHAPE_TO_HANDLER.\n"
+        f"  omitted: {sorted(set(SHAPE_TO_HANDLER) - documented)}\n"
+        f"  phantom: {sorted(documented - set(SHAPE_TO_HANDLER))}"
     )

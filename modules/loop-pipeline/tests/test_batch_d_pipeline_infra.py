@@ -409,7 +409,7 @@ class TestM21ShapeNameSelectors:
             name="test",
             nodes={
                 "code_node": Node(id="code_node", shape="box", prompt="Code"),
-                "human_node": Node(id="human_node", shape="ellipse", prompt="Review"),
+                "human_node": Node(id="human_node", shape="hexagon", prompt="Review"),
             },
             edges=[],
         )

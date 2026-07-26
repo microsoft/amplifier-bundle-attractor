@@ -919,17 +919,31 @@ def _repo_root():
     return Path(__file__).parent.parent.parent.parent
 
 
-def test_doc_diamond_not_in_dot_reference_shape_table():
-    """context/dot-reference.md must NOT list diamond as a supported shape (D-128).
+def test_doc_shape_tables_match_shape_to_handler():
+    """Agent-visible shape tables must match SHAPE_TO_HANDLER exactly.
 
-    diamond was removed from SHAPE_TO_HANDLER; listing it in the agent-visible
-    reference card causes agents to generate invalid pipelines.
+    Derived from ground truth rather than a hardcoded snapshot, because the
+    hardcoded form went stale and became a guard protecting a false claim:
+
+      2026-04-11  diamond/conditional removed from SHAPE_TO_HANDLER
+      2026-04-17  test added asserting "diamond must NOT appear in docs"
+      2026-05-23  ConditionalHandler implemented -- diamond RE-ADDED
+
+    For two months the test enforced the April state against May's code, so
+    the reference card silently under-documented a supported shape and any
+    attempt to correct it hit a red bar.  A derived assertion cannot drift:
+    add or remove a shape in SHAPE_TO_HANDLER and this test tells you which
+    doc to update.
     """
+    from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
+
     doc = (_repo_root() / "context" / "dot-reference.md").read_text()
-    # Match a markdown table row whose first cell is exactly `diamond`
-    assert "| `diamond` |" not in doc, (
-        "context/dot-reference.md still lists 'diamond' as a shape in the "
-        "handler table — remove it (D-128)"
+    documented = {s for s in SHAPE_TO_HANDLER if f"| `{s}` |" in doc}
+    missing = set(SHAPE_TO_HANDLER) - documented
+    assert not missing, (
+        f"context/dot-reference.md omits supported shape(s) {sorted(missing)} "
+        f"from its handler table. Agents read this file; an omitted shape is a "
+        f"capability they will never use. Add a row for each."
     )
 
 
@@ -946,13 +960,18 @@ def test_doc_ellipse_not_in_dot_reference_shape_table():
     )
 
 
-def test_doc_diamond_not_in_readme_shape_table():
-    """README.md must NOT list diamond as a supported shape (D-127).
+def test_readme_shape_table_matches_shape_to_handler():
+    """README.md's shape table must not omit a supported shape.
 
-    Same root cause as D-128 — diamond has no registered handler.
+    Superseded D-127, whose premise ("diamond has no registered handler") was
+    invalidated when ConditionalHandler landed -- see
+    test_doc_shape_tables_match_shape_to_handler for the full timeline.
     """
+    from amplifier_module_loop_pipeline.validation import SHAPE_TO_HANDLER
+
     doc = (_repo_root() / "README.md").read_text()
-    assert "| `diamond` |" not in doc, (
-        "README.md still lists 'diamond' as a shape in the handler table "
-        "— remove it (D-127)"
+    documented = {s for s in SHAPE_TO_HANDLER if f"| `{s}` |" in doc}
+    missing = set(SHAPE_TO_HANDLER) - documented
+    assert not missing, (
+        f"README.md omits supported shape(s) {sorted(missing)} from its shape table."
     )

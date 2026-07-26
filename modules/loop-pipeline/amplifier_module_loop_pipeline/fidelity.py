@@ -7,7 +7,10 @@ window usage across multi-stage pipelines.
 Spec coverage: FID-001–010, Section 5.4.
 
 Modes:
-    full           – Reuse session (same thread), full history preserved.
+    full           – Fresh spawn, prior node exchanges replayed as ``parent_messages``.
+                     NOT session reuse: continuity is a transcript replayed into a new
+                     spawn, at node-exchange granularity, branch-local. See
+                     ``backend.py`` module docstring and EXTENSIONS.md §12–13.
     truncate       – Fresh session, minimal: only graph goal and run ID.
     compact        – Fresh session, structured bullet-point summary.
     summary:low    – Fresh session, ~600 token text summary.
@@ -166,7 +169,8 @@ def build_preamble(
     """Build a context preamble string for a fresh session.
 
     The preamble synthesizes prior execution state for nodes that
-    don't use full fidelity (which reuses sessions instead).
+    don't use full fidelity (which carries prior state as replayed
+    ``parent_messages`` on a fresh spawn instead of as a preamble).
 
     Args:
         fidelity: The resolved fidelity mode.

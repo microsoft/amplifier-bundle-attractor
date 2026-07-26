@@ -193,10 +193,12 @@ Quick version -- pipelines are Graphviz DOT digraphs where node shapes determine
 | `Mdiamond` | Start node (entry point) |
 | `Msquare` | Exit node (pipeline end) |
 | `box` | LLM agent node (default) |
+| `diamond` | Conditional routing point (no-op handler; edges do the routing) |
 | `component` | Parallel fan-out |
 | `tripleoctagon` | Parallel fan-in (collect results) |
 | `hexagon` | Human approval gate |
 | `parallelogram` | External tool execution |
+| `folder` | Nested sub-pipeline (runs a child DOT via `dot_file=`) |
 | `house` | Manager/supervisor loop |
 
 Minimal pipeline:

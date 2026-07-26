@@ -85,7 +85,8 @@ class AmplifierBackend:
       (LLM call → tool execution → repeat).
 
     Supports fidelity-based context control:
-    - ``full``: Reuses sessions via a thread-keyed session pool.
+    - ``full``: Fresh spawn with prior node exchanges replayed as ``parent_messages``
+      (thread-keyed transcript, NOT a session pool -- see the module docstring above).
     - ``compact``/``truncate``/``summary:*``: Fresh session with preamble.
     """
 
@@ -134,7 +135,9 @@ class AmplifierBackend:
         """Create a clone with shared immutable refs but fresh mutable state.
 
         Used for parallel branch isolation so concurrent branches don't
-        corrupt each other's session pools or completion tracking.
+        corrupt each other's thread transcripts or completion tracking.
+        (``_thread_transcripts`` is reset here, so branches sharing an
+        explicit ``thread_id`` still each start fresh -- EXTENSIONS.md §13.)
         """
         new = AmplifierBackend.__new__(AmplifierBackend)
         # Shared immutable refs

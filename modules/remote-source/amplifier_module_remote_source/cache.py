@@ -107,10 +107,25 @@ class BlobCache:
         construction. Each writer writes to its own unique temp path, then
         atomically ``os.replace``s it into place -- concurrent writers race
         harmlessly and the last rename simply wins with identical bytes.
+
+        The "already exists, skip" fast path is only trustworthy if the
+        existing file's bytes still match ``content`` -- an on-disk blob can
+        become corrupted (bitrot, external tampering) independent of any
+        writer here. Without this check, ``get()``'s 304-path self-heal
+        (which re-verifies via ``git_blob_sha`` and re-fetches on mismatch)
+        would fetch correct bytes but then silently fail to persist them,
+        since this method would see the (corrupted) path already exists and
+        return without ever overwriting it -- leaving the cache permanently
+        corrupted for that blob and forcing a repeat self-heal fetch on every
+        subsequent call.
         """
         p = self._blob_path(blob_sha)
         if p.exists():
-            return  # content-addressed: identical bytes stored once
+            try:
+                if p.read_bytes() == content:
+                    return  # content-addressed: identical bytes stored once
+            except OSError:
+                pass  # unreadable existing file -- fall through and rewrite
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_name(f"{p.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
         try:
@@ -162,14 +177,19 @@ class BlobCache:
 
         if result.not_modified and entry:
             blob = self._read_blob(entry["blob_sha"])
-            if blob is not None:
+            # Re-verify on every 304, not just on fresh 200s: a blob's path
+            # *is* its sha, so re-hashing on read is cheap, and it's the only
+            # thing standing between an on-disk bitrot/corruption event and
+            # silently handing back wrong bytes forever (the 304 path never
+            # touches the network, so nothing else would ever catch it).
+            if blob is not None and git_blob_sha(blob) == entry["blob_sha"]:
                 return blob, entry["blob_sha"]
-            # Cached ref says "not modified" but the blob file is gone from
-            # disk (e.g. externally deleted). Self-heal with a single forced
-            # refetch that skips the etag, guaranteeing a full 200 with
-            # content instead of another 304. No loop: if this second fetch
-            # still yields no content, fall through to the empty-result
-            # error below.
+            # Either the blob file is gone from disk (e.g. externally
+            # deleted) or its content no longer hashes to its own filename
+            # (corrupted). Self-heal with a single forced refetch that skips
+            # the etag, guaranteeing a full 200 with content instead of
+            # another 304. No loop: if this second fetch still yields no
+            # content, fall through to the empty-result error below.
             result = await fetch_fn(
                 origin, token=token, base_url=base_url, etag=None, limits=limits
             )

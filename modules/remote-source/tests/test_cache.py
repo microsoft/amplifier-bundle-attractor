@@ -124,6 +124,45 @@ async def test_reuses_on_304_even_when_cached_blob_deleted_by_self_heal(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_reuses_on_304_even_when_cached_blob_corrupted_on_disk(tmp_path):
+    """304 + an on-disk blob whose bytes no longer hash to its own filename
+    (e.g. bitrot/external corruption) must self-heal via a forced no-etag
+    refetch, not silently hand back the wrong bytes.
+
+    Fail-before: with the old code, the 304 branch did ``_read_blob() ->
+    return blob`` unconditionally whenever the file existed, with no
+    ``git_blob_sha(blob) == entry["blob_sha"]`` check -- corrupted content
+    would be returned as if it were valid, forever, since a 304 never
+    touches the network.
+    """
+    cache = BlobCache(tmp_path)
+    f = ThreeOhFourThenContentFetcher()
+
+    # Prime the cache: first fetch (no etag on disk yet) gets full content.
+    content, sha = await cache.get(_origin(ref="main"), fetch_fn=f)
+    assert content == f.content
+    assert f.calls == 1
+
+    blob_path = cache._blob_path(sha)
+    assert blob_path.exists()
+
+    # Corrupt the on-disk blob in place -- the ref still points at `sha`,
+    # but the bytes under that path no longer hash to it.
+    blob_path.write_bytes(b"corrupted, does not match its own sha")
+
+    # get() must detect the mismatch on the 304 path and self-heal: the
+    # revalidation request (with etag) returns 304, then a forced no-etag
+    # refetch returns full (correct) content, which gets rewritten to disk.
+    content2, sha2 = await cache.get(_origin(ref="main"), fetch_fn=f)
+
+    assert content2 == f.content
+    assert sha2 == sha
+    assert f.calls == 3  # 1 (prime) + 1 (etag'd 304) + 1 (forced no-etag refetch)
+    assert f.etags_seen == [None, '"e1"', None]
+    assert blob_path.read_bytes() == f.content, "corrupted blob must be overwritten with correct bytes"
+
+
+@pytest.mark.asyncio
 async def test_second_fetch_still_empty_after_self_heal_raises(tmp_path):
     """If the forced no-etag refetch ALSO yields no content, get() must
     still raise -- self-heal is a single attempt, not a retry loop."""

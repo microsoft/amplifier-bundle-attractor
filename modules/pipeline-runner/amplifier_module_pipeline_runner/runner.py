@@ -136,6 +136,23 @@ def seed_context(
     context.set("context.target_dir", str(cwd))
 
 
+async def _load_graph(graph_or_dot: "Graph | str"):
+    """Return (graph, cleanup). If graph_or_dot is a git+https:// URL, materialize
+    the remote tree (async, before parse) and parse the local entry; otherwise
+    behave exactly as before. cleanup() removes any per-run materialized view.
+
+    Thin wrapper around ``amplifier_module_loop_pipeline.remote_dot.
+    load_remote_or_local_graph`` -- the single materialize/parse/cleanup
+    sequence shared with the mounted ``PipelineOrchestrator.execute()`` hook,
+    so the two engine entry points can't diverge. Kept as a module-level
+    function (rather than inlined into ``drive_engine``) so it stays
+    independently monkeypatchable in tests.
+    """
+    from amplifier_module_loop_pipeline.remote_dot import load_remote_or_local_graph
+
+    return await load_remote_or_local_graph(graph_or_dot)
+
+
 async def drive_engine(
     graph_or_dot: "Graph | str",
     coordinator: Any,
@@ -197,57 +214,59 @@ async def drive_engine(
     """
     from amplifier_module_loop_pipeline.backend import AmplifierBackend
     from amplifier_module_loop_pipeline.context import PipelineContext
-    from amplifier_module_loop_pipeline.dot_parser import parse_dot
     from amplifier_module_loop_pipeline.engine import PipelineEngine
     from amplifier_module_loop_pipeline.handlers import HandlerContext, HandlerRegistry
     from amplifier_module_loop_pipeline.transforms import apply_transforms
     from amplifier_module_loop_pipeline.validation import validate_or_raise
 
-    graph = parse_dot(graph_or_dot) if isinstance(graph_or_dot, str) else graph_or_dot
+    graph, _source_cleanup = await _load_graph(graph_or_dot)
 
-    resolved_cwd = Path(cwd) if cwd is not None else Path.cwd()
+    try:
+        resolved_cwd = Path(cwd) if cwd is not None else Path.cwd()
 
-    context = PipelineContext()
-    seed_context(context, params, resolved_cwd)
+        context = PipelineContext()
+        seed_context(context, params, resolved_cwd)
 
-    if transform:
-        graph = apply_transforms(graph, context)
+        if transform:
+            graph = apply_transforms(graph, context)
 
-    if validate:
-        # Fail loud on graph-shape problems before spending an LLM call.
-        validate_or_raise(graph)
+        if validate:
+            # Fail loud on graph-shape problems before spending an LLM call.
+            validate_or_raise(graph)
 
-    # Default engine/handler observability to the coordinator's own hook stack
-    # when the caller didn't supply hooks. A mounted observability hook (e.g.
-    # a session-level logging/telemetry hook composed onto the bundle) lives on
-    # ``coordinator.hooks``; the mounted-orchestrator path reaches it because
-    # the session hands the orchestrator ``coordinator.hooks`` and it forwards
-    # that same object into ``PipelineEngine(hooks=...)``. Driving the engine
-    # directly, we must do the same, or the engine's ``pipeline:*`` events (and
-    # handler-emitted ``provider:*``/``tool:*`` events) are emitted into nothing
-    # and never reach the session's observers. ``getattr(..., None)`` keeps
-    # bare test-stub coordinators (which may lack ``.hooks``) safe, and the
-    # ``hooks is not None`` guard preserves an explicit caller override.
-    effective_hooks = hooks if hooks is not None else getattr(coordinator, "hooks", None)
+        # Default engine/handler observability to the coordinator's own hook stack
+        # when the caller didn't supply hooks. A mounted observability hook (e.g.
+        # a session-level logging/telemetry hook composed onto the bundle) lives on
+        # ``coordinator.hooks``; the mounted-orchestrator path reaches it because
+        # the session hands the orchestrator ``coordinator.hooks`` and it forwards
+        # that same object into ``PipelineEngine(hooks=...)``. Driving the engine
+        # directly, we must do the same, or the engine's ``pipeline:*`` events (and
+        # handler-emitted ``provider:*``/``tool:*`` events) are emitted into nothing
+        # and never reach the session's observers. ``getattr(..., None)`` keeps
+        # bare test-stub coordinators (which may lack ``.hooks``) safe, and the
+        # ``hooks is not None`` guard preserves an explicit caller override.
+        effective_hooks = hooks if hooks is not None else getattr(coordinator, "hooks", None)
 
-    backend = AmplifierBackend(
-        coordinator=coordinator,
-        profiles=dict(profiles or DEFAULT_PROFILES),
-    )
-    registry = HandlerRegistry(
-        HandlerContext(
-            backend=backend, hooks=effective_hooks, interviewer=interviewer
+        backend = AmplifierBackend(
+            coordinator=coordinator,
+            profiles=dict(profiles or DEFAULT_PROFILES),
         )
-    )
-    engine = PipelineEngine(
-        graph=graph,
-        context=context,
-        handler_registry=registry,
-        logs_root=str(logs_root),
-        hooks=effective_hooks,
-    )
+        registry = HandlerRegistry(
+            HandlerContext(
+                backend=backend, hooks=effective_hooks, interviewer=interviewer
+            )
+        )
+        engine = PipelineEngine(
+            graph=graph,
+            context=context,
+            handler_registry=registry,
+            logs_root=str(logs_root),
+            hooks=effective_hooks,
+        )
 
-    return await engine.run()
+        return await engine.run()
+    finally:
+        _source_cleanup()
 
 
 async def _resolve_agent_bundle(agent_name: str, config: dict[str, Any]) -> Any:
@@ -590,7 +609,10 @@ async def run_pipeline(
     cwd_path = Path(cwd).expanduser().resolve() if cwd is not None else Path.cwd()
     cwd_path.mkdir(parents=True, exist_ok=True)
 
-    (logs_dir / "pipeline.dot").write_text(dot_source, encoding="utf-8")
+    # A git+https:// entry is a URL, not DOT -- don't write it as pipeline.dot.
+    # (drive_engine materializes it; the resolved graph is logged by the engine.)
+    if not dot_source.startswith("git+https://"):
+        (logs_dir / "pipeline.dot").write_text(dot_source, encoding="utf-8")
 
     resolved_profiles = dict(profiles) if profiles else dict(DEFAULT_PROFILES)
 

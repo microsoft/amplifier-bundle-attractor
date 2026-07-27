@@ -10,7 +10,7 @@ authors = [
 dependencies = [
     "amplifier-core>=0.1.0",
     "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation@main",
-    "amplifier-module-loop-pipeline @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline",
+    "amplifier-module-loop-pipeline[remote] @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline",
 ]
 
 [project.scripts]
@@ -27,6 +27,7 @@ package = true
 
 [tool.uv.sources]
 amplifier-module-loop-pipeline = { path = "../loop-pipeline" }
+amplifier-module-remote-source = { path = "../remote-source" }
 
 [tool.hatch.build.targets.wheel]
 packages = [

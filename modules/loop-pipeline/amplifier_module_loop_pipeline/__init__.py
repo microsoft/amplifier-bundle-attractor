@@ -20,7 +20,6 @@ import tempfile
 from typing import Any
 
 from .context import PipelineContext
-from .dot_parser import parse_dot
 from .engine import PipelineEngine
 from .handlers import HandlerRegistry
 from .handlers.context import HandlerContext
@@ -486,149 +485,161 @@ class PipelineOrchestrator:
         # 1. Get DOT source
         dot_source = self._resolve_dot_source()
 
-        # 2. Parse the DOT graph
-        graph = parse_dot(dot_source)
+        # 2. Parse the DOT graph — materialize first if it's a remote entry.
+        # Shared with the direct-engine `drive_engine`/`_load_graph` hook in
+        # pipeline-runner via remote_dot.load_remote_or_local_graph, so the two
+        # engine entry points can't diverge (see that function's docstring).
+        from .remote_dot import load_remote_or_local_graph  # lazy: keeps import net-free
 
-        # 3. Create pipeline context with goal from the prompt
-        pipeline_context = PipelineContext()
-        if prompt:
-            pipeline_context.set("graph.goal", prompt)
+        graph, _source_cleanup = await load_remote_or_local_graph(dot_source)
 
-        # Set params for $param expansion in transforms
-        params = self.config.get("params")
-        if params:
-            pipeline_context.set("graph.params_values", params)
+        try:
+            # 3. Create pipeline context with goal from the prompt
+            pipeline_context = PipelineContext()
+            if prompt:
+                pipeline_context.set("graph.goal", prompt)
 
-        # 4. Apply transforms (variable expansion, stylesheet) before validation
-        apply_transforms(graph, pipeline_context)
+            # Set params for $param expansion in transforms
+            params = self.config.get("params")
+            if params:
+                pipeline_context.set("graph.params_values", params)
 
-        # 5. Validate the (transformed) graph
-        validate_or_raise(graph)
+            # 4. Apply transforms (variable expansion, stylesheet) before validation
+            apply_transforms(graph, pipeline_context)
 
-        # 6. Set up logs directory
-        logs_root = self.config.get(
-            "logs_root", os.path.join(tempfile.gettempdir(), "attractor-pipeline")
-        )
-        os.makedirs(logs_root, exist_ok=True)
+            # 5. Validate the (transformed) graph
+            validate_or_raise(graph)
 
-        # 6b. Write the DOT source for dashboard visualization
-        dot_path = os.path.join(logs_root, "graph.dot")
-        with open(dot_path, "w") as f:
-            f.write(dot_source)
+            # 6. Set up logs directory
+            logs_root = self.config.get(
+                "logs_root", os.path.join(tempfile.gettempdir(), "attractor-pipeline")
+            )
+            os.makedirs(logs_root, exist_ok=True)
 
-        # 7. Resolve backend: explicit kwarg \u2192 auto-construct from providers
-        coordinator = kwargs.get("coordinator")
-        backend = kwargs.get("backend")
-        if backend is None:
-            backend = _build_backend(providers, tools, hooks, coordinator, self.config)
-
-        # 7b. Environment setup (if configured)
-        env_config: dict[str, Any] | None = self.config.get("execution_environment")
-        container_id = None
-        env_instance_name = "pipeline-workspace"  # default for teardown
-        if env_config:
-            env_instance_name = env_config.get("name", "pipeline-workspace")
-            if "env_create" in tools:
-                env_create_args = dict(env_config)  # copy to avoid mutating config
-                env_create_args.setdefault("type", "docker")
-                env_create_args.setdefault("name", "pipeline-workspace")
-                result = await tools["env_create"].execute(env_create_args)
-                try:
-                    parsed = json.loads(result.output)
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(
-                        "env_create returned unparseable output: %s", result.output
-                    )
-                    parsed = {}
-                container_id = parsed.get("container_id")
-                if container_id:
-                    pipeline_context.set("internal.env_container_id", container_id)
-                    pipeline_context.set(
-                        "internal.env_type", env_config.get("type", "docker")
-                    )
-                    logger.info(
-                        "Execution environment created: %s (container_id=%s)",
-                        env_instance_name,
-                        container_id,
-                    )
-                else:
-                    logger.warning(
-                        "env_create succeeded but returned no container_id "
-                        "— falling back to local execution"
-                    )
-            else:
-                logger.warning(
-                    "execution_environment configured but env_create tool not "
-                    "available (env-all bundle not composed?) — falling back "
-                    "to local execution"
+            # 6b. Write the DOT source for dashboard visualization
+            dot_path = os.path.join(logs_root, "graph.dot")
+            with open(dot_path, "w") as f:
+                f.write(
+                    dot_source
+                    if not dot_source.startswith("git+https://")
+                    else f"// materialized from {dot_source}\n"
                 )
 
-        # 8. Create registry (no closures, no rewire — engine passes self at call time)
-        registry = HandlerRegistry(
-            HandlerContext(
-                backend=backend,
+            # 7. Resolve backend: explicit kwarg \u2192 auto-construct from providers
+            coordinator = kwargs.get("coordinator")
+            backend = kwargs.get("backend")
+            if backend is None:
+                backend = _build_backend(providers, tools, hooks, coordinator, self.config)
+
+            # 7b. Environment setup (if configured)
+            env_config: dict[str, Any] | None = self.config.get("execution_environment")
+            container_id = None
+            env_instance_name = "pipeline-workspace"  # default for teardown
+            if env_config:
+                env_instance_name = env_config.get("name", "pipeline-workspace")
+                if "env_create" in tools:
+                    env_create_args = dict(env_config)  # copy to avoid mutating config
+                    env_create_args.setdefault("type", "docker")
+                    env_create_args.setdefault("name", "pipeline-workspace")
+                    result = await tools["env_create"].execute(env_create_args)
+                    try:
+                        parsed = json.loads(result.output)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(
+                            "env_create returned unparseable output: %s", result.output
+                        )
+                        parsed = {}
+                    container_id = parsed.get("container_id")
+                    if container_id:
+                        pipeline_context.set("internal.env_container_id", container_id)
+                        pipeline_context.set(
+                            "internal.env_type", env_config.get("type", "docker")
+                        )
+                        logger.info(
+                            "Execution environment created: %s (container_id=%s)",
+                            env_instance_name,
+                            container_id,
+                        )
+                    else:
+                        logger.warning(
+                            "env_create succeeded but returned no container_id "
+                            "— falling back to local execution"
+                        )
+                else:
+                    logger.warning(
+                        "execution_environment configured but env_create tool not "
+                        "available (env-all bundle not composed?) — falling back "
+                        "to local execution"
+                    )
+
+            # 8. Create registry (no closures, no rewire — engine passes self at call time)
+            registry = HandlerRegistry(
+                HandlerContext(
+                    backend=backend,
+                    hooks=hooks,
+                )
+            )
+
+            # 9. Create engine (carries itself to handlers via execute(engine=...))
+            engine = PipelineEngine(
+                graph=graph,
+                context=pipeline_context,
+                handler_registry=registry,
+                logs_root=logs_root,
                 hooks=hooks,
             )
-        )
 
-        # 9. Create engine (carries itself to handlers via execute(engine=...))
-        engine = PipelineEngine(
-            graph=graph,
-            context=pipeline_context,
-            handler_registry=registry,
-            logs_root=logs_root,
-            hooks=hooks,
-        )
+            # 10. Run the engine (with environment teardown in finally)
+            try:
+                outcome = await engine.run(goal=prompt or None)
+            finally:
+                # Backend teardown: release any cached LLM client (e.g. the
+                # AsyncAnthropic/httpx client the fallback path lazily creates)
+                # WITHIN this event loop. Skipping it lets GC run aclose() on a
+                # closed loop later, raising "RuntimeError: Event loop is closed"
+                # (spec finalize contract: attractor-spec.md Section 3.1 step 6).
+                backend_close = getattr(backend, "close", None)
+                if backend_close is not None:
+                    try:
+                        await backend_close()
+                    except Exception:
+                        logger.exception(
+                            "Failed to close backend during finalize - LLM client may leak"
+                        )
 
-        # 10. Run the engine (with environment teardown in finally)
-        try:
-            outcome = await engine.run(goal=prompt or None)
+                # Environment teardown
+                if container_id and "env_destroy" in tools:
+                    try:
+                        await tools["env_destroy"].execute({"instance": env_instance_name})
+                        logger.info(
+                            "Execution environment destroyed: %s",
+                            env_instance_name,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to destroy execution environment %s "
+                            "— container may need manual cleanup",
+                            env_instance_name,
+                        )
+
+            # 12. Build a meaningful summary from all completed nodes
+            summary = self._build_pipeline_summary(engine, outcome)
+
+            # 13. Return the final outcome as JSON
+            result = {
+                "status": outcome.status.value,
+                "notes": summary,
+                "failure_reason": outcome.failure_reason,
+                "nodes_completed": len(engine.completed_nodes),
+                "node_statuses": {
+                    nid: engine.node_outcomes[nid].status.value
+                    for nid in engine.completed_nodes
+                    if nid in engine.node_outcomes
+                },
+            }
+            return json.dumps(result)
         finally:
-            # Backend teardown: release any cached LLM client (e.g. the
-            # AsyncAnthropic/httpx client the fallback path lazily creates)
-            # WITHIN this event loop. Skipping it lets GC run aclose() on a
-            # closed loop later, raising "RuntimeError: Event loop is closed"
-            # (spec finalize contract: attractor-spec.md Section 3.1 step 6).
-            backend_close = getattr(backend, "close", None)
-            if backend_close is not None:
-                try:
-                    await backend_close()
-                except Exception:
-                    logger.exception(
-                        "Failed to close backend during finalize - LLM client may leak"
-                    )
-
-            # Environment teardown
-            if container_id and "env_destroy" in tools:
-                try:
-                    await tools["env_destroy"].execute({"instance": env_instance_name})
-                    logger.info(
-                        "Execution environment destroyed: %s",
-                        env_instance_name,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to destroy execution environment %s "
-                        "— container may need manual cleanup",
-                        env_instance_name,
-                    )
-
-        # 12. Build a meaningful summary from all completed nodes
-        summary = self._build_pipeline_summary(engine, outcome)
-
-        # 13. Return the final outcome as JSON
-        result = {
-            "status": outcome.status.value,
-            "notes": summary,
-            "failure_reason": outcome.failure_reason,
-            "nodes_completed": len(engine.completed_nodes),
-            "node_statuses": {
-                nid: engine.node_outcomes[nid].status.value
-                for nid in engine.completed_nodes
-                if nid in engine.node_outcomes
-            },
-        }
-        return json.dumps(result)
+            _source_cleanup()
 
     def _build_pipeline_summary(self, engine: PipelineEngine, outcome: Outcome) -> str:
         """Build a human-readable pipeline summary.

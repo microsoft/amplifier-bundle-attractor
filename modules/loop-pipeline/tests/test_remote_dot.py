@@ -7,7 +7,10 @@ import httpx
 import pytest
 import respx
 
-from amplifier_module_loop_pipeline.remote_dot import materialize_remote_dot
+from amplifier_module_loop_pipeline.remote_dot import (
+    load_remote_or_local_graph,
+    materialize_remote_dot,
+)
 from amplifier_module_remote_source import (
     BlobCache,
     FetchLimits,
@@ -218,3 +221,85 @@ async def test_real_recursive_fetch(tmp_path):
         assert entry_path.read_text().strip()
     finally:
         cleanup()
+
+
+# --- load_remote_or_local_graph: the shared materialize/parse/cleanup hook ---
+# used by both `pipeline_runner.runner._load_graph` and the mounted
+# `PipelineOrchestrator.execute()` -- see that function's docstring for why
+# the two hand-synced copies were unified into this one.
+
+
+@pytest.mark.asyncio
+async def test_load_local_string_parses_and_noop_cleanup():
+    graph, cleanup = await load_remote_or_local_graph(
+        "digraph G { s [shape=Mdiamond]; d [shape=Msquare]; s -> d }"
+    )
+    assert "s" in graph.nodes
+    assert "d" in graph.nodes
+    cleanup()  # must not raise -- no-op for the local path
+
+
+@pytest.mark.asyncio
+async def test_load_local_graph_object_passthrough():
+    from amplifier_module_loop_pipeline.dot_parser import parse_dot
+
+    original = parse_dot("digraph G { s [shape=Mdiamond]; d [shape=Msquare]; s -> d }")
+    graph, cleanup = await load_remote_or_local_graph(original)
+    assert graph is original
+    cleanup()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_load_remote_sets_source_dir(tmp_path, monkeypatch):
+    # load_remote_or_local_graph -> materialize_remote_dot doesn't take an
+    # explicit cache override (matching both production call sites), so
+    # point the default cache root at tmp_path to keep this hermetic.
+    monkeypatch.setenv("ATTRACTOR_CACHE_DIR", str(tmp_path / "cache"))
+    _contents("acme", "samples", "pipelines/main.dot",
+              "digraph G { s [shape=Mdiamond]; d [shape=Msquare]; s -> d }")
+    graph, cleanup = await load_remote_or_local_graph(ENTRY)
+    try:
+        assert graph.source_dir is not None
+        assert os.path.isdir(graph.source_dir)
+    finally:
+        cleanup()
+
+
+@pytest.mark.asyncio
+async def test_load_remote_cleanup_called_when_parse_fails(tmp_path, monkeypatch):
+    """If parse_dot raises after a successful materialize, cleanup must still
+    run and the per-run view must not leak -- this is the exact regression
+    both call sites (runner.drive_engine and the mounted orchestrator) guard
+    against, now exercised once against the shared implementation."""
+    import amplifier_module_loop_pipeline.remote_dot as remote_dot_mod
+
+    view_dir = tmp_path / "materialized-view"
+    view_dir.mkdir()
+    entry_path = view_dir / "main.dot"
+    entry_path.write_text("not valid dot", encoding="utf-8")
+
+    cleanup_calls: list[bool] = []
+
+    def _cleanup() -> None:
+        cleanup_calls.append(True)
+        import shutil
+
+        shutil.rmtree(view_dir, ignore_errors=True)
+
+    async def _fake_materialize(_source: str):
+        return entry_path, _cleanup
+
+    def _raising_parse_dot(_text: str):
+        raise ValueError("boom: simulated parse failure after materialize")
+
+    monkeypatch.setattr(remote_dot_mod, "materialize_remote_dot", _fake_materialize)
+    monkeypatch.setattr(remote_dot_mod, "parse_dot", _raising_parse_dot)
+
+    with pytest.raises(ValueError, match="boom"):
+        await load_remote_or_local_graph(
+            "git+https://github.com/acme/samples@main#subdirectory=pipelines/main.dot"
+        )
+
+    assert cleanup_calls == [True]
+    assert not view_dir.exists()

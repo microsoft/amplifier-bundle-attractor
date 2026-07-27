@@ -9,15 +9,17 @@ exception propagated from outside the try/finally and cleanup never ran,
 leaking the per-run materialized view directory on disk.
 
 The fix wraps just the materialize->parse window in its own try/except that
-calls cleanup and re-raises, mirroring the sibling hook in
-``amplifier_module_pipeline_runner.runner._load_graph``.
+calls cleanup and re-raises. That sequence now lives in the single shared
+``remote_dot.load_remote_or_local_graph`` helper used by both this mounted
+hook and the sibling direct-engine hook in
+``amplifier_module_pipeline_runner.runner._load_graph`` -- see that
+function's docstring for why the two were unified.
 """
 
 import shutil
 
 import pytest
 
-import amplifier_module_loop_pipeline as lp_pkg
 import amplifier_module_loop_pipeline.remote_dot as remote_dot_mod
 from amplifier_module_loop_pipeline import PipelineOrchestrator
 
@@ -47,14 +49,12 @@ async def test_cleanup_called_when_parse_fails_after_materialize(tmp_path, monke
     def _raising_parse_dot(_source: str):
         raise ValueError("boom: simulated parse failure after materialize")
 
-    # materialize_remote_dot is imported lazily inside execute() via
-    # `from .remote_dot import materialize_remote_dot`, so patching the
-    # attribute on the remote_dot module is what the lazy import will see.
+    # materialize_remote_dot and parse_dot are both referenced as module-level
+    # globals inside remote_dot.load_remote_or_local_graph (which execute()
+    # now delegates to), so patching them on the remote_dot module is what
+    # that shared helper's calls will see.
     monkeypatch.setattr(remote_dot_mod, "materialize_remote_dot", _fake_materialize)
-
-    # parse_dot is imported at module top-level in amplifier_module_loop_pipeline
-    # and referenced directly (as a global) inside execute().
-    monkeypatch.setattr(lp_pkg, "parse_dot", _raising_parse_dot)
+    monkeypatch.setattr(remote_dot_mod, "parse_dot", _raising_parse_dot)
 
     orchestrator = PipelineOrchestrator(
         config={"dot_source": "git+https://github.com/acme/samples@main#pipelines/main.dot"}

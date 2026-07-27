@@ -22,6 +22,12 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from .dot_parser import parse_dot
+
+if TYPE_CHECKING:
+    from .graph import Graph
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +52,6 @@ def _cross_origin_local_relpath(referrer, child) -> str:
 
 def extract_dot_file_refs(text: str, *, origin) -> list[str]:
     """Return all raw dot_file= values, using the engine's own parser (no regex)."""
-    from .dot_parser import parse_dot  # local package, no network
-
     from amplifier_module_remote_source import RemoteFetchParseError  # lazy
 
     try:
@@ -210,3 +214,47 @@ async def materialize_remote_dot(
     except BaseException:
         shutil.rmtree(view_dir, ignore_errors=True)
         raise
+
+
+async def load_remote_or_local_graph(
+    source: "Graph | str",
+) -> tuple["Graph", Callable[[], None]]:
+    """Return ``(graph, cleanup)`` for a DOT source that may be local or remote.
+
+    This is the single materialize -> parse -> set-``source_dir`` -> cleanup
+    -on-exception sequence shared by both engine entry points --
+    ``pipeline_runner.runner._load_graph`` (the direct-engine path) and the
+    mounted ``PipelineOrchestrator.execute()`` in this package. Both used to
+    maintain their own hand-synced copy of this sequence; keeping it in one
+    place makes the two hooks structurally unable to diverge again (see
+    AGENTS.md's partial-coverage-symmetry note -- this exact divergence risk
+    already cost a regression test once).
+
+    If ``source`` is a ``git+https://`` URL: materializes the remote tree
+    (async, before parse) via ``materialize_remote_dot``, parses the local
+    entry, and sets ``graph.source_dir`` to the materialized entry's parent
+    directory so subgraph ``dot_file=`` refs resolve against the fetched tree
+    rather than cwd. If parsing the materialized entry fails, ``cleanup()`` is
+    called before the exception propagates so the per-run view never leaks.
+
+    Otherwise: ``source`` is treated as local. A ``str`` is parsed as raw DOT
+    text; anything else (an already-parsed ``Graph``) is passed through
+    unchanged. ``cleanup()`` is a no-op in this path.
+
+    Returns:
+        ``(graph, cleanup)``. The caller is responsible for calling
+        ``cleanup()`` (typically in a ``finally:``) once the graph is no
+        longer needed, regardless of which path was taken.
+    """
+    if isinstance(source, str) and source.startswith(_GIT_HTTPS_PREFIX):
+        entry_path, cleanup = await materialize_remote_dot(source)
+        try:
+            graph = parse_dot(entry_path.read_text(encoding="utf-8"))
+            graph.source_dir = str(entry_path.parent)
+            return graph, cleanup
+        except BaseException:
+            cleanup()
+            raise
+
+    graph = parse_dot(source) if isinstance(source, str) else source
+    return graph, (lambda: None)

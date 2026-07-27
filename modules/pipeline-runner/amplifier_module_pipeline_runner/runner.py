@@ -139,23 +139,18 @@ def seed_context(
 async def _load_graph(graph_or_dot: "Graph | str"):
     """Return (graph, cleanup). If graph_or_dot is a git+https:// URL, materialize
     the remote tree (async, before parse) and parse the local entry; otherwise
-    behave exactly as before. cleanup() removes any per-run materialized view."""
-    from amplifier_module_loop_pipeline.dot_parser import parse_dot
+    behave exactly as before. cleanup() removes any per-run materialized view.
 
-    if isinstance(graph_or_dot, str) and graph_or_dot.startswith("git+https://"):
-        from amplifier_module_loop_pipeline.remote_dot import materialize_remote_dot
+    Thin wrapper around ``amplifier_module_loop_pipeline.remote_dot.
+    load_remote_or_local_graph`` -- the single materialize/parse/cleanup
+    sequence shared with the mounted ``PipelineOrchestrator.execute()`` hook,
+    so the two engine entry points can't diverge. Kept as a module-level
+    function (rather than inlined into ``drive_engine``) so it stays
+    independently monkeypatchable in tests.
+    """
+    from amplifier_module_loop_pipeline.remote_dot import load_remote_or_local_graph
 
-        entry_path, cleanup = await materialize_remote_dot(graph_or_dot)
-        try:
-            graph = parse_dot(entry_path.read_text(encoding="utf-8"))
-            graph.source_dir = str(entry_path.parent)
-            return graph, cleanup
-        except BaseException:
-            cleanup()
-            raise
-
-    graph = parse_dot(graph_or_dot) if isinstance(graph_or_dot, str) else graph_or_dot
-    return graph, (lambda: None)
+    return await load_remote_or_local_graph(graph_or_dot)
 
 
 async def drive_engine(

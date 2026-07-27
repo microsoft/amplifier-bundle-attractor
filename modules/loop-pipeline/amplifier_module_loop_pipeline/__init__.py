@@ -17,11 +17,9 @@ import logging
 import os
 import re
 import tempfile
-from collections.abc import Callable
 from typing import Any
 
 from .context import PipelineContext
-from .dot_parser import parse_dot
 from .engine import PipelineEngine
 from .handlers import HandlerRegistry
 from .handlers.context import HandlerContext
@@ -488,22 +486,12 @@ class PipelineOrchestrator:
         dot_source = self._resolve_dot_source()
 
         # 2. Parse the DOT graph — materialize first if it's a remote entry.
-        def _noop_cleanup() -> None:
-            return None
+        # Shared with the direct-engine `drive_engine`/`_load_graph` hook in
+        # pipeline-runner via remote_dot.load_remote_or_local_graph, so the two
+        # engine entry points can't diverge (see that function's docstring).
+        from .remote_dot import load_remote_or_local_graph  # lazy: keeps import net-free
 
-        _source_cleanup: Callable[[], None] = _noop_cleanup
-        if isinstance(dot_source, str) and dot_source.startswith("git+https://"):
-            from .remote_dot import materialize_remote_dot  # lazy: keeps import net-free
-
-            entry_path, _source_cleanup = await materialize_remote_dot(dot_source)
-            try:
-                graph = parse_dot(entry_path.read_text(encoding="utf-8"))
-                graph.source_dir = str(entry_path.parent)
-            except BaseException:
-                _source_cleanup()
-                raise
-        else:
-            graph = parse_dot(dot_source)
+        graph, _source_cleanup = await load_remote_or_local_graph(dot_source)
 
         try:
             # 3. Create pipeline context with goal from the prompt

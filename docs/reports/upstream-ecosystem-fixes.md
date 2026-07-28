@@ -194,6 +194,33 @@ if check_first_run():
 
 ---
 
+---
+
+## Fix 8: ConditionalHandler Should NOT Pass Through Upstream Outcomes (T0-1 Upstream Rec)
+
+**Severity:** LOW (the correct fix is at the graph level; this is a spec clarification)
+**Repo:** `amplifier-bundle-attractor` (this repo) — `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/conditional.py`
+**Discovered by:** T0-1 dead-edge analysis (2026-07)
+**Status:** Resolved at graph level (T0-1). Upstream spec clarification recommended.
+
+**The situation:** `ConditionalHandler.execute()` unconditionally returns `Outcome(status=StageStatus.SUCCESS)`. It does NOT pass through the upstream node's outcome. This means a `shape=diamond` node followed by `condition="outcome!=success"` edges creates a dead edge — the diamond always produces SUCCESS, so the `outcome!=success` branch can never match.
+
+**Why the graph-level fix is correct:** A diamond (`shape=diamond`) is the right tool when routing on `context.*` keys set by *earlier* nodes (e.g., a `preferred_label` from a `report_outcome` call). In that use case, the diamond is a pure routing switch — its own outcome is irrelevant, and unconditional SUCCESS is correct. The bug was in the graph authors using diamonds with `outcome=` conditions, not in ConditionalHandler's behavior.
+
+**The T0-1 fix:** Replace `shape=diamond` + `condition="outcome=..."` with `shape=parallelogram` + `tool_command` that runs the real verifier and prints a routing token, routed via `condition="context.tool.last_line=<token>"`. This is the correct pattern — it routes on observed evidence, not on the handler's synthetic outcome.
+
+**Upstream recommendation (not a code change):** The canonical spec at `github.com/strongdm/attractor` should clarify:
+1. `shape=diamond` (ConditionalHandler) is for routing on `context.*` keys set by earlier nodes — NOT for routing on `outcome=` of the node before it.
+2. `condition="outcome=..."` on edges from a diamond is always a bug (dead edge).
+3. The correct pattern for evidence-based routing is `shape=parallelogram` + `tool_command` + `condition="context.tool.last_line=<token>"`.
+
+**Why NOT change ConditionalHandler to pass through upstream outcomes:** If ConditionalHandler passed through the upstream outcome, it would break the valid use case where a diamond routes on `context.*` keys (e.g., `preferred_label`). The diamond would then need to be SUCCESS for the normal case AND pass through FAIL for the error case — conflating two different routing semantics. The cleaner design is: diamond = context-key routing (always SUCCESS); parallelogram = evidence routing (outcome reflects tool exit code).
+
+**Scope:** Spec documentation PR to `github.com/strongdm/attractor`, no code change.
+**Blocks:** Nothing (already fixed at graph level in T0-1).
+
+---
+
 ## Summary
 
 | # | Repo | Bug | Severity | Status | Blocks |
@@ -205,6 +232,7 @@ if check_first_run():
 | **5** | amplifier-foundation | tool-delegate spawn kwargs vs spawn() params | **MEDIUM** | Not started | Spawn contract clarity |
 | **6** | amplifier-app-cli | Misleading init tip message | **LOW** | Not started | UX |
 | **7** | amplifier-app-cli | No auto-init for non-interactive | **MEDIUM** | Not started | Shadow/CI workflows |
+| **8** | attractor spec | ConditionalHandler/diamond routing semantics clarification | **LOW** | Resolved at graph level (T0-1) | Future graph authors |
 
 ### Recommended Fix Order
 

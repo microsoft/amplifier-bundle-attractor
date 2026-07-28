@@ -24,7 +24,7 @@ This is a realistic "build a feature" pipeline that exercises **every Attractor 
 | Feature | Where Used |
 |---------|-----------|
 | **Linear traversal** | start -> plan, integrate -> test, final_review -> review_gate |
-| **Conditional routing** | test_gate (diamond) with `outcome=success` / `outcome!=success` |
+| **Evidence-based routing** | test_gate (parallelogram) with `context.tool.last_line=pass` / `context.tool.last_line=fail` |
 | **Parallel fan-out** | parallel_impl (component) -> backend + frontend branches |
 | **Parallel fan-in** | collect (tripleoctagon) consolidates branch results |
 | **Human gate** | review_gate (hexagon) with [S]/[P]/[R] accelerator keys |
@@ -36,7 +36,7 @@ This is a realistic "build a feature" pipeline that exercises **every Attractor 
 | **Thread IDs** | `thread_id="backend-impl"` and `thread_id="frontend-impl"` for session reuse |
 | **$goal expansion** | Used in plan, implement_backend, implement_frontend prompts |
 | **Edge weights** | Pass edge (weight=10) preferred over Fail edge (weight=5) |
-| **Edge conditions** | `outcome=success` and `outcome!=success` on test_gate edges |
+| **Edge conditions** | `context.tool.last_line=pass` and `context.tool.last_line=fail` on test_gate edges |
 | **Accelerator keys** | `[S] Ship it!`, `[P] Polish first`, `[R] Rework needed` |
 | **Class attribute** | `.planning`, `.code`, `.fast` on various nodes |
 | **Join policy** | `wait_all` on parallel_impl |
@@ -71,9 +71,9 @@ integrate (.code, compact fidelity)
 test (.fast, gemini-flash)
   |
   v
-test_gate (diamond)
+test_gate (parallelogram -- runs pytest, routes on context.tool.last_line)
   |                  |
-  | [Pass]           | [Fail]
+  | [pass]           | [fail]
   v                  v
 final_review    fix_tests (summary:high)
 (#id -> opus)       |
@@ -117,18 +117,22 @@ done       polish      fix_tests
 3. `collect` (fan-in) consolidates results, selects best candidate
 4. `integrate` connects the pieces (compact fidelity from graph default)
 5. `test` runs the test suite (gemini-flash for speed)
-6. `test_gate` routes based on outcome:
-   - SUCCESS -> `final_review` (condition match, weight=10)
+6. `test_gate` (parallelogram) runs `pytest -q` directly and routes on the result:
+   - Tests pass -> prints "pass" -> `context.tool.last_line=pass` -> `final_review` (weight=10)
 7. `final_review` performs comprehensive review (claude-opus, summary:high)
 8. `review_gate` presents choices to human:
    - `[S] Ship it!` -> done
 9. Pipeline completes with all goal gates satisfied
 
 ### Test Failure Loop
-At `test_gate`, if outcome != success:
-- Routes to `fix_tests` (summary:high fidelity for detailed failure context)
-- `fix_tests` loops back to `test`
-- Cycle repeats until tests pass
+At `test_gate` (parallelogram), if pytest exits non-0:
+- Prints "fail" -> `context.tool.last_line=fail` -> routes to `fix_tests`
+- `fix_tests` (summary:high fidelity for detailed failure context) loops back to `test`
+- `test` runs again -> `test_gate` re-runs pytest -> cycle repeats until tests pass
+
+**Why parallelogram, not diamond**: `ConditionalHandler` (the diamond handler) unconditionally
+returns SUCCESS, so `condition="outcome!=success"` from a diamond is always false -- the loop
+never fires. The parallelogram gate runs the real verifier and routes on observed evidence.
 
 ### Human Rejection Loops
 At `review_gate`:
@@ -159,7 +163,7 @@ steps:
 1. **Stylesheet application**: Check that node attrs contain the correct model after initialization
 2. **Parallel execution**: Two branch directories in logs, `parallel.results` in context
 3. **Fidelity preambles**: Compare prompt.md content across nodes with different fidelity modes
-4. **Conditional routing**: test_gate edges evaluated, correct branch taken
+4. **Evidence-based routing**: test_gate (parallelogram) runs pytest; `context.tool.last_line` holds `pass` or `fail`; correct branch taken
 5. **Human gate**: review_gate presents 3 options with accelerator keys
 6. **Goal gates**: At exit, both implementation nodes checked for success
 7. **Variable expansion**: All `$goal` references replaced with the graph goal

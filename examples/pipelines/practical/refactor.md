@@ -46,3 +46,23 @@ Model-agnostic -- every node runs on your configured default provider/model. To 
 ## Key Feature: Snapshot Safety Net
 
 The snapshot-first approach gives a safety net. If the refactoring breaks tests, the retry loop between `run_tests` and `implement_refactor` catches regressions immediately. The diff review confirms behavior preservation.
+
+## Routing Pattern: Evidence Gate
+
+The `test_gate` node uses `shape=parallelogram` + `tool_command`, not `shape=diamond`:
+
+```dot
+// RIGHT -- runs the real verifier, routes on observed evidence:
+test_gate [shape=parallelogram, label="Tests Pass?",
+           tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"]
+test_gate -> diff_review        [condition="context.tool.last_line=pass"]
+test_gate -> implement_refactor [condition="context.tool.last_line=fail"]
+```
+
+**Why not diamond**: `ConditionalHandler` (the diamond handler) unconditionally returns SUCCESS.
+A `condition="outcome!=success"` edge from a diamond is always false -- the fix loop would never
+fire, and the pipeline would proceed to diff review even when tests are failing. The parallelogram
+gate runs `pytest` directly and routes on the actual exit code.
+
+**FAIL routing**: `snapshot_tests` has `retry_target="snapshot_tests"`. If any LLM node crashes
+(hard FAIL), the engine's `default_max_retry=3` provides retry before fail-fast termination.

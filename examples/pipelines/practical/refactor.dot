@@ -50,8 +50,15 @@ digraph Refactor {
         prompt="Run the full test suite (pytest -v --tb=short). Compare results against the baseline snapshot. All previously-passing tests must still pass. Report any regressions."
     ]
 
-    // Stage 6: Gate -- routes based on test outcome
-    test_gate [shape=diamond, label="Tests Pass?"]
+    // Stage 6: Evidence gate -- runs pytest and routes on the result.
+    // shape=parallelogram runs the tool_command directly (not via LLM).
+    // Prints "pass" (exit 0) or "fail" (exit non-0) as the last stdout line.
+    // Edges condition on context.tool.last_line -- the proven routing pattern.
+    test_gate [
+        shape=parallelogram,
+        label="Tests Pass?",
+        tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"
+    ]
 
     // Stage 7: Diff review (reasoning-heavy)
     diff_review [
@@ -60,7 +67,7 @@ digraph Refactor {
     ]
 
     start -> analyze_smells -> plan_refactor -> snapshot_tests -> implement_refactor -> run_tests -> test_gate
-    test_gate -> diff_review [condition="outcome=success"]
-    test_gate -> implement_refactor [condition="outcome!=success", label="fix regressions"]
+    test_gate -> diff_review        [label="pass", condition="context.tool.last_line=pass"]
+    test_gate -> implement_refactor [label="fail", condition="context.tool.last_line=fail"]
     diff_review -> done
 }

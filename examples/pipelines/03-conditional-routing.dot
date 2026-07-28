@@ -1,8 +1,14 @@
-// 03-conditional-routing.dot -- Diamond gates with condition expressions.
+// 03-conditional-routing.dot -- Evidence-based routing with tool gates.
 //
-// A pipeline where a test result routes through a diamond (conditional) node.
-// Tests: diamond handler (shape=diamond), edge conditions (outcome=success,
-//        outcome!=success), conditional branching, edge weights, retry loops.
+// A pipeline where a test result routes through a parallelogram (tool) gate node.
+// Tests: tool handler (shape=parallelogram), edge conditions on context.tool.last_line,
+//        evidence-based conditional branching, edge weights, retry loops.
+//
+// ROUTING PATTERN: The gate runs the real verifier (pytest) and prints a token
+// ("pass" or "fail") as its last stdout line. Edges condition on that token via
+// context.tool.last_line. This is the correct pattern -- NOT shape=diamond with
+// outcome= conditions (ConditionalHandler always returns SUCCESS, so outcome-based
+// edges from a diamond are dead).
 
 digraph ConditionalRouting {
     graph [
@@ -20,34 +26,38 @@ digraph ConditionalRouting {
     // Work nodes
     implement [
         label="Implement",
-        prompt="Write a Python URL shortener service with shorten() and expand() functions for: $goal"
+        prompt="Write a Python URL shortener service with shorten() and expand() functions for: $goal. Write the implementation to url_shortener.py and write pytest tests to test_url_shortener.py."
     ]
 
     test [
         label="Run Tests",
-        prompt="Write and execute tests for the URL shortener. Report success if all tests pass, failure if any fail."
+        prompt="Run the test suite with: pytest -v --tb=short test_url_shortener.py. Report which tests pass and which fail. If all pass, report success. If any fail, report the failure details."
     ]
 
-    // Conditional gate -- the diamond shape makes this a routing node.
-    // The handler itself is a no-op (returns SUCCESS); the engine evaluates
-    // edge conditions against the previous node's outcome and context.
+    // Evidence gate -- shape=parallelogram runs the real verifier.
+    // The tool_command runs pytest and prints a routing token on its last line:
+    //   "pass" -> all tests green  -> route to done
+    //   "fail" -> tests failing    -> route to fix
+    // Edges condition on context.tool.last_line (the last non-empty stdout line).
     gate [
-        shape=diamond,
-        label="Tests Pass?"
+        shape=parallelogram,
+        label="Tests Pass?",
+        tool_command="pytest -q test_url_shortener.py > /dev/null 2>&1 && printf pass || printf fail"
     ]
 
     // Fix node -- only reached when tests fail
     fix [
         label="Fix Issues",
-        prompt="The tests failed. Review the test output and fix the implementation. Focus on the specific failures reported."
+        prompt="The tests failed. Review the test output and fix the implementation. Focus on the specific failures reported.",
+        retry_target="fix"
     ]
 
-    // Flow: implement -> test -> gate -> (success: done, fail: fix -> test)
+    // Flow: implement -> test -> gate -> (pass: done, fail: fix -> test)
     start -> implement -> test -> gate
 
-    // Condition-matched edges: evaluated first in edge selection (Step 1)
-    gate -> done [label="Yes", condition="outcome=success", weight=10]
-    gate -> fix  [label="No",  condition="outcome!=success", weight=5]
+    // Condition-matched edges: evaluated against context.tool.last_line (Step 1)
+    gate -> done [label="pass", condition="context.tool.last_line=pass", weight=10]
+    gate -> fix  [label="fail", condition="context.tool.last_line=fail", weight=5]
 
     // Fix loops back to test for re-validation
     fix -> test

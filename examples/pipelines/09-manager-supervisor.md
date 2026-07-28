@@ -24,6 +24,7 @@ See [README.md](README.md) in this folder for the run pattern and why the `$DOT`
 - **Child context cloning**: Each cycle gets an isolated context clone
 - **Steering injection**: When `steer` is in actions and a previous cycle failed, the manager injects `manager.steering` into the child context with failure details
 - **Cycle telemetry**: Context is updated with `manager.cycle_N.status`, `manager.last_child_status`, `manager.cycles_completed`
+- **Evidence-based gate**: The child's internal `gate` uses `shape=parallelogram` + `tool_command` to run pytest and route on `context.tool.last_line` -- not a diamond routing on `outcome=`. See routing pattern explanation below.
 
 ## Pipeline Structure
 
@@ -31,10 +32,38 @@ See [README.md](README.md) in this folder for the run pattern and why the `$DOT`
 start -> plan -> manager -> report -> done
                    |
                    v (child subgraph, run each cycle)
-                 implement -> test -> gate --[Pass]--> (child complete)
+                 implement -> test -> gate --[pass]--> done (child exits)
                    ^                  |
-                   +---[Fail]---------+
+                   +---[fail]---------+
 ```
+
+## Routing Pattern: Evidence Gate vs. Diamond
+
+The child's `gate` node uses `shape=parallelogram` (tool gate), not `shape=diamond` (conditional gate):
+
+```dot
+// WRONG (dead edges -- ConditionalHandler always returns SUCCESS):
+gate [shape=diamond, label="Tests Pass?"]
+gate -> done      [condition="outcome=success"]   // always fires
+gate -> implement [condition="outcome!=success"]  // never fires
+
+// RIGHT (evidence-based -- routes on what actually happened):
+gate [shape=parallelogram, label="Tests Pass?",
+      tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"]
+gate -> done      [condition="context.tool.last_line=pass"]
+gate -> implement [condition="context.tool.last_line=fail"]
+```
+
+`ConditionalHandler` (the diamond handler) unconditionally returns SUCCESS, overwriting the upstream node's outcome. A `condition="outcome!=success"` edge from a diamond is always false -- the loop never fires. The parallelogram gate runs the real verifier and routes on observed evidence.
+
+## Two-Level Retry Structure
+
+This pipeline has two levels of retry:
+
+1. **Child-level loop**: `gate` routes `implement -> test -> gate` on failure. The child can loop multiple times within a single manager cycle.
+2. **Manager-level retry**: If the child subgraph fails overall, the manager starts a new cycle (up to `max_cycles=5`) with steering context injected.
+
+The child's evidence gate (level 1) handles within-cycle test failures. The manager's outer loop (level 2) handles cross-cycle retry with LLM steering guidance.
 
 ## Expected Behavior
 

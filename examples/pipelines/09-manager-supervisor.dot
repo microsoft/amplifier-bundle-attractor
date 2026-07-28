@@ -55,9 +55,15 @@ digraph ManagerSupervisor {
         prompt="Run the test suite for the data pipeline. Test CSV parsing, data transformation, and database writing. Report success if all tests pass."
     ]
 
+    // Evidence gate -- shape=parallelogram runs the real verifier.
+    // The tool_command runs pytest and prints a routing token on its last line:
+    //   "pass" -> tests green  -> child subgraph exits (manager evaluates stop_condition)
+    //   "fail" -> tests failing -> route back to implement for another fix attempt
+    // Edges condition on context.tool.last_line (the last non-empty stdout line).
     gate [
-        shape=diamond,
-        label="Tests Pass?"
+        shape=parallelogram,
+        label="Tests Pass?",
+        tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"
     ]
 
     // Report on what the manager accomplished
@@ -74,8 +80,8 @@ digraph ManagerSupervisor {
 
     // Child subgraph flow
     implement -> test -> gate
-    gate -> done [label="Pass", condition="outcome=success"]
-    gate -> implement [label="Fail", condition="outcome!=success"]
+    gate -> done      [label="pass", condition="context.tool.last_line=pass"]
+    gate -> implement [label="fail", condition="context.tool.last_line=fail"]
 
     // After manager completes, continue to report
     manager -> report [weight=0]

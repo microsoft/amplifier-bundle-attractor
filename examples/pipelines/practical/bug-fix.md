@@ -44,3 +44,24 @@ Model-agnostic -- every node runs on your configured default provider/model. To 
 ## Key Feature: Disciplined Workflow
 
 Forces the reproduce-first pattern. The regression test ensures the bug stays fixed. The retry loop catches cases where the fix breaks other tests.
+
+## Routing Pattern: Evidence Gate
+
+The `test_gate` node uses `shape=parallelogram` + `tool_command`, not `shape=diamond`:
+
+```dot
+// RIGHT -- runs the real verifier, routes on observed evidence:
+test_gate [shape=parallelogram, label="Tests Pass?",
+           tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"]
+test_gate -> done          [condition="context.tool.last_line=pass"]
+test_gate -> implement_fix [condition="context.tool.last_line=fail"]
+```
+
+**Why not diamond**: `ConditionalHandler` (the diamond handler) unconditionally returns SUCCESS.
+A `condition="outcome!=success"` edge from a diamond is always false -- the fix loop would never
+fire, and the pipeline would report success even when tests are failing. The parallelogram gate
+runs `pytest` directly and routes on the actual exit code.
+
+**FAIL routing**: `implement_fix` has `retry_target="implement_fix"` and the graph sets
+`default_max_retry=3`. If the LLM node crashes (hard FAIL), the engine retries up to 3 times
+before fail-fast termination.

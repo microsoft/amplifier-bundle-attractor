@@ -110,9 +110,15 @@ digraph FullAttractor {
         prompt="Run the full test suite:\n- Backend unit tests (WebSocket, email, API)\n- Frontend component tests (NotificationCenter, Toast)\n- Integration tests (end-to-end notification flow)\nReport pass/fail for each category."
     ]
 
+    // Evidence gate -- shape=parallelogram runs the real verifier.
+    // The tool_command runs pytest and prints a routing token on its last line:
+    //   "pass" -> all tests green  -> route to final_review
+    //   "fail" -> tests failing    -> route to fix_tests
+    // Edges condition on context.tool.last_line (the last non-empty stdout line).
     test_gate [
-        shape=diamond,
-        label="All Tests Pass?"
+        shape=parallelogram,
+        label="All Tests Pass?",
+        tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"
     ]
 
     // Fix node for test failures
@@ -166,9 +172,9 @@ digraph FullAttractor {
     // Testing with conditional routing
     integrate -> test -> test_gate
 
-    // Conditional edges with conditions and weights
-    test_gate -> final_review [label="Pass", condition="outcome=success", weight=10]
-    test_gate -> fix_tests    [label="Fail", condition="outcome!=success", weight=5]
+    // Evidence-based edges: condition on context.tool.last_line from the pytest run
+    test_gate -> final_review [label="pass", condition="context.tool.last_line=pass", weight=10]
+    test_gate -> fix_tests    [label="fail", condition="context.tool.last_line=fail", weight=5]
 
     // Fix loops back to test
     fix_tests -> test

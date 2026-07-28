@@ -41,6 +41,26 @@ for box-node (agent) pipelines -- that's why we `cd` into the copy (see
 
 The retry loop between `run_tests` and `fix_failures` means the pipeline doesn't just generate tests -- it validates them and fixes failures automatically. Up to 3 retry cycles.
 
+## Routing Pattern: Evidence Gate
+
+The `test_gate` node uses `shape=parallelogram` + `tool_command`, not `shape=diamond`:
+
+```dot
+// RIGHT -- runs the real verifier, routes on observed evidence:
+test_gate [shape=parallelogram, label="Tests Pass?",
+           tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"]
+test_gate -> done         [condition="context.tool.last_line=pass"]
+test_gate -> fix_failures [condition="context.tool.last_line=fail"]
+```
+
+**Why not diamond**: `ConditionalHandler` (the diamond handler) unconditionally returns SUCCESS.
+A `condition="outcome!=success"` edge from a diamond is always false -- the self-healing loop
+would never fire, and the pipeline would report success with failing tests. The parallelogram
+gate runs `pytest` directly and routes on the actual exit code.
+
+**FAIL routing**: `write_tests` has `retry_target="fix_failures"`. If any LLM node crashes
+(hard FAIL), the engine's `default_max_retry=3` provides retry before fail-fast termination.
+
 ## Models
 
 Model-agnostic -- every node runs on your configured default provider/model. Add a `model_stylesheet` only if you want to route specific steps to specific models (see `examples/pipelines/06-model-stylesheet.dot`).

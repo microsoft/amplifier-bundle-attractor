@@ -63,8 +63,15 @@ digraph FeatureBuild {
         max_retries=3
     ]
 
-    // Stage 6: Gate -- routes based on test outcome
-    test_gate [shape=diamond, label="Tests Pass?"]
+    // Stage 6: Evidence gate -- runs pytest and routes on the result.
+    // shape=parallelogram runs the tool_command directly (not via LLM).
+    // Prints "pass" (exit 0) or "fail" (exit non-0) as the last stdout line.
+    // Edges condition on context.tool.last_line -- the proven routing pattern.
+    test_gate [
+        shape=parallelogram,
+        label="Tests Pass?",
+        tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"
+    ]
 
     // Stage 7: Human review gate
     review_gate [
@@ -80,8 +87,8 @@ digraph FeatureBuild {
     impl_api -> collect
     impl_tests -> collect
     collect -> integration_test -> test_gate
-    test_gate -> review_gate [condition="outcome=success"]
-    test_gate -> integration_test [condition="outcome!=success", label="fix"]
-    review_gate -> done [label="[S] Ship"]
+    test_gate -> review_gate     [label="pass", condition="context.tool.last_line=pass"]
+    test_gate -> integration_test [label="fail", condition="context.tool.last_line=fail"]
+    review_gate -> done           [label="[S] Ship"]
     review_gate -> integration_test [label="[R] Rework"]
 }

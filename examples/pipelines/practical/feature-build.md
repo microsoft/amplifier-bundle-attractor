@@ -30,6 +30,27 @@ attractor run examples/pipelines/practical/feature-build.dot \
 - **Human gate** before finalization gives the developer a review checkpoint
 - **Integration test retry** catches cross-branch issues automatically
 
+## Routing Pattern: Evidence Gate
+
+The `test_gate` node uses `shape=parallelogram` + `tool_command`, not `shape=diamond`:
+
+```dot
+// RIGHT -- runs the real verifier, routes on observed evidence:
+test_gate [shape=parallelogram, label="Tests Pass?",
+           tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"]
+test_gate -> review_gate      [condition="context.tool.last_line=pass"]
+test_gate -> integration_test [condition="context.tool.last_line=fail"]
+```
+
+**Why not diamond**: `ConditionalHandler` (the diamond handler) unconditionally returns SUCCESS.
+A `condition="outcome!=success"` edge from a diamond is always false -- the integration test
+retry loop would never fire, and the pipeline would proceed to human review even when tests are
+failing. The parallelogram gate runs `pytest` directly and routes on the actual exit code.
+
+**FAIL routing**: `integration_test` has `retry_target="integration_test"` and `max_retries=3`.
+If the LLM node crashes (hard FAIL), the engine retries up to 3 times before fail-fast
+termination.
+
 ## Models
 
 Model-agnostic -- every node runs on your configured default provider/model. To route the planning step (`parse_spec`) to a stronger model, add a `model_stylesheet` (see `examples/pipelines/06-model-stylesheet.dot`).

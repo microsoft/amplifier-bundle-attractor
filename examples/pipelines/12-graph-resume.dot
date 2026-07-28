@@ -111,7 +111,15 @@ digraph GraphResume {
         prompt="Run the full test suite (pytest -v --tb=short). Compare results against the baseline in .ai/snapshot.txt. All previously-passing tests must still pass. If ALL tests pass: update .ai/STATE.json to {\"tests_passed\": true} and report success. If any regression: leave .ai/STATE.json as {\"tests_passed\": false} and report failure with details of what broke."
     ]
 
-    test_gate [shape=diamond, label="Tests Pass?"]
+    // Evidence gate -- shape=parallelogram runs the real verifier.
+    // Prints "pass" if pytest exits 0, "fail" otherwise. Edges route on
+    // context.tool.last_line -- the same pattern used by all other guard nodes
+    // in this pipeline (check_smells, check_plan, check_snapshot, check_tests_done).
+    test_gate [
+        shape=parallelogram,
+        label="Tests Pass?",
+        tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"
+    ]
 
     // ── Stage 6: Diff review ──────────────────────────────────────────────────
     // No guard -- diff_review always runs if we reach this stage.
@@ -150,8 +158,8 @@ digraph GraphResume {
     implement_refactor -> run_tests
     run_tests -> test_gate
 
-    test_gate -> diff_review        [label="pass", condition="outcome=success"]
-    test_gate -> implement_refactor [label="fix",  condition="outcome!=success"]
+    test_gate -> diff_review        [label="pass", condition="context.tool.last_line=pass"]
+    test_gate -> implement_refactor [label="fix",  condition="context.tool.last_line=fail"]
 
     // Stage 6 always leads to done
     diff_review -> done

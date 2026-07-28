@@ -86,7 +86,7 @@ start
   → check_tests_done       [STATE.json missing → last_line="todo"]
   → implement_refactor     [writes .ai/STATE.json: {"tests_passed": false}]
   → run_tests
-  → test_gate
+  → test_gate              [runs pytest -q; prints "pass" or "fail"]
     → [pass] diff_review   [run_tests also updated STATE.json: {"tests_passed": true}]
     → done
 ```
@@ -112,8 +112,17 @@ The engine ran from Start every time. No goto, no jump, no engine resume API.
 
 ### First run
 All guard nodes print `todo`; all work nodes execute in sequence. The implement+test loop
-may iterate if tests fail (`test_gate → implement_refactor → run_tests`), writing
-`{"tests_passed": false}` each time until all tests pass, then `{"tests_passed": true}`.
+may iterate if tests fail: `test_gate` (parallelogram) runs `pytest -q` directly and prints
+`fail` -> routes back to `implement_refactor`. The loop writes `{"tests_passed": false}` each
+time until all tests pass, then `{"tests_passed": true}`, and `test_gate` prints `pass` -> routes
+to `diff_review`.
+
+**Why `test_gate` is a parallelogram, not a diamond**: All guard nodes in this pipeline
+(`check_smells`, `check_plan`, `check_snapshot`, `check_tests_done`, and now `test_gate`) use
+`shape=parallelogram` + `tool_command` + `context.tool.last_line` routing. This is consistent
+and correct. The diamond handler (`ConditionalHandler`) unconditionally returns SUCCESS, so
+`condition="outcome!=success"` from a diamond is always false -- the implement+test loop would
+never fire. The parallelogram gate runs the real verifier and routes on observed evidence.
 
 ### Resume after crash (any stage)
 Guard nodes for completed stages print `done` (their artifact exists); their work nodes are

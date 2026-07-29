@@ -488,3 +488,66 @@ reference via `${node_id}` substitution or direct context lookup.
 unaffected. Existing `.dot` files work without modification. Canonical spec-conformant backends
 that do not read `response_schema` will silently treat it as an unknown attribute (per the
 existing unknown-attr passthrough behaviour of `dot_parser.py::_apply_node`).
+
+---
+
+## 24. Convergence Observability: Per-Iteration Records, `$iteration` Substitution, and `trace.jsonl`
+
+> **This extension is NOT in the canonical attractor spec.** The canonical spec defines the run
+> directory layout (Appendix C / Section 5.6) but does not specify per-iteration sub-directories
+> or a `trace.jsonl` descent curve. This extension is additive and backward-compatible.
+
+**What:** Three coordinated additions that make the attractor convergence claim measurable:
+
+1. **Per-iteration node records** — on each `loop_restart` edge traversal the engine creates
+   `logs_root/iteration_N/<node_id>/status.json` alongside the existing flat
+   `logs_root/<node_id>/status.json` (backward compat). Each iteration's records are preserved;
+   a 10-iteration run yields 10 complete per-iteration snapshots, none overwritten.
+
+2. **`$iteration` / `$loop_count` context keys** — the engine seeds `iteration` and `loop_count`
+   into `PipelineContext` at pipeline start (value `"0"`) and increments both on every
+   `loop_restart`. Because the substitution machinery (`substitution.py`) already expands `$key`
+   from context, `$iteration` and `$loop_count` are immediately usable in `prompt` attributes
+   and `tool_command` strings without any additional wiring.
+
+3. **`trace.jsonl` descent curve** — the engine appends one JSONL record to
+   `logs_root/trace.jsonl` after every node completion (including skipped nodes). Record shape:
+   ```json
+   {"iteration": 0, "node_id": "work", "status": "success", "preferred_label": "go",
+    "duration_ms": 42.1, "ts": "2024-01-01T00:00:00+00:00"}
+   ```
+   The file is append-only and engine-written (not hook-derived), so it survives without any
+   hook configured. Reading it across all iterations gives the descent curve: gate signals and
+   durations per node per iteration.
+
+4. **`attractor trace <run-dir>` CLI subcommand** — reads `trace.jsonl` and prints a
+   human-readable summary of iterations, nodes, statuses, and durations. Exits 0 even if no
+   `trace.jsonl` exists (run directories that predate this extension).
+
+**Why:** The attractor claim is *convergence*: work descends toward a verified sink. Without
+per-iteration records, "converged" and "got lucky once" are indistinguishable. `trace.jsonl` is
+the empirical form of the convergence claim — a descent curve that can be plotted, compared
+across runs, and used as evidence in evals. `$iteration` lets pipeline authors write prompts
+that reference the current iteration number (e.g. "This is attempt $iteration — previous
+attempts failed because…").
+
+**Canonical spec note:** The canonical spec should gain matching vocabulary for per-iteration
+run directories and a trace artifact in the Appendix C run-directory layout section. Until then,
+this extension documents the behavior here.
+
+**Backward compatibility:** Fully additive.
+- Existing pipelines that do not use `loop_restart` see no change (iteration stays `"0"` and
+  `trace.jsonl` records only that single pass).
+- The flat `logs_root/<node_id>/status.json` path is preserved alongside the new
+  `iteration_N/<node_id>/status.json` path — existing consumers that read the flat path are
+  unaffected.
+- `$iteration` and `$loop_count` in context are new keys; existing pipelines that happen to
+  use those names as their own context keys will see them overwritten at pipeline start and on
+  each `loop_restart`. Pipeline authors should treat `iteration` and `loop_count` as reserved
+  context key names going forward.
+
+**Implementation locations:**
+- `engine.py: _initialize_context()` — seeds `iteration` and `loop_count` to `"0"` at start
+- `engine.py: run() Step 6 (loop_restart)` — increments and re-seeds both keys on restart
+- `engine.py: _write_node_status()` — writes iteration-scoped path and appends to `trace.jsonl`
+- `modules/pipeline-runner/amplifier_module_pipeline_runner/cli.py: cmd_trace()` — trace subcommand

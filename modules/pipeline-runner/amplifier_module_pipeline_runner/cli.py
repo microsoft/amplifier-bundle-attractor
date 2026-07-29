@@ -7,6 +7,7 @@ clear message and exit non-zero. No fallbacks, no synthetic success.
 Subcommands:
     run       <dot_file>   run a DOT pipeline
     doctor                 environment diagnostics
+    trace     <run-dir>    print a human-readable iteration/descent summary
 """
 
 from __future__ import annotations
@@ -86,6 +87,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("doctor", help="environment diagnostics")
+
+    trace = sub.add_parser(
+        "trace",
+        help="print a human-readable iteration/descent summary from a run directory",
+    )
+    trace.add_argument(
+        "run_dir",
+        help="path to the run directory produced by 'attractor run'",
+    )
 
     return parser
 
@@ -212,7 +222,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             return 1
         interviewer = ConsoleInterviewer()
 
-    print(f"attractor: running pipeline (cwd: {cwd}, logs: {logs_root})")
+    print(f"attractor: running pipeline cwd={cwd} logs={logs_root}")
 
     try:
         result = asyncio.run(
@@ -260,6 +270,81 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0 if result.status == "success" else 1
 
 
+def cmd_trace(args: argparse.Namespace) -> int:
+    """Print a human-readable iteration/descent summary from a run directory.
+
+    Reads ``trace.jsonl`` from the run directory (written by the engine on
+    each node completion — Extension #24) and prints a table of iterations,
+    nodes, statuses, and durations.  Exits 0 even if no trace data exists
+    (e.g. runs that predate this feature) — prints a clear "no trace data"
+    message instead of crashing.
+    """
+    import collections
+
+    run_dir = Path(args.run_dir).expanduser()
+    if not run_dir.is_dir():
+        print(
+            f"attractor trace: run directory not found: {run_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    trace_path = run_dir / "trace.jsonl"
+    if not trace_path.exists():
+        print(
+            f"attractor trace: no trace data found in {run_dir}\n"
+            "  (trace.jsonl is written by the engine on each node completion;\n"
+            "   this run directory may predate convergence observability support)"
+        )
+        return 0
+
+    records: list[dict] = []
+    with open(trace_path) as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                print(
+                    f"attractor trace: warning — malformed record on line {lineno}: {e}",
+                    file=sys.stderr,
+                )
+
+    if not records:
+        print(
+            f"attractor trace: trace.jsonl exists but contains no records in {run_dir}"
+        )
+        return 0
+
+    # Group records by iteration for the summary view
+    by_iteration: dict[int, list[dict]] = collections.defaultdict(list)
+    for rec in records:
+        iteration = rec.get("iteration", 0)
+        by_iteration[iteration].append(rec)
+
+    n_iterations = len(by_iteration)
+    print(f"attractor trace: {run_dir}")
+    print(f"  iterations: {n_iterations}  total nodes: {len(records)}")
+    print()
+
+    for iteration in sorted(by_iteration.keys()):
+        nodes = by_iteration[iteration]
+        print(f"  iteration {iteration}  ({len(nodes)} node(s))")
+        for rec in nodes:
+            node_id = rec.get("node_id", "?")
+            status = rec.get("status", "?")
+            preferred = rec.get("preferred_label") or ""
+            duration = rec.get("duration_ms")
+            dur_str = f"  {duration:.0f}ms" if duration is not None else ""
+            label_str = f"  [{preferred}]" if preferred else ""
+            print(f"    {node_id:<20} {status:<16}{label_str}{dur_str}")
+        print()
+
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     del args  # doctor takes no options today
 
@@ -290,6 +375,7 @@ def main(argv: list[str] | None = None) -> int:
     dispatch = {
         "run": cmd_run,
         "doctor": cmd_doctor,
+        "trace": cmd_trace,
     }
     return dispatch[args.command](args)
 

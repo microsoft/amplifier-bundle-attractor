@@ -85,8 +85,17 @@ Selectors match node shapes or classes (`.classname`).
 |-------|--------|-------------|
 | `$goal` | `graph.goal` or tool `goal` parameter | The pipeline objective |
 | `$param_name` | `params` dict from tool input | Custom key-value parameters |
+| `$iteration` | engine context (Extension #24) | Current iteration number (0-based; increments on each `loop_restart`) |
+| `$loop_count` | engine context (Extension #24) | Alias for `$iteration` |
 
 Example: `params: {"language": "Python"}` expands `$language` in prompts.
+
+`$iteration` is seeded to `"0"` at pipeline start and incremented on each `loop_restart` edge.
+Use it in prompts to reference the current attempt number:
+
+```dot
+work [prompt="Attempt $iteration: fix the failing tests."]
+```
 
 ## Copy-Paste Patterns
 

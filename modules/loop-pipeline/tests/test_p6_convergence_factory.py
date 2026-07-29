@@ -8,7 +8,7 @@ Test coverage:
 - Structural parse tests for demo-convergence-factory.dot (folder node, context attrs)
 - Structural: edge conditions correct (converged vs refine routing)
 - Structural: loop_restart edge from feedback -> generate exists
-- Structural: prompt templates reference expected context variables
+- Structural: prompt templates reference expected context variables ($artifact_goal, $iteration)
 - Execution: single-pass convergence (assess returns converged on first pass)
 - Execution: one-refinement convergence (assess returns refine then converged)
 - Execution: execution path verification via backend call tracking
@@ -293,6 +293,15 @@ class TestConvergenceFactoryParse:
             f"Expected '$artifact_path' in generate prompt, got: {prompt!r}"
         )
 
+    def test_generate_prompt_references_iteration(self):
+        """generate node's prompt contains $iteration (Extension #24)."""
+        source = _FACTORY_DOT.read_text()
+        g = parse_dot(source)
+        prompt = g.nodes["generate"].prompt
+        assert "$iteration" in prompt, (
+            f"Expected '$iteration' in generate prompt, got: {prompt!r}"
+        )
+
     def test_assess_prompt_references_criteria_variable(self):
         """assess node's prompt contains $validation_criteria."""
         source = _FACTORY_DOT.read_text()
@@ -315,6 +324,15 @@ class TestConvergenceFactoryParse:
         )
         assert "$validation_criteria" in prompt, (
             f"Expected '$validation_criteria' in feedback prompt, got: {prompt!r}"
+        )
+
+    def test_feedback_prompt_references_iteration(self):
+        """feedback node's prompt contains $iteration (Extension #24)."""
+        source = _FACTORY_DOT.read_text()
+        g = parse_dot(source)
+        prompt = g.nodes["feedback"].prompt
+        assert "$iteration" in prompt, (
+            f"Expected '$iteration' in feedback prompt, got: {prompt!r}"
         )
 
     def test_validate_node_has_tool_command_attribute(self):

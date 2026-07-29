@@ -830,6 +830,11 @@ class PipelineEngine:
                 # are pipeline-declared outputs=, not per-cycle routing
                 # signals, and are intentionally left untouched.
                 self.context.set("preferred_label", None)
+                # Extension #24: update $iteration / $loop_count in context so
+                # prompts and tool commands in the new iteration see the current
+                # iteration number (not the stale value from the prior cycle).
+                self.context.set("iteration", str(self.iteration_count))
+                self.context.set("loop_count", str(self.iteration_count))
 
             # Step 7: Advance to next node
             current_node = self.graph.nodes[edge.to_node]
@@ -960,6 +965,14 @@ class PipelineEngine:
         # Mirror graph-level attributes
         for key, value in self.graph.graph_attrs.items():
             self.context.set(f"graph.{key}", value)
+
+        # Extension #24: Seed iteration state so $iteration / $loop_count
+        # are available for substitution in prompts and tool commands from
+        # the very first node.  iteration_count starts at 0 (the initial
+        # pass before any loop_restart); it is incremented and re-seeded on
+        # each loop_restart edge (see Step 6 in run()).
+        self.context.set("iteration", str(self.iteration_count))
+        self.context.set("loop_count", str(self.iteration_count))
 
     def _find_start_node(self) -> Node:
         """Find the start node.
@@ -1120,11 +1133,18 @@ class PipelineEngine:
         """Write status.json for a node after execution.
 
         Spec Section 5.6: Per-node status.json.
+
+        Extension #24: Per-iteration records.
+        Writes to two locations:
+          1. logs_root/<node_id>/status.json  — flat path (backward compat)
+          2. logs_root/iteration_<N>/<node_id>/status.json  — iteration-scoped
+             (survives loop_restart; each iteration's record is preserved)
+        Also appends one record to logs_root/trace.jsonl (append-only descent
+        curve — the canonical convergence observability artifact).
         """
-        node_dir = os.path.join(self.logs_root, node_id)
-        os.makedirs(node_dir, exist_ok=True)
         status = {
             "node_id": node_id,
+            "iteration": self.iteration_count,
             "outcome": outcome.status.value,
             "status": outcome.status.value,  # backward compat (M-19)
             "preferred_next_label": outcome.preferred_label,
@@ -1138,9 +1158,37 @@ class PipelineEngine:
             # Populated by ToolHandler on failure; None/absent on success.
             "failed_step": outcome.failed_step,
         }
+
+        # 1. Flat path (backward compat — existing consumers read this)
+        node_dir = os.path.join(self.logs_root, node_id)
+        os.makedirs(node_dir, exist_ok=True)
         status_path = os.path.join(node_dir, "status.json")
         with open(status_path, "w") as f:
             json.dump(status, f, indent=2)
+
+        # 2. Iteration-scoped path (Extension #24 — survives loop_restart)
+        iteration_node_dir = os.path.join(
+            self.logs_root,
+            f"iteration_{self.iteration_count}",
+            node_id,
+        )
+        os.makedirs(iteration_node_dir, exist_ok=True)
+        iteration_status_path = os.path.join(iteration_node_dir, "status.json")
+        with open(iteration_status_path, "w") as f:
+            json.dump(status, f, indent=2)
+
+        # 3. Append to trace.jsonl (append-only descent curve)
+        trace_record = {
+            "iteration": self.iteration_count,
+            "node_id": node_id,
+            "status": outcome.status.value,
+            "preferred_label": outcome.preferred_label,
+            "duration_ms": duration_ms,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        trace_path = os.path.join(self.logs_root, "trace.jsonl")
+        with open(trace_path, "a") as f:
+            f.write(json.dumps(trace_record) + "\n")
 
     # -- Multi-edge parallel fan-out helpers -----------------------------------
 

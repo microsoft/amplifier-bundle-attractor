@@ -160,6 +160,71 @@ digraph {
 }
 ```
 
+### Iterative Pipelines (`loop_restart`)
+
+Use `loop_restart="true"` on a back-edge to create a convergence loop. The
+engine resets execution state (completed nodes, outcomes) and increments
+`$iteration` before re-running from the target node. Context values set via
+`context_updates` are preserved so accumulated state (e.g., feedback files,
+assessment results) carries across iterations.
+
+```dot
+digraph {
+    graph [goal="Refine the artifact until it passes quality review"]
+
+    start    [shape=Mdiamond]
+    done     [shape=Msquare]
+
+    generate [prompt="Attempt $iteration: generate or refine the artifact. Goal: $goal"]
+    assess   [prompt="Assess the artifact. Return preferred_label='converged' or 'refine'."]
+    feedback [prompt="Refinement iteration $iteration: write targeted feedback for the next pass."]
+
+    start -> generate -> assess
+    assess -> done     [condition="outcome=converged"]
+    assess -> feedback [condition="outcome=refine"]
+    feedback -> generate [loop_restart="true"]
+}
+```
+
+**How `loop_restart` works:**
+
+1. The engine traverses the `loop_restart` edge normally.
+2. It increments the internal `iteration_count` (starting from 0).
+3. It updates `$iteration` and `$loop_count` in context.
+4. It resets `completed_nodes` and `node_outcomes` so the target node and all
+   downstream nodes re-execute cleanly.
+5. Context values accumulated via `context_updates` (e.g., `preferred_label`,
+   custom keys) are preserved — the loop can carry state forward.
+
+**Per-iteration records and the descent curve (Extension #24):**
+
+After each node completes, the engine writes:
+- `logs_root/<node_id>/status.json` — flat path (backward compatible)
+- `logs_root/iteration_N/<node_id>/status.json` — iteration-scoped record
+
+All iteration records coexist: a 10-iteration run produces 10 complete
+per-iteration snapshots, none overwritten. The engine also appends one JSONL
+record to `logs_root/trace.jsonl` per node completion:
+
+```json
+{"iteration": 2, "node_id": "generate", "status": "success",
+ "preferred_label": null, "duration_ms": 1240.5, "ts": "2024-01-01T00:00:00+00:00"}
+```
+
+To inspect the descent curve after a run:
+
+```
+attractor trace <run-dir>
+```
+
+This prints a human-readable summary of iterations, nodes, statuses, and
+durations — the empirical form of the convergence claim.
+
+**Difference from `max_retries`:** `max_retries` retries a single node on
+failure; `loop_restart` resets the entire pipeline pass for intentional
+multi-iteration refinement. Use `max_retries` for transient failures, use
+`loop_restart` for structured convergence loops.
+
 ### Parallel Fan-Out / Fan-In
 
 Use `shape=component` for parallel fan-out and `shape=tripleoctagon` for fan-in.
@@ -492,6 +557,7 @@ Every node in a DOT pipeline can have these attributes:
 | `weight` | Integer | `0` | Priority for edge selection. Higher wins among equally eligible edges. |
 | `fidelity` | String | unset | Override fidelity for the target node. Highest precedence. |
 | `thread_id` | String | unset | Override thread ID for the target node. |
+| `loop_restart` | Boolean | `false` | When `true`, the engine increments the iteration counter and resets execution state (completed nodes, outcomes) before continuing to the target node. Context values set via `context_updates` are preserved across the restart. See [Iterative Pipelines](#iterative-pipelines-loop_restart) below. |
 
 **Edge selection priority** (the engine picks the first match):
 1. Condition-matching edges (condition evaluates to true)
@@ -501,8 +567,15 @@ Every node in a DOT pipeline can have these attributes:
 
 ## Variable Expansion
 
-The only built-in variable is `$goal`, which resolves to the graph-level `goal`
-attribute. It is expanded in node prompts before execution.
+Variables in node `prompt` and `tool_command` attributes are expanded before
+execution. The following built-in variables are always available:
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `$goal` | `graph.goal` attribute | The pipeline objective |
+| `$iteration` | engine context (Extension #24) | Current iteration number (0-based; increments on each `loop_restart`) |
+| `$loop_count` | engine context (Extension #24) | Alias for `$iteration` |
+| `$<param>` | `--param k=v` CLI flag or `params` dict | Custom key-value parameters |
 
 ```dot
 graph [goal="Create a REST API with authentication"]
@@ -513,6 +586,17 @@ plan [prompt="Plan the implementation of: $goal"]
 The `goal` value comes from the graph-level `goal` attribute. Override it at run
 time with `--param goal="..."` on the `attractor run` CLI, or the `goal`
 parameter in `run_pipeline`.
+
+`$iteration` is seeded to `"0"` at pipeline start and increments by 1 on each
+`loop_restart` edge traversal. Use it in prompts to let the LLM know which
+attempt it is on:
+
+```dot
+work [prompt="Attempt $iteration: fix the failing tests and re-run them."]
+```
+
+Custom parameters passed via `--param language=Python` are available as
+`$language` in prompts and `tool_command` attributes.
 
 ## Fidelity Modes
 

@@ -26,7 +26,7 @@ digraph convergence_factory {
     // On subsequent iterations, should read prior feedback from .ai/feedback/.
     generate [
         label="Generate Artifact",
-        prompt="You are generating or refining an artifact.\n\nArtifact goal: $artifact_goal\n\nArtifact path: $artifact_path\n\nBefore generating, check .ai/feedback/ for any prior refinement guidance from previous iterations and incorporate it.\n\nGenerate or update the artifact now, writing it to $artifact_path."
+        prompt="You are generating or refining an artifact.\n\nThis is attempt $iteration.\n\nArtifact goal: $artifact_goal\n\nArtifact path: $artifact_path\n\nBefore generating, check .ai/feedback/ for any prior refinement guidance from previous iterations and incorporate it.\n\nGenerate or update the artifact now, writing it to $artifact_path."
     ]
 
     // validate: runs mechanical validation (syntax check, parse check, tests).
@@ -55,7 +55,7 @@ digraph convergence_factory {
     // refinement guidance to .ai/feedback/ using the Pyramid Summary pattern.
     feedback [
         label="Write Feedback",
-        prompt="You are writing targeted refinement guidance for the next iteration.\n\nArtifact goal: $artifact_goal\n\nValidation criteria: $validation_criteria\n\nRead the current assessment from .ai/assessment.md and any prior feedback files in .ai/feedback/.\nWrite a new feedback file to .ai/feedback/ using the Pyramid Summary pattern:\n  1. Key finding (1 sentence) — what is the most important issue\n  2. What to change (3-5 bullet points) — specific, actionable improvements\n  3. Why it matters (1-2 sentences) — how this moves toward the goal\n\nBe precise and constructive. Focus on the delta needed to converge."
+        prompt="You are writing targeted refinement guidance for the next iteration.\n\nThis is refinement iteration $iteration.\n\nArtifact goal: $artifact_goal\n\nValidation criteria: $validation_criteria\n\nRead the current assessment from .ai/assessment.md and any prior feedback files in .ai/feedback/.\nWrite a new feedback file to .ai/feedback/ using the Pyramid Summary pattern:\n  1. Key finding (1 sentence) — what is the most important issue\n  2. What to change (3-5 bullet points) — specific, actionable improvements\n  3. Why it matters (1-2 sentences) — how this moves toward the goal\n\nBe precise and constructive. Focus on the delta needed to converge."
     ]
 
     // Exit point — reached only when assess returns 'converged'

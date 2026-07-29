@@ -7,6 +7,7 @@ their output appears in the ChatRequest sent to the provider.
 Spec coverage: PROV-002, SYS-001, SYS-005-008, ENVCTX-001-002.
 """
 
+import logging
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -479,13 +480,16 @@ async def test_system_prompt_takes_precedence_over_system_prompt_file(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_unknown_provider_with_no_base_raises_loud_error():
-    """Precedence (4): unknown provider + no explicit base raises a clear RuntimeError.
+async def test_unknown_provider_with_no_base_falls_back_to_generic_with_warning(caplog):
+    """Precedence (4): unknown provider + no explicit base uses generic + logs WARNING.
 
     With the provider-default in place, a KNOWN provider (anthropic/openai/gemini)
-    always resolves a default base. The fail-loud path is now an UNKNOWN provider
-    with no system_prompt / system_prompt_file: there is no default to apply and
-    we must NOT silently pick a wrong one.
+    always resolves a default base. For an UNKNOWN provider with no system_prompt
+    / system_prompt_file, we now fall back to context/system-generic.md with a
+    WARNING that names the provider and both specialisation routes.
+
+    This is loud (warning), not fatal (no RuntimeError) - the generic base is
+    correct-but-unspecialised, not wrong.
     """
     context = MagicMock()
     provider = AsyncMock()
@@ -498,9 +502,21 @@ async def test_unknown_provider_with_no_base_raises_loud_error():
         coordinator=coordinator,
         config={"max_tool_rounds_per_input": 1},  # no system_prompt, no file
     )
-    with pytest.raises(RuntimeError, match="not one of the known providers"):
-        # "test" is not a known provider -> no default -> fail loud.
+
+    with caplog.at_level(logging.WARNING):
+        # "test" is not a known provider -> generic fallback + warning
         await orch.execute("hello", context, {"test": provider}, {}, hooks)
+
+    # Verify generic fallback was used
+    request = provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+    assert "Generic Profile" in system_content
+
+    # Verify warning was emitted naming "test" and both specialisation routes
+    assert any("test" in record.message for record in caplog.records)
+    assert any("system-generic.md" in record.message for record in caplog.records)
+    assert any("system-<provider>.md" in record.message for record in caplog.records)
+    assert any("system_prompt_file" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -814,3 +830,20 @@ def test_resolve_existing_absolute_file_used_as_is(tmp_path):
     resolved = _resolve_system_prompt_file(str(f))
     assert resolved == f
     assert resolved.read_text(encoding="utf-8") == "ABS-BASE"
+
+
+# ---------------------------------------------------------------------------
+# C1: Provider-neutral Layer-1 base prompt (generic fallback)
+# ---------------------------------------------------------------------------
+
+
+def test_generic_base_contains_no_dialect_specific_terms():
+    """C1.5: context/system-generic.md contains no dialect-specific terms."""
+    from amplifier_module_loop_agent import _resolve_system_prompt_file
+
+    generic = _resolve_system_prompt_file("context/system-generic.md")
+    text = generic.read_text(encoding="utf-8")
+
+    dialect_terms = ("edit_file", "apply_patch", "old_string", "Claude", "Codex", "Gemini")
+    for term in dialect_terms:
+        assert term not in text, f"Generic base should not contain {term!r}"

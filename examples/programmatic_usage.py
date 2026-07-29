@@ -13,11 +13,22 @@ Two modes of operation:
     - Good for coding pipelines (file edits, shell commands).
     - Requirements: pip install amplifier-foundation
 
+  Option C: DirectProviderBackend against a LOCAL model
+    - Same as Option A, but served by an OpenAI-compatible endpoint you host
+      (Ollama, vLLM, llama.cpp, LM Studio, Docker Model Runner).
+    - Cost, and data control: context for these nodes never leaves your box.
+    - Two ways in: environment variables, or an explicitly injected Client.
+
 Environment:
     Set at least one provider API key:
     - ANTHROPIC_API_KEY
     - OPENAI_API_KEY
     - GEMINI_API_KEY
+
+    ...or point at a local OpenAI-compatible endpoint (no key required):
+    - OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
+    - OPENAI_COMPAT_PROVIDER_NAME=local   (optional, default "local")
+    - OPENAI_COMPAT_API_KEY=...           (optional; local servers ignore it)
 """
 
 from __future__ import annotations
@@ -57,6 +68,24 @@ digraph {
 }
 """
 
+# Note what this graph does NOT contain: a URL, a port, or a credential.
+# `llm_provider="local"` is a ROLE; where that role lives is deployment config.
+# That separation is what keeps a .dot portable across laptop / CI / GPU box.
+# Use a CONCRETE model id -- globs and family tokens resolve against cloud
+# catalogues and will not match a locally served model.
+LOCAL_PIPELINE = r"""
+digraph {
+    graph [goal="Summarize the trade-offs of running LLMs locally"]
+
+    start    [shape=Mdiamond]
+    analyze  [prompt="$goal. Answer in three bullets.",
+              llm_provider="local", llm_model="qwen2.5-coder:7b"]
+    done     [shape=Msquare]
+
+    start -> analyze -> done
+}
+"""
+
 
 # ===================================================================
 # OPTION A: Direct LLM calls (no Amplifier session, no tools)
@@ -89,6 +118,88 @@ async def run_direct(dot_source: str) -> None:
         context=context,
         handler_registry=HandlerRegistry(backend=backend),
         logs_root=tempfile.mkdtemp(prefix="attractor-"),
+    )
+
+    outcome = await engine.run()
+    print(f"Status: {outcome.status.value}")
+    if outcome.notes:
+        print(f"Result: {outcome.notes[:500]}")
+
+
+# ===================================================================
+# OPTION C: Direct LLM calls against a LOCAL OpenAI-compatible endpoint
+# ===================================================================
+
+
+async def run_local(dot_source: str) -> None:
+    """Run a pipeline on a model you host yourself.
+
+    Works with any OpenAI-compatible ``/v1/chat/completions`` server: Ollama,
+    vLLM, llama.cpp, LM Studio, Docker Model Runner.
+
+    Why: cost, and data control -- context for these nodes never leaves the
+    machine serving the endpoint.
+
+    Two ways to supply the endpoint. Both are equivalent; neither puts a URL
+    in the .dot.
+
+    1. ENVIRONMENT (nothing to write in code)::
+
+           export OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
+           export OPENAI_COMPAT_PROVIDER_NAME=local   # matches llm_provider=
+
+       then just ``DirectProviderBackend(provider=object())`` -- it builds the
+       client from the environment, exactly like Option A.
+
+    2. INJECTED CLIENT (shown below) -- for apps that already hold their own
+       config and do not want to route it through environment variables.
+    """
+    import unified_llm
+    from amplifier_module_loop_pipeline import DirectProviderBackend
+    from amplifier_module_loop_pipeline.context import PipelineContext
+    from amplifier_module_loop_pipeline.dot_parser import parse_dot
+    from amplifier_module_loop_pipeline.engine import PipelineEngine
+    from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+    from amplifier_module_loop_pipeline.handlers.context import HandlerContext
+    from amplifier_module_loop_pipeline.transforms import apply_transforms
+    from amplifier_module_loop_pipeline.validation import validate_or_raise
+    from unified_llm.adapters.openai_compat import OpenAICompatAdapter
+
+    # The registry key ("local") is what llm_provider= in the DOT resolves
+    # against. Pass the SAME string as name= -- the adapter reports it in
+    # Response.provider, so a mismatch makes your audit trail claim the data
+    # went somewhere it did not.
+    client = unified_llm.Client(
+        providers={
+            "local": OpenAICompatAdapter(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key="not-needed",  # local servers ignore this
+            )
+        },
+        default_provider="local",
+    )
+
+    graph = parse_dot(dot_source)
+    context = PipelineContext()
+    apply_transforms(graph, context)
+    validate_or_raise(graph)
+
+    backend = DirectProviderBackend(
+        provider=object(),  # TRUTHINESS FLAG, not a provider -- see below
+        unified_client=client,
+        provider_names=("local",),
+        default_provider="local",
+    )
+    # Foot-gun: `provider` here is only a flag enabling the direct path. Pass
+    # None and the pipeline silently drops into simulation mode -- it "runs"
+    # and produces nothing real.
+
+    engine = PipelineEngine(
+        graph=graph,
+        context=context,
+        handler_registry=HandlerRegistry(HandlerContext(backend=backend)),
+        logs_root=tempfile.mkdtemp(prefix="attractor-local-"),
     )
 
     outcome = await engine.run()

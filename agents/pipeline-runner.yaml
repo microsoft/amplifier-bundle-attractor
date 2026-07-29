@@ -33,6 +33,11 @@ session:
     source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline
     config:
       # Profiles map llm_provider values to child agent names.
+      # default_provider: the provider used by nodes that declare no llm_provider.
+      # This USED to be a hardcoded "anthropic" literal in engine code. A provider
+      # literal in the engine is POLICY, and it is wrong for any bundle that does
+      # not mount it -- so it lives here, at the edge, where the bundle owns it.
+      default_provider: anthropic
       profiles:
         anthropic: attractor-agent-anthropic
         openai: attractor-agent-openai

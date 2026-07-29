@@ -157,7 +157,9 @@ class AgentOrchestrator:
              from the agent's own mounted provider — the same provider used for
              the actual completion, so the base always matches the model called.
           4. unknown provider, or a configured/default file that does not exist
-             -> a CLEAR, ACTIONABLE error (never a silent wrong/empty base).
+             -> for unknown providers: provider-neutral
+                ``context/system-generic.md``, with a logging.WARNING; for missing
+                files: a CLEAR, ACTIONABLE error.
 
         Explicit config (1, 2) always overrides the provider default (3), so a
         non-coding agent (e.g. attractor-expert) can pin its own persona base.
@@ -174,17 +176,28 @@ class AgentOrchestrator:
         if not spf:
             canonical = canonical_provider(provider_name)
             if canonical is None:
-                # (4) unknown provider — do NOT guess a base; fail loud and clear.
-                raise RuntimeError(
-                    f"loop-agent cannot select a Layer-1 base prompt: no "
-                    f"system_prompt or system_prompt_file is configured, and the "
-                    f"provider {provider_name!r} is not one of the known providers "
-                    f"{KNOWN_PROVIDERS} (so no default context/system-<provider>.md "
-                    f"applies). Set an explicit system_prompt_file in "
-                    f"session.orchestrator.config, or run under a known provider. "
-                    f"See docs/designs/layer-1-profile-owned-system-prompt.md."
+                # Provider names are OPEN STRINGS (canonical spec: "openai,
+                # anthropic, gemini, etc." — no enum), so KNOWN_PROVIDERS can
+                # never be complete. It is a SPECIALISATION table, not an
+                # allow-list: it names the providers for which we ship a
+                # dialect-specific base prompt. Anything else gets the
+                # provider-neutral base.
+                #
+                # This is loud, not fatal. The failure this path guards against
+                # is a WRONG base (e.g. the Claude Code edit_file dialect served
+                # to a model that has no edit_file). The generic base is
+                # correct-but-unspecialised, which is not that failure.
+                logger.warning(
+                    "loop-agent: provider %r has no specialised Layer-1 base "
+                    "prompt; falling back to context/system-generic.md. To "
+                    "specialise: add context/system-<provider>.md and extend "
+                    "KNOWN_PROVIDERS, or set system_prompt_file in "
+                    "session.orchestrator.config.",
+                    provider_name,
                 )
-            spf = f"context/system-{canonical}.md"
+                spf = "context/system-generic.md"
+            else:
+                spf = f"context/system-{canonical}.md"
 
         # (2)/(3) load via the robust, CWD-independent resolver. A missing file
         # raises a clear FileNotFoundError naming the value and path tried — (4).

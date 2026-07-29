@@ -29,6 +29,11 @@ session:
       # Maps llm_provider values in DOT node attributes to agent names.
       # The model stylesheet sets llm_provider per node; the engine looks
       # up this map to spawn the correct child agent session.
+      # default_provider: the provider used by nodes that declare no llm_provider.
+      # This USED to be a hardcoded "anthropic" literal in engine code. A provider
+      # literal in the engine is POLICY, and it is wrong for any bundle that does
+      # not mount it -- so it lives here, at the edge, where the bundle owns it.
+      default_provider: anthropic
       profiles:
         anthropic: attractor-agent-anthropic
         openai: attractor-agent-openai

@@ -17,6 +17,48 @@ from unified_llm.types import Request, Response, StreamEvent
 # Module-level default client (Spec §2.5)
 _default_client: Client | None = None
 
+# Env-var prefix for OpenAI-compatible endpoints (Spec §7.10).
+_COMPAT_PREFIX = "OPENAI_COMPAT"
+
+# Local endpoints typically ignore the key, but the OpenAI SDK wants a string.
+_COMPAT_DEFAULT_KEY = "not-needed"
+
+
+
+
+
+def _openai_compat_from_env() -> dict[str, ProviderAdapter]:
+    """Build an OpenAI-compatible adapter from the 3-variable shorthand (Spec §7.10).
+
+    The registered NAME is what a caller puts in ``Request.provider`` -- and, for
+    attractor, what a DOT node puts in ``llm_provider``. So the name is chosen by
+    the operator, not by us::
+
+        OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
+        OPENAI_COMPAT_PROVIDER_NAME=ollama           # optional, default "local"
+        OPENAI_COMPAT_API_KEY=...                    # optional, default "not-needed"
+
+    Keyed on ``BASE_URL``, never on an API key: local endpoints have no meaningful
+    key, so requiring one would make them unreachable.
+
+    Returns:
+        Mapping of provider name to adapter, or empty when ``BASE_URL`` is not set.
+    """
+    import os
+
+    base_url = os.environ.get(f"{_COMPAT_PREFIX}_BASE_URL")
+    if not base_url:
+        return {}
+
+    from unified_llm.adapters.openai_compat import OpenAICompatAdapter
+
+    name = os.environ.get(f"{_COMPAT_PREFIX}_PROVIDER_NAME", "local").strip() or "local"
+    api_key = (
+        os.environ.get(f"{_COMPAT_PREFIX}_API_KEY")
+        or _COMPAT_DEFAULT_KEY
+    )
+    return {name: OpenAICompatAdapter(name=name, api_key=api_key, base_url=base_url)}
+
 
 class Client:
     """Provider-agnostic LLM client (Spec §3).
@@ -121,10 +163,23 @@ class Client:
             if default is None:
                 default = "gemini"
 
+        # OpenAI-compatible endpoints (Spec §7.10): vLLM, Ollama, llama.cpp,
+        # Docker Model Runner, LM Studio, Together, Groq...
+        #
+        # Registered LAST so an OpenAI-compatible endpoint never steals
+        # `default_provider` from a cloud key that is already present, per §2.2
+        # ("the first registered provider becomes the default").
+        for name, adapter in _openai_compat_from_env().items():
+            providers[name] = adapter
+            if default is None:
+                default = name
+
         if not providers:
             raise ConfigurationError(
-                "No API keys found in environment. Set at least one of: "
-                "ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY"
+                "No providers found in environment. Set at least one of: "
+                "ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or an "
+                "OpenAI-compatible endpoint via OPENAI_COMPAT_BASE_URL "
+                "(optionally with OPENAI_COMPAT_PROVIDER_NAME and OPENAI_COMPAT_API_KEY)."
             )
 
         return cls(providers=providers, default_provider=default)

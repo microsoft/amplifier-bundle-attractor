@@ -42,6 +42,8 @@ from .pipeline_events import (
     PIPELINE_NODE_SKIPPED,
     PIPELINE_NODE_START,
     PIPELINE_START,
+    PIPELINE_SUBGRAPH_COMPLETE,
+    PIPELINE_SUBGRAPH_START,
 )
 from .retry import RetryPolicy, execute_with_retry
 from .substitution import extract_refs
@@ -813,6 +815,43 @@ class PipelineEngine:
             current_node = self.graph.nodes[edge.to_node]
 
     async def run_subgraph(
+        self,
+        start_node_id: str,
+        *,
+        context: PipelineContext | None = None,
+    ) -> Outcome:
+        """Execute a subgraph, bracketed by subgraph_start/subgraph_complete.
+
+        A thin emit-wrapper around :meth:`_run_subgraph_inner`, which holds the
+        unchanged walk logic.  The wrapper exists because the inner walk has six
+        distinct return points; emitting the completion event at each of them
+        would be six chances to miss one -- the partial-coverage-symmetry bug
+        class this repo already documents.  One exit, one emit.
+
+        ``PIPELINE_SUBGRAPH_START`` / ``PIPELINE_SUBGRAPH_COMPLETE`` were
+        declared in ``pipeline_events`` but never emitted by anything, so a
+        subgraph run (parallel branch, ``folder`` sub-pipeline, manager child)
+        was invisible in ``events.jsonl`` between its nodes' own events.
+
+        Emission is best-effort: ``_emit`` is a no-op when no hooks are mounted,
+        and the event is emitted around the walk without altering its result.
+        """
+        await self._emit(
+            PIPELINE_SUBGRAPH_START,
+            {"start_node_id": start_node_id, "isolated_context": context is not None},
+        )
+        outcome = await self._run_subgraph_inner(start_node_id, context=context)
+        await self._emit(
+            PIPELINE_SUBGRAPH_COMPLETE,
+            {
+                "start_node_id": start_node_id,
+                "status": outcome.status.value,
+                "failure_reason": outcome.failure_reason,
+            },
+        )
+        return outcome
+
+    async def _run_subgraph_inner(
         self,
         start_node_id: str,
         *,

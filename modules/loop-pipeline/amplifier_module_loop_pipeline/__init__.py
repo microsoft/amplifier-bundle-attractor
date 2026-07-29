@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import tempfile
+from collections.abc import Sequence
 from typing import Any
 
 from .context import PipelineContext
@@ -48,12 +49,21 @@ class DirectProviderBackend:
         hooks: Any = None,
         coordinator: Any = None,
         unified_client: Any | None = None,
+        provider_names: Sequence[str] = (),
+        default_provider: str | None = None,
     ) -> None:
         self._provider = provider
         self._tools = tools or {}
         self._hooks = hooks
         self._coordinator = coordinator
         self._unified_client = unified_client
+        self._provider_names = tuple(provider_names)
+        # SINGLE SOURCE OF TRUTH: _default_provider is stored ONLY to be passed
+        # into _resolve_provider(). Nothing in this class may branch on it, read
+        # it, or fall back to it anywhere else. Exactly one function in this
+        # codebase answers "which provider does this node use?" -- and it is
+        # _resolve_provider. Two answers to that question is how they diverge.
+        self._default_provider = default_provider
         # Fidelity state (H-9): track completed nodes and message history
         self._completed_nodes: dict[str, Any] = {}
         self._message_pools: dict[str, list] = {}  # thread_key -> unified_llm Messages
@@ -84,6 +94,7 @@ class DirectProviderBackend:
             _parse_outcome,
             _resolve_concrete_model,
             _resolve_model,
+            _resolve_provider,
             _STATUS_MAP,
             _MAX_TOOL_LOOP_ROUNDS,
         )
@@ -99,11 +110,14 @@ class DirectProviderBackend:
                 node, incoming_edge, graph, self._last_node_id
             )
 
-        # Resolve model, provider, tools, reasoning, max_agent_turns
-        provider_name = (
-            node.llm_provider
-            if hasattr(node, "llm_provider") and node.llm_provider
-            else node.attrs.get("llm_provider", "anthropic")
+        # Resolve model, provider, tools, reasoning, max_agent_turns.
+        # _resolve_provider is the ONLY thing that decides a provider -- see the
+        # note on self._default_provider in __init__.
+        provider_name = await _resolve_provider(
+            node,
+            candidates=self._provider_names,
+            default_provider=self._default_provider,
+            emit=self._emit,
         )
         model = await _resolve_concrete_model(
             provider_name, _resolve_model(node), emit=self._emit
@@ -457,12 +471,20 @@ def _build_backend(
                 provider=first_provider,
                 tools=tools,
                 hooks=hooks,
+                default_provider=cfg.get("default_provider"),
             )
 
     # Fall back to direct provider tool loop
     if first_provider is not None:
         logger.info("Using DirectProviderBackend (direct provider tool loop)")
-        return DirectProviderBackend(first_provider, tools, hooks, coordinator)
+        return DirectProviderBackend(
+            first_provider,
+            tools,
+            hooks,
+            coordinator,
+            provider_names=tuple(providers or ()),
+            default_provider=(orchestrator_config or {}).get("default_provider"),
+        )
 
     logger.warning(
         "No providers available \u2014 codergen nodes will run in simulation mode"

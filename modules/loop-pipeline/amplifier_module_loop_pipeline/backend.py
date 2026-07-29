@@ -34,6 +34,7 @@ import copy
 import json
 import logging
 import re
+from collections.abc import Mapping, Sequence
 from typing import Any, overload
 
 try:
@@ -98,6 +99,7 @@ class AmplifierBackend:
         tools: dict[str, Any] | None = None,
         unified_client: Any | None = None,
         hooks: Any | None = None,
+        default_provider: str | None = None,
     ) -> None:
         """Initialize the backend.
 
@@ -114,6 +116,7 @@ class AmplifierBackend:
         """
         self._coordinator = coordinator
         self._profiles = profiles
+        self._default_provider = default_provider
         self._provider = provider
         self._tools = tools or {}
         self._unified_client = unified_client
@@ -143,6 +146,7 @@ class AmplifierBackend:
         # Shared immutable refs
         new._coordinator = self._coordinator
         new._profiles = self._profiles
+        new._default_provider = self._default_provider
         new._provider = self._provider
         new._unified_client = self._unified_client
         new._hooks = self._hooks
@@ -233,7 +237,12 @@ class AmplifierBackend:
             self._spawn_checked = True
 
         # 2. Resolve provider and profile from node attributes
-        provider = node.attrs.get("llm_provider", "anthropic")
+        provider = await _resolve_provider(
+            node,
+            candidates=tuple(self._profiles.keys()),
+            default_provider=self._default_provider,
+            emit=self._emit,
+        )
         model = node.attrs.get("llm_model")
         model = await _resolve_concrete_model(provider, model, emit=self._emit)
         reasoning_effort = node.attrs.get("reasoning_effort")
@@ -241,9 +250,7 @@ class AmplifierBackend:
         max_agent_turns = (
             int(max_agent_turns_raw) if max_agent_turns_raw is not None else None
         )
-        profile_name = self._profiles.get(
-            provider, next(iter(self._profiles.values()), "")
-        )
+        profile_name = _resolve_profile(node.id, provider, self._profiles)
 
         # 3. Resolve fidelity mode (spec FID-001–010)
         if graph is not None:
@@ -607,7 +614,12 @@ class AmplifierBackend:
         import unified_llm
 
         client = self._get_or_create_unified_client()
-        provider_name = node.llm_provider or node.attrs.get("llm_provider", "anthropic")
+        provider_name = await _resolve_provider(
+            node,
+            candidates=tuple(self._profiles.keys()),
+            default_provider=self._default_provider,
+            emit=self._emit,
+        )
         model = await _resolve_concrete_model(
             provider_name, _resolve_model(node), emit=self._emit
         )
@@ -963,6 +975,139 @@ def _resolve_model(node: Node) -> str:
         f"against a deprecated or unintended model."
     )
 
+
+
+# ---------------------------------------------------------------------------
+# Provider resolution helpers
+# ---------------------------------------------------------------------------
+# These helpers implement the 4-rung provider resolution ladder:
+#   1. node.llm_provider (author declared it)
+#   2. orchestrator config default_provider (bundle policy)
+#   3. sole entry in candidates (unambiguous by construction)
+#   4. fail loud (no guessing allowed)
+#
+# The emit callable is optional and defaults to None. When provided, it emits
+# pipeline:provider_defaulted events for runs where the provider was not
+# author-declared (steps 2 and 3). This is a machine-checkable signal.
+
+
+async def _resolve_provider(
+    node: Node,
+    *,
+    candidates: Sequence[str],
+    default_provider: str | None = None,
+    emit=None,
+) -> str:
+    """Resolve a node's LLM provider — declared, configured, or unambiguous.
+
+    Resolution order (first that applies wins):
+      1. the node's own ``llm_provider``            — the author declared it
+      2. orchestrator config ``default_provider``   — the BUNDLE declared it
+      3. the sole entry in *candidates*             — unambiguous by construction
+      4. (none)                                     — fail loud
+
+    There is deliberately NO hardcoded default. A provider literal in engine
+    code is a POLICY, and it is wrong for any bundle that does not mount it.
+    Policy belongs in the bundle's own config (step 2). Cf. ``_resolve_model``,
+    which refuses to default a model for the same reason.
+
+    Args:
+        node: The pipeline node to resolve a provider for.
+        candidates: Provider names this backend can actually route to
+            (the profile-map keys for the spawn backend; the mounted provider
+            keys for the direct backend). Used ONLY for the sole-entry rule
+            and for the error message.
+        default_provider: The bundle-declared default, or None.
+        emit: Optional emit callable for pipeline:provider_defaulted events.
+            When provided, emits with node_id, provider, reason ("bundle_default"
+            for step 2 or "sole_mapped_provider" for step 3), and sorted candidates.
+
+    Returns:
+        The resolved provider name.
+
+    Raises:
+        ValueError: When no provider can be resolved without guessing.
+            Names the node, lists available candidates, and gives both fixes:
+            set llm_provider on the node (or via model_stylesheet), or set
+            default_provider in the loop-pipeline orchestrator config.
+    """
+    declared = getattr(node, "llm_provider", None) or node.attrs.get("llm_provider")
+    if declared:
+        return declared
+
+    # Step 2: bundle-declared default
+    if default_provider:
+        if emit is not None:
+            await emit(
+                "pipeline:provider_defaulted",
+                {
+                    "node_id": node.id,
+                    "provider": default_provider,
+                    "reason": "bundle_default",
+                    "candidates": sorted(candidates),
+                },
+            )
+        return default_provider
+
+    # Step 3: sole entry in candidates (unambiguous)
+    if len(candidates) == 1:
+        provider = next(iter(candidates))
+        if emit is not None:
+            await emit(
+                "pipeline:provider_defaulted",
+                {
+                    "node_id": node.id,
+                    "provider": provider,
+                    "reason": "sole_mapped_provider",
+                    "candidates": sorted(candidates),
+                },
+            )
+        return provider
+
+    # Step 4: fail loud
+    raise ValueError(
+        f"Node '{node.id}' declares no 'llm_provider' and no provider could be "
+        f"resolved without guessing: the orchestrator config sets no "
+        f"'default_provider', and {len(candidates)} providers are available "
+        f"({sorted(candidates)}). Fix by either setting llm_provider on the "
+        f"node (or via the pipeline's model_stylesheet), or setting "
+        f"default_provider in the loop-pipeline orchestrator config."
+    )
+
+
+def _resolve_profile(node_id: str, provider: str, profiles: Mapping[str, str]) -> str:
+    """Map a provider to its agent profile — strict, never a fallback.
+
+    The former behavior (``profiles.get(provider, next(iter(profiles.values()))``)
+    silently ran an UNMAPPED provider's node on the FIRST agent profile — a
+    different model, reporting SUCCESS. Every other layer here is fail-loud;
+    this was the one gap. This function is the fix: it raises immediately if
+    the provider is not in the map, naming the provider and all mapped providers
+    so the author can add the missing entry.
+
+    Args:
+        node_id: The node ID for error messages.
+        provider: The provider name to look up.
+        profiles: The profile map (provider name -> agent name).
+
+    Returns:
+        The agent profile name for the provider.
+
+    Raises:
+        ValueError: If the provider is not mapped to an agent profile.
+            Names the node, the requested provider, all mapped providers,
+            and the fix: add '<provider>: <agent-name>' to the orchestrator config's
+            'profiles' map.
+    """
+    try:
+        return profiles[provider]
+    except KeyError:
+        raise ValueError(
+            f"Node '{node_id}' requests llm_provider={provider!r}, which is not "
+            f"mapped to an agent profile. Mapped providers: {sorted(profiles)}. "
+            f"Fix by adding '{provider}': <agent-name> to the loop-pipeline "
+            f"orchestrator config's 'profiles' map."
+        ) from None
 
 # ---------------------------------------------------------------------------
 # Live model-token resolution (family token / glob -> concrete served id)

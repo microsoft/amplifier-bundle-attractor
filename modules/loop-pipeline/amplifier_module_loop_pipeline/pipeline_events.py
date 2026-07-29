@@ -94,6 +94,16 @@ PROVIDER_ERROR: str = "provider:error"
 # eval reproducibility. Fires once per distinct resolution per run.
 MODEL_RESOLVED: str = "model:resolved"
 
+#: Emitted when a node's provider is resolved via the resolution ladder.
+#: This happens when the node does not explicitly declare llm_provider, so
+#: the engine falls back to bundle config or sole-entry inference.
+#: Payload fields:
+#:   node_id     — ID of the node
+#:   provider    — the resolved provider name
+#:   reason      — "bundle_default" (step 2) or "sole_mapped_provider" (step 3)
+#:   candidates  — sorted list of providers available for resolution
+PIPELINE_PROVIDER_DEFAULTED: str = "pipeline:provider_defaulted"
+
 # ---------------------------------------------------------------------------
 # Subgraph execution (nested pipeline nodes)
 # ---------------------------------------------------------------------------

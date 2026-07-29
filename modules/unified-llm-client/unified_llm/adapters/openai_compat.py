@@ -150,10 +150,27 @@ class OpenAICompatAdapter:
     def __init__(
         self,
         *,
+        name: str = "openai_compat",
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
     ) -> None:
+        """Create an adapter for one OpenAI-compatible endpoint.
+
+        Args:
+            name: The registry name this adapter is registered under. It is
+                NOT cosmetic: it is echoed in ``Response.provider`` and is the
+                key consulted in ``Request.provider_options``. Registering the
+                adapter as "ollama" while it reports "openai_compat" would make
+                ``Response.provider`` lie in every audit record, and would
+                cause ``provider_options={"ollama": ...}`` to be silently
+                dropped. One endpoint, one name, everywhere.
+            api_key: Endpoint credential. Local servers ignore it, but the
+                OpenAI SDK expects a string.
+            base_url: The endpoint's OpenAI-compatible base URL.
+            timeout: Optional request timeout in seconds.
+        """
+        self._name = name
         kwargs: dict[str, Any] = {}
         if api_key is not None:
             kwargs["api_key"] = api_key
@@ -165,7 +182,7 @@ class OpenAICompatAdapter:
 
     @property
     def name(self) -> str:
-        return "openai_compat"
+        return self._name
 
     # ------------------------------------------------------------------
     # complete()
@@ -264,7 +281,7 @@ class OpenAICompatAdapter:
                             response=Response(
                                 id=response_id,
                                 model=model,
-                                provider="openai_compat",
+                                provider=self._name,
                                 message=Message(role=Role.ASSISTANT, content=[]),
                                 finish_reason=finish_reason,
                                 usage=usage,
@@ -373,7 +390,7 @@ class OpenAICompatAdapter:
                         response=Response(
                             id=response_id,
                             model=model,
-                            provider="openai_compat",
+                            provider=self._name,
                             message=Message(role=Role.ASSISTANT, content=[]),
                             finish_reason=finish_reason,
                             usage=usage,
@@ -437,8 +454,8 @@ class OpenAICompatAdapter:
         # NOTE: reasoning_effort is NOT passed through — Chat Completions limitation
 
         # Provider options escape hatch
-        if request.provider_options and "openai_compat" in request.provider_options:
-            opts = request.provider_options["openai_compat"]
+        if request.provider_options and self._name in request.provider_options:
+            opts = request.provider_options[self._name]
             for k, v in opts.items():
                 kwargs[k] = v
 
@@ -646,7 +663,7 @@ class OpenAICompatAdapter:
         return Response(
             id=getattr(raw, "id", ""),
             model=getattr(raw, "model", ""),
-            provider="openai_compat",
+            provider=self._name,
             message=Message(role=Role.ASSISTANT, content=content_parts),
             finish_reason=finish_reason,
             usage=usage,
@@ -720,7 +737,7 @@ class OpenAICompatAdapter:
             return errors.error_from_status_code(
                 status_code=status_code,
                 message=message,
-                provider="openai_compat",
+                provider=self._name,
                 error_code=error_code,
                 raw=raw,
                 retry_after=retry_after,
@@ -729,7 +746,7 @@ class OpenAICompatAdapter:
 
         return errors.ProviderError(
             message=str(error),
-            provider="openai_compat",
+            provider=self._name,
             retryable=True,
             cause=error,
         )

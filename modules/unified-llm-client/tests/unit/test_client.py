@@ -202,7 +202,7 @@ class TestFromEnv:
                 Client.from_env()
                 assert False, "Should raise"
             except ConfigurationError as e:
-                assert "no api keys" in e.message.lower()
+                assert "no providers found in environment" in e.message.lower()
 
     def test_anthropic_key_detected(self) -> None:
         """ANTHROPIC_API_KEY should register anthropic provider."""

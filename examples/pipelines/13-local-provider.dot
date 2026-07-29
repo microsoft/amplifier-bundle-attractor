@@ -1,0 +1,93 @@
+// 13-local-provider.dot -- Running nodes on a LOCAL model.
+//
+// Why: cost, and data control. Nodes that touch sensitive context can run on a
+// model inside your own boundary, while nodes that need frontier capability
+// still reach out. Per-node choice is the whole point.
+//
+// Tests: an OpenAI-compatible local endpoint (Ollama, vLLM, llama.cpp,
+//        LM Studio, Docker Model Runner) as a first-class llm_provider;
+//        per-node provider routing; a mixed local/cloud graph.
+//
+// ---------------------------------------------------------------------------
+// THE ONE RULE: this file names a provider. It never says where it lives.
+//
+//   llm_provider="local"   is a ROLE, like a DNS name.
+//   base_url               is DEPLOYMENT, and lives outside this file.
+//
+// Put a URL in a .dot and the graph stops being portable across laptop / CI /
+// GPU box, and your infrastructure ends up committed to git. There is
+// deliberately NO base_url node attribute. The recognised attributes are
+// exactly: llm_model, llm_provider, reasoning_effort.
+// ---------------------------------------------------------------------------
+//
+// WIRING THE ENDPOINT -- pick the one matching how you run attractor:
+//
+//   Programmatic / embedded (DirectProviderBackend, no bundle):
+//       export OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
+//       export OPENAI_COMPAT_PROVIDER_NAME=local     # optional, default "local"
+//       export OPENAI_COMPAT_API_KEY=...             # optional; local servers ignore it
+//
+//   Amplifier session (spawn path, nodes get full tools):
+//       providers:
+//         - module: provider-chat-completions
+//           id: local                     # `id`, NOT config.name
+//           config:
+//             base_url: http://localhost:11434/v1
+//             api_key: not-needed
+//       session.orchestrator.config.profiles:
+//         local: attractor-agent-local
+//
+// MODEL IDS: use a CONCRETE served id, as below. Globs and family tokens
+// (opus/sonnet/haiku) resolve against cloud catalogues and will not match a
+// local model. A concrete id bypasses resolution entirely.
+
+digraph LocalProvider {
+    graph [
+        goal="Summarise the input document and list any dates it mentions",
+        label="Local Provider Pipeline"
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    done  [shape=Msquare,  label="Done"]
+
+    // Sensitive work stays inside the boundary: the document never leaves the
+    // machine serving `local`.
+    summarise [
+        shape=box,
+        label="Summarise (local)",
+        llm_provider="local",
+        llm_model="qwen2.5-coder:7b",
+        prompt="$goal\n\nWrite a short summary, then list every date you find."
+    ]
+
+    // Deterministic check -- a tool node costs nothing and needs no model.
+    // Prefer these over asking a model to verify its own work.
+    verify [
+        shape=parallelogram,
+        label="Verify",
+        tool_command="test -s summary.md && echo tests_pass"
+    ]
+
+    // Nodes that declare no llm_provider inherit the pipeline's default:
+    // `default_provider` in the orchestrator config, or -- when exactly one
+    // provider is mapped -- that one, which emits a pipeline:provider_defaulted
+    // event so an implicit choice is never silent.
+    //
+    // To send THIS node to a frontier model instead, add:
+    //     llm_provider="anthropic", llm_model="claude-sonnet-4-6"
+    // and map `anthropic` in the profiles map. That is the mixed-graph shape:
+    // cheap/private work local, hard reasoning remote.
+    report [
+        shape=box,
+        label="Report",
+        llm_model="qwen2.5-coder:7b",
+        prompt="Turn the summary into three bullet points."
+    ]
+
+    start     -> summarise
+    summarise -> verify
+    verify    -> report [condition="context.tool.last_line=tests_pass"]
+    verify    -> done   [label="verification failed"]
+    report    -> done
+}

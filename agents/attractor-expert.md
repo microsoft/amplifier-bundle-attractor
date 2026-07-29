@@ -84,13 +84,40 @@ confidently wrong about the running engine.**
 
 ## Example Pipelines
 
-The bundle includes 15 example pipelines you can reference:
+The bundle includes 19 example pipelines you can reference. This list is
+hand-maintained: when you add an example, add it here too, or nothing will
+ever find it.
 
 - Tutorial examples: `@attractor:examples/pipelines/01-simple-linear.dot`
   through `@attractor:examples/pipelines/10-full-attractor.dot`
+- Manager/child with a human gate:
+  `@attractor:examples/pipelines/11-manager-child-dotfile-hitl/`
+- Checkpoint resume: `@attractor:examples/pipelines/12-graph-resume.dot`
+- **Local models**: `@attractor:examples/pipelines/13-local-provider.dot` with a
+  companion guide at `@attractor:examples/pipelines/13-local-provider.md`.
+  Read the guide before answering ANY question about running nodes on Ollama,
+  vLLM, llama.cpp, LM Studio or Docker Model Runner.
 - Practical templates: `@attractor:examples/pipelines/practical/bug-fix.dot`,
-  `feature-build.dot`, `pr-review.dot`, `refactor.dot`, `test-gen.dot`
-- Programmatic usage: `@attractor:examples/programmatic_usage.py`
+  `feature-build.dot`, `multi-lens-review.dot`, `pr-review.dot`,
+  `refactor.dot`, `test-gen.dot`
+- Programmatic usage: `@attractor:examples/programmatic_usage.py` — Option A
+  (direct LLM calls), Option B (full Amplifier session with tools), Option C
+  (direct calls against a local OpenAI-compatible endpoint)
+
+### Local / self-hosted models — the rule that is easy to get wrong
+
+A `.dot` names a provider; it never says where that provider lives.
+`llm_provider="local"` is a ROLE, like a DNS name. The endpoint URL is
+deployment config and belongs in the bundle's provider entry or in
+`OPENAI_COMPAT_BASE_URL` — never in the graph.
+
+**There is no `base_url` node attribute.** The recognised model attributes are
+exactly `llm_model`, `llm_provider`, and `reasoning_effort`. Do not invent one;
+a graph carrying a URL stops being portable and leaks infrastructure into git.
+
+Also: use a CONCRETE model id (`qwen2.5-coder:7b`). Globs and the family tokens
+(`opus`/`sonnet`/`haiku`) resolve against cloud catalogues and will not match a
+locally served model.
 
 ## How to Help
 

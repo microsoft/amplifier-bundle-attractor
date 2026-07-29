@@ -5,6 +5,30 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from amplifier_module_loop_pipeline.pipeline_events import (
+    PIPELINE_CHECKPOINT,
+    PIPELINE_COMPLETE,
+    PIPELINE_EDGE_SELECTED,
+    PIPELINE_ERROR,
+    PIPELINE_GOAL_GATE_CHECK,
+    PIPELINE_INTERVIEW_COMPLETED,
+    PIPELINE_INTERVIEW_STARTED,
+    PIPELINE_INTERVIEW_TIMEOUT,
+    PIPELINE_NODE_COMPLETE,
+    PIPELINE_NODE_START,
+    PIPELINE_PARALLEL_BRANCH_COMPLETED,
+    PIPELINE_PARALLEL_BRANCH_STARTED,
+    PIPELINE_PARALLEL_COMPLETED,
+    PIPELINE_PARALLEL_STARTED,
+    PIPELINE_PROVIDER_DEFAULTED,
+    PIPELINE_START,
+    PIPELINE_STAGE_FAILED,
+    PIPELINE_STAGE_RETRYING,
+    PIPELINE_SUBGRAPH_COMPLETE,
+    PIPELINE_SUBGRAPH_START,
+    PROVIDER_RESPONSE,
+)
+
 from .aggregator import StateAggregator
 from .status_bar import StatusBarContributor
 
@@ -13,26 +37,30 @@ logger = logging.getLogger(__name__)
 # Amplifier module metadata
 __amplifier_module_type__ = "hooks"
 
-# All pipeline events this module subscribes to
+# All pipeline events this module subscribes to (imported from pipeline_events.py)
+# plus provider/model events that are defined here (not in pipeline_events.py)
 _PIPELINE_EVENTS = [
-    "pipeline:start",
-    "pipeline:complete",
-    "pipeline:node_start",
-    "pipeline:node_complete",
-    "pipeline:edge_selected",
-    "pipeline:checkpoint",
-    "pipeline:goal_gate_check",
-    "pipeline:error",
-    "pipeline:parallel_started",
-    "pipeline:parallel_branch_started",
-    "pipeline:parallel_branch_completed",
-    "pipeline:parallel_completed",
-    "pipeline:interview_started",
-    "pipeline:interview_completed",
-    "pipeline:interview_timeout",
-    "pipeline:stage_retrying",
-    "pipeline:stage_failed",
-    "provider:response",
+    PIPELINE_START,
+    PIPELINE_COMPLETE,
+    PIPELINE_NODE_START,
+    PIPELINE_NODE_COMPLETE,
+    PIPELINE_EDGE_SELECTED,
+    PIPELINE_CHECKPOINT,
+    PIPELINE_GOAL_GATE_CHECK,
+    PIPELINE_ERROR,
+    PIPELINE_PARALLEL_STARTED,
+    PIPELINE_PARALLEL_BRANCH_STARTED,
+    PIPELINE_PARALLEL_BRANCH_COMPLETED,
+    PIPELINE_PARALLEL_COMPLETED,
+    PIPELINE_INTERVIEW_STARTED,
+    PIPELINE_INTERVIEW_COMPLETED,
+    PIPELINE_INTERVIEW_TIMEOUT,
+    PIPELINE_STAGE_RETRYING,
+    PIPELINE_STAGE_FAILED,
+    PIPELINE_SUBGRAPH_START,
+    PIPELINE_SUBGRAPH_COMPLETE,
+    PIPELINE_PROVIDER_DEFAULTED,
+    PROVIDER_RESPONSE,
     "model:resolved",
 ]
 

@@ -81,18 +81,33 @@ wrong about the running engine.
 Source: `edge_selection.py`; `handlers/tool.py`; nlspec §3.3, §3.7, §10.
 
 - **Token channel:** route a tool node via `condition="context.tool.last_line=<token>"`.
-  `tool.last_line` = last non-empty stripped stdout line (`tool.py:210-219`).
-  `tool.output` = **full stdout** (`tool.py:177`) — conditioning on it silently never matches.
+  `tool.last_line` = last non-empty stripped stdout line (`tool.py:212-220`) — set **only on
+  success**. A **failing tool node does NOT refresh `tool.last_line`** (`tool.py:158-176`
+  early FAIL return precedes the `context.set` at `tool.py:220`); the key retains the value
+  from the last *successful* execution. **Stale-label rule:** on the second+ visit to a gate,
+  a stale `tool.last_line` value from a prior successful run can match a
+  `context.tool.last_line=X` edge even when the current run failed, causing an unintended
+  parallel fan-out. **Discipline:** any edge with `condition="context.tool.last_line=X"` that
+  shares a source node with an `outcome=fail` edge MUST also assert `&& outcome=success`;
+  otherwise a stale label plus a FAIL match both edges on the second visit.
+  `tool.output` = **full stdout** (`tool.py:179`) — conditioning on it silently never matches.
 - **Bare-token condition** = truthy lookup: `condition="context.flag"` is true iff the value
   is non-empty (nlspec §10.5; `conditions.py`).
 - **5-step selection** (§3.3; `edge_selection.py:39-101`): condition-match → `preferred_label`
   (unconditional edges only) → `suggested_next_ids` (unconditional only) → highest `weight`
   → **lexical tiebreak on target id**. The lexical tiebreak is silent but specified —
   >1 unconditional edge from one node picks lexically-first.
-- **Tool non-zero exit → FAIL** (`tool.py:156-174`); needs an explicit FAIL route per #2 above.
-- **No edge selected & outcome≠FAIL → branch terminates SUCCESS** (nlspec §3.2 step 6). It
-  does NOT hard-fail `no_matching_edge` and does NOT loop. "Every LLM node needs an
-  unconditional fallback" is an authoring/lint discipline, not a runtime hard-fail. [MEDIUM]
+- **Tool non-zero exit → FAIL** (`tool.py:158-176`); needs an explicit FAIL route per #2 above.
+- **No edge selected — behavior depends on execution context:**
+  - **Main loop** (`engine.py:773-788`): hard-fails with `terminate_pipeline`, emits
+    `PIPELINE_ERROR` with `error_type: no_matching_edge`. This is NOT a silent SUCCESS.
+    (Shipped behavior since the initial engine commit `6c8bf5a`; the earlier claim here
+    transcribed nlspec §3.2 step 6, which the shipped main loop has never followed — an
+    unreconciled spec/engine divergence.)
+  - **Subgraph branches** (`run_subgraph`, `engine.py:917-919`): returns the last outcome on a
+    dead-end — no hard-fail. "Every LLM node needs an unconditional fallback" is an
+    authoring/lint discipline for the main loop; inside `run_subgraph` a dead-end is a
+    graceful termination. [MEDIUM]
 
 ---
 

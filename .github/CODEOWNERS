@@ -1,0 +1,3 @@
+# Default owners — all changes require review from the bundle's maintainer.
+# More-specific rules below override the catch-all (last match wins).
+* @bkrabach

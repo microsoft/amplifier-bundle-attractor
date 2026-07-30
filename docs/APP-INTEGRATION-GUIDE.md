@@ -373,10 +373,18 @@ recipe loops until the code passes all scenarios.
 
 ### When to Use Each
 
+**Recipes are for staged sequential workflows with human approval gates;
+attractor pipelines are for machine-verified convergence. If your pipeline graph
+has no cycle, it should probably have been a recipe.**
+
+Note: the `@recipes:examples/attractor/` recipe *is* a recipe that implements a
+convergence loop -- it is the exception that proves the rule. The rule is about
+your graph's shape, not the recipe's name.
+
 | Approach | Best For |
 |----------|---------|
-| **DOT Pipelines** | Visual, declarative workflows with explicit control flow, conditional routing, parallel execution, human gates, multi-provider routing |
-| **Attractor Recipe** | Spec-driven code generation with convergence testing loops, where the workflow is always "generate code, test, fix, repeat until passing" |
+| **DOT Pipelines** | Machine-verified convergence loops: corrective cycles, evidence gates, stall detection, multi-provider routing, parallel fan-out |
+| **Attractor Recipe** | Spec/scenario-driven code generation with holdout validation and configurable convergence limits (machine-verified; no human approval gates) |
 
 The recipe approach is more opinionated (4 fixed stages: seed, generate,
 validate, converge) but requires less pipeline design. DOT pipelines give you

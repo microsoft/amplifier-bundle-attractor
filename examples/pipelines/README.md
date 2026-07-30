@@ -7,7 +7,7 @@ This folder has three kinds:
 |---------------|-----------|
 | **`01`–`12` (numbered)** | **Tutorials** -- each isolates one concept (linear flow, routing, fan-out, gates, fidelity, model stylesheets, resume). Self-contained: the goal is embedded in the `.dot`, so they run with no target. |
 | [**`practical/`**](practical/) | **Task pipelines** for real work -- bug fix, refactor, test-gen, PR review, feature build, multi-lens review. Three ship a runnable sample. See [practical/README.md](practical/README.md). |
-| [**`patterns/`**](patterns/) | Reusable DOT **snippets** (convergence factory, conversational gates) to drop into your own graphs. |
+| [**`patterns/`**](../patterns/) | Reusable DOT **snippets** (convergence factory, conversational gates) to drop into your own graphs, plus the battle-hardened [task-runner](../patterns/task-runner.md) exemplar with a runnable sample fixture. |
 
 Each pipeline is a pair: a `.dot` (the graph) and a `.md` (the guide -- start there).
 

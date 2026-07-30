@@ -1,0 +1,264 @@
+// ============================================================================
+// Task Runner — a battle-hardened convergence attractor
+// ============================================================================
+// Takes ONE task (goal + rationale + executable definition-of-done script) and
+// converges on its completion. The exit is structurally unreachable until the
+// DoD script passes AND the work survives a strict critique.
+//
+// Invocation (per KNOWN_ISSUES: process cwd MUST equal --cwd for box nodes):
+//   cd <target_repo>
+//   DOT=/abs/path/to/task-runner.dot
+//   attractor run "$DOT" \
+//       --param task_file=/abs/path/to/task.md \
+//       --param target_dir=$PWD \
+//       --param max_iterations=6 \
+//       --cwd .
+//
+// Parameters:
+//   task_file        Absolute path to the task description .md file.
+//   target_dir       Absolute path to the target repo (pass $PWD; see note below).
+//   max_iterations   Budget: total verify attempts before the budget wall fires.
+//
+// NOTE on target_dir vs --cwd: tool-node cwd is seeded from --cwd, not from
+// --param target_dir. The $target_dir param is prompt text for box nodes only.
+// The invocation above keeps them identical on purpose.
+//
+// DoD script discovery: the runner looks for a sibling of task_file named
+// <task-basename>.verify.sh (same name as the task file, .md replaced by
+// .verify.sh). Keep the task file and its DoD script as siblings.
+// NOTE: tool_command uses VF="$task_file"; VF="${VF%.md}.verify.sh" — the
+// engine substitutes $name/${name} only; ${name%.suffix} is NOT expanded.
+//
+// SHAPE (the doctrine, made visible):
+//   - INNER loop:  attempt -> verify -(red)-> triage -(novel)-> attempt
+//     Tight mechanical fix cycle. Session continuity (thread_id=work).
+//   - OUTER loop:  verify -(green)-> critique -> verdict -(iterate)->
+//     feedback -(loop_restart)-> attempt
+//     Quality convergence: fresh eyes each iteration + accumulated critique
+//     in .ai/feedback/ = descent, not a coin re-flip.
+//   - ROOT-CAUSE wall: same failure signature twice -> diagnose (stop
+//     patching; an attractor absorbs model drift, not deterministic bugs).
+//   - BUDGET as a decision point: verify itself walls the budget (green
+//     and red paths BOTH spend iterations) -> postmortem -> human gate,
+//     never a bare FAIL.
+//   - Gates are deterministic (parallelogram + exit codes + tool.last_line).
+//     No diamond+outcome= routing (dead-edge trap). Cheap gate (DoD script)
+//     before expensive gate (LLM critique). goal_gate on both gates makes
+//     the exit unearnable without evidence.
+//
+// VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON (see task-runner.md):
+//   - STALE-LABEL RULE: a failing tool node does NOT refresh tool.last_line
+//     (ToolHandler returns early on nonzero exit). Therefore any
+//     `context.tool.last_line=X` edge that shares a source node with an
+//     `outcome=fail` edge MUST also assert `&& outcome=success` — otherwise
+//     a stale label + FAIL match two edges at once and the engine takes the
+//     parallel fan-out path. This is the runtime sibling of the diamond
+//     trap, and it only fires on the SECOND+ visit to a gate.
+//   - PARAM NAMESPACE: engine substitution rewrites $name/${name} for any
+//     context/param key, and leaves unknown refs untouched. Shell variables
+//     here (VF, n, rc, sig, B, N, prev, ok, sc) are safe ONLY because no param
+//     shares their name. Never add a param named like a shell var.
+//   - context.target_dir (tool-node cwd) is seeded from --cwd, NOT from
+//     --param target_dir. The $target_dir param is prompt text for box
+//     nodes only. The invocation above keeps them identical on purpose.
+//   - loop_restart clears engine state but NOT backend thread transcripts;
+//     fresh-eyes re-entry is expressed via edge-level fidelity (highest
+//     precedence) on the feedback->attempt edge.
+//   - .ai/iter counts TOTAL verify attempts (inner fixes + outer
+//     iterations); the budget deliberately bounds total verification spend.
+//     Feedback file numbers may skip — they order chronologically.
+//   - On a human-gate timeout/auto-approve, the FIRST edge is chosen:
+//     Abandon is listed first so unattended runs fail safe (honest FAIL +
+//     postmortem) instead of looping on budget bumps.
+//   - SHIP-PATH TRANSIENT RECOVERY + BUDGET WALL AT VERIFY: critique/
+//     feedback/package carry outcome=fail edges back to verify (see the
+//     edge block below). verify increments .ai/iter FIRST and checks the
+//     budget BEFORE running the DoD script, so every re-entry spends an
+//     iteration and a PERSISTENT provider outage drains the budget through
+//     verify and escalates via postmortem->human (verify->postmortem on
+//     last_line=exhausted). The wall must live in verify: triage runs only
+//     on verify FAIL, so a red-path-only budget check would let
+//     critique(FAIL)->verify(PASS)->critique cycle until the engine step
+//     cap kills the run with a bare FAIL, bypassing the postmortem path.
+//     orient stays fail-fast (fails early, cheap to relaunch);
+//     diagnose/postmortem stay fail-fast (already inside failure handling
+//     — a failure there should surface, not loop). Triage keeps its own
+//     exhausted check as a harmless second wall.
+//   - CONVERGENCE RECORD: exactly TWO gates append to .ai/convergence.jsonl
+//     (not every gate). verify appends {"iteration", "gate": "verify",
+//     "pass"} per DoD run, plus {"iteration", "gate": "verify", "budget":
+//     "exhausted"} when the budget wall fires; verdict appends
+//     {"iteration", "gate": "critique", "ship"} per critique round. The
+//     descent curve is kept in files because the engine does not yet
+//     record gate outcomes natively (engine-native convergence records are
+//     proposed in PR #99).
+//
+// MODEL DOCTRINE: the expensive model belongs in the gates (critique,
+// diagnose) — gate quality determines basin depth; maker quality only
+// affects iteration count. Map via model_stylesheet in your deployment, e.g.:
+//   model_stylesheet=".gate { llm_model: <strong-reasoning-model> } .maker { llm_model: <standard-coding-model> }"
+// ============================================================================
+
+digraph TaskRunner {
+    graph [
+        goal="Complete the task described by the task_file parameter to its full definition of done: the task's DoD script passes, and the work survives a strict doctrine critique against the task's judgment criteria.",
+        params="task_file, target_dir, max_iterations",
+        default_max_retries=2,
+        default_fidelity="compact",
+        max_pipeline_duration="14400s",
+        retry_target="attempt"
+    ]
+
+    start [shape=Mdiamond]
+    done  [shape=Msquare]
+
+    // ---------- setup: deterministic preflight ----------
+    setup [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="rm -rf .ai && mkdir -p .ai/feedback .ai/postmortem && B=$max_iterations; echo ${B:-6} > .ai/budget && VF=\"$task_file\"; VF=\"${VF%.md}.verify.sh\"; [ -f \"$task_file\" ] && [ -f \"$VF\" ] && printf ok || printf missing"]
+
+    bad_input [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="echo 'FATAL: task_file or its sibling .verify.sh not found' >&2; exit 1"]
+
+    // ---------- orient: understand before acting ----------
+    orient [shape=box, class="maker",
+        prompt="You are starting a task. Read the task file at $task_file IN FULL, and any doctrine docs it references. Then survey the current state of the target repository at $target_dir: git status, the files and areas the task names. Write .ai/brief.md containing: (1) the goal in your own words, as an end-state of the world; (2) the definition of done — both the mechanical DoD script and the judgment criteria; (3) the quality dimensions that matter and the risks you foresee; (4) the repo's current state, including any partial or dirty work this run must be robust to. Capture understanding, not a step-by-step plan."]
+
+    // ---------- attempt: the maker (inner-loop session continuity) ----------
+    attempt [shape=box, class="maker", thread_id="work", fidelity="full",
+        prompt="Advance the task's goal. Sources of truth: the task file at $task_file, your brief at .ai/brief.md, and ALL files in .ai/feedback/ — accumulated critique from prior iterations; read them FIRST and address them. If .ai/verify.log exists it holds the DoD script's latest output — if it was failing, fix exactly what it reports. If .ai/postmortem/diagnosis.md exists, honor its change of course. Work in the target repository at $target_dir with your file and shell tools; make real changes; honor the repo's own conventions (AGENTS.md, PR templates, design docs) and the task's stated non-goals. Never fabricate evidence or game the DoD script — your work is verified by code, then critiqued against the task's judgment criteria."]
+
+    // ---------- verify: CHEAP deterministic gate (the task's own DoD) ----------
+    verify [shape=parallelogram, class="gate", max_retries=0,
+        goal_gate=true, retry_target="attempt",
+        tool_command="n=$(($(cat .ai/iter 2>/dev/null || echo 0)+1)); echo $n > .ai/iter; B=$(cat .ai/budget 2>/dev/null); B=${B:-6}; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"verify\", \"budget\": \"exhausted\"}\n' \"$n\" >> .ai/convergence.jsonl; printf exhausted; else VF=\"$task_file\"; VF=\"${VF%.md}.verify.sh\"; timeout 1800 bash \"$VF\" > .ai/verify.log 2>&1; rc=$?; [ $rc -eq 124 ] && echo 'VERIFY TIMEOUT after 1800s' >> .ai/verify.log; printf '{\"iteration\": %s, \"gate\": \"verify\", \"pass\": %s}\n' \"$n\" \"$([ $rc -eq 0 ] && echo true || echo false)\" >> .ai/convergence.jsonl; [ $rc -eq 0 ] && printf green || { printf red; exit 1; }; fi"]
+
+    // ---------- triage: root-cause wall + budget check (deterministic) ----------
+    // Signature normalization: volatile tokens (temp run-dir paths, float
+    // timings) are stripped before hashing — a run burned its whole budget
+    // on same-class failures that hashed "novel" every time because a random
+    // /tmp/... path in the hash made every identical failure look novel, so
+    // the root-cause wall never fired (see task-runner.md, lesson 3).
+    triage [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="B=$(cat .ai/budget 2>/dev/null); B=${B:-6}; n=$(cat .ai/iter 2>/dev/null || echo 0); sig=$(tail -20 .ai/verify.log 2>/dev/null | sed -E 's|/tmp/[A-Za-z0-9._-]+|TMPPATH|g; s/[0-9]+\\.[0-9]+s?//g' | md5sum | cut -d' ' -f1); prev=$(cat .ai/last-fail-sig 2>/dev/null || echo none); echo $sig > .ai/last-fail-sig; if [ \"$n\" -ge \"$B\" ]; then printf exhausted; elif [ \"$sig\" = \"$prev\" ]; then printf repeat; else printf novel; fi"]
+
+    diagnose [shape=box, class="gate",
+        prompt="Verification failed twice with the SAME failure signature. Stop patching — find the root cause. Read .ai/verify.log, the task file at $task_file, and the relevant code and docs in $target_dir. Determine what is actually wrong: (a) the current approach, (b) the environment or tooling, (c) the DoD script itself, or (d) the task's assumptions. Write .ai/postmortem/diagnosis.md with the root cause, the evidence, and the single change of course for the next attempt. An attractor absorbs model drift, not deterministic bugs — do not recommend another blind retry. If the blocker cannot be resolved from inside this run (missing access, a genuinely broken DoD script, a contradictory task), include the word BLOCKED on its own line and explain."]
+
+    // Clears the failure signature so the post-diagnosis attempt gets one
+    // clean shot before the root-cause wall can re-fire. BLOCKED grep is
+    // line-start anchored: prose like "not BLOCKED" must not misroute.
+    diagnose_gate [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="rm -f .ai/last-fail-sig; grep -qE '^BLOCKED' .ai/postmortem/diagnosis.md && printf blocked || printf continue"]
+
+    // ---------- critique: EXPENSIVE judgment gate (only on green work) ----------
+    // The verdict grep below is anchored (last line starting 'VERDICT:'):
+    // a critique that merely QUOTES the phrase mid-prose cannot false-ship.
+    critique [shape=box, class="gate",
+        prompt="The mechanical DoD script passed. Now judge the work against the task's FULL definition of done — especially the judgment criteria the script cannot check. Read the task file at $task_file, the brief at .ai/brief.md, and review the ACTUAL changes in $target_dir (git diff, new and changed files; .ai/verify.log for what was verified). Apply the doctrine: evidence over claims — verify that claimed evidence is real; no test-gaming or DoD-script-gaming; docs and paired guides updated; repo conventions honored; non-goals respected; exemplar quality where the task demands it. Write .ai/critique.md: specific findings with file references, then a final line reading exactly 'VERDICT: SHIP' or 'VERDICT: ITERATE'. Be strict — a wrong-but-plausible result that ships is worse than another iteration."]
+
+    // STALL DETECTION: the iteration budget only gates the RED path (triage
+    // runs on verify failure), so a mechanically-green run whose critique
+    // keeps refusing loops unbounded until the wall-clock fuse — 6 consecutive
+    // refusals observed in a live run, with a fresh maximally-strict critic
+    // finding something new each cycle. After 3 total refusals the verdict
+    // routes to postmortem->human: budget-as-decision-point on the OUTER loop.
+    verdict [shape=parallelogram, class="gate", max_retries=0,
+        goal_gate=true, retry_target="attempt",
+        tool_command="n=$(cat .ai/iter 2>/dev/null || echo 0); grep -E '^VERDICT:' .ai/critique.md | tail -1 | grep -q 'SHIP'; ok=$?; printf '{\"iteration\": %s, \"gate\": \"critique\", \"ship\": %s}\n' \"$n\" \"$([ $ok -eq 0 ] && echo true || echo false)\" >> .ai/convergence.jsonl; [ $ok -eq 0 ] && printf ship || { sc=$(($(cat .ai/stall-count 2>/dev/null || echo 0)+1)); echo $sc > .ai/stall-count; if [ \"$sc\" -ge 3 ]; then printf stall; else printf iterate; exit 1; fi; }"]
+
+    // ---------- feedback: accumulate critique -> descent, not re-flip ----------
+    feedback [shape=box, class="maker",
+        prompt="Read .ai/critique.md (and .ai/verify.log if relevant). Distill the SINGLE highest-leverage change for the next iteration into a new file in .ai/feedback/ — read .ai/iter for the current iteration number N and name the file N-next.md. Format: Key finding / What to change / Why it matters. Then curate the channel: consolidate or delete earlier feedback files that are now stale or addressed. Accumulated critique must descend toward the goal, not pile up into sludge."]
+
+    // ---------- package: ship on a branch with real evidence ----------
+    package [shape=box, class="maker",
+        prompt="Both gates passed. Prepare the work for handoff in $target_dir: ensure runner artifacts (.ai/) are excluded from version control via .git/info/exclude (do NOT commit them); create or reuse a branch named task/<task-id> (the id is in the task file's frontmatter at $task_file); commit all task changes with a clear conventional commit message stating WHAT changed and WHY (draw on .ai/brief.md and .ai/critique.md; include the standard Amplifier co-authored-by attribution); and write .ai/SHIPPED.md summarizing the goal, what shipped, where the evidence lives (.ai/verify.log, .ai/convergence.jsonl, run events), and anything a reviewer should know."]
+
+    ship_check [shape=parallelogram, class="gate", max_retries=0,
+        tool_command="[ -z \"$(git status --porcelain | grep -v -E '^\\?\\? \\.ai')\" ] && git log --oneline -1 | grep -q . && printf shipped || printf dirty"]
+
+    // ---------- budget exhaustion: a decision point, not a fuse ----------
+    postmortem [shape=box, class="gate",
+        prompt="The run has hit a decision point without convergence: either the iteration budget is exhausted (repeated verification failures) or the quality loop has stalled (repeated critique refusals on mechanically-green work). Read .ai/convergence.jsonl (the descent record), .ai/critique.md, .ai/verify.log, and .ai/feedback/. Write .ai/postmortem/report.md: what each iteration attempted, whether the loop was DESCENDING, OSCILLATING, or WANDERING (cite the convergence record), your best hypothesis for why it has not converged, and the options (continue with more budget / change approach / split the task / abandon). Be honest — this report is the value salvaged from a non-converging run."]
+
+    // Deterministic guard: the postmortem node has been observed returning
+    // SUCCESS without writing its report. The gate guarantees the file exists
+    // — as a labeled stub if necessary — so abandon never references a missing
+    // artifact (see task-runner.md, lesson 5).
+    pm_gate [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="[ -s .ai/postmortem/report.md ] && printf ok || { echo 'POSTMORTEM REPORT MISSING — the postmortem node completed without writing it. Salvage from .ai/convergence.jsonl, .ai/verify.log, .ai/feedback/.' > .ai/postmortem/report.md; printf stub; }"]
+
+    escalate [shape=hexagon,
+        prompt="The runner could not converge within budget, or could not package cleanly. Review .ai/postmortem/ and .ai/convergence.jsonl before choosing."]
+
+    // Budget bumps are capped so the engine step cap can never become the
+    // real terminator (which would bypass the postmortem path with a bare FAIL).
+    bump_budget [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="B=$(cat .ai/budget 2>/dev/null); B=${B:-6}; N=$((B+3)); [ $N -gt 15 ] && N=15; echo $N > .ai/budget; rm -f .ai/last-fail-sig; printf continue"]
+
+    abandon [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="echo 'ABANDONED: see .ai/postmortem/report.md and .ai/convergence.jsonl' >&2; exit 1"]
+
+    // ================= edges =================
+    start -> setup
+    setup -> orient    [condition="context.tool.last_line=ok"]
+    setup -> bad_input [condition="context.tool.last_line=missing"]
+
+    orient  -> attempt
+    attempt -> verify
+
+    // Cheap gate: green advances, red enters the corrective basin.
+    // NOTE `&& outcome=success`: a failing verify does NOT refresh
+    // tool.last_line, so without the conjunction a stale 'green' + FAIL
+    // would match both edges and fan out (see STALE-LABEL RULE above).
+    verify -> critique [condition="context.tool.last_line=green && outcome=success"]
+    verify -> triage   [condition="outcome=fail"]
+    // Budget wall: verify spends the budget on EVERY entry — green path
+    // and transient re-entries included — and routes exhaustion to the
+    // decision point. `&& outcome=success` is the mandatory STALE-LABEL
+    // conjunction (verify carries an outcome=fail edge, so a stale
+    // 'exhausted' + FAIL would otherwise fan out).
+    verify -> postmortem [condition="context.tool.last_line=exhausted && outcome=success", label="budget exhausted"]
+
+    // Inner loop + root-cause wall + budget wall.
+    triage -> attempt    [condition="context.tool.last_line=novel",     label="fix"]
+    triage -> diagnose   [condition="context.tool.last_line=repeat",    label="same failure twice"]
+    triage -> postmortem [condition="context.tool.last_line=exhausted", label="budget spent"]
+
+    diagnose -> diagnose_gate
+    diagnose_gate -> attempt  [condition="context.tool.last_line=continue", label="change course"]
+    diagnose_gate -> escalate [condition="context.tool.last_line=blocked"]
+
+    // Expensive gate: ship or iterate with accumulated feedback.
+    critique -> verdict
+    verdict  -> package   [condition="context.tool.last_line=ship && outcome=success"]
+    verdict  -> feedback  [condition="outcome=fail",                                    label="iterate"]
+    verdict  -> postmortem [condition="context.tool.last_line=stall && outcome=success", label="quality loop stalled — decision point"]
+    // Edge-level fidelity (highest precedence) forces the fresh-eyes reset:
+    // loop_restart alone does NOT clear the thread_id=work transcript.
+    feedback -> attempt  [loop_restart="true", fidelity="compact", label="fresh iteration, kept learning"]
+
+    // TRANSIENT-RECOVERY routes: a provider error (e.g. overloaded_error) at
+    // a ship-path box node used to fail-fast the whole run after the work was
+    // already done. Route such FAILs back through the cheap gate: verify
+    // re-greens in seconds and the outer loop re-converges. Each re-entry
+    // consumes an iteration, and verify's own budget wall (checked BEFORE
+    // the DoD script runs) means a persistent outage drains the budget and
+    // escalates honestly via postmortem->human instead of looping.
+    critique -> verify [condition="outcome=fail", label="transient — re-enter via cheap gate"]
+    feedback -> verify [condition="outcome=fail", label="transient — re-enter via cheap gate"]
+    package  -> verify [condition="outcome=fail", label="transient — re-enter via cheap gate"]
+
+    // Ship path: evidence of a clean handoff, or a human decides.
+    package    -> ship_check
+    ship_check -> done     [condition="context.tool.last_line=shipped"]
+    ship_check -> escalate [condition="context.tool.last_line=dirty"]
+
+    // Human gate: budget is a decision point. Abandon is FIRST so that
+    // timeout/auto-approve fails safe instead of looping.
+    postmortem -> pm_gate
+    pm_gate -> escalate
+    escalate -> abandon     [label="[A] Abandon — keep the postmortem"]
+    escalate -> bump_budget [label="[C] Continue — raise the budget"]
+    bump_budget -> attempt
+}

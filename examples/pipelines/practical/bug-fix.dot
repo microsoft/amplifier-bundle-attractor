@@ -1,65 +1,186 @@
-// bug-fix.dot -- Systematic bug fix pipeline.
+// bug-fix.dot -- Convergence exemplar: evidence-gated bug fix with
+// feedback-accumulating outer loop and root-cause wall.
 //
-// Reproduce, diagnose, fix, write regression test, verify.
-// Model-agnostic: every node runs on your configured default provider/model.
+// SHAPE (the doctrine, made visible):
+//   INNER loop:  implement_fix -> test_gate -[fail]-> triage -[novel]-> implement_fix
+//     Tight mechanical fix cycle. Session continuity (thread_id + fidelity=full)
+//     so the fixer sees what it just tried.
+//   ROOT-CAUSE WALL: triage -[repeat]-> diagnose -> implement_fix
+//     Same failure signature twice? Stop patching -- find the actual cause.
+//     An attractor absorbs model drift, not deterministic bugs.
+//   OUTER loop:  test_gate -[pass]-> critique -> verdict_gate
+//     -[iterate]-> feedback -[loop_restart]-> implement_fix
+//     Fresh eyes each iteration + durable critique in .ai/feedback/ = descent,
+//     not a coin re-flip. Feedback is written once per outer iteration and read
+//     at the top of every implement_fix attempt.
+//   BUDGET as a decision point:  test_gate -[exhausted]-> postmortem -> escalated
+//     test_gate increments .ai/iter on EVERY entry (inner loop AND outer loop).
+//     When the count exceeds .ai/budget (default 5), it emits "exhausted" and
+//     routes to postmortem -> escalated -- a decision point, not a bare FAIL.
+//     This bounds ordinary convergence cycles (red tests, quality ITERATE).
+//     implement_fix hard failures (provider error) also route to postmortem.
+//     max_pipeline_duration is a safety ceiling that terminates the engine
+//     directly (bare FAIL, no graph traversal); it is NOT a postmortem trigger.
+//     default_max_retries bounds only implement_fix hard failures.
+//
+// VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON:
+//   STALE-LABEL RULE (general case): a tool node that exits nonzero does NOT
+//   refresh tool.last_line. On a second visit, a stale label could match a
+//   last_line edge while FAIL also traverses the outcome=fail edge -- fan-out.
+//   The `&& outcome=success` conjunction prevents this. On this specific graph,
+//   test_gate and verdict_gate always exit 0 (printf pass/fail at the end), so
+//   the conjunction is harmless but present as future-proofing discipline.
+//   Apply it to any last_line edge sharing a source node with an outcome=fail edge.
 
 digraph BugFix {
     graph [
         goal="$goal",
         label="Bug Fix Pipeline",
-        default_max_retry=3,
+        default_max_retries=3,
         default_fidelity="full",
-        default_thread_id="bug-fix"
+        default_thread_id="bug-fix",
+        max_pipeline_duration="3600s"
     ]
 
-    start [shape=Mdiamond, label="Start"]
-    done  [shape=Msquare, label="Done"]
+    start     [shape=Mdiamond, label="Start"]
+    done      [shape=Msquare,  label="Done"]
+    // Escalation is a deterministic non-terminal handoff, not a second
+    // successful pipeline exit. It writes a minimal fallback handoff even if
+    // the postmortem LLM itself failed, so every LLM-node hard failure is
+    // absorbed before the engine returns failure.
+    escalated [
+        shape=parallelogram,
+        label="Escalated",
+        tool_command="mkdir -p .ai/postmortem; if [ ! -f .ai/postmortem/report.md ]; then echo 'Postmortem could not be produced. Preserve the run logs and escalate the LLM failure to a human.' > .ai/postmortem/escalation.md; else echo 'Read .ai/postmortem/report.md and the run logs; choose change approach, split task, or human escalation.' > .ai/postmortem/escalation.md; fi; printf escalated"
+    ]
 
-    // Stage 1: Reproduce the bug
+    // Reproduce: establish the failure before touching code.
     reproduce [
         label="Reproduce",
-        prompt="Attempt to reproduce the bug described in the goal. Write a minimal reproduction script and run it. Capture the error output. If you cannot reproduce it, document what you tried."
+        prompt="Advance the goal: reproduce the bug described in the goal. Write a minimal reproduction script and run it. Capture the error output. If you cannot reproduce it, document what you tried. Code will verify your fix later -- focus on understanding the failure first."
     ]
 
-    // Stage 2: Diagnose the root cause (reasoning-heavy).
-    // Want a stronger reasoning model just for this step? Add a model_stylesheet
-    // and tag this node with a class -- see examples/pipelines/06-model-stylesheet.dot.
+    // Diagnose: root-cause analysis (reasoning-heavy).
+    // Runs on the initial path AND as the root-cause wall when triage detects
+    // the same failure signature twice. Want a stronger reasoning model just for
+    // this step? Add a model_stylesheet and tag this node with a class -- see
+    // examples/pipelines/06-model-stylesheet.dot.
     diagnose [
         label="Diagnose",
-        prompt="Analyze the reproduction results and the relevant source code. Identify the root cause. Explain: (1) what is happening, (2) why it is happening, (3) which file(s) and line(s) are responsible."
+        prompt="Analyze the reproduction results and the relevant source code. Identify the root cause. Explain: (1) what is happening, (2) why it is happening, (3) which file(s) and line(s) are responsible. If .ai/test.log exists, read it -- it holds the latest test output. If .ai/postmortem/diagnosis.md exists from a prior attempt, note what was tried and why it did not converge."
     ]
 
-    // Stage 3: Implement the fix
+    // Implement Fix: the maker node.
+    // Reads .ai/feedback/ on every entry -- accumulated critique from prior
+    // outer-loop iterations makes each attempt informed descent, not a re-flip.
     implement_fix [
         label="Implement Fix",
-        prompt="Implement the minimal fix for the diagnosed root cause. Change only what is necessary. Explain each change and why it resolves the issue.",
-        goal_gate=true,
+        prompt="Advance the goal: implement the minimal fix for the diagnosed root cause. Before writing any code, check .ai/feedback/ for prior critique from earlier iterations and address it. Change only what is necessary. Write a regression test that (1) fails without the fix and (2) passes with it. Explain each change and why it resolves the issue. Code will verify -- do not skip or weaken the failing test to get to green.",
         retry_target="implement_fix"
     ]
 
-    // Stage 4: Write a regression test
-    regression_test [
-        label="Regression Test",
-        prompt="Write a regression test that: (1) fails without the fix (to prove it tests the right thing), (2) passes with the fix. Add it to the existing test suite."
-    ]
-
-    // Stage 5: Run all tests
-    run_tests [
-        label="Run Tests",
-        prompt="Run the full test suite (pytest -v --tb=short). All tests must pass, including the new regression test. Report results."
-    ]
-
-    // Stage 6: Evidence gate -- runs pytest and routes on the result.
+    // Test Gate: deterministic primary gate AND iteration budget wall.
     // shape=parallelogram runs the tool_command directly (not via LLM).
-    // Prints "pass" (exit 0) or "fail" (exit non-0) as the last stdout line.
-    // Edges condition on context.tool.last_line -- the proven routing pattern.
+    // Increments .ai/iter on every entry (inner loop + outer loop). When the
+    // count exceeds .ai/budget (default 5), emits "exhausted" and routes to
+    // postmortem -- a decision point, not a bare FAIL. Otherwise runs pytest
+    // and saves output to .ai/test.log for the triage node's signature check.
+    // All three branches end with printf (exit 0), so tool.last_line is always
+    // fresh. The `&& outcome=success` on pass/exhausted edges is general-case
+    // discipline (STALE-LABEL RULE): if the tool ever exits nonzero, a stale
+    // last_line could fan-out. Edges condition on context.tool.last_line.
     test_gate [
         shape=parallelogram,
         label="Tests Pass?",
-        tool_command="pytest -q > /dev/null 2>&1 && printf pass || printf fail"
+        tool_command="mkdir -p .ai; n=$(($(cat .ai/iter 2>/dev/null || echo 0)+1)); echo $n > .ai/iter; B=$(cat .ai/budget 2>/dev/null || echo 5); if [ \"$n\" -gt \"$B\" ]; then printf exhausted; else pytest -q > .ai/test.log 2>&1; [ $? -eq 0 ] && printf pass || printf fail; fi"
     ]
 
-    start -> reproduce -> diagnose -> implement_fix -> regression_test -> run_tests -> test_gate
-    test_gate -> done          [label="pass", condition="context.tool.last_line=pass"]
-    test_gate -> implement_fix [label="fail", condition="context.tool.last_line=fail"]
+    // Triage: deterministic root-cause wall.
+    // Computes a signature of the test failure output and compares to the
+    // previous failure. Routes "novel" (first failure or different failure) to
+    // implement_fix for another attempt; routes "repeat" (same failure twice) to
+    // diagnose -- stop patching, find the actual root cause.
+    triage [
+        shape=parallelogram,
+        label="Novel Failure?",
+        tool_command="mkdir -p .ai; sig=$(tail -20 .ai/test.log 2>/dev/null | sed 's/[0-9]*\\.[0-9]*s//g' | md5sum | cut -d' ' -f1); prev=$(cat .ai/last-fail-sig 2>/dev/null || echo none); echo $sig > .ai/last-fail-sig; [ \"$sig\" = \"$prev\" ] && printf repeat || printf novel"
+    ]
+
+    // Critique: outer quality loop -- fresh eyes on green work.
+    // Checks fix quality, minimality, and test integrity (no test-gaming).
+    // Writes .ai/critique.md with findings and a final VERDICT: SHIP or ITERATE line.
+    critique [
+        label="Critique Fix",
+        prompt="The tests are green. Judge the fix against the goal's full definition of done -- not just 'tests pass'. Read the goal, the changed files, and .ai/feedback/ (prior critique). Check: (1) is the fix minimal and correct? (2) does the regression test actually prove the bug is fixed, or was it weakened/skipped to get to green? (3) is the code clean? Write .ai/critique.md with specific findings, then end with a final line reading exactly 'VERDICT: SHIP' or 'VERDICT: ITERATE'."
+    ]
+
+    // Verdict Gate: deterministic routing on the critique verdict.
+    // Greps .ai/critique.md for the VERDICT line -- no LLM opinion in the routing.
+    verdict_gate [
+        shape=parallelogram,
+        label="Ship?",
+        tool_command="grep -E '^VERDICT:' .ai/critique.md 2>/dev/null | tail -1 | grep -q 'SHIP' && printf ship || printf iterate"
+    ]
+
+    // Feedback: distill the highest-leverage change for the next iteration.
+    // Writes to .ai/feedback/ -- implement_fix reads this on re-entry.
+    // loop_restart on the back-edge resets iteration state so the next
+    // implement_fix starts fresh while retaining the accumulated critique.
+    feedback [
+        label="Write Feedback",
+        prompt="Read .ai/critique.md. Distill the single highest-leverage change for the next iteration into a new file in .ai/feedback/ (name it by iteration, e.g. 1-next.md). Format: Key finding (1 sentence) / What to change (3-5 bullets) / Why it matters. Be precise -- this is the descent signal the next attempt will read."
+    ]
+
+    // Postmortem: budget exhaustion or a single LLM-node hard failure produces
+    // a decision point, not a bare FAIL. A deterministic fallback path below
+    // still reaches escalated if this LLM cannot write the detailed report.
+    postmortem [
+        label="Postmortem",
+        prompt="The fix loop has exhausted its budget without converging. Read .ai/feedback/, .ai/critique.md (if it exists), .ai/test.log, and the current state of the code. Write .ai/postmortem/report.md: what was attempted each iteration, whether the loop was descending or oscillating, your best hypothesis for why it has not converged, and the options (change approach / split the task / escalate to a human). Be honest -- this report is the value salvaged from a non-converging run."
+    ]
+
+    // ===== edges =====
+    start -> reproduce -> diagnose -> implement_fix -> test_gate
+
+    // Budget wall: iteration budget exhausted -> decision point (not bare FAIL).
+    // `&& outcome=success` on exhausted edge: STALE-LABEL discipline (test_gate
+    // carries an outcome=fail edge via implement_fix; a stale "exhausted" +
+    // FAIL would otherwise match two edges on a second visit).
+    test_gate -> postmortem [label="budget exhausted", condition="context.tool.last_line=exhausted && outcome=success"]
+
+    // Inner loop: red enters triage for root-cause classification.
+    // `&& outcome=success` on the pass edge: general-case STALE-LABEL discipline.
+    // On this graph test_gate always exits 0, so it is harmless; in the general
+    // case a nonzero-exit tool does not refresh tool.last_line and the conjunction
+    // prevents a stale label from matching both edges on a second visit.
+    test_gate -> critique [label="pass", condition="context.tool.last_line=pass && outcome=success"]
+    test_gate -> triage   [label="fail", condition="context.tool.last_line=fail"]
+
+    // Root-cause wall: novel failure retries; repeat failure re-diagnoses.
+    triage -> implement_fix [label="novel",  condition="context.tool.last_line=novel"]
+    triage -> diagnose      [label="repeat", condition="context.tool.last_line=repeat"]
+
+    // Outer quality loop: green work goes through critique -> verdict -> ship or iterate.
+    critique -> verdict_gate
+    // `&& outcome=success` on ship/iterate: same STALE-LABEL discipline as above.
+    verdict_gate -> done     [label="ship",    condition="context.tool.last_line=ship && outcome=success"]
+    verdict_gate -> feedback [label="iterate", condition="context.tool.last_line=iterate && outcome=success"]
+
+    // Feedback loop: loop_restart resets iteration state; implement_fix reads
+    // .ai/feedback/ at the top of its prompt -- accumulated critique = descent.
+    feedback -> implement_fix [loop_restart="true", label="fresh iteration, kept critique"]
+
+    // Hard failure: every LLM node has a real recovery route. The first failed
+    // LLM goes through postmortem; if postmortem is the failed node, its FAIL
+    // edge goes directly to the deterministic escalation handoff. Thus one bad
+    // LLM invocation is absorbed rather than becoming an unhandled failure.
+    // max_pipeline_duration is an engine-level fire exit and is intentionally
+    // outside graph routing.
+    reproduce     -> postmortem [condition="outcome=fail", label="hard failure"]
+    diagnose      -> postmortem [condition="outcome=fail", label="hard failure"]
+    implement_fix -> postmortem [condition="outcome=fail", label="hard failure"]
+    critique      -> postmortem [condition="outcome=fail", label="hard failure"]
+    feedback      -> postmortem [condition="outcome=fail", label="hard failure"]
+    postmortem   -> escalated  [condition="outcome=fail", label="postmortem failed"]
+    postmortem   -> escalated  [label="escalate"]
 }

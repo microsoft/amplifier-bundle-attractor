@@ -8,6 +8,7 @@ Subcommands:
     run       <dot_file>   run a DOT pipeline
     doctor                 environment diagnostics
     trace     <run-dir>    print a human-readable iteration/descent summary
+    lint      <dot_file>   static topological lint of a .dot pipeline file
 """
 
 from __future__ import annotations
@@ -95,6 +96,18 @@ def build_parser() -> argparse.ArgumentParser:
     trace.add_argument(
         "run_dir",
         help="path to the run directory produced by 'attractor run'",
+    )
+
+    lint_p = sub.add_parser(
+        "lint",
+        help="static topological lint of a .dot pipeline file",
+    )
+    lint_p.add_argument("dot_file", help="path to a .dot file to lint")
+    lint_p.add_argument(
+        "--strict",
+        action="store_true",
+        default=False,
+        help="exit non-zero on WARNING diagnostics as well as ERRORs (default: only ERRORs cause non-zero exit)",
     )
 
     return parser
@@ -345,6 +358,78 @@ def cmd_trace(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lint(args: argparse.Namespace) -> int:
+    """Static topological lint of a .dot pipeline file.
+
+    Parses the DOT file and runs the full basin-lint rule set:
+    structural rules (LINT-001–018) plus topological rules (TOPO-001–005).
+
+    Exit-code contract:
+        ERROR-severity diagnostics → exit 1.
+        WARNING-only (or clean) → exit 0 (unless --strict).
+        --strict: exit 1 on any diagnostic (ERROR or WARNING).
+
+    This command does not run the pipeline.  It is safe to use in CI
+    before committing a .dot file.
+    """
+    dot_path = Path(args.dot_file).expanduser()
+    if not dot_path.is_file():
+        print(f"attractor lint: DOT file not found: {dot_path}", file=sys.stderr)
+        return 1
+
+    dot_source = dot_path.read_text(encoding="utf-8")
+
+    # Import the pipeline module's parser and lint function
+    try:
+        from amplifier_module_loop_pipeline.dot_parser import parse_dot
+        from amplifier_module_loop_pipeline.validation import lint
+    except ImportError as e:
+        print(
+            f"attractor lint: cannot import lint engine: {e}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        graph = parse_dot(dot_source)
+    except Exception as e:  # noqa: BLE001 -- fail loud with the real error, no fallback
+        print(f"attractor lint: failed to parse {dot_path}: {e}", file=sys.stderr)
+        return 1
+
+    diags = lint(graph)
+
+    if not diags:
+        print(f"attractor lint: {dot_path}: OK (no findings)")
+        return 0
+
+    errors = [d for d in diags if d.severity == "ERROR"]
+    warnings = [d for d in diags if d.severity == "WARNING"]
+    infos = [d for d in diags if d.severity not in ("ERROR", "WARNING")]
+
+    for d in diags:
+        loc = f" [{d.node_id}]" if d.node_id else ""
+        edge_loc = f" ({d.edge[0]} -> {d.edge[1]})" if d.edge else ""
+        print(f"{d.severity}: [{d.rule}]{loc}{edge_loc} {d.message}")
+        if d.fix:
+            print(f"  fix: {d.fix}")
+
+    print()
+    summary_parts = []
+    if errors:
+        summary_parts.append(f"{len(errors)} error(s)")
+    if warnings:
+        summary_parts.append(f"{len(warnings)} warning(s)")
+    if infos:
+        summary_parts.append(f"{len(infos)} info(s)")
+    print(f"attractor lint: {dot_path}: {', '.join(summary_parts)}")
+
+    if errors:
+        return 1
+    if args.strict and (warnings or infos):
+        return 1
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     del args  # doctor takes no options today
 
@@ -376,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
         "run": cmd_run,
         "doctor": cmd_doctor,
         "trace": cmd_trace,
+        "lint": cmd_lint,
     }
     return dispatch[args.command](args)
 

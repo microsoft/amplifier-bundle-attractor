@@ -12,6 +12,47 @@ from .context import PipelineContext
 from .outcome import Outcome
 
 
+def parse_condition(condition: str) -> list[tuple[str, str, str]]:
+    """Parse a condition expression into ``(key, op, value)`` clause triples.
+
+    This is the single grammar entry point for the condition expression
+    language.  Both the runtime evaluator (``evaluate_condition``) and the
+    static lint rules (``validation.py`` TOPO-001..005) consume it, so the
+    grammar cannot drift between engine routing and lint analysis.
+
+    The grammar (spec Section 10): one or more clauses joined by ``&&``
+    (the ONLY conjunction operator — comma is NOT an AND separator; a value
+    containing a comma is compared literally as a single clause, e.g.
+    ``context.x=a,b`` matches the value ``"a,b"``).  Each clause is one of:
+
+      - ``key!=value``  — inequality check  → ``(key, "!=", value)``
+      - ``key=value``   — equality check    → ``(key, "=", value)``
+      - ``key``         — truthiness check  → ``(key, "truthy", "")``
+
+    ``!=`` is checked before ``=`` (since ``=`` is a substring of ``!=``).
+    Whitespace around ``&&`` and around operators is stripped.  Clauses that
+    are empty after stripping are silently skipped.  An empty condition
+    yields an empty clause list (which evaluates as always-true).
+    """
+    clauses: list[tuple[str, str, str]] = []
+    if not condition:
+        return clauses
+    for piece in condition.split("&&"):
+        clause = piece.strip()
+        if not clause:
+            continue
+        if "!=" in clause:
+            key, value = clause.split("!=", maxsplit=1)
+            clauses.append((key.strip(), "!=", value.strip()))
+        elif "=" in clause:
+            key, value = clause.split("=", maxsplit=1)
+            clauses.append((key.strip(), "=", value.strip()))
+        else:
+            # Bare key: truthiness check
+            clauses.append((clause, "truthy", ""))
+    return clauses
+
+
 def evaluate_condition(
     condition: str,
     outcome: Outcome,
@@ -22,45 +63,36 @@ def evaluate_condition(
     Returns True if the condition passes (edge is eligible).
     An empty condition always returns True.
 
-    Spec Section 10.5: Evaluation algorithm.
+    Spec Section 10.5: Evaluation algorithm.  Parsing is delegated to
+    ``parse_condition`` (the shared grammar entry point).
     """
     if not condition or not condition.strip():
         return True
 
-    # Split on '&&' — the ONLY conjunction operator (spec §10, §10.7).
-    # Comma is NOT an AND separator; a value containing a comma is compared
-    # literally as a single clause (e.g. context.x=a,b matches the value "a,b").
-    raw_clauses: list[str] = []
-    for piece in condition.split("&&"):
-        piece = piece.strip()
-        if piece:
-            raw_clauses.append(piece)
-
-    for clause in raw_clauses:
-        if not _evaluate_clause(clause, outcome, context):
+    for key, op, value in parse_condition(condition):
+        if not _evaluate_clause(key, op, value, outcome, context):
             return False
     return True
 
 
 def _evaluate_clause(
-    clause: str,
+    key: str,
+    op: str,
+    value: str,
     outcome: Outcome,
     context: PipelineContext,
 ) -> bool:
-    """Evaluate a single Key Operator Value clause.
+    """Evaluate a single parsed ``(key, op, value)`` clause.
 
     Spec Section 10.5: evaluate_clause algorithm.
     """
-    # Check for != before = (since = is a substring of !=)
-    if "!=" in clause:
-        key, value = clause.split("!=", maxsplit=1)
-        return _resolve_key(key.strip(), outcome, context) != value.strip()
-    elif "=" in clause:
-        key, value = clause.split("=", maxsplit=1)
-        return _resolve_key(key.strip(), outcome, context) == value.strip()
-    else:
-        # Bare key: check if truthy
-        return bool(_resolve_key(clause.strip(), outcome, context))
+    resolved = _resolve_key(key, outcome, context)
+    if op == "!=":
+        return resolved != value
+    if op == "=":
+        return resolved == value
+    # "truthy": bare key — check if truthy
+    return bool(resolved)
 
 
 def _resolve_key(

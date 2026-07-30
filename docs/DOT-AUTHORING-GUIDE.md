@@ -753,9 +753,219 @@ digraph FeatureBuild {
 }
 ```
 
+## Static Lint Rules (`attractor lint`)
+
+Run `attractor lint <file.dot>` to check a pipeline file before running it.
+Lint is static (no API calls, sub-second), safe to run in CI, and does not
+change run-time validation behaviour.
+
+**Exit-code contract:**
+- Errors (ERROR severity) → exit 1 (pipeline will not execute correctly)
+- Warnings only → exit 0 (use `--strict` to treat warnings as errors)
+
+**Spec note:** These lint rules are lint-only — they do not change run-time
+behaviour and require no `specs/EXTENSIONS.md` entry.  They enforce the
+canonical attractor spec's routing semantics statically, at author time.
+
+---
+
+### TOPO-001 — Dead conditional edge out of a diamond node
+
+**What it detects:** An edge out of a `diamond` (ConditionalHandler) node
+whose condition is `outcome!=success` or `outcome=fail`.
+
+**Why it's wrong:** `ConditionalHandler` (shape=`diamond`) always returns
+`SUCCESS` unconditionally (`handlers/conditional.py`).  Additionally, `FAIL`
+is fail-fast — it never reaches a diamond via plain edges
+(`edge_selection.py`).  Therefore, `outcome!=success` and `outcome=fail`
+edges out of a diamond can **never fire**.  The corrective branch is silently
+dead.  This was the root cause of 8 shipped examples having dead corrective
+edges for months.
+
+**Severity:** ERROR — the edge is provably unreachable.
+
+**Fix:** Replace the `outcome=` condition with an evidence-based condition set
+by a preceding tool or LLM node:
+
+```dot
+// WRONG — dead edge: ConditionalHandler always returns SUCCESS
+gate -> fix [condition="outcome!=success"]
+
+// CORRECT — route on evidence set by the preceding tool/LLM node
+gate -> fix [condition="context.preferred_label=retry"]
+gate -> done [condition="context.preferred_label=done"]
+```
+
+Diamond nodes are pure routing hubs.  They do not execute logic and cannot
+observe upstream outcomes.  Use `context.preferred_label` (set via
+`report_outcome`) or `context.tool.last_line` (set by a tool node) to route.
+
+---
+
+### TOPO-002 — Stale-label collision on a tool node
+
+**What it detects:** A `parallelogram` (ToolHandler) node that has BOTH:
+- an outgoing edge conditioned on `context.tool.last_line=X` (without also
+  asserting `&& outcome=success`), AND
+- an outgoing edge conditioned on `outcome=fail`
+
+**Why it's wrong:** `ToolHandler` sets `context.tool.last_line` only on
+success (`tool.py`).  On failure, it returns `FAIL` early before setting the
+label.  On the second visit after a failure, `tool.last_line` still holds the
+stale value from the prior success.  Both edges then match simultaneously —
+the stale `last_line` edge AND the `outcome=fail` edge — causing a silent
+double-dispatch.  This bug is invisible in single-pass testing.
+
+**Severity:** ERROR — silent correctness bug on the second visit.
+
+**Fix:** Add `&& outcome=success` to the `last_line` edge so it only fires
+when the tool actually succeeded and the label is fresh:
+
+```dot
+// WRONG — stale-label collision on second visit
+tool -> done [condition="context.tool.last_line=green"]
+tool -> fix  [condition="outcome=fail"]
+
+// CORRECT — conjunction ensures label is fresh
+tool -> done [condition="context.tool.last_line=green && outcome=success"]
+tool -> fix  [condition="outcome=fail"]
+```
+
+---
+
+### TOPO-003 — Acyclic graph (no corrective cycle)
+
+**What it detects:** A pipeline with no back-edge (no cycle at all).
+
+**Why it matters:** An attractor pipeline should have at least one corrective
+loop that allows it to retry, self-correct, or converge.  A pipeline with no
+cycle is a linear one-pass analysis — which may be deliberate (a "recipe") but
+is more likely a design gap.  12 of 24 shipped examples were acyclic.
+
+**Severity:** WARNING — deliberate one-pass pipelines are legitimate
+(single-pass analysis, no retry needed).
+
+**Fix:** If convergence is needed, add a corrective back-edge:
+
+```dot
+// Add a back-edge with evidence-based exit condition
+validate -> work  [condition="outcome=fail"]
+validate -> done  [condition="context.tool.last_line=pass && outcome=success"]
+```
+
+If the pipeline is deliberately linear, ignore this warning.  Consider whether
+it should be a recipe (a staged, human-approved sequence) rather than an
+attractor.
+
+---
+
+### TOPO-004 — Cycle with no explicitly-gated exit
+
+**What it detects:** A cycle (strongly-connected component) where no edge
+**exiting the cycle** (from a cycle node to a node outside the cycle) carries
+an explicit gate.  Two edge forms count as explicitly gated:
+
+- an exit edge with a `condition` expression, or
+- a **labeled** exit edge from a human-gate (`hexagon`) node — the human's
+  selection routes on edge labels, an explicit gate without a `condition`.
+
+Note: conditional edges that route *within* the cycle do not count — only an
+exit edge leaving the SCC provides a gated termination path.
+
+**Why it matters:** Without an explicit gate, termination rests on implicit
+routing mechanics (unconditional-edge weight/lexical tiebreaks, fail-fast
+halts) or on budget caps (`max_retries`, `max_pipeline_duration`).  That may
+work, but the convergence criterion is invisible to a reader of the graph —
+make the exit explicit.
+
+**Severity:** WARNING — implicitly-routed and budget-capped loops are
+legitimate in some contexts (bounded exploration).
+
+**Fix:** Add a condition expression to the cycle's exit edge:
+
+```dot
+// WRONG — unconditional exit, budget-cap only
+validate -> done  // no condition
+
+// CORRECT — evidence-gated exit
+validate -> done [condition="context.tool.last_line=pass && outcome=success"]
+validate -> work [condition="outcome=fail"]
+```
+
+The check runs per strongly-connected component (SCC) so that a compliant
+loop does not suppress diagnostics for a separate non-compliant loop in the
+same graph.
+
+---
+
+### TOPO-005 — Cycle with no deterministic evidence gate
+
+**What it detects:** A cycle (SCC) whose continuation/exit decisions rest
+solely on LLM say-so — no `parallelogram` (tool) node on the cycle whose
+evidence actually gates control flow, and no human gate on the cycle.
+
+**Why it matters:** LLMs may claim success prematurely (wrong-but-plausible
+work exits the loop) or loop indefinitely.  The corrective loop only descends
+when a mechanical gate on the cycle forces bad work back around — or halts it
+loudly.
+
+A tool node counts as a deterministic evidence gate when its outcome or
+output participates in routing.  Grounded in engine semantics, that happens
+in two ways:
+
+1. **Evidence-conditioned edges:** an outgoing edge routing on `outcome`
+   (a tool's outcome is its command's exit status — mechanical) or on a
+   `context.tool.*` key (set from the tool's output).
+2. **A plain (unconditional) outgoing edge:** plain edges only traverse on
+   SUCCESS — FAIL is fail-fast — so a failing tool mechanically halts the
+   pipeline.  That is an implicit `outcome=success` gate.  (Exception: a
+   plain edge to a `runs_on=always` / `runs_on=failure` target traverses on
+   FAIL too, and gates nothing.)
+
+A tool merely *being present* on the cycle is NOT enough.  A no-op router
+tool whose outgoing edges are all conditioned on LLM-set context keys (e.g.
+`context.preferred_label`) leaves the loop LLM-gated — its own evidence is
+unused — and this rule fires.
+
+A human-gate (`hexagon`) node on the cycle also counts as a real gate: every
+iteration passes through external human judgment, which is exactly the check
+that catches wrong-but-plausible output.  Human-gated loops do not warn.
+
+**The honest limit of static analysis:** lint credits the topology, not the
+command.  A tool whose command is a meaningless no-op that always succeeds
+(e.g. `echo ok`) followed by a plain edge satisfies form 2 syntactically;
+whether the command performs a real check is not statically decidable.
+
+**Severity:** WARNING — LLM-gated loops are legitimate in some contexts
+(goal_gate with retry_target).
+
+**Fix:** Put a tool node on the cycle whose evidence gates routing:
+
+```dot
+// WRONG — LLM-only cycle, exit gated on LLM outcome
+generate -> assess
+assess -> done [condition="outcome=success"]   // LLM says "done"
+assess -> generate [condition="outcome!=success"]
+
+// CORRECT — tool on cycle, routing gated on tool evidence
+generate -> validate  // validate is shape=parallelogram
+validate -> done    [condition="context.tool.last_line=pass && outcome=success"]
+validate -> generate [condition="outcome=fail"]
+```
+
+See `examples/patterns/convergence-factory.dot` for the canonical pattern:
+its `validate` tool has a plain out-edge, so a failing validation halts the
+loop via fail-fast before the LLM assessor ever judges the work.
+
+The check runs per SCC so that a compliant loop does not suppress diagnostics
+for a separate non-compliant loop.
+
+---
+
 ## Further Reading
 
 - [DOT-SYNTAX.md](DOT-SYNTAX.md) -- Quick reference tables and copy-paste patterns
 - [APP-INTEGRATION-GUIDE.md](APP-INTEGRATION-GUIDE.md) -- Using pipelines from Python code
 - [GETTING-STARTED.md](GETTING-STARTED.md) -- Installation and first run
 - [examples/pipelines/](../examples/pipelines/) -- 10 tutorial + 5 practical pipeline examples
+- [examples/LINT-SWEEP.md](../examples/LINT-SWEEP.md) -- Full corpus sweep results

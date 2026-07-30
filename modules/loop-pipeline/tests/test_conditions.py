@@ -3,7 +3,10 @@
 Spec coverage: CEXPR-001–011 (Section 10).
 """
 
-from amplifier_module_loop_pipeline.conditions import evaluate_condition
+from amplifier_module_loop_pipeline.conditions import (
+    evaluate_condition,
+    parse_condition,
+)
 from amplifier_module_loop_pipeline.context import PipelineContext
 from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
 
@@ -285,10 +288,16 @@ def test_ampersand_and_both_clauses_must_pass():
     ctx = PipelineContext()
     ctx.set("state", "ready")
     # Both clauses pass → True
-    assert evaluate_condition("outcome=success && context.state=ready", outcome, ctx) is True
+    assert (
+        evaluate_condition("outcome=success && context.state=ready", outcome, ctx)
+        is True
+    )
     # Second clause fails → False
     ctx.set("state", "busy")
-    assert evaluate_condition("outcome=success && context.state=ready", outcome, ctx) is False
+    assert (
+        evaluate_condition("outcome=success && context.state=ready", outcome, ctx)
+        is False
+    )
 
 
 def test_comma_in_value_is_literal_not_and_separator():
@@ -302,3 +311,108 @@ def test_comma_in_value_is_literal_not_and_separator():
     # Different value → no match
     ctx.set("tag", "a,c")
     assert evaluate_condition("context.tag=a,b", outcome, ctx) is False
+
+
+# --- shared grammar entry point: parse_condition ---
+#
+# parse_condition is the single condition-grammar parser shared by the
+# runtime evaluator (evaluate_condition) and the static lint rules
+# (validation.py TOPO-001..005).  These tests pin the parser's output and
+# its parity with the evaluator so the two can never drift apart.
+
+
+def test_parse_condition_equality_clause():
+    """key=value parses to (key, '=', value)."""
+    assert parse_condition("outcome=success") == [("outcome", "=", "success")]
+
+
+def test_parse_condition_inequality_clause():
+    """key!=value parses to (key, '!=', value) — != checked before =."""
+    assert parse_condition("outcome!=success") == [("outcome", "!=", "success")]
+
+
+def test_parse_condition_bare_key_is_truthy():
+    """A bare key parses to a truthy clause, matching engine truthiness."""
+    assert parse_condition("context.flag") == [("context.flag", "truthy", "")]
+
+
+def test_parse_condition_conjunction_order_preserved():
+    """&& conjunction yields clauses in source order."""
+    assert parse_condition("context.tool.last_line=green && outcome=success") == [
+        ("context.tool.last_line", "=", "green"),
+        ("outcome", "=", "success"),
+    ]
+
+
+def test_parse_condition_whitespace_stripped():
+    """Whitespace around && and operators is stripped."""
+    assert parse_condition("  context.x =  y  &&  outcome != fail ") == [
+        ("context.x", "=", "y"),
+        ("outcome", "!=", "fail"),
+    ]
+
+
+def test_parse_condition_empty_and_blank_clauses_skipped():
+    """Empty conditions and empty clauses yield no triples."""
+    assert parse_condition("") == []
+    assert parse_condition("   ") == []
+    assert parse_condition("outcome=success && ") == [("outcome", "=", "success")]
+
+
+def test_parse_condition_comma_value_is_literal():
+    """Spec §10.7: a comma stays inside the value — one clause, not two."""
+    assert parse_condition("context.tag=a,b") == [("context.tag", "=", "a,b")]
+
+
+def test_parse_condition_value_containing_equals():
+    """maxsplit=1: only the first = splits key from value."""
+    assert parse_condition("context.expr=a=b") == [("context.expr", "=", "a=b")]
+
+
+def test_parse_condition_parity_with_evaluator():
+    """Parity: evaluate_condition agrees with a manual walk of parse_condition.
+
+    Guards against the two-parallel-parsers drift class: if the evaluator's
+    grammar ever diverges from parse_condition, this test fails.
+    """
+    outcome = Outcome(status=StageStatus.SUCCESS)
+    ctx = PipelineContext()
+    ctx.set("state", "ready")
+    ctx.set("flag", "yes")
+
+    cases = [
+        "outcome=success",
+        "outcome!=fail",
+        "context.state=ready",
+        "context.state!=busy",
+        "context.flag",
+        "outcome=success && context.state=ready",
+        "  context.state = ready  &&  outcome != fail ",
+        "context.missing",
+        "context.missing=x",
+    ]
+
+    def resolve(key: str) -> str:
+        if key == "outcome":
+            return outcome.preferred_label or outcome.status.value
+        if key == "preferred_label":
+            return outcome.preferred_label or ""
+        if key.startswith("context."):
+            v = ctx.get(key)
+            if v is None:
+                v = ctx.get(key[len("context.") :])
+            return "" if v is None else str(v)
+        v = ctx.get(key)
+        return "" if v is None else str(v)
+
+    for cond in cases:
+        expected = True
+        for key, op, value in parse_condition(cond):
+            if op == "=":
+                ok = resolve(key) == value
+            elif op == "!=":
+                ok = resolve(key) != value
+            else:
+                ok = bool(resolve(key))
+            expected = expected and ok
+        assert evaluate_condition(cond, outcome, ctx) is expected, cond

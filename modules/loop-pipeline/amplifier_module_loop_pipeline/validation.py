@@ -4,7 +4,9 @@ Validates parsed Graph models against the rules defined in
 spec Section 7 (Validation and Linting). Produces Diagnostic objects
 with severity ERROR (blocks execution) or WARNING (informational).
 
-Spec coverage: LINT-001–018
+Spec coverage: LINT-001–018.  TOPO-001–005 are topological basin-lint rules
+implemented here beyond the canonical spec; they are lint-only (exposed via
+``lint()``, not ``validate()``) and do not change run-time behaviour.
 """
 
 from __future__ import annotations
@@ -13,10 +15,10 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .conditions import evaluate_condition
+from .conditions import evaluate_condition, parse_condition
 from .context import PipelineContext
 from .fidelity import VALID_FIDELITY_MODES
-from .graph import Graph
+from .graph import Graph, Node
 from .outcome import Outcome, StageStatus
 from .stylesheet import parse_stylesheet
 
@@ -99,6 +101,33 @@ def validate(
     for rule in extra_rules or []:
         diags.extend(rule(graph))
 
+    return diags
+
+
+def lint(graph: Graph) -> list[Diagnostic]:
+    """Run topological (basin-lint) rules in addition to structural rules.
+
+    This is the entry point for the ``attractor lint`` CLI command.  It runs
+    the full structural ``validate()`` suite plus the five new topological
+    rules (TOPO-001–005) that reason about cycle structure, handler semantics,
+    and evidence-routing patterns.
+
+    Topological rules are lint-only: they do not change run-time validation
+    behaviour.  Existing graphs that execute today will not start failing at
+    ``run`` time because of new WARNINGs produced here.
+
+    Exit-code contract (for CLI use):
+        ERROR-severity diagnostics → non-zero exit.
+        WARNING-only (or clean) → zero exit.
+
+    Returns the combined list of all Diagnostic objects.
+    """
+    diags = validate(graph)
+    _check_dead_conditional_edge(graph, diags)
+    _check_stale_label_collision(graph, diags)
+    _check_acyclic_graph(graph, diags)
+    _check_cycle_no_conditional_exit(graph, diags)
+    _check_cycle_no_deterministic_exit(graph, diags)
     return diags
 
 
@@ -589,3 +618,616 @@ def _check_response_schema(graph: Graph, diags: list[Diagnostic]) -> None:
                     ),
                 )
             )
+
+
+# ---------------------------------------------------------------------------
+# Topological (basin-lint) rules — TOPO-001 through TOPO-005
+#
+# These rules reason about cycle structure and handler semantics, not just
+# graph topology.  They are exposed via ``lint()`` (not ``validate()``) so
+# they remain lint-only and do not change run-time validation behaviour.
+#
+# Every rule is traceable to a real, observed failure mode (dead corrective
+# edges shipped in 8 examples; the stale-label collision; acyclic "attractor"
+# pipelines).  Speculative rules are intentionally excluded.
+#
+# Condition expressions are parsed with ``conditions.parse_condition`` — the
+# same grammar entry point the runtime evaluator uses — so lint analysis and
+# engine routing cannot drift apart.
+# ---------------------------------------------------------------------------
+
+# Shape set for diamond (ConditionalHandler) nodes.
+_DIAMOND_SHAPES: frozenset[str] = frozenset({"diamond"})
+
+# Shape set for parallelogram (ToolHandler) nodes.
+_TOOL_SHAPES: frozenset[str] = frozenset({"parallelogram"})
+
+
+def _is_diamond(node: Node) -> bool:
+    """Return True if the node is a ConditionalHandler (diamond) node."""
+    return node.shape in _DIAMOND_SHAPES or node.type == "conditional"
+
+
+def _is_tool(node: Node) -> bool:
+    """Return True if the node is a ToolHandler (parallelogram) node."""
+    return node.shape in _TOOL_SHAPES or node.type == "tool"
+
+
+def _is_human_gate(node: Node) -> bool:
+    """Return True if the node is a human-gate (hexagon / wait.human) node."""
+    return node.shape == "hexagon" or node.type == "wait.human"
+
+
+def _find_back_edges(graph: Graph) -> set[tuple[str, str]]:
+    """Return the set of back-edges (source, target) in the graph using DFS.
+
+    A back-edge is an edge from a node to an ancestor in the DFS tree,
+    indicating a cycle.  Uses iterative DFS to avoid recursion limits on
+    large graphs.
+    """
+    visited: set[str] = set()
+    in_stack: set[str] = set()
+    back_edges: set[tuple[str, str]] = set()
+
+    def dfs(start: str) -> None:
+        stack: list[tuple[str, list[str]]] = [(start, [])]
+        while stack:
+            node_id, neighbors_iter_state = stack[-1]
+            if node_id not in visited:
+                visited.add(node_id)
+                in_stack.add(node_id)
+                # Build neighbor list on first visit
+                neighbors = [
+                    e.to_node
+                    for e in graph.outgoing_edges(node_id)
+                    if e.to_node in graph.nodes
+                ]
+                stack[-1] = (node_id, neighbors)
+            else:
+                # Continuing after returning from a child
+                neighbors = neighbors_iter_state
+
+            # Find next unprocessed neighbor
+            found_child = False
+            while neighbors:
+                neighbor = neighbors.pop(0)
+                stack[-1] = (node_id, neighbors)
+                if neighbor in in_stack:
+                    back_edges.add((node_id, neighbor))
+                elif neighbor not in visited:
+                    stack.append((neighbor, []))
+                    found_child = True
+                    break
+
+            if not found_child:
+                stack.pop()
+                in_stack.discard(node_id)
+
+    for node_id in graph.nodes:
+        if node_id not in visited:
+            dfs(node_id)
+
+    return back_edges
+
+
+def _has_cycle(graph: Graph) -> bool:
+    """Return True if the graph contains at least one cycle."""
+    return bool(_find_back_edges(graph))
+
+
+def _compute_sccs(graph: Graph) -> list[set[str]]:
+    """Return a list of strongly-connected components (SCCs) with size >= 2,
+    or size == 1 with a self-loop.  Uses Kosaraju's two-pass algorithm.
+
+    Each returned SCC is a set of node IDs that form a cycle together.
+    SCCs of size 1 with no self-loop are trivial (no cycle) and are excluded.
+
+    This is the correct granularity for per-cycle analysis: TOPO-004 and
+    TOPO-005 must check each SCC independently so that a compliant SCC does
+    not suppress diagnostics for a non-compliant sibling SCC.
+    """
+    node_ids = list(graph.nodes.keys())
+    if not node_ids:
+        return []
+
+    # Build adjacency and reverse adjacency
+    adj: dict[str, list[str]] = {n: [] for n in node_ids}
+    radj: dict[str, list[str]] = {n: [] for n in node_ids}
+    for edge in graph.edges:
+        if edge.from_node in graph.nodes and edge.to_node in graph.nodes:
+            adj[edge.from_node].append(edge.to_node)
+            radj[edge.to_node].append(edge.from_node)
+
+    # Self-loop check helper
+    self_loop_nodes: set[str] = {
+        edge.from_node
+        for edge in graph.edges
+        if edge.from_node == edge.to_node and edge.from_node in graph.nodes
+    }
+
+    # Pass 1: DFS on original graph, collect finish order
+    visited: set[str] = set()
+    finish_order: list[str] = []
+
+    def dfs1(start: str) -> None:
+        stack: list[tuple[str, int]] = [(start, 0)]
+        while stack:
+            node, idx = stack[-1]
+            if node not in visited:
+                visited.add(node)
+            neighbors = adj[node]
+            if idx < len(neighbors):
+                stack[-1] = (node, idx + 1)
+                nxt = neighbors[idx]
+                if nxt not in visited:
+                    stack.append((nxt, 0))
+            else:
+                stack.pop()
+                finish_order.append(node)
+
+    for n in node_ids:
+        if n not in visited:
+            dfs1(n)
+
+    # Pass 2: DFS on reversed graph in reverse finish order
+    visited2: set[str] = set()
+    sccs: list[set[str]] = []
+
+    def dfs2(start: str) -> set[str]:
+        component: set[str] = set()
+        stack: list[str] = [start]
+        while stack:
+            node = stack.pop()
+            if node in visited2:
+                continue
+            visited2.add(node)
+            component.add(node)
+            for nxt in radj[node]:
+                if nxt not in visited2:
+                    stack.append(nxt)
+        return component
+
+    for n in reversed(finish_order):
+        if n not in visited2:
+            scc = dfs2(n)
+            # Include SCCs with a cycle: size >= 2, or size == 1 with self-loop
+            if len(scc) >= 2 or (len(scc) == 1 and next(iter(scc)) in self_loop_nodes):
+                sccs.append(scc)
+
+    return sccs
+
+
+def _nodes_on_cycles(graph: Graph) -> set[str]:
+    """Return the set of node IDs that participate in at least one cycle.
+
+    Delegates to ``_compute_sccs`` for correctness: any node in a non-trivial
+    SCC (size >= 2 or self-loop) is on a cycle.
+    """
+    result: set[str] = set()
+    for scc in _compute_sccs(graph):
+        result.update(scc)
+    return result
+
+
+def _check_dead_conditional_edge(graph: Graph, diags: list[Diagnostic]) -> None:
+    """TOPO-001: Dead conditional edge out of a diamond node.
+
+    ConditionalHandler (shape=diamond) always returns SUCCESS unconditionally
+    (handlers/conditional.py:47).  Additionally, FAIL is fail-fast: it never
+    reaches a diamond node via plain edges (edge_selection.py:79-101).
+
+    Therefore any edge out of a diamond that conditions on ``outcome!=success``
+    can NEVER fire — the diamond always emits SUCCESS, so the negation is
+    always false.  Similarly, ``outcome=fail`` edges are dead for the same
+    reason.
+
+    This is the root cause of the dead-corrective-edge bug class that shipped
+    in 8 examples (fixed upstream).  The correct pattern is to route on
+    evidence (e.g. ``context.tool.last_line=X`` or ``context.preferred_label``
+    set by a preceding tool/LLM node) rather than on ``outcome=`` through a
+    diamond.
+
+    Severity: ERROR — the edge is provably unreachable; the corrective branch
+    will never execute.
+    """
+    for node in graph.nodes.values():
+        if not _is_diamond(node):
+            continue
+        if node.is_start_node() or node.is_exit_node():
+            continue
+
+        for edge in graph.outgoing_edges(node.id):
+            cond = edge.condition.strip() if edge.condition else ""
+            if not cond:
+                continue
+
+            # Check each clause for outcome!=success or outcome=fail patterns
+            for key, op, val in parse_condition(cond):
+                dead = (op == "!=" and key == "outcome" and val == "success") or (
+                    op == "=" and key == "outcome" and val in ("fail", "error")
+                )
+
+                if dead:
+                    diags.append(
+                        Diagnostic(
+                            rule="dead_conditional_edge",
+                            severity="ERROR",
+                            message=(
+                                f"Node '{node.id}' (diamond/ConditionalHandler) has a "
+                                f"dead outgoing edge to '{edge.to_node}' with condition "
+                                f"'{cond}': ConditionalHandler always returns SUCCESS "
+                                f"unconditionally, so outcome!=success / outcome=fail "
+                                f"edges from a diamond can never fire."
+                            ),
+                            node_id=node.id,
+                            edge=(edge.from_node, edge.to_node),
+                            fix=(
+                                f"Replace the outcome= condition on the edge from "
+                                f"'{node.id}' to '{edge.to_node}' with an evidence-based "
+                                f"condition (e.g. context.tool.last_line=X or "
+                                f"context.preferred_label=Y set by a preceding tool or "
+                                f"LLM node). Diamond nodes are pure routing hubs — they "
+                                f"do not execute logic and cannot observe upstream "
+                                f"outcomes. See DOT-AUTHORING-GUIDE.md for the "
+                                f"evidence-routing pattern."
+                            ),
+                        )
+                    )
+                    break  # one diagnostic per edge is enough
+
+
+def _check_stale_label_collision(graph: Graph, diags: list[Diagnostic]) -> None:
+    """TOPO-002: Stale-label collision on a tool node.
+
+    When a ToolHandler (shape=parallelogram) fails, it returns FAIL early
+    (handlers/tool.py:158-176) BEFORE setting ``context.tool.last_line``
+    (tool.py:220).  On the second visit after a failure, ``tool.last_line``
+    still holds the stale value from the prior successful run.
+
+    If the same source tool node has BOTH:
+      - an outgoing edge conditioned on ``context.tool.last_line=X`` (without
+        also asserting ``&& outcome=success``), AND
+      - an outgoing edge conditioned on ``outcome=fail``
+
+    then on the second visit after a failure, BOTH edges match simultaneously:
+    the ``last_line`` edge matches the stale value AND the ``outcome=fail``
+    edge matches the current FAIL outcome.  The engine fans out to both
+    targets — a silent double-dispatch.
+
+    The fix is to add ``&& outcome=success`` to the ``last_line`` edge so it
+    only fires when the tool actually succeeded (and the label is fresh).
+
+    Severity: ERROR — the double-dispatch is a silent correctness bug that
+    only manifests on the second visit (invisible in single-pass testing).
+
+    Traceable to: handlers/tool.py (early FAIL return precedes the
+    context.set of tool.last_line); context/engine-semantics.md.
+    """
+    for node in graph.nodes.values():
+        if not _is_tool(node):
+            continue
+        if node.is_start_node() or node.is_exit_node():
+            continue
+
+        outgoing = graph.outgoing_edges(node.id)
+        if not outgoing:
+            continue
+
+        # Collect edges with context.tool.last_line= conditions (without && outcome=success)
+        last_line_edges_without_success: list = []
+        has_outcome_fail_edge = False
+
+        for edge in outgoing:
+            cond = edge.condition.strip() if edge.condition else ""
+            if not cond:
+                continue
+
+            clauses = parse_condition(cond)
+            has_outcome_success = False
+            has_last_line = False
+
+            for key, op, val in clauses:
+                if op == "=" and key == "outcome" and val == "success":
+                    has_outcome_success = True
+                if key in ("context.tool.last_line", "tool.last_line"):
+                    has_last_line = True
+
+            if has_last_line and not has_outcome_success:
+                last_line_edges_without_success.append(edge)
+
+            # Check for outcome=fail edge (or outcome!=success equivalent)
+            for key, op, val in clauses:
+                if key == "outcome" and (
+                    (op == "=" and val == "fail") or (op == "!=" and val == "success")
+                ):
+                    has_outcome_fail_edge = True
+
+        if last_line_edges_without_success and has_outcome_fail_edge:
+            for edge in last_line_edges_without_success:
+                diags.append(
+                    Diagnostic(
+                        rule="stale_label_collision",
+                        severity="ERROR",
+                        message=(
+                            f"Node '{node.id}' (tool/parallelogram) has a "
+                            f"stale-label collision: edge to '{edge.to_node}' "
+                            f"conditions on 'context.tool.last_line=...' without "
+                            f"'&& outcome=success', while another outgoing edge "
+                            f"conditions on 'outcome=fail'. On the second visit "
+                            f"after a failure, tool.last_line holds a stale value "
+                            f"from the prior success, causing both edges to match "
+                            f"simultaneously (silent double-dispatch)."
+                        ),
+                        node_id=node.id,
+                        edge=(edge.from_node, edge.to_node),
+                        fix=(
+                            f"Add '&& outcome=success' to the condition on the edge "
+                            f"from '{node.id}' to '{edge.to_node}' so it reads "
+                            f"'context.tool.last_line=X && outcome=success'. This "
+                            f"ensures the label edge only fires when the tool "
+                            f"succeeded and the label is fresh. The 'outcome=fail' "
+                            f"edge handles the failure case exclusively. See "
+                            f"DOT-AUTHORING-GUIDE.md for the evidence-routing pattern."
+                        ),
+                    )
+                )
+
+
+def _check_acyclic_graph(graph: Graph, diags: list[Diagnostic]) -> None:
+    """TOPO-003: Acyclic graph warning — no corrective cycle found.
+
+    An attractor pipeline should have at least one back-edge (cycle) that
+    allows it to retry, correct, or converge.  A pipeline with no cycle is
+    a linear one-pass analysis — which may be deliberate (a single-pass
+    review is a legitimate shape) but is more likely a recipe that should
+    not be an attractor.
+
+    Half of the originally-shipped examples were acyclic.  This warning
+    surfaces the question at author time.
+
+    Severity: WARNING — deliberate one-pass pipelines are legitimate.  The
+    fix text acknowledges this.
+    """
+    if _has_cycle(graph):
+        return
+
+    diags.append(
+        Diagnostic(
+            rule="acyclic_graph",
+            severity="WARNING",
+            message=(
+                "This graph has no cycle (no back-edge): it is a linear, "
+                "one-pass pipeline.  An attractor should have at least one "
+                "corrective loop that allows it to retry, self-correct, or "
+                "converge.  If this is intentional (a deliberate single-pass "
+                "analysis), this warning can be ignored — but consider whether "
+                "this pipeline should be a recipe instead."
+            ),
+            fix=(
+                "Add a corrective back-edge from a validation/gate node back to "
+                "an earlier work node so the pipeline can retry on failure.  "
+                "Use evidence-based conditions (context.tool.last_line or "
+                "context.preferred_label) on the exit edge to gate convergence.  "
+                "If this is a deliberate one-pass pipeline, no change is needed — "
+                "this is a WARNING, not an error."
+            ),
+        )
+    )
+
+
+def _check_cycle_no_conditional_exit(graph: Graph, diags: list[Diagnostic]) -> None:
+    """TOPO-004: Cycle with no explicitly-gated exit edge.
+
+    A cycle (SCC) where NO edge leaving the cycle carries an explicit gate
+    has no stated convergence criterion.  Termination then rests on implicit
+    routing mechanics — unconditional-edge weight/lexical tiebreaks,
+    fail-fast halts — or on budget caps (max_retries,
+    max_pipeline_duration).  That may work, but the convergence criterion
+    is invisible to a reader of the graph.  This is a design smell: make
+    the exit explicit.
+
+    Two edge forms count as an explicitly-gated exit:
+      - an exit edge with a ``condition`` expression, or
+      - a *labeled* exit edge whose source is a human-gate (hexagon /
+        wait.human) node — the human's selection routes on edge labels,
+        which is an explicit (human) gate even without a condition attr.
+
+    The check runs per strongly-connected component (SCC) so that a compliant
+    SCC does not suppress diagnostics for a separate non-compliant SCC.
+
+    Note: ``goal_gate_has_retry`` (an existing WARNING) already covers the
+    case where a goal_gate node lacks retry_target.  This rule covers the
+    orthogonal case where no gated exit exists on the cycle at all.
+
+    Severity: WARNING — implicitly-routed and budget-capped loops are
+    legitimate in some contexts (e.g. bounded exploration).
+    """
+    sccs = _compute_sccs(graph)
+    if not sccs:
+        return
+
+    for scc in sccs:
+        # Find edges that exit this SCC (from an SCC node to a non-SCC node)
+        # and check if any of them are explicitly gated.
+        has_gated_exit = False
+        for node_id in scc:
+            node = graph.nodes.get(node_id)
+            for edge in graph.outgoing_edges(node_id):
+                if edge.to_node not in scc and edge.to_node in graph.nodes:
+                    if edge.condition and edge.condition.strip():
+                        has_gated_exit = True
+                        break
+                    # Labeled exit from a human gate: the human's selection
+                    # routes on edge labels — an explicit gate.
+                    if (
+                        node is not None
+                        and _is_human_gate(node)
+                        and edge.label
+                        and edge.label.strip()
+                    ):
+                        has_gated_exit = True
+                        break
+            if has_gated_exit:
+                break
+
+        if not has_gated_exit:
+            cycle_list = ", ".join(sorted(scc))
+            diags.append(
+                Diagnostic(
+                    rule="cycle_no_conditional_exit",
+                    severity="WARNING",
+                    message=(
+                        f"The cycle involving nodes [{cycle_list}] has no explicitly-"
+                        f"gated exit edge: no edge leaving the cycle carries a "
+                        f"condition expression (or a labeled human-gate choice).  "
+                        f"Termination rests on implicit routing mechanics "
+                        f"(unconditional-edge tiebreaks, fail-fast halts) or budget "
+                        f"caps (max_retries, max_pipeline_duration) — the convergence "
+                        f"criterion is invisible to a reader of the graph."
+                    ),
+                    fix=(
+                        "Add a condition expression to the cycle's exit edge(s) so the "
+                        "pipeline exits based on evidence (e.g. "
+                        "context.tool.last_line=done or context.preferred_label=converged). "
+                        "This makes convergence explicit and independent of budget "
+                        "caps.  See DOT-AUTHORING-GUIDE.md for the evidence-routing pattern."
+                    ),
+                )
+            )
+
+
+def _tool_evidence_gates_flow(graph: Graph, node_id: str) -> bool:
+    """Return True if a tool node's own evidence can gate control flow.
+
+    A parallelogram (ToolHandler) node counts as a deterministic evidence
+    gate when its outcome or output actually participates in routing.  Two
+    engine-semantics-grounded ways this happens:
+
+    (i)  An outgoing edge whose condition references the tool's own evidence:
+         ``outcome`` (a tool's outcome is its command's exit status —
+         mechanical, not LLM say-so) or a ``tool.*`` / ``context.tool.*``
+         key (set from the tool's output).
+
+    (ii) A plain (unconditional) outgoing edge to a default node.  Plain
+         edges only traverse on SUCCESS — FAIL is fail-fast
+         (edge_selection.py, spec §3.7) — so the tool mechanically halts
+         the pipeline on failure: an implicit ``outcome=success`` gate.
+         Exception: a plain edge to a node with ``runs_on=always`` or
+         ``runs_on=failure`` traverses on FAIL too, so it gates nothing.
+
+    A tool whose outgoing edges are all conditioned solely on non-tool
+    context keys (e.g. ``context.preferred_label`` set by an LLM node via
+    report_outcome) does NOT gate anything: its own evidence is unused, and
+    those context conditions can even match on FAIL against stale context
+    values (the stale-label trap, TOPO-002).
+
+    Note the honest limit of static analysis: lint credits the topology,
+    not the command.  A tool whose command is a no-op that always succeeds
+    (e.g. ``echo ok``) satisfies (ii) syntactically; whether the command
+    performs a meaningful check is not statically decidable.
+    """
+    for edge in graph.outgoing_edges(node_id):
+        cond = edge.condition.strip() if edge.condition else ""
+        if not cond:
+            # (ii) plain edge — implicit outcome=success gate via fail-fast,
+            # unless the target opts into failure routing via runs_on.
+            target = graph.nodes.get(edge.to_node)
+            runs_on = "success"
+            if target is not None:
+                runs_on = str(target.attrs.get("runs_on", "success") or "success")
+                runs_on = runs_on.strip().lower()
+            if runs_on not in ("always", "failure"):
+                return True
+            continue
+        # (i) conditional edge referencing the tool's own evidence
+        for key, _op, _val in parse_condition(cond):
+            if key == "outcome" or key.startswith(("tool.", "context.tool.")):
+                return True
+    return False
+
+
+def _check_cycle_no_deterministic_exit(graph: Graph, diags: list[Diagnostic]) -> None:
+    """TOPO-005: Loop with no deterministic evidence gate on the cycle.
+
+    A cycle (SCC) whose continuation/exit decisions rest solely on LLM
+    say-so lacks a deterministic convergence criterion: the LLM can claim
+    success prematurely (wrong-but-plausible work exits the loop) or loop
+    forever.  The corrective loop only descends when a mechanical gate on
+    the cycle forces bad work back around (or halts it loudly).
+
+    An SCC is compliant when it contains at least one parallelogram
+    (ToolHandler) node whose evidence actually gates control flow — see
+    ``_tool_evidence_gates_flow`` for the two engine-grounded forms this
+    takes (evidence-conditioned edges, or a plain edge whose traversal is
+    itself gated by fail-fast semantics).
+
+    A tool merely *being present* on the cycle is NOT enough: a no-op tool
+    whose outgoing edges route solely on LLM-set context keys (e.g.
+    ``context.preferred_label``) leaves the loop LLM-gated, and this rule
+    fires.
+
+    A human-gate (hexagon / wait.human) node on the cycle also counts as a
+    real gate: every iteration passes through a human decision, which is
+    external judgment — precisely the check that catches wrong-but-plausible
+    LLM output.  Warning on the canonical conversational-gate pattern would
+    be a false positive that trains authors to ignore the rule.
+
+    The check runs per strongly-connected component (SCC) so that a compliant
+    SCC does not suppress diagnostics for a separate non-compliant SCC.
+
+    Severity: WARNING — LLM-gated loops are legitimate in some contexts
+    (e.g. goal_gate nodes with retry_target).  This is a design smell, not
+    a hard error.
+    """
+    sccs = _compute_sccs(graph)
+    if not sccs:
+        return
+
+    for scc in sccs:
+        # A human gate on the cycle is real external judgment — not LLM
+        # say-so.  The loop is human-gated by design; do not warn.
+        if any(_is_human_gate(graph.nodes[n]) for n in scc if n in graph.nodes):
+            continue
+
+        tools_on_scc = [n for n in scc if n in graph.nodes and _is_tool(graph.nodes[n])]
+
+        if any(_tool_evidence_gates_flow(graph, n) for n in tools_on_scc):
+            continue  # This SCC has a deterministic evidence gate — clean.
+
+        cycle_list = ", ".join(sorted(scc))
+        if not tools_on_scc:
+            detail = (
+                "no parallelogram (tool) node on the cycle provides "
+                "mechanically-verifiable evidence for convergence"
+            )
+        else:
+            # Tool(s) exist but their evidence never gates routing
+            detail = (
+                "parallelogram (tool) node(s) exist on the cycle but their "
+                "evidence never gates routing: every outgoing edge is "
+                "conditioned on non-tool context keys (e.g. LLM-set "
+                "context.preferred_label), so the tool outcome/output is "
+                "unused and the loop remains LLM-gated"
+            )
+
+        diags.append(
+            Diagnostic(
+                rule="cycle_no_deterministic_exit",
+                severity="WARNING",
+                message=(
+                    f"The cycle involving nodes [{cycle_list}] has no deterministic "
+                    f"evidence gate: {detail}.  The loop's "
+                    f"continuation/exit relies solely on LLM judgment."
+                ),
+                fix=(
+                    "Put a parallelogram (tool) node on the cycle whose evidence "
+                    "gates routing: either route on its outcome/output "
+                    "(condition='context.tool.last_line=done && outcome=success' "
+                    "to exit, condition='outcome=fail' back to the work node), or "
+                    "give it a plain edge so a failing check halts the loop via "
+                    "fail-fast instead of letting unverified work continue.  "
+                    "See DOT-AUTHORING-GUIDE.md (TOPO-005) and "
+                    "examples/patterns/convergence-factory.dot."
+                ),
+            )
+        )

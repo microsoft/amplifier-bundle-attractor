@@ -115,7 +115,7 @@ class DirectProviderBackend:
         # note on self._default_provider in __init__.
         provider_name = await _resolve_provider(
             node,
-            candidates=self._provider_names,
+            candidates=self._candidate_providers(),
             default_provider=self._default_provider,
             emit=self._emit,
         )
@@ -381,6 +381,35 @@ class DirectProviderBackend:
             self._message_pools[thread_key] = conversation
 
         return outcome
+
+    def _candidate_providers(self) -> tuple[str, ...]:
+        """Provider names this backend can actually route to.
+
+        Feeds the sole-mapped rung of ``_resolve_provider``'s ladder, and the
+        error message when nothing resolves.
+
+        Callers that know their provider set pass it explicitly as
+        ``provider_names``. On the ENV-DRIVEN entry point
+        (``DirectProviderBackend(provider=...)`` with no ``provider_names``
+        and no injected client) nobody does -- yet the candidate set is not
+        unknown there, it is simply held somewhere else: the client built by
+        ``Client.from_env()`` knows exactly which providers the environment
+        registered.
+
+        Deriving it here keeps ONE rule ("the sole provider available to this
+        backend") true on all three entry points instead of silently
+        unreachable on one. Without it, a node that declares no
+        ``llm_provider`` can never resolve on the env path, because the
+        candidate tuple is empty and the ladder falls straight through to
+        fail-loud.
+
+        Creating the client here is not premature: ``run()`` needs it a few
+        lines later regardless, and ``_get_or_create_unified_client`` caches.
+        """
+        if self._provider_names:
+            return self._provider_names
+        client = self._get_or_create_unified_client()
+        return tuple(getattr(client, "providers", ()) or ())
 
     def _get_or_create_unified_client(self) -> Any:
         """Return the injected client or lazily create one from environment."""

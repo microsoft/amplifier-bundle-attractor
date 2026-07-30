@@ -24,6 +24,7 @@ import re
 
 import pytest
 
+from amplifier_module_loop_pipeline import DirectProviderBackend
 from amplifier_module_loop_pipeline.backend import (
     AmplifierBackend,
     _resolve_profile,
@@ -249,3 +250,81 @@ def test_no_hardcoded_anthropic_default_remains_in_loop_pipeline():
     assert offenders == [], (
         f"hardcoded 'anthropic' provider default reintroduced at: {offenders}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Env-path candidate derivation -- rung 3 must be reachable on ALL entry points
+# ---------------------------------------------------------------------------
+
+
+class _FakeClient:
+    """Minimal stand-in for unified_llm.Client -- only `providers` is read."""
+
+    def __init__(self, names):
+        self.providers = {name: object() for name in names}
+
+
+def test_candidate_providers_prefers_explicitly_passed_names():
+    """An explicit provider_names always wins over the client's registry."""
+    backend = DirectProviderBackend(
+        provider=object(),
+        provider_names=("alpha", "beta"),
+        unified_client=_FakeClient(["gamma"]),
+    )
+
+    assert backend._candidate_providers() == ("alpha", "beta")
+
+
+def test_candidate_providers_derives_from_client_when_names_empty():
+    """THE ENV-PATH LOCK.
+
+    On the env-driven entry point nobody passes provider_names -- but the
+    candidate set is not unknown, it is just held by the client that
+    ``Client.from_env()`` built. Deriving it keeps the sole-mapped rung
+    reachable here instead of silently dead on one of three entry points.
+    """
+    backend = DirectProviderBackend(
+        provider=object(), unified_client=_FakeClient(["local"])
+    )
+
+    assert backend._candidate_providers() == ("local",)
+
+
+def test_env_path_undeclared_node_resolves_via_sole_client_provider():
+    """A node with no llm_provider must resolve when the env supplies exactly one.
+
+    Regression lock for the shipped Option A example: before candidate
+    derivation, ``provider_names`` was empty on this path, so every undeclared
+    node fell straight through the ladder to fail-loud and the example could
+    not complete.
+    """
+    backend = DirectProviderBackend(
+        provider=object(), unified_client=_FakeClient(["local"])
+    )
+    rec = _Recorder()
+
+    provider = _resolve(
+        Node(id="synthesis"), candidates=backend._candidate_providers(), emit=rec
+    )
+
+    assert provider == "local"
+    emitted = rec.named(PIPELINE_PROVIDER_DEFAULTED)
+    assert len(emitted) == 1
+    assert emitted[0]["reason"] == "sole_mapped_provider"
+
+
+def test_env_path_stays_fail_loud_when_client_has_several_providers():
+    """Derivation must not become a guess.
+
+    Two registered providers is genuinely ambiguous -- the ladder must still
+    refuse rather than pick one.
+    """
+    backend = DirectProviderBackend(
+        provider=object(), unified_client=_FakeClient(["local", "anthropic"])
+    )
+
+    with pytest.raises(ValueError) as exc:
+        _resolve(Node(id="synthesis"), candidates=backend._candidate_providers())
+
+    msg = str(exc.value)
+    assert "local" in msg and "anthropic" in msg

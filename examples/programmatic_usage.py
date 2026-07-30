@@ -34,26 +34,41 @@ Environment:
 from __future__ import annotations
 
 import asyncio
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
+
+# The direct path requires an explicit llm_model on every LLM node -- there is
+# deliberately NO default model, so a pipeline can never silently run against an
+# unintended or deprecated one. Point this at whatever your environment serves.
+#   cloud:  export ATTRACTOR_EXAMPLE_MODEL=claude-sonnet-4-6
+#   local:  export ATTRACTOR_EXAMPLE_MODEL=qwen2.5-coder:7b
+EXAMPLE_MODEL = os.environ.get("ATTRACTOR_EXAMPLE_MODEL", "claude-sonnet-4-6")
 
 # ---------------------------------------------------------------------------
 # Example DOT pipelines
 # ---------------------------------------------------------------------------
 
+# Deliberately declares NO llm_provider on either node, so this graph runs
+# against whichever single provider the environment supplies -- cloud or local.
+# Both nodes resolve through the sole-mapped rung and emit
+# `pipeline:provider_defaulted`, so the implicit choice stays auditable.
+# Declare `llm_provider=` per node when you want to pin one, or when more than
+# one provider is configured (which is ambiguous, and fails loud by design).
 ANALYSIS_PIPELINE = r"""
 digraph {
     graph [goal="Explain the trade-offs between microservices and monoliths"]
 
     start     [shape=Mdiamond]
-    research  [prompt="List the key trade-offs for: $goal", llm_provider="anthropic"]
-    synthesis [prompt="Synthesize the research into a concise 3-paragraph summary"]
+    research  [prompt="List the key trade-offs for: $goal", llm_model="__MODEL__"]
+    synthesis [prompt="Synthesize the research into a concise 3-paragraph summary",
+               llm_model="__MODEL__"]
     done      [shape=Msquare]
 
     start -> research -> synthesis -> done
 }
-"""
+""".replace("__MODEL__", EXAMPLE_MODEL)
 
 CODING_PIPELINE = r"""
 digraph {
@@ -102,6 +117,7 @@ async def run_direct(dot_source: str) -> None:
     from amplifier_module_loop_pipeline.dot_parser import parse_dot
     from amplifier_module_loop_pipeline.engine import PipelineEngine
     from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+    from amplifier_module_loop_pipeline.handlers.context import HandlerContext
     from amplifier_module_loop_pipeline.transforms import apply_transforms
     from amplifier_module_loop_pipeline.validation import validate_or_raise
 
@@ -111,12 +127,16 @@ async def run_direct(dot_source: str) -> None:
     apply_transforms(graph, context)
     validate_or_raise(graph)
 
-    # provider=None -> auto-creates unified_llm.Client from env vars
-    backend = DirectProviderBackend(provider=None)
+    # provider is a truthiness flag enabling this path, NOT a provider instance.
+    # With no unified_client and no provider_names, the client is built from the
+    # environment and its registered providers become the candidate set -- so a
+    # node that declares no llm_provider resolves when exactly one provider is
+    # configured.
+    backend = DirectProviderBackend(provider=object())
     engine = PipelineEngine(
         graph=graph,
         context=context,
-        handler_registry=HandlerRegistry(backend=backend),
+        handler_registry=HandlerRegistry(HandlerContext(backend=backend)),
         logs_root=tempfile.mkdtemp(prefix="attractor-"),
     )
 

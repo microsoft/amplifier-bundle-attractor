@@ -4,14 +4,46 @@ How to design effective multi-stage AI pipelines using Graphviz DOT digraphs.
 
 ## Philosophy
 
-Attractor pipelines are **declarative workflow definitions**. You describe _what_
-should happen at each stage and _how_ stages connect -- the pipeline engine
-handles execution, retries, context passing, and backend selection.
+Attractor pipelines are **convergence graphs**: the graph encodes the
+control structure -- gates, budgets, corrective loops, feedback channels --
+and the engine walks it from `start` to `done`, executing each node and
+following edges based on outcomes.
 
-A DOT digraph is the workflow. Each node is a task (usually an LLM call). Each
-edge defines flow. Node shapes determine handler behavior (LLM call, conditional
-gate, parallel fork, human approval, etc.). The engine walks the graph from
-`start` to `done`, executing each node and following edges based on outcomes.
+**The pipeline author's job is the convergence skeleton, not the domain
+decomposition.** Keep the task-agnostic control structure: the gates, budgets,
+walls, and feedback channels that make the loop descend. Delete the domain
+decomposition -- plan/implement/test phases, backend/frontend splits -- that is
+the model's job, not the graph's. `examples/patterns/task-runner.dot` is the
+canonical example: its stages are control-plane responsibilities (orient /
+attempt / verify / critique / triage / postmortem / package), zero domain phases.
+
+**The node contract.** Every LLM node (`shape=box`) should state:
+
+1. **Objective** -- what the node is responsible for achieving
+2. **Constraints** -- what it must not do or assume
+3. **Available capabilities** -- what tools or context it has access to
+4. **Required evidence** -- what artifact or observable state proves it succeeded
+
+The prompt states the contract, not the algorithm -- never enumerate the
+procedure step-by-step unless the procedure itself is a business or safety
+requirement. A node that carries the algorithm cannot absorb a model's bad day;
+a node that carries objective + constraints + capabilities + required evidence
+lets the loop correct the *work* because "done" is defined outside the worker.
+
+**`goal_gate` belongs on evidence-bearing nodes, not implementation nodes.**
+The engine's `goal_gate` contract (spec §3.4) is: this node must succeed before
+the pipeline can exit. Attaching it to an implementation node makes "the
+implementer finished" the exit criterion -- an implementation finishing is not a
+goal state. Attach `goal_gate` to the node that *bears evidence*: a test gate,
+an acceptance check, a human approval gate, or an evidence-backed review node.
+Shipped positive example: `examples/pipelines/practical/bug-fix.dot`'s exit is
+gated on `verdict_gate` output -- implementation completing earns nothing.
+
+**Recipes vs. attractor pipelines.** Recipes are for staged sequential workflows
+with human approval gates; attractor pipelines are for machine-verified
+convergence. If your pipeline graph has no cycle, it should probably have been a
+recipe. (TOPO-003 warns on acyclic graphs for this reason; deliberate one-pass
+pipelines are legitimate -- the "probably" is load-bearing.)
 
 **Design principles:**
 
@@ -19,7 +51,7 @@ gate, parallel fork, human approval, etc.). The engine walks the graph from
 - Prompts should be self-contained -- a node should not assume context unless fidelity is `full`
 - Use `$goal` to inject the pipeline's overall objective into node prompts
 - Prefer fewer, well-prompted nodes over many thin ones
-- Use goal gates on nodes whose success is required for the pipeline to pass
+- Use `goal_gate` on evidence-bearing nodes (test gates, acceptance checks, human gates)
 - Use conditional routing to handle success/failure paths explicitly
 
 ## Pipeline Patterns
@@ -40,7 +72,8 @@ digraph {
 }
 ```
 
-A more realistic linear pipeline with planning and testing:
+A convergence-shaped pipeline -- a worker node with an evidence gate and a corrective
+back-edge. This is the recommended shape for any task where the first attempt may not succeed:
 
 ```dot
 digraph {
@@ -51,14 +84,32 @@ digraph {
     ]
 
     start     [shape=Mdiamond]
-    plan      [prompt="List 3 steps to create: $goal. Be brief."]
-    implement [prompt="Create calculator.py with add(a,b). Include type hints.", goal_gate=true]
-    test      [prompt="Write pytest tests for calculator.py and run them."]
+    implement [prompt="Create or improve calculator.py with add(a,b) and pytest tests in test_calculator.py, to satisfy: $goal. If test_output.txt exists, read it -- it holds the latest test results."]
+    test_gate [shape=parallelogram, tool_command="pytest -q test_calculator.py > test_output.txt 2>&1", goal_gate=true]
     done      [shape=Msquare]
 
-    start -> plan -> implement -> test -> done
+    start -> implement -> test_gate
+    test_gate -> done          [condition="outcome=success"]
+    test_gate -> implement     [condition="outcome=fail", label="fix and retry"]
 }
 ```
+
+The `test_gate` is a deterministic tool node (not an LLM self-report): it runs
+`pytest` and routes on the exit code. `goal_gate=true` is on the evidence-bearing node,
+not on `implement`. The corrective back-edge (`test_gate -> implement`) is what makes
+this a convergence graph rather than a recipe.
+
+Two mechanics worth copying exactly. First, test output travels through a *file*
+(`test_output.txt`), not a prompt variable: LLM-node prompts expand only `$goal`,
+`$context`, and plain (dot-free) context keys -- `tool.output` is a dotted key
+available to `tool_command` strings, not to prompts. Second, the gate uses plain
+redirection (`> test_output.txt 2>&1`) rather than a pipe: `tool_command` runs under
+`/bin/sh`, where a pipe would make the exit code `tee`'s, not pytest's (and bash-isms
+like `PIPESTATUS` are unavailable). Redirection preserves pytest's exit code, which is
+what the edges route on.
+
+The linear `start -> implement -> test -> done` shape (no back-edge) is a recipe shape
+and will trigger TOPO-003. If that is intentional -- a one-pass workflow -- use a recipe.
 
 ### Conditional Routing
 
@@ -831,6 +882,13 @@ tool -> done [condition="context.tool.last_line=green && outcome=success"]
 tool -> fix  [condition="outcome=fail"]
 ```
 
+> **Spec-reconciliation note:** This defensive rule exists because the current
+> engine selects ALL matching edges (parallel fan-out) where the canonical spec
+> prescribes deterministic single-best-edge selection; that divergence is under
+> active reconciliation.  If the engine adopts single-edge selection, the
+> `&& outcome=success` conjunction becomes unnecessary — but it is harmless, so
+> pipelines written with it stay correct either way.
+
 ---
 
 ### TOPO-003 — Acyclic graph (no corrective cycle)
@@ -968,4 +1026,4 @@ for a separate non-compliant loop.
 - [APP-INTEGRATION-GUIDE.md](APP-INTEGRATION-GUIDE.md) -- Using pipelines from Python code
 - [GETTING-STARTED.md](GETTING-STARTED.md) -- Installation and first run
 - [examples/pipelines/](../examples/pipelines/) -- 10 tutorial + 5 practical pipeline examples
-- [examples/LINT-SWEEP.md](../examples/LINT-SWEEP.md) -- Full corpus sweep results
+- [modules/loop-pipeline/tests/test_examples_lint_clean.py](../modules/loop-pipeline/tests/test_examples_lint_clean.py) -- Self-updating lint sweep (replaces the static LINT-SWEEP.md artifact; run `pytest` to re-sweep)

@@ -26,13 +26,21 @@ pipeline needed.
 
 ## Pipeline Decision Heuristic
 
+**Recipes are for staged sequential workflows with human approval gates; attractor
+pipelines are for machine-verified convergence. If your pipeline graph has no cycle,
+it should probably have been a recipe.**
+
 When the user asks you to do a complex task, decide:
 
 1. **Simple task (1-2 steps, no branching)** — Just do it directly. No pipeline.
    Example: "Add a docstring to this function" or "Fix the typo in README.md"
 
-2. **Medium task (2-4 ordered steps)** — Generate an inline pipeline with `dot_source`.
-   Example: "Refactor the auth module" becomes a plan -> implement -> test pipeline.
+2. **Medium task (2-4 ordered steps, one-pass)** — Consider whether a recipe fits
+   better than an inline pipeline. If the steps are sequential with no corrective
+   loop, it should probably have been a recipe. If you do generate an inline pipeline,
+   give it a corrective back-edge with a verification gate -- a `plan -> implement -> test`
+   linear graph (no back-edge) teaches recipe thinking, not convergence. A verification
+   gate alone does not create a cycle; the back-edge is what makes it a convergence graph.
 
 3. **Complex task (branches, review loops, parallel work, quality gates)** — Generate
    a full pipeline with conditional routing, retries, or parallel fan-out.
@@ -61,13 +69,15 @@ Run a pipeline from a file:
 }
 ```
 
-Run a simple inline pipeline:
+Run a convergence-shaped inline pipeline (worker + evidence gate + corrective back-edge):
 ```json
 {
   "goal": "Add input validation to the user registration endpoint",
-  "dot_source": "digraph { start [shape=Mdiamond]; implement [prompt=\"$goal\"]; test [prompt=\"Write tests for the changes\"]; done [shape=Msquare]; start -> implement -> test -> done }"
+  "dot_source": "digraph { start [shape=Mdiamond]; implement [prompt=\"Implement: $goal. If test_output.txt exists, read it -- it holds the latest test results.\"]; test_gate [shape=parallelogram, tool_command=\"pytest -q > test_output.txt 2>&1\", goal_gate=true]; done [shape=Msquare]; start -> implement -> test_gate; test_gate -> done [condition=\"outcome=success\"]; test_gate -> implement [condition=\"outcome=fail\"] }"
 }
 ```
+
+For a one-pass task with no corrective loop, use a recipe instead of an inline pipeline.
 
 ## Available Example Pipelines
 

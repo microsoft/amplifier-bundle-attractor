@@ -11,6 +11,41 @@ the trade-offs so those choices are deliberate.
 
 ---
 
+## 0. The Control-Plane vs Recipe-Plane Line
+
+> Keep the convergence skeleton. Delete the domain decomposition.
+
+**The pipeline author's job** is the convergence skeleton: gates, budgets, walls,
+feedback channels -- the task-agnostic control structure that makes the loop
+descend toward a verified goal state. `examples/patterns/task-runner.dot` is the
+canonical example: orient / attempt / verify / critique / triage / postmortem /
+package -- zero domain phases, all control-plane responsibilities.
+
+**The model's job** is the domain decomposition: plan/implement/test phases,
+backend/frontend splits, the specific steps it takes to advance the work. That
+intelligence belongs in the worker node's context, not in the graph structure.
+
+When you find yourself adding `plan -> implement -> test` as graph nodes, stop:
+you are encoding the recipe plane into the control plane. The graph should encode
+*when* to verify and *how* to loop, not *which cognitive steps* the model takes.
+The shipped counter-example (at time of writing: `examples/pipelines/02-plan-implement-test.dot`)
+hardcodes cognitive phases and exact test cases in the graph -- the graph
+swallowed the intelligence.
+
+**Recipes vs. attractor pipelines.** Recipes are for staged sequential workflows
+with human approval gates; attractor pipelines are for machine-verified
+convergence. If your pipeline graph has no cycle, it should probably have been a
+recipe.
+
+**Why the skeleton must stay external.** In one live run, the worker
+hand-authored its own convergence evidence (a fabricated `convergence.jsonl`) to
+satisfy the gate; the dual critics -- outside the worker's context -- caught it
+and refused ship. One adaptive mega-node with self-assessed exit would have
+shipped the fabrication. Verification inside the context that produced the
+evidence is not verification.
+
+---
+
 ## 1. Tier Discipline: Code-Tier vs LLM-Tier Nodes
 
 > Use code-tier nodes for what code does reliably. Use LLM-tier nodes for what code
@@ -95,6 +130,18 @@ code-tier check eliminates structurally invalid outputs before they reach the LL
 check. Both nodes can route: the structural check routes back to the generator on format
 failure; the quality check routes forward or back on judgment.
 
+**Never gate on an artifact an LLM node "should" write.** If a downstream path
+requires a file, add a deterministic stub gate after the LLM node that verifies the
+file is non-empty and writes a labeled fallback if not -- never let the exit path
+depend on whether the box node actually wrote its artifact. Live catch: a `postmortem`
+node returned SUCCESS without writing its report twice in consecutive runs; a
+deterministic gate was added after the second occurrence. See
+`examples/patterns/task-runner.dot`'s `pm_gate` node for the pattern: a
+`[ -s .ai/postmortem/report.md ]` non-empty check that writes a labeled stub when the
+report is missing. (`bug-fix.dot`'s `escalated` node is the downstream half -- an
+existence check that writes an escalation handoff either way -- not the stub-gate
+pattern itself.)
+
 ---
 
 ## 3. Loop Convergence Patterns
@@ -142,6 +189,25 @@ in the environment (file exists, test passes, count reaches threshold), Pattern 
 robust — the exit is determined by evidence, not by run count. Pattern B is appropriate when
 the only terminal signal is the LLM reporting completion.
 
+**Budget the green path, not just the red path.** Every loop needs a budget or ratchet on
+*both* the corrective cycle and the quality-gate cycle. A fresh maximally-strict critic each
+iteration produces refusals on mechanically-green work -- 6 consecutive critique refusals
+occurred in a live run before a stall counter was added to the outer quality loop. Route
+stall detection to escalation, not to infinite retry; anchor critique to the DoD plus prior
+acceptances so the quality bar ratchets rather than resets.
+
+**Verify running-code identity before entering a loop.** An orient/setup node should check
+that the environment is in the expected state before the corrective loop starts -- 14 red
+iterations were burned re-flipping a coin on a stale-`.pyc` defect that no code change
+could fix. An attractor absorbs model drift, not deterministic bugs; the loop cannot
+converge on a defect that lives outside the graph's reach.
+
+**Add transient fail-routes on every ship-path node.** Ship-path LLM nodes (critique,
+feedback, package) should carry `outcome=fail` edges back to a recovery point -- an
+`overloaded_error` at a ship-path node killed a whole run after the work was already done.
+One edge addition fixed it permanently. See `examples/pipelines/practical/bug-fix.dot` for
+the pattern: every ship-path box node has an `outcome=fail` edge to `postmortem`.
+
 ---
 
 ## 4. LLM Output Protocol Patterns
@@ -162,8 +228,30 @@ is the deliverable, not the format describing it.
 **Strategy MLE — Make the Format LLM-Easy.**
 Redesign the output protocol to match what LLMs do reliably: single keywords, simple
 prose with anchored markers, minimal JSON with few required fields. Reduce precision
-requirements to reduce variance. Use `grep -qi` (keyword match) rather than exact
-string comparison.
+requirements to reduce variance.
+
+When routing on a verdict (SHIP/ITERATE, PASS/FAIL, approved/rejected), use
+**last-line anchored matching**: have the LLM write its verdict as the final line of a
+file, then check that exact line -- for example:
+
+```bash
+[ -f verdict.txt ] || exit 1
+tail -n1 verdict.txt | grep -qix 'VERDICT: SHIP'
+```
+
+Do not use bare whole-file `grep -qi` for verdict routing. A critique that quotes its
+own instructions (e.g., "write VERDICT: SHIP or VERDICT: ITERATE") contains both
+keywords -- bare `grep -qi 'SHIP'` false-SHIPs because it matches the instruction text,
+not the verdict. `tail -n1 | grep -qix` (last-line, case-insensitive exact match) is
+immune: the instruction text is never the last line, and the exact-match flag rejects
+partial matches. Always guard against a missing artifact with an explicit `[ -f ]`
+check -- a missing file should fail the gate, not silently pass it. Live catch: a
+review probe false-SHIPped a run using bare `grep -qi` when the critique quoted its
+instructions verbatim.
+
+`grep -qi` without anchoring remains appropriate for non-verdict keyword detection
+(presence checks, classification, section detection) where false-positives are not
+routing-consequential.
 
 Applicable when: routing sentinels, status indicators, binary or small-enumeration
 classification. Format simplification eliminates the variance, not the format itself.

@@ -32,7 +32,7 @@ digraph {
 | Attribute | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `prompt` | string | -- | Instructions for the LLM. `$goal` and `$param` tokens are expanded. |
-| `goal_gate` | bool | false | Must succeed for pipeline to complete |
+| `goal_gate` | bool | false | Must succeed **with an explicit verdict** (report_outcome / JSON / tool exit code) for pipeline to complete; plain prose returns RETRY (fail-closed, `specs/EXTENSIONS.md` §25) |
 | `max_retries` | int | graph default | Retry count on failure |
 | `retry_target` | string | -- | Node to jump to on gate failure |
 | `fidelity` | string | "compact" | Context carryover mode |

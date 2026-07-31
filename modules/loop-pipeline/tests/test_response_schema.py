@@ -551,6 +551,9 @@ class TestBackendToolLoopWiring:
         # Parsed object stashed under node.id in context_updates
         assert outcome.context_updates is not None
         assert outcome.context_updates[node.id] == {"name": "Alice"}
+        # EXTENSIONS.md §25 (corrected): non-verdict structured output is
+        # DERIVED — format is not a verdict.
+        assert outcome.is_explicit is False
 
     @pytest.mark.asyncio
     async def test_structured_output_with_invalid_json_still_succeeds(self) -> None:
@@ -583,6 +586,8 @@ class TestBackendToolLoopWiring:
         # node.id key should NOT be present when JSON parse failed
         assert outcome.context_updates is not None
         assert node.id not in outcome.context_updates
+        # Unparseable structured output is never explicit (fail-closed at gates).
+        assert outcome.is_explicit is False
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +672,8 @@ class TestDirectProviderBackendWiring:
 
         assert outcome.status == StageStatus.SUCCESS
         assert outcome.notes == json_response
+        # {"name": "Bob"} carries no verdict — DERIVED (EXTENSIONS.md §25).
+        assert outcome.is_explicit is False
 
     @pytest.mark.asyncio
     async def test_direct_backend_no_response_format_when_no_schema(self) -> None:
@@ -687,3 +694,207 @@ class TestDirectProviderBackendWiring:
         assert len(mock_client.requests) >= 1
         req = mock_client.requests[-1]
         assert req.response_format is None
+
+
+# ---------------------------------------------------------------------------
+# 9. EXTENSIONS.md §25 corrected policy: format ≠ verdict (review round 2)
+# ---------------------------------------------------------------------------
+
+
+def _make_tool_loop_backend(text: str) -> "AmplifierBackend":
+    """AmplifierBackend wired to the tool-loop path with a canned response."""
+    return AmplifierBackend(
+        coordinator=MagicMock(
+            get_capability=lambda _: None,
+            config={"agents": {}},
+            session=MagicMock(),
+        ),
+        profiles={},
+        provider=MagicMock(),
+        unified_client=_MockUnifiedClient(text=text),
+    )
+
+
+class TestStructuredOutputVerdictPolicy:
+    """Schema-parsed output is explicit ONLY when it carries a recognized verdict.
+
+    Review round 2, Finding 1 (BLOCKER): the round-1 policy marked ANY
+    parseable JSON as is_explicit=True, so a goal_gate structured-output
+    node returning {"assessment": "NOT CONVERGED"} — or {"name": "Alice"} —
+    shipped success. Corrected policy: format ≠ verdict.
+    """
+
+    @pytest.mark.asyncio
+    async def test_non_verdict_schema_output_is_derived(self) -> None:
+        """{"name": "Alice"} parses but asserts nothing → SUCCESS, DERIVED."""
+        backend = _make_tool_loop_backend(json.dumps({"name": "Alice"}))
+        node = _make_node_with_schema(_INLINE_SCHEMA_DICT)
+        outcome = await backend._run_with_tool_loop(
+            node=node, instruction="Extract", reasoning_effort=None
+        )
+        assert outcome.status == StageStatus.SUCCESS
+        assert outcome.is_explicit is False
+
+    @pytest.mark.asyncio
+    async def test_incident_shape_not_converged_is_derived(self) -> None:
+        """{"assessment": "NOT CONVERGED"} carries no recognized verdict → DERIVED.
+
+        This is the reviewer's incident-class example: a goal_gate judge
+        emitting non-verdict structured output must not be able to satisfy
+        its gate.
+        """
+        backend = _make_tool_loop_backend(
+            json.dumps({"assessment": "NOT CONVERGED"})
+        )
+        node = _make_node_with_schema(_INLINE_SCHEMA_DICT)
+        outcome = await backend._run_with_tool_loop(
+            node=node, instruction="Judge", reasoning_effort=None
+        )
+        assert outcome.status == StageStatus.SUCCESS  # non-gate behavior unchanged
+        assert outcome.is_explicit is False, (
+            "Non-verdict structured output must be DERIVED — the round-1 "
+            "'parseable ⇒ explicit' policy was a false-success side door."
+        )
+
+    @pytest.mark.asyncio
+    async def test_verdict_shaped_schema_output_is_explicit_success(self) -> None:
+        """A `status` field with a recognized value IS an explicit verdict."""
+        backend = _make_tool_loop_backend(
+            json.dumps({"status": "success", "notes": "All criteria pass."})
+        )
+        node = _make_node_with_schema(_INLINE_SCHEMA_DICT)
+        outcome = await backend._run_with_tool_loop(
+            node=node, instruction="Judge", reasoning_effort=None
+        )
+        assert outcome.status == StageStatus.SUCCESS
+        assert outcome.is_explicit is True
+        assert outcome.notes == "All criteria pass."
+
+    @pytest.mark.asyncio
+    async def test_verdict_shaped_schema_output_fail_honored(self) -> None:
+        """An explicit FAIL verdict in schema output is honored, not wrapped."""
+        backend = _make_tool_loop_backend(
+            json.dumps({"status": "fail", "failure_reason": "2 of 7 criteria pass"})
+        )
+        node = _make_node_with_schema(_INLINE_SCHEMA_DICT)
+        outcome = await backend._run_with_tool_loop(
+            node=node, instruction="Judge", reasoning_effort=None
+        )
+        assert outcome.status == StageStatus.FAIL
+        assert outcome.is_explicit is True
+        assert outcome.failure_reason == "2 of 7 criteria pass"
+
+    @pytest.mark.asyncio
+    async def test_unrecognized_status_value_is_derived(self) -> None:
+        """{"status": "NOT CONVERGED"} — unrecognized value is NOT a verdict."""
+        backend = _make_tool_loop_backend(
+            json.dumps({"status": "NOT CONVERGED"})
+        )
+        node = _make_node_with_schema(_INLINE_SCHEMA_DICT)
+        outcome = await backend._run_with_tool_loop(
+            node=node, instruction="Judge", reasoning_effort=None
+        )
+        assert outcome.status == StageStatus.SUCCESS
+        assert outcome.is_explicit is False
+
+    @pytest.mark.asyncio
+    async def test_direct_backend_same_policy(self) -> None:
+        """DirectProviderBackend shares the classifier — same policy both paths."""
+        from amplifier_module_loop_pipeline import DirectProviderBackend
+
+        # Non-verdict → DERIVED
+        backend = DirectProviderBackend(
+            provider=MagicMock(),
+            unified_client=_MockUnifiedClient(
+                text=json.dumps({"assessment": "NOT CONVERGED"})
+            ),
+        )
+        node = _make_node_with_schema(_INLINE_SCHEMA_DICT)
+        outcome = await backend.run(node, "Judge", _make_context())
+        assert outcome.status == StageStatus.SUCCESS
+        assert outcome.is_explicit is False
+
+        # Verdict-shaped → explicit
+        backend2 = DirectProviderBackend(
+            provider=MagicMock(),
+            unified_client=_MockUnifiedClient(
+                text=json.dumps({"status": "success", "notes": "converged"})
+            ),
+        )
+        outcome2 = await backend2.run(node, "Judge", _make_context())
+        assert outcome2.status == StageStatus.SUCCESS
+        assert outcome2.is_explicit is True
+
+
+class TestGoalGateStructuredOutput:
+    """Full-engine red/green for goal_gate + response_schema nodes."""
+
+    def _engine(self, response_text: str, tmp_path: Path, goal_gate: bool):
+        from amplifier_module_loop_pipeline import DirectProviderBackend
+        from amplifier_module_loop_pipeline.engine import PipelineEngine
+        from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+        from amplifier_module_loop_pipeline.handlers.context import HandlerContext
+
+        attrs: dict[str, Any] = {"goal_gate": "true"} if goal_gate else {}
+        node = _make_node_with_schema(
+            _INLINE_SCHEMA_DICT, id="judge", attrs=attrs
+        )
+        graph = _make_minimal_graph(node)
+        backend = DirectProviderBackend(
+            provider=MagicMock(),
+            unified_client=_MockUnifiedClient(text=response_text),
+        )
+        return PipelineEngine(
+            graph=graph,
+            context=_make_context(),
+            handler_registry=HandlerRegistry(HandlerContext(backend=backend)),
+            logs_root=str(tmp_path),
+        )
+
+    @pytest.mark.asyncio
+    async def test_goal_gate_schema_non_verdict_json_gate_rejects(
+        self, tmp_path: Path
+    ) -> None:
+        """RED: goal_gate schema node returning non-verdict JSON must FAIL.
+
+        The BLOCKER fix: {"assessment": "NOT CONVERGED"} is format, not
+        verdict — the gate must reject it (pipeline must not exit success).
+        """
+        engine = self._engine(
+            json.dumps({"assessment": "NOT CONVERGED"}), tmp_path, goal_gate=True
+        )
+        outcome = await engine.run()
+        assert not outcome.is_success, (
+            "goal_gate schema node with non-verdict JSON must NOT exit "
+            "success — response_schema was a false-success side door."
+        )
+        assert engine.node_outcomes["judge"].is_explicit is False
+
+    @pytest.mark.asyncio
+    async def test_goal_gate_schema_verdict_json_exits_success(
+        self, tmp_path: Path
+    ) -> None:
+        """GREEN: verdict-shaped schema output satisfies the gate."""
+        engine = self._engine(
+            json.dumps({"status": "success", "notes": "converged"}),
+            tmp_path,
+            goal_gate=True,
+        )
+        outcome = await engine.run()
+        assert outcome.is_success
+        assert engine.node_outcomes["judge"].is_explicit is True
+
+    @pytest.mark.asyncio
+    async def test_plain_schema_node_non_verdict_still_succeeds(
+        self, tmp_path: Path
+    ) -> None:
+        """Non-gate schema node returning {"name": "Alice"} succeeds as before."""
+        engine = self._engine(
+            json.dumps({"name": "Alice"}), tmp_path, goal_gate=False
+        )
+        outcome = await engine.run()
+        assert outcome.is_success, "non-gate schema node behavior must be unchanged"
+        judge_outcome = engine.node_outcomes["judge"]
+        assert judge_outcome.is_explicit is False
+        assert judge_outcome.context_updates is not None
+        assert judge_outcome.context_updates["judge"] == {"name": "Alice"}

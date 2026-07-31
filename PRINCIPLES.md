@@ -38,7 +38,29 @@ Document accepted deviations from the canonical spec here. Each delta should rec
 - **Why** — the use case that justified the deviation; what was insufficient about the upstream behavior.
 - **Link** — the PR or decision that landed it.
 
-Empty until the next change author captures theirs. If a delta exists in the codebase today and is not listed here, this is the place to add it.
+### Delta 1 — Fail-closed goal-gate outcomes (T0-5, 2026-07-31)
+
+**What we changed:** Canonical spec §4.5 `CodergenHandler` pseudocode returns
+`Outcome(status=SUCCESS, notes="Stage completed: …")` unconditionally for any non-empty string
+response. We diverge for `goal_gate=true` nodes: a plain-prose response (no `report_outcome`
+tool call, no JSON, no embedded verdict) returns `Outcome(status=RETRY)` instead of SUCCESS.
+This means a goal gate cannot be satisfied by silence or by a response that literally says the
+work is not done.
+
+**Why:** Verified real-world incident (2026-07-28): a convergence judge marked `goal_gate=true`
+wrote "NOT CONVERGED — 2 of 7 criteria pass" and was recorded `outcome=success` by the
+fail-open default. The designed replan loop never fired; the pipeline exited false success with
+zero work product after 2.4 hours. The spec's fail-open default is the upstream cause; this
+delta closes the class for goal_gate nodes without breaking the vast majority of pipelines
+whose ordinary `box` nodes end in prose.
+
+**Walk-upstream note:** The canonical spec §4.5 default should gain a `goal_gate` check. The
+recommended change: before the final SUCCESS fallback, check whether the node carries
+`goal_gate=true`; if so, return RETRY (or FAIL with a clear message) rather than SUCCESS.
+This is general enough that other consumers of the nlspec would benefit. Until the upstream
+spec adopts this, the divergence is documented in `specs/EXTENSIONS.md §25`.
+
+**Link:** `specs/EXTENSIONS.md §25`; task T0-5.
 
 ---
 

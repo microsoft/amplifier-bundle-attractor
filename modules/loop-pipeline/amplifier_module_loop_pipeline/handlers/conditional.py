@@ -45,4 +45,10 @@ class ConditionalHandler:
         engine: "PipelineEngine | None" = None,
     ) -> Outcome:
         """Return SUCCESS immediately.  Routing is handled by the engine."""
-        return Outcome(status=StageStatus.SUCCESS, notes=f"Conditional node: {node.id}")
+        # EXTENSIONS.md §25: structural no-op — deterministic SUCCESS that
+        # cannot be an LLM default, so it is an explicit verdict.
+        return Outcome(
+            status=StageStatus.SUCCESS,
+            notes=f"Conditional node: {node.id}",
+            is_explicit=True,
+        )

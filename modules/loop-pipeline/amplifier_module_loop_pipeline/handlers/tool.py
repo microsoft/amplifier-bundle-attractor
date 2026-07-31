@@ -162,6 +162,9 @@ class ToolHandler:
                 exit_code: int = proc.returncode or -1
                 return Outcome(
                     status=StageStatus.FAIL,
+                    # EXTENSIONS.md §25: a tool's exit code IS an explicit
+                    # verdict — the process asserted failure unambiguously.
+                    is_explicit=True,
                     failure_reason=(
                         f"Command exited with code {exit_code}: "
                         f"{stderr_text.strip() or stdout_text.strip()}"
@@ -222,6 +225,11 @@ class ToolHandler:
 
             return Outcome(
                 status=StageStatus.SUCCESS,
+                # EXTENSIONS.md §25: exit code 0 IS an explicit verdict — the
+                # process asserted success unambiguously. Without this, a
+                # goal_gate=true tool node could never satisfy its gate
+                # (the gate check requires is_success AND is_explicit).
+                is_explicit=True,
                 context_updates=context_updates,
                 notes=f"Tool completed: {command}",
             )

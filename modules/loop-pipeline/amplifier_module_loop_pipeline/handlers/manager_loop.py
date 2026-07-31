@@ -241,6 +241,12 @@ class ManagerLoopHandler:
                 if evaluate_condition(stop_condition, child_outcome, context):
                     return Outcome(
                         status=child_outcome.status,
+                        # EXTENSIONS.md §25: the manager's verdict IS the
+                        # child's — propagate the child's explicitness rather
+                        # than dropping to False (which made a goal_gate=true
+                        # manager node unsatisfiable even when the child
+                        # produced an explicit verdict).
+                        is_explicit=child_outcome.is_explicit,
                         notes=f"Manager completed in {cycle} cycle(s) — stop condition satisfied",
                         context_updates={
                             "last_stage": node.id,
@@ -252,6 +258,9 @@ class ManagerLoopHandler:
                 if child_outcome.is_success:
                     return Outcome(
                         status=child_outcome.status,
+                        # EXTENSIONS.md §25: propagate the child's
+                        # explicitness (see stop-condition branch above).
+                        is_explicit=child_outcome.is_explicit,
                         notes=f"Manager completed in {cycle} cycle(s)",
                         context_updates={
                             "last_stage": node.id,

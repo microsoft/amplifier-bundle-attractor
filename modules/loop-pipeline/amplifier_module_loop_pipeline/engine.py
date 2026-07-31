@@ -1003,7 +1003,17 @@ class PipelineEngine:
             if node is None:
                 continue
             if node.attrs.get("goal_gate") in (True, "true"):
-                if outcome.is_success:
+                # EXTENSIONS.md §25 — fail-closed gate enforcement.
+                # A goal_gate node satisfies its gate ONLY when:
+                #   1. outcome.is_success is True (SUCCESS or PARTIAL_SUCCESS), AND
+                #   2. outcome.is_explicit is True (an asserted verdict: report_outcome,
+                #      JSON, fenced JSON, or recovered embedded verdict).
+                # This closes the spawn-path bypass: _outcome_from_spawn_result()
+                # returns is_explicit=False when recovering from the orchestrator's
+                # completion status alone (no report_outcome, no JSON). That outcome
+                # may be SUCCESS but it is not an explicit verdict from the node.
+                gate_satisfied = outcome.is_success and outcome.is_explicit
+                if gate_satisfied:
                     satisfied.append(node_id)
                 else:
                     unsatisfied.append((node_id, outcome))
@@ -1127,6 +1137,10 @@ class PipelineEngine:
             "notes": outcome.notes,
             "failure_reason": outcome.failure_reason,
             "session_id": outcome.session_id,
+            # EXTENSIONS.md §25: is_explicit is durable audit data — analysts
+            # must be able to distinguish asserted verdicts from defaulted
+            # ones without reverse-engineering the notes prefix.
+            "is_explicit": outcome.is_explicit,
             # Issue 10: structured tool-invocation failure payload.
             # Populated by ToolHandler on failure; None/absent on success.
             "failed_step": outcome.failed_step,
@@ -1156,6 +1170,8 @@ class PipelineEngine:
             "node_id": node_id,
             "status": outcome.status.value,
             "preferred_label": outcome.preferred_label,
+            # EXTENSIONS.md §25: durable audit field (see status.json above).
+            "is_explicit": outcome.is_explicit,
             "duration_ms": duration_ms,
             "ts": datetime.now(timezone.utc).isoformat(),
         }

@@ -267,6 +267,9 @@ class HumanGateHandler:
         ):
             return Outcome(
                 status=StageStatus.FAIL,
+                # EXTENSIONS.md §25: a SKIP is a deterministic interviewer
+                # decision, not a defaulted LLM completion — explicit verdict.
+                is_explicit=True,
                 context_updates={
                     text_key: None,
                     "human.gate.label": node.label,
@@ -402,6 +405,10 @@ class HumanGateHandler:
 
         return Outcome(
             status=StageStatus.SUCCESS,
+            # EXTENSIONS.md §25: a human's selection is the most explicit
+            # verdict possible — deterministic, cannot be an LLM default.
+            # Without this, a goal_gate=true human gate is unsatisfiable.
+            is_explicit=True,
             suggested_next_ids=target_ids if target_ids else None,
             context_updates={
                 "human.gate.selected": selected,
@@ -515,6 +522,9 @@ class HumanGateHandler:
 
         return Outcome(
             status=StageStatus.SUCCESS,
+            # EXTENSIONS.md §25: freeform human input is a deterministic
+            # human action, not a defaulted LLM completion — explicit.
+            is_explicit=True,
             suggested_next_ids=target_ids if target_ids else None,
             context_updates={
                 "human.gate.text": answer.text,

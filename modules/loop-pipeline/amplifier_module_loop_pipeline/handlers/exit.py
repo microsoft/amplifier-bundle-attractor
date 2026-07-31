@@ -31,4 +31,10 @@ class ExitHandler:
         engine: "PipelineEngine | None" = None,
     ) -> Outcome:
         """Return SUCCESS immediately."""
-        return Outcome(status=StageStatus.SUCCESS, notes=f"Exit node: {node.id}")
+        # EXTENSIONS.md §25: structural no-op — deterministic SUCCESS that
+        # cannot be an LLM default, so it is an explicit verdict.
+        return Outcome(
+            status=StageStatus.SUCCESS,
+            notes=f"Exit node: {node.id}",
+            is_explicit=True,
+        )

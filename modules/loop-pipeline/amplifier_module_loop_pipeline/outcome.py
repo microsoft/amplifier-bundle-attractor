@@ -4,11 +4,12 @@ Defines StageStatus enum and Outcome dataclass that drive routing
 decisions and state updates after each node handler completes.
 
 Spec coverage: OUT-001–007, Section 5.2 (Outcome)
+Extension: EXTENSIONS.md §25 (fail-closed goal-gate outcomes)
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -34,6 +35,12 @@ class Outcome:
     context updates, and retry/failure routing.
 
     Spec Section 5.2: Outcome model.
+
+    EXTENSIONS.md §25: the ``is_explicit`` field distinguishes an asserted
+    verdict (report_outcome / JSON / embedded recovery) from a defaulted one
+    (plain-prose fallback).  A goal_gate=true node whose outcome is NOT
+    explicit cannot satisfy its own gate — the gate check treats a defaulted
+    SUCCESS as unsatisfied (fail-closed contract).
     """
 
     status: StageStatus
@@ -45,6 +52,14 @@ class Outcome:
     session_id: str | None = (
         None  # child Amplifier session ID (if executed via AmplifierBackend)
     )
+
+    #: EXTENSIONS.md §25 — True when the status was asserted by the node
+    #: (report_outcome tool call, pure JSON response, fenced JSON, or recovered
+    #: embedded {…} verdict).  False when the status is the parser's plain-text
+    #: fallback ("Plain text response: …").  A goal_gate=true node REQUIRES
+    #: is_explicit=True to satisfy its gate; a defaulted SUCCESS is treated as
+    #: unsatisfied and the gate fails closed (RETRY / FAIL, never silent success).
+    is_explicit: bool = field(default=False)
 
     #: Issue 10 / analog of WS-4 Sub-fix C: structured tool-invocation payload
     #: populated by ToolHandler on failure so the dashboard can display the

@@ -326,5 +326,9 @@ class PipelineHandler:
             },
         )
 
-        # (12) Return child outcome
+        # (12) Return child outcome verbatim. EXTENSIONS.md §25: this
+        # propagates the child's is_explicit — a folder node's outcome CAN
+        # carry a defaulted LLM completion (the child's terminal outcome), so
+        # it must NOT be blanket-classified as explicit; explicitness flows
+        # from the child's own verdict mechanism.
         return outcome

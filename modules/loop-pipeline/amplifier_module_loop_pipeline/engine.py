@@ -26,7 +26,7 @@ from .checkpoint import (
     save_checkpoint,
 )
 from .context import PipelineContext
-from .edge_selection import select_all_matching_edges, select_edge
+from .edge_selection import select_edge
 from .graph import Graph, Node
 from .handlers import HandlerRegistry
 from .node_outputs import SUBSTITUTABLE_ATTRS, build_output_table
@@ -665,21 +665,25 @@ class PipelineEngine:
                 },
             )
 
-            # Step 5: Select next edge(s) — detect multi-edge fan-out
+            # Step 5: Select next edge — spec §3.3 single-edge selection.
+            #
+            # T0-4 (spec-conformance restoration): the engine now conforms to
+            # attractor-spec.md §3.3 step 1, which prescribes
+            # best_by_weight_then_lexical(condition_matched) — ONE edge,
+            # deterministic.  The previous multi-match → parallel fan-out path
+            # (select_all_matching_edges → _execute_parallel_fan_out) for
+            # non-component nodes is retired.  Explicit parallelism remains
+            # intact via two spec-sanctioned paths:
+            #   - shape=component nodes (handled below, via ParallelHandler)
+            #   - shape=parallel fan-out (EXTENSIONS.md #18, handled above)
             #
             # BUG G FIX: Component nodes (shape=component) are handled by
             # ParallelHandler, which fans out ALL outgoing branches internally
-            # via run_subgraph and populates parallel.results
-            # in context.  The engine must NOT re-fan-out via
-            # _execute_parallel_fan_out after the handler returns — that would
-            # execute each branch a second time.
-            #
-            # Key subtlety: component nodes typically use UNCONDITIONAL outgoing
-            # edges (branches run regardless of conditions), so
-            # select_all_matching_edges() — which only returns condition-matched
-            # edges — must NOT be used here.  Instead, read ALL outgoing edges
-            # directly from the graph, find the shared fan-in node, and route
-            # to it.  The FanInHandler will then read parallel.results.
+            # via run_subgraph and populates parallel.results in context.
+            # The engine must NOT re-fan-out after the handler returns — that
+            # would execute each branch a second time.  Instead, read ALL
+            # outgoing edges directly from the graph, find the shared fan-in
+            # node, and route to it.  The FanInHandler reads parallel.results.
             if current_node.shape == "component":
                 all_branches = self.graph.outgoing_edges(current_node.id)
                 if len(all_branches) > 1:
@@ -709,42 +713,11 @@ class PipelineEngine:
                 # Single outgoing edge from component node — fall through to
                 # normal single-edge selection below.
 
-            all_matching = select_all_matching_edges(
-                current_node.id, outcome, self.context, self.graph
-            )
-
-            if len(all_matching) > 1:
-                # Multi-edge fan-out from a non-component node: execute all
-                # targets in parallel via the engine-level fan-out path.
-                logger.info(
-                    "Multi-edge fan-out from '%s': %d parallel targets",
-                    current_node.id,
-                    len(all_matching),
-                )
-
-                await self._execute_parallel_fan_out(all_matching, pipeline_start_time)
-
-                # Find convergence node: the first node that all parallel
-                # targets share as a common outgoing edge target
-                fan_in_node_id = self._find_fan_in_node(
-                    [e.to_node for e in all_matching]
-                )
-                if fan_in_node_id is None:
-                    fail_outcome = Outcome(
-                        status=StageStatus.FAIL,
-                        failure_reason=(
-                            f"Multi-edge fan-out from '{current_node.id}' "
-                            f"has no convergence (fan-in) node"
-                        ),
-                    )
-                    await self._emit_complete(fail_outcome, pipeline_start_time)
-                    return fail_outcome
-
-                # Store parallel results in context for the fan-in node
-                current_node = self.graph.nodes[fan_in_node_id]
-                continue
-
-            # Single-edge selection (normal path)
+            # Single-edge selection: spec §3.3 five-step ladder ending in
+            # best_by_weight_then_lexical.  When multiple conditional edges
+            # simultaneously match, select_edge() deterministically returns
+            # the one with the highest weight (lexical target-id tiebreak) —
+            # never a fan-out.
             edge = select_edge(current_node.id, outcome, self.context, self.graph)
             if edge is None:
                 # Try failure routing: node/graph retry targets
@@ -1190,123 +1163,13 @@ class PipelineEngine:
         with open(trace_path, "a") as f:
             f.write(json.dumps(trace_record) + "\n")
 
-    # -- Multi-edge parallel fan-out helpers -----------------------------------
-
-    async def _execute_parallel_fan_out(
-        self,
-        edges: list,
-        pipeline_start_time: float,
-    ) -> list[dict[str, Any]]:
-        """Execute multiple branch targets in parallel with isolated contexts.
-
-        Each branch gets a clone of the current context for isolation
-        (NLSpec Section 798). Results are collected and context_updates
-        from all branches are merged back into the main context.
-        """
-
-        async def run_branch(target_node_id: str) -> dict[str, Any]:
-            branch_context = self.context.clone()
-            # Clear the per-cycle routing signal so the branch starts with NO
-            # inherited routing verdict (symmetric with the loop_restart clear
-            # in run(); see handlers/pipeline.py step 6a).
-            branch_context.set("preferred_label", None)
-            # Move 1: give each branch its own engine so run_subgraph uses an
-            # isolated handler_registry (and therefore isolated backend state).
-            branch_engine = self.clone_for_branch(context=branch_context)
-            node = self.graph.nodes[target_node_id]
-            handler = branch_engine.handler_registry.get(node)
-            handler_type = node.type or node.shape
-
-            # Increment per-node execution count for branch nodes
-            self._node_execution_counts[node.id] = (
-                self._node_execution_counts.get(node.id, 0) + 1
-            )
-            branch_execution_index = self._node_execution_counts[node.id]
-
-            await self._emit(
-                PIPELINE_NODE_START,
-                {
-                    "node_id": node.id,
-                    "handler_type": handler_type,
-                    "attempt": 1,  # within-handler retry counter (backward compat)
-                    "execution_index": branch_execution_index,  # NEW — graph-level visit count
-                },
-            )
-
-            node_start = time.monotonic()
-            retry_policy = RetryPolicy.from_node(node, self.graph)
-
-            try:
-                outcome = await execute_with_retry(
-                    handler,
-                    node,
-                    branch_context,
-                    self.graph,
-                    self.logs_root,
-                    retry_policy,
-                    hooks=self.hooks,
-                    engine=branch_engine,  # S3: branch engine; outcome recorded below
-                )
-            except Exception as exc:
-                outcome = Outcome(
-                    status=StageStatus.FAIL,
-                    failure_reason=f"Parallel branch '{target_node_id}' raised: {exc}",
-                )
-
-            node_duration = (time.monotonic() - node_start) * 1000
-
-            # S3: Record completion in the PARENT engine's state so downstream
-            # edge-selection (select_edge) and fan-in can read branch outcomes.
-            self.completed_nodes.append(target_node_id)
-            self.node_outcomes[target_node_id] = outcome
-
-            # Write per-node status.json BEFORE emitting so hook bridge can copy it
-            self._write_node_status(target_node_id, outcome, node_duration)
-
-            await self._emit(
-                PIPELINE_NODE_COMPLETE,
-                {
-                    "node_id": target_node_id,
-                    "status": outcome.status.value,
-                    "duration_ms": node_duration,
-                    "notes": outcome.notes,
-                    "failure_reason": outcome.failure_reason,
-                    "session_id": outcome.session_id,
-                    "execution_index": branch_execution_index,  # NEW — graph-level visit count
-                },
-            )
-
-            return {
-                "node_id": target_node_id,
-                "status": outcome.status.value,
-                "notes": outcome.notes,
-                "failure_reason": outcome.failure_reason,
-                "context_updates": outcome.context_updates,
-            }
-
-        # Execute all branches concurrently with bounded parallelism.
-        # Read max_parallel from the source node's attrs (matching ParallelHandler's
-        # convention for shape=component nodes).  Default 4 mirrors ParallelHandler.
-        source_node = self.graph.nodes.get(edges[0].from_node) if edges else None
-        max_parallel = int(
-            source_node.attrs.get("max_parallel", 4) if source_node else 4
-        )
-        semaphore = asyncio.Semaphore(max_parallel)
-
-        async def bounded_run_branch(target_node_id: str) -> dict[str, Any]:
-            async with semaphore:
-                return await run_branch(target_node_id)
-
-        tasks = [bounded_run_branch(edge.to_node) for edge in edges]
-        results = list(await asyncio.gather(*tasks))
-
-        # Apply context_updates from all branches
-        for result in results:
-            updates = result.get("context_updates")
-            if updates:
-                self.context.update(updates)
-
-        return results
+    # -- Parallel fan-in helper (component-node explicit parallelism) -----------
+    #
+    # T0-4: the engine-level _execute_parallel_fan_out helper that backed the
+    # retired multi-match fan-out dialect has been deleted along with its only
+    # call site.  Explicit parallelism runs through ParallelHandler (which
+    # executes each branch via run_subgraph); the engine keeps only the fan-in
+    # discovery below.
 
     def _find_fan_in_node(self, parallel_target_ids: list[str]) -> str | None:
         """Find the first node reachable from ALL parallel branch roots via BFS.

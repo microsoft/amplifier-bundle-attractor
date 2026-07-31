@@ -215,11 +215,17 @@ async def test_component_fanout_fan_in_node_executes_after_all_branches(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_non_component_multi_edge_fanout_still_works(tmp_path):
-    """Engine-level multi-edge fan-out (shape=box, not component) must be unaffected.
+async def test_non_component_single_edge_selection(tmp_path):
+    """T0-4: non-component nodes with multiple simultaneously-matching conditional
+    edges now select exactly ONE successor via spec §3.3 best_by_weight_then_lexical.
 
-    The existing _execute_parallel_fan_out path is used for non-component nodes
-    with multiple matching outgoing edges. The fix must NOT break this path.
+    Prior to T0-4, the engine fanned out to ALL matching edges for non-component
+    nodes (the retired select_all_matching_edges → _execute_parallel_fan_out path).
+    After T0-4, the engine uses select_edge() which returns exactly one edge —
+    the one with the highest weight (lexical target-id tiebreak).
+
+    This test uses two edges with the same condition (outcome=success) and no
+    weight attributes, so the lexical tiebreak applies: 'b1' < 'b2' → 'b1' wins.
     """
     executed: list[str] = []
 
@@ -228,28 +234,28 @@ async def test_non_component_multi_edge_fanout_still_works(tmp_path):
             executed.append(node.id)
             return "done"
 
-    # Non-component node (box) with multiple same-condition outgoing edges
+    # Non-component node (box) with two same-condition outgoing edges.
+    # Under spec §3.3 single-edge selection, only the lexically-first target
+    # ('b1' < 'b2') runs.  'b2' must NOT run.
     graph = Graph(
-        name="test-box-fanout",
+        name="test-box-single-edge",
         nodes={
             "start": Node(id="start", shape="Mdiamond"),
             "check": Node(id="check", shape="box", prompt="Check"),
             "b1": Node(id="b1", shape="box", prompt="B1"),
             "b2": Node(id="b2", shape="box", prompt="B2"),
-            "merge": Node(id="merge", shape="box", prompt="Merge"),
             "exit": Node(id="exit", shape="Msquare"),
         },
         edges=[
             Edge(from_node="start", to_node="check"),
+            # Both conditions match simultaneously → select_edge picks 'b1' (lexical)
             Edge(from_node="check", to_node="b1", condition="outcome=success"),
             Edge(from_node="check", to_node="b2", condition="outcome=success"),
-            Edge(from_node="b1", to_node="merge"),
-            Edge(from_node="b2", to_node="merge"),
-            Edge(from_node="merge", to_node="exit"),
+            Edge(from_node="b1", to_node="exit"),
+            Edge(from_node="b2", to_node="exit"),
         ],
     )
 
-    # No subgraph_runner needed for box nodes (uses engine-level fan-out)
     context = PipelineContext()
     registry = HandlerRegistry(HandlerContext(backend=TrackingBackend()))
     engine = PipelineEngine(
@@ -260,7 +266,12 @@ async def test_non_component_multi_edge_fanout_still_works(tmp_path):
     )
     outcome = await engine.run()
 
-    assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
-    assert "b1" in executed
-    assert "b2" in executed
-    assert "merge" in executed
+    assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS), (
+        f"Pipeline must complete: {outcome.failure_reason}"
+    )
+    # Exactly one branch must run — the lexically-first one
+    assert "b1" in executed, "b1 (lexically first) must run"
+    assert "b2" not in executed, (
+        "b2 must NOT run — spec §3.3 single-edge selection picks exactly one "
+        "successor (b1 wins the lexical tiebreak). Non-component fan-out is retired (T0-4)."
+    )

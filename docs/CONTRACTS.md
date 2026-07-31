@@ -62,7 +62,7 @@ depend on missing inputs don't silently receive nothing — they don't run at al
 authors must explicitly opt in to any failure-routing behavior they want.
 
 **Reference:** `modules/loop-pipeline/amplifier_module_loop_pipeline/edge_selection.py`
-(lines 62–98; outcome-status guard at line 76).
+(lines 65–101; outcome-status guard at line 79).
 
 ### Explicit fail-forward opt-ins
 
@@ -79,21 +79,24 @@ Three mechanisms let pipeline authors override fail-fast for specific scenarios:
 `continue_on_fail=true` that fails has its outcome flipped FAIL→SUCCESS before edge
 selection; a downstream `runs_on=failure` node will NOT see that predecessor as failed
 (the failure was swallowed). Use `runs_on=always` on cleanup nodes that must fire after
-a `continue_on_fail` predecessor. See engine.py lines 487–498 for the canonical
+a `continue_on_fail` predecessor. See engine.py lines 578–592 for the canonical
 explanation.
 
 **Reference:** `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py`
-(line 501 for `continue_on_fail` check; lines 1301–1412 for `_get_runs_on` and skip-gate
-logic). Also: `edge_selection.py` lines 68–91 for the edge-level routing comment.
+(lines 593–596 for the `continue_on_fail` check; lines 1299–1323 for `_get_runs_on` and
+1350–1447 for the skip-gate `_check_node_skip`). Also: `edge_selection.py` lines 65–78
+for the edge-level routing comment.
 
 ---
 
 ## 3. Structural Concurrency Policy
 
 **Behavior:** The `max_parallel` node attribute caps the number of concurrent branches
-during fan-out execution. The default is 4 when not specified. The attribute applies to
-both `shape=component` nodes (handled by `ParallelHandler`) and engine-level multi-edge
-fan-outs (handled by `_execute_parallel_fan_out`).
+during fan-out execution. The default is 4 when not specified. Parallelism is
+component-based: the attribute applies to `shape=component` nodes (handled by
+`ParallelHandler`), which are the only fan-out mechanism. (The engine-level multi-edge
+fan-out helper `_execute_parallel_fan_out` was retired when spec §3.3 single-best-edge
+selection was restored — multiple matching conditional edges no longer fan out.)
 
 **Implication for consumers:** `max_parallel` controls engine-level branch concurrency
 only — it does not cap LLM API calls per provider. Provider-level rate limiting (for
@@ -104,9 +107,9 @@ branches the engine dispatches simultaneously; any additional rate control is th
 provider module's responsibility.
 
 **Reference:**
-`modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py` (line 98,
-`ParallelHandler`); `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py`
-(lines 1193–1199, `_execute_parallel_fan_out`).
+`modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py` (lines 91–94,
+`ParallelHandler`). The former engine-level helper is documented in
+`engine.py` (T0-4 retirement comment near the old `_execute_parallel_fan_out` site).
 
 ---
 
@@ -126,8 +129,7 @@ provider module's responsibility.
 | Contract | File | Location |
 |---|---|---|
 | M5 substitution | `modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py` | Module docstring |
-| Fail-fast / edge selection | `modules/loop-pipeline/amplifier_module_loop_pipeline/edge_selection.py` | Lines 62–98 |
-| `continue_on_fail` override | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Line 501 and comment block at 487–498 |
-| `runs_on` logic | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 1301–1412 |
-| Structural concurrency (component) | `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py` | Line 98 |
-| Structural concurrency (fan-out) | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 1193–1199 |
+| Fail-fast / edge selection | `modules/loop-pipeline/amplifier_module_loop_pipeline/edge_selection.py` | Lines 65–101 (`select_edge`) |
+| `continue_on_fail` override | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 593–596 and comment block at 578–592 |
+| `runs_on` logic | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 1299–1323 (`_get_runs_on`) and 1350–1447 (`_check_node_skip`) |
+| Structural concurrency (component) | `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py` | Lines 91–94 (`max_parallel` + semaphore) |

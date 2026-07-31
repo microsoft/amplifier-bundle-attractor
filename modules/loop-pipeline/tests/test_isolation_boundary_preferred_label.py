@@ -337,7 +337,7 @@ async def test_parallel_branch_clone_starts_without_preferred_label():
 
 @pytest.mark.asyncio
 async def test_engine_fanout_branch_starts_without_preferred_label(tmp_path):
-    """Site 4 (engine.py _execute_parallel_fan_out): multi-edge fan-out
+    """Site 4 (shape=component fan-out via ParallelHandler): parallel
     branches must not inherit the parent's preferred_label."""
     backend = RecordingBackend()
     graph = Graph(

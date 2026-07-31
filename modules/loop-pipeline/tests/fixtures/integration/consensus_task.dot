@@ -1,3 +1,17 @@
+// ============================================================================
+// Consensus Task Workflow — three-agent consensus at every stage
+//
+// Parallelism note (T0-4 spec-conformance restoration): this graph originally
+// expressed its three-agent fan-out as multiple conditional edges sharing one
+// condition (e.g. three outcome=needs_dod edges from CheckDoD).  That relied
+// on the retired multi-match fan-out dialect; under spec §3.3 the engine now
+// deterministically picks ONE best edge, so the pattern silently degraded to
+// a single agent.  The fan-out intent is now expressed explicitly and
+// spec-sanctioned: shape=component nodes dispatch ALL outgoing branches in
+// parallel (ParallelHandler), converging on shape=tripleoctagon fan-in nodes
+// (FanInHandler).  Conditional routing (needs_dod / has_dod, yes / retry)
+// remains single-edge, as the spec prescribes.
+// ============================================================================
 digraph Workflow {
   graph [
     label="Consensus Task Workflow",
@@ -121,6 +135,31 @@ digraph Workflow {
     prompt="Failure postmortem.\n\nTASK: $task\n\nWrite to .ai/postmortem_NN.md"
   ];
 
+
+  DefineDoD_FanOut [
+    shape="component", label="Define DoD (3-agent fan-out)", style="rounded,filled"
+  ];
+
+  DefineDoD_Join [
+    shape="tripleoctagon", label="Define DoD (fan-in)", style="rounded,filled"
+  ];
+
+  Plan_FanOut [
+    shape="component", label="Plan (3-agent fan-out)", style="rounded,filled"
+  ];
+
+  Plan_Join [
+    shape="tripleoctagon", label="Plan (fan-in)", style="rounded,filled"
+  ];
+
+  Review_FanOut [
+    shape="component", label="Review (3-agent fan-out)", style="rounded,filled"
+  ];
+
+  Review_Join [
+    shape="tripleoctagon", label="Review (fan-in)", style="rounded,filled"
+  ];
+
   Exit [
     type="exit", label="Exit", shape="doublecircle", style="rounded,filled",
     is_codergen="true", llm_provider="anthropic", llm_model="claude-opus-4-6",
@@ -128,31 +167,42 @@ digraph Workflow {
   ];
 
   Start -> CheckDoD;
-  CheckDoD -> DefineDoD_Gemini [condition="outcome=needs_dod"];
-  CheckDoD -> DefineDoD_GPT [condition="outcome=needs_dod"];
-  CheckDoD -> DefineDoD_Opus [condition="outcome=needs_dod"];
-  CheckDoD -> PlanGemini [condition="outcome=has_dod"];
-  CheckDoD -> PlanGPT [condition="outcome=has_dod"];
-  CheckDoD -> PlanOpus [condition="outcome=has_dod"];
-  DefineDoD_Gemini -> ConsolidateDoD;
-  DefineDoD_GPT -> ConsolidateDoD;
-  DefineDoD_Opus -> ConsolidateDoD;
-  ConsolidateDoD -> PlanGemini;
-  ConsolidateDoD -> PlanGPT;
-  ConsolidateDoD -> PlanOpus;
-  PlanGemini -> DebateConsolidate;
-  PlanGPT -> DebateConsolidate;
-  PlanOpus -> DebateConsolidate;
+
+  // Conditional routing: single edge per outcome (spec §3.3 pick-one-best-edge)
+  CheckDoD -> DefineDoD_FanOut [condition="outcome=needs_dod"];
+  CheckDoD -> Plan_FanOut [condition="outcome=has_dod"];
+
+  // Stage 1: three agents define the DoD in parallel (explicit component fan-out)
+  DefineDoD_FanOut -> DefineDoD_Gemini;
+  DefineDoD_FanOut -> DefineDoD_GPT;
+  DefineDoD_FanOut -> DefineDoD_Opus;
+  DefineDoD_Gemini -> DefineDoD_Join;
+  DefineDoD_GPT -> DefineDoD_Join;
+  DefineDoD_Opus -> DefineDoD_Join;
+  DefineDoD_Join -> ConsolidateDoD;
+  ConsolidateDoD -> Plan_FanOut;
+
+  // Stage 2: three agents plan in parallel
+  Plan_FanOut -> PlanGemini;
+  Plan_FanOut -> PlanGPT;
+  Plan_FanOut -> PlanOpus;
+  PlanGemini -> Plan_Join;
+  PlanGPT -> Plan_Join;
+  PlanOpus -> Plan_Join;
+  Plan_Join -> DebateConsolidate;
   DebateConsolidate -> Implement;
-  Implement -> ReviewGemini;
-  Implement -> ReviewGPT;
-  Implement -> ReviewOpus;
-  ReviewGemini -> ReviewConsensus;
-  ReviewGPT -> ReviewConsensus;
-  ReviewOpus -> ReviewConsensus;
+
+  // Stage 3: three agents review in parallel
+  Implement -> Review_FanOut;
+  Review_FanOut -> ReviewGemini;
+  Review_FanOut -> ReviewGPT;
+  Review_FanOut -> ReviewOpus;
+  ReviewGemini -> Review_Join;
+  ReviewGPT -> Review_Join;
+  ReviewOpus -> Review_Join;
+  Review_Join -> ReviewConsensus;
+
   ReviewConsensus -> Exit [condition="outcome=yes"];
   ReviewConsensus -> Postmortem [condition="outcome=retry"];
-  Postmortem -> PlanGemini [loop_restart="true"];
-  Postmortem -> PlanGPT [loop_restart="true"];
-  Postmortem -> PlanOpus [loop_restart="true"];
+  Postmortem -> Plan_FanOut [loop_restart="true"];
 }

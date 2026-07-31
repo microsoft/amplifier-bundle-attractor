@@ -192,19 +192,23 @@ during review.
 **Doctrine:** Route on evidence — and know how the evidence channel decays.
 
 **Mechanics:** A failing tool node does NOT refresh `tool.last_line`
-(ToolHandler returns early on nonzero exit). Therefore any
-`context.tool.last_line=X` edge that shares a source with an `outcome=fail`
-edge **must** also assert `&& outcome=success` — otherwise a stale label + FAIL
-match two edges at once and the engine takes the parallel fan-out path. This is
-the runtime sibling of the diamond trap. In this graph: `verify->critique`
-carries `last_line=green && outcome=success`; `verdict->package` carries
-`last_line=ship && outcome=success`.
+(ToolHandler returns early on nonzero exit). Therefore on a second visit after
+a failure, a stale label + FAIL can simultaneously match a
+`context.tool.last_line=X` edge AND an `outcome=fail` edge. In this graph:
+`verify->critique` carries `last_line=green && outcome=success`;
+`verdict->package` carries `last_line=ship && outcome=success`. The
+`&& outcome=success` conjunction makes the routing intent unambiguous —
+good explicitness discipline regardless of engine semantics.
 
-**War story:** In an empirical engine probe, stale "green" + FAIL matched two
-edges and the engine fanned out, critiquing red work. The bug fires only on the
-**second+** gate visit — exactly when the corrective loop first works — so it
-survived topology lints and was caught only by probing the running engine
-during review.
+**Historical note (T0-4):** Prior to spec-conformance restoration, stale
+"green" + FAIL matched two edges and the engine fanned out to both, critiquing
+red work. The bug fired only on the **second+** gate visit — exactly when the
+corrective loop first works — so it survived topology lints and was caught only
+by probing the running engine during review. After T0-4, the engine conforms to
+spec §3.3 and picks ONE edge deterministically (weight desc, then lexical
+target-id tiebreak). The deterministic pick can still be the wrong edge — so
+the conjunction remains good practice, though it is no longer a safety
+requirement against fan-out.
 
 ### 2. Transient-recovery routes
 

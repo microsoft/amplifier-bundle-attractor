@@ -32,8 +32,10 @@ decision points.
 
 **Five-step edge selection algorithm** — When a node finishes, the engine
 runs a deterministic priority-ordered algorithm over the node's outgoing edges
-to select the single edge to follow (or all matching edges in multi-match
-fan-out scenarios).
+to select the single best edge to follow (spec §3.3: when several edges match,
+weight then lexical order break the tie — exactly one successor is chosen).
+Parallel fan-out is component-based: it happens only at `shape=component`
+nodes via `ParallelHandler`, never from plain multi-edge conditions.
 
 Understanding how these three pieces interact is essential for writing
 pipelines that route correctly under all outcome combinations, including

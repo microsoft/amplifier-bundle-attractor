@@ -247,7 +247,7 @@ class TestStaleLabelCollision:
     """TOPO-002: tool node with last_line edge (no && outcome=success) + outcome=fail edge."""
 
     def test_collision_flagged(self):
-        """ERROR: context.tool.last_line=X edge without && outcome=success + outcome=fail sibling."""
+        """WARNING: context.tool.last_line=X edge without && outcome=success + outcome=fail sibling."""
         g = _graph(
             nodes={
                 "start": _mdiamond(),
@@ -265,11 +265,11 @@ class TestStaleLabelCollision:
         diags = lint(g)
         stale = _diag(diags, "stale_label_collision")
         assert stale, "Expected stale_label_collision diagnostic"
-        assert all(d.severity == "ERROR" for d in stale)
+        assert all(d.severity == "WARNING" for d in stale)
         assert any(d.node_id == "stalegate" for d in stale)
 
     def test_collision_with_outcome_not_success_flagged(self):
-        """ERROR: outcome!=success sibling also triggers stale-label check."""
+        """WARNING: outcome!=success sibling also triggers stale-label check."""
         g = _graph(
             nodes={
                 "start": _mdiamond(),

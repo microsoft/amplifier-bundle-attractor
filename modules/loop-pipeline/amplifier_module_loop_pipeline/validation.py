@@ -877,7 +877,7 @@ def _check_dead_conditional_edge(graph: Graph, diags: list[Diagnostic]) -> None:
 
 
 def _check_stale_label_collision(graph: Graph, diags: list[Diagnostic]) -> None:
-    """TOPO-002: Stale-label collision on a tool node.
+    """TOPO-002: Stale-label ambiguity on a tool node.
 
     When a ToolHandler (shape=parallelogram) fails, it returns FAIL early
     (handlers/tool.py:158-176) BEFORE setting ``context.tool.last_line``
@@ -891,14 +891,21 @@ def _check_stale_label_collision(graph: Graph, diags: list[Diagnostic]) -> None:
 
     then on the second visit after a failure, BOTH edges match simultaneously:
     the ``last_line`` edge matches the stale value AND the ``outcome=fail``
-    edge matches the current FAIL outcome.  The engine fans out to both
-    targets — a silent double-dispatch.
+    edge matches the current FAIL outcome.
 
-    The fix is to add ``&& outcome=success`` to the ``last_line`` edge so it
-    only fires when the tool actually succeeded (and the label is fresh).
+    Historical note (T0-4): prior to spec-conformance restoration, the engine
+    fanned out to both targets — a silent double-dispatch.  The engine now
+    conforms to attractor-spec.md §3.3 (best_by_weight_then_lexical): when
+    multiple conditional edges match, exactly ONE is selected — the highest-
+    weight edge, with lexical target-id tiebreak.  The fan-out consequence is
+    gone; the ambiguity is not.  A stale ``last_line`` + FAIL still resolves
+    to one edge deterministically, but that edge may not be the one the author
+    intended.  Adding ``&& outcome=success`` makes the intent explicit and
+    removes the ambiguity entirely.
 
-    Severity: ERROR — the double-dispatch is a silent correctness bug that
-    only manifests on the second visit (invisible in single-pass testing).
+    Severity: WARNING — the deterministic pick can still be the wrong edge;
+    ``&& outcome=success`` is good explicitness discipline, not a safety
+    requirement.  Downgraded from ERROR (T0-4 spec-conformance restoration).
 
     Traceable to: handlers/tool.py (early FAIL return precedes the
     context.set of tool.last_line); context/engine-semantics.md.
@@ -947,16 +954,19 @@ def _check_stale_label_collision(graph: Graph, diags: list[Diagnostic]) -> None:
                 diags.append(
                     Diagnostic(
                         rule="stale_label_collision",
-                        severity="ERROR",
+                        severity="WARNING",
                         message=(
                             f"Node '{node.id}' (tool/parallelogram) has a "
-                            f"stale-label collision: edge to '{edge.to_node}' "
+                            f"stale-label ambiguity: edge to '{edge.to_node}' "
                             f"conditions on 'context.tool.last_line=...' without "
                             f"'&& outcome=success', while another outgoing edge "
                             f"conditions on 'outcome=fail'. On the second visit "
                             f"after a failure, tool.last_line holds a stale value "
-                            f"from the prior success, causing both edges to match "
-                            f"simultaneously (silent double-dispatch)."
+                            f"from the prior success, so both edges match "
+                            f"simultaneously. The engine resolves this "
+                            f"deterministically (weight desc, lexical tiebreak on "
+                            f"target id) but the selected edge may not be the one "
+                            f"intended."
                         ),
                         node_id=node.id,
                         edge=(edge.from_node, edge.to_node),
@@ -965,8 +975,9 @@ def _check_stale_label_collision(graph: Graph, diags: list[Diagnostic]) -> None:
                             f"from '{node.id}' to '{edge.to_node}' so it reads "
                             f"'context.tool.last_line=X && outcome=success'. This "
                             f"ensures the label edge only fires when the tool "
-                            f"succeeded and the label is fresh. The 'outcome=fail' "
-                            f"edge handles the failure case exclusively. See "
+                            f"succeeded and the label is fresh, making the intent "
+                            f"explicit. The 'outcome=fail' edge handles the failure "
+                            f"case exclusively. See "
                             f"DOT-AUTHORING-GUIDE.md for the evidence-routing pattern."
                         ),
                     )

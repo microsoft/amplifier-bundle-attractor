@@ -93,11 +93,14 @@ with `printf pass` or `printf fail`, so ToolHandler always stores a fresh
 `tool.last_line`). The conjunction is therefore harmless here -- not strictly
 required. It is included as general-case discipline: in the broader engine,
 a tool node that exits nonzero does NOT refresh `tool.last_line`, and on a
-second visit a stale `"pass"` label would match the pass edge while the FAIL
-outcome would also try to traverse the fail edge -- a spurious fan-out. The
-`&& outcome=success` conjunction prevents that in the general case. Apply it
-to any `last_line` edge that shares a source node with an `outcome=fail` edge,
-as future-proofing when the tool command changes.
+second visit a stale `"pass"` label + FAIL simultaneously match two edges.
+Historical note (T0-4): prior to spec-conformance restoration, the engine
+fanned out to both edges in this case; after T0-4 it conforms to spec §3.3
+and picks ONE edge deterministically (weight desc, then lexical target-id
+tiebreak). The deterministic pick can still be the wrong edge -- so the
+`&& outcome=success` conjunction remains good explicitness discipline. Apply
+it to any `last_line` edge that shares a source node with an `outcome=fail`
+edge, as future-proofing when the tool command changes.
 
 **Why save output to `.ai/test.log`**: the triage node (see below) reads the
 test failure output to compute a failure signature. Without saving the output,

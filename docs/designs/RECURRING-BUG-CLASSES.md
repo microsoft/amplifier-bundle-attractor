@@ -208,9 +208,11 @@ ecosystem over the past year, and 100% of fix commits in
   quoted string), and the condition evaluator reached the bare-key
   truthy branch: `_resolve_key("key=value", ...)` returned
   `"continue"` (non-empty) → `True`.  ALL four conditional edges
-  matched; the engine took the parallel fan-out path; `loop_restart`
-  was never processed; hours were spent debugging routing.  Fixed
-  by gap-detection in `_tokenize` (S6-fix, PR to be filed).
+  matched; the engine (under the since-retired multi-match fan-out
+  dialect — T0-4 restored spec §3.3 single-best-edge selection) took
+  the parallel fan-out path; `loop_restart` was never processed;
+  hours were spent debugging routing.  Fixed by gap-detection in
+  `_tokenize` (S6-fix, PR to be filed).
 - **Noun-fix**: detect unmatched characters in the tokenizer.  After
   each regex match, inspect the gap between the last consumed
   position and the new match start.  A backslash immediately before a

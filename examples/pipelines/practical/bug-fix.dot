@@ -25,12 +25,17 @@
 //
 // VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON:
 //   STALE-LABEL RULE (general case): a tool node that exits nonzero does NOT
-//   refresh tool.last_line. On a second visit, a stale label could match a
-//   last_line edge while FAIL also traverses the outcome=fail edge -- fan-out.
-//   The `&& outcome=success` conjunction prevents this. On this specific graph,
-//   test_gate and verdict_gate always exit 0 (printf pass/fail at the end), so
-//   the conjunction is harmless but present as future-proofing discipline.
-//   Apply it to any last_line edge sharing a source node with an outcome=fail edge.
+//   refresh tool.last_line. On a second visit after a failure, a stale label
+//   can simultaneously match a last_line edge AND an outcome=fail edge.
+//   Historical note (T0-4): prior to spec-conformance restoration, the engine
+//   fanned out to ALL matching edges in this case; after T0-4 it conforms to
+//   spec §3.3 and picks ONE edge deterministically (weight desc, then lexical
+//   target-id tiebreak). The deterministic pick can still be the wrong edge.
+//   The `&& outcome=success` conjunction makes routing intent explicit -- good
+//   explicitness discipline. On this specific graph, test_gate and verdict_gate
+//   always exit 0 (printf pass/fail at the end), so the conjunction is harmless
+//   but present as future-proofing discipline. Apply it to any last_line edge
+//   sharing a source node with an outcome=fail edge.
 
 digraph BugFix {
     graph [
@@ -93,7 +98,8 @@ digraph BugFix {
     // All three branches end with printf (exit 0), so tool.last_line is always
     // fresh. The `&& outcome=success` on pass/exhausted edges is general-case
     // discipline (STALE-LABEL RULE): if the tool ever exits nonzero, a stale
-    // last_line could fan-out. Edges condition on context.tool.last_line.
+    // last_line could be the deterministic pick on a FAIL visit. Edges condition
+    // on context.tool.last_line.
     test_gate [
         shape=parallelogram,
         label="Tests Pass?",
@@ -149,15 +155,16 @@ digraph BugFix {
 
     // Budget wall: iteration budget exhausted -> decision point (not bare FAIL).
     // `&& outcome=success` on exhausted edge: STALE-LABEL discipline (test_gate
-    // carries an outcome=fail edge via implement_fix; a stale "exhausted" +
-    // FAIL would otherwise match two edges on a second visit).
+    // carries an outcome=fail edge via implement_fix; the conjunction makes the
+    // exhausted-path intent explicit and prevents a stale "exhausted" from being
+    // the deterministic pick on a FAIL visit).
     test_gate -> postmortem [label="budget exhausted", condition="context.tool.last_line=exhausted && outcome=success"]
 
     // Inner loop: red enters triage for root-cause classification.
     // `&& outcome=success` on the pass edge: general-case STALE-LABEL discipline.
     // On this graph test_gate always exits 0, so it is harmless; in the general
     // case a nonzero-exit tool does not refresh tool.last_line and the conjunction
-    // prevents a stale label from matching both edges on a second visit.
+    // prevents a stale label from being the deterministic pick on a FAIL visit.
     test_gate -> critique [label="pass", condition="context.tool.last_line=pass && outcome=success"]
     test_gate -> triage   [label="fail", condition="context.tool.last_line=fail"]
 

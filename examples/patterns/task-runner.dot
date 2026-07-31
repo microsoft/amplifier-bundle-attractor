@@ -48,12 +48,16 @@
 //
 // VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON (see task-runner.md):
 //   - STALE-LABEL RULE: a failing tool node does NOT refresh tool.last_line
-//     (ToolHandler returns early on nonzero exit). Therefore any
-//     `context.tool.last_line=X` edge that shares a source node with an
-//     `outcome=fail` edge MUST also assert `&& outcome=success` — otherwise
-//     a stale label + FAIL match two edges at once and the engine takes the
-//     parallel fan-out path. This is the runtime sibling of the diamond
-//     trap, and it only fires on the SECOND+ visit to a gate.
+//     (ToolHandler returns early on nonzero exit). Therefore on a second
+//     visit after a failure, a stale label + FAIL can simultaneously match
+//     a `context.tool.last_line=X` edge AND an `outcome=fail` edge.
+//     Historical note (T0-4): prior to spec-conformance restoration, the
+//     engine fanned out to ALL matching edges in this case; after T0-4 it
+//     conforms to spec §3.3 and picks ONE edge deterministically (weight
+//     desc, then lexical target-id tiebreak). The deterministic pick can
+//     still be the wrong edge — so `&& outcome=success` remains good
+//     explicitness discipline (it makes intent unambiguous), even though
+//     it is no longer a safety requirement against fan-out.
 //   - PARAM NAMESPACE: engine substitution rewrites $name/${name} for any
 //     context/param key, and leaves unknown refs untouched. Shell variables
 //     here (VF, n, rc, sig, B, N, prev, ok, sc) are safe ONLY because no param
@@ -209,15 +213,18 @@ digraph TaskRunner {
 
     // Cheap gate: green advances, red enters the corrective basin.
     // NOTE `&& outcome=success`: a failing verify does NOT refresh
-    // tool.last_line, so without the conjunction a stale 'green' + FAIL
-    // would match both edges and fan out (see STALE-LABEL RULE above).
+    // tool.last_line. Without the conjunction, a stale 'green' + FAIL
+    // could simultaneously match both edges; the engine now picks one
+    // deterministically (see STALE-LABEL RULE above), but the conjunction
+    // makes intent explicit — good explicitness discipline.
     verify -> critique [condition="context.tool.last_line=green && outcome=success"]
     verify -> triage   [condition="outcome=fail"]
     // Budget wall: verify spends the budget on EVERY entry — green path
     // and transient re-entries included — and routes exhaustion to the
-    // decision point. `&& outcome=success` is the mandatory STALE-LABEL
-    // conjunction (verify carries an outcome=fail edge, so a stale
-    // 'exhausted' + FAIL would otherwise fan out).
+    // decision point. `&& outcome=success` is good STALE-LABEL discipline
+    // (verify carries an outcome=fail edge; the conjunction makes the
+    // exhausted-path intent explicit and prevents a stale 'exhausted' from
+    // being the deterministic pick on a FAIL visit).
     verify -> postmortem [condition="context.tool.last_line=exhausted && outcome=success", label="budget exhausted"]
 
     // Inner loop + root-cause wall + budget wall.

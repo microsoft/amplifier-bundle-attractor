@@ -949,12 +949,29 @@ async def test_normal_edge_without_loop_restart(tmp_path):
     assert "work" in engine.completed_nodes
 
 
-# --- Multi-edge parallel fan-out ---
+# --- Multi-edge selection: spec §3.3 single-edge selection (T0-4) ---
+#
+# After T0-4 spec-conformance restoration, the engine selects exactly ONE
+# edge when multiple conditional edges match simultaneously.  The retired
+# multi-match → parallel fan-out path (select_all_matching_edges →
+# _execute_parallel_fan_out) is gone for non-component nodes.
+#
+# Tests below verify:
+#   - Multi-match resolves to ONE edge (highest weight, lexical tiebreak)
+#   - Single-match still works (unchanged)
+#   - Explicit parallelism via shape=component is unaffected
+# The old "executes_all_targets" and "detects_fan_in" tests that asserted
+# fan-out behavior for non-component nodes are updated to assert single-edge
+# selection instead.
 
 
 @pytest.mark.asyncio
-async def test_multi_edge_fan_out_executes_all_targets(tmp_path):
-    """Graph with node having 3 edges with same condition executes all three."""
+async def test_multi_edge_single_match_selects_highest_weight(tmp_path):
+    """Spec §3.3: when multiple conditional edges match, select the highest-weight one.
+
+    Three edges from 'check' all carry condition=outcome=success.  The engine
+    must select exactly ONE — the edge with weight=3 (to branch_c).
+    """
     executed_nodes: list[str] = []
 
     class TrackingBackend:
@@ -963,27 +980,24 @@ async def test_multi_edge_fan_out_executes_all_targets(tmp_path):
             return Outcome(status=StageStatus.SUCCESS)
 
     graph = Graph(
-        name="test-fanout",
+        name="test-single-best-edge",
         nodes={
             "start": Node(id="start", shape="Mdiamond"),
             "check": Node(id="check", shape="box", prompt="Check"),
             "branch_a": Node(id="branch_a", shape="box", prompt="A"),
             "branch_b": Node(id="branch_b", shape="box", prompt="B"),
             "branch_c": Node(id="branch_c", shape="box", prompt="C"),
-            "consolidate": Node(id="consolidate", shape="box", prompt="Merge"),
             "exit": Node(id="exit", shape="Msquare"),
         },
         edges=[
             Edge(from_node="start", to_node="check"),
-            # Multi-edge fan-out: same condition, three targets
-            Edge(from_node="check", to_node="branch_a", condition="outcome=success"),
-            Edge(from_node="check", to_node="branch_b", condition="outcome=success"),
-            Edge(from_node="check", to_node="branch_c", condition="outcome=success"),
-            # All branches converge on consolidate (fan-in)
-            Edge(from_node="branch_a", to_node="consolidate"),
-            Edge(from_node="branch_b", to_node="consolidate"),
-            Edge(from_node="branch_c", to_node="consolidate"),
-            Edge(from_node="consolidate", to_node="exit"),
+            # All three conditions match; weight=3 makes branch_c the winner.
+            Edge(from_node="check", to_node="branch_a", condition="outcome=success", weight=1),
+            Edge(from_node="check", to_node="branch_b", condition="outcome=success", weight=2),
+            Edge(from_node="check", to_node="branch_c", condition="outcome=success", weight=3),
+            Edge(from_node="branch_a", to_node="exit"),
+            Edge(from_node="branch_b", to_node="exit"),
+            Edge(from_node="branch_c", to_node="exit"),
         ],
     )
 
@@ -998,15 +1012,19 @@ async def test_multi_edge_fan_out_executes_all_targets(tmp_path):
     outcome = await engine.run()
 
     assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
-    # All three branches should have been executed
-    assert "branch_a" in executed_nodes
-    assert "branch_b" in executed_nodes
-    assert "branch_c" in executed_nodes
+    # Exactly ONE branch must have been executed — the highest-weight one.
+    assert "branch_c" in executed_nodes, "branch_c (weight=3) must be selected"
+    assert "branch_a" not in executed_nodes, "branch_a must NOT execute (weight=1)"
+    assert "branch_b" not in executed_nodes, "branch_b must NOT execute (weight=2)"
 
 
 @pytest.mark.asyncio
-async def test_multi_edge_fan_out_detects_fan_in(tmp_path):
-    """Fan-in node E executes after parallel branches B, C, D complete."""
+async def test_multi_edge_lexical_tiebreak(tmp_path):
+    """Spec §3.3: when weights are equal, lexical target-id tiebreak applies.
+
+    Two edges from 'check' carry the same condition and equal weight.
+    The lexically-first target id ('aaa') wins.
+    """
     executed_nodes: list[str] = []
 
     class TrackingBackend:
@@ -1015,27 +1033,21 @@ async def test_multi_edge_fan_out_detects_fan_in(tmp_path):
             return Outcome(status=StageStatus.SUCCESS)
 
     graph = Graph(
-        name="test-fanin",
+        name="test-lexical-tiebreak",
         nodes={
             "start": Node(id="start", shape="Mdiamond"),
-            "A": Node(id="A", shape="box", prompt="A"),
-            "B": Node(id="B", shape="box", prompt="B"),
-            "C": Node(id="C", shape="box", prompt="C"),
-            "D": Node(id="D", shape="box", prompt="D"),
-            "E": Node(id="E", shape="box", prompt="E"),
+            "check": Node(id="check", shape="box", prompt="Check"),
+            "aaa": Node(id="aaa", shape="box", prompt="AAA"),
+            "zzz": Node(id="zzz", shape="box", prompt="ZZZ"),
             "exit": Node(id="exit", shape="Msquare"),
         },
         edges=[
-            Edge(from_node="start", to_node="A"),
-            # A fans out to B, C, D (same condition)
-            Edge(from_node="A", to_node="B", condition="outcome=success"),
-            Edge(from_node="A", to_node="C", condition="outcome=success"),
-            Edge(from_node="A", to_node="D", condition="outcome=success"),
-            # B, C, D all converge on E (fan-in)
-            Edge(from_node="B", to_node="E"),
-            Edge(from_node="C", to_node="E"),
-            Edge(from_node="D", to_node="E"),
-            Edge(from_node="E", to_node="exit"),
+            Edge(from_node="start", to_node="check"),
+            # Equal weight; 'aaa' < 'zzz' lexically — 'aaa' wins.
+            Edge(from_node="check", to_node="aaa", condition="outcome=success"),
+            Edge(from_node="check", to_node="zzz", condition="outcome=success"),
+            Edge(from_node="aaa", to_node="exit"),
+            Edge(from_node="zzz", to_node="exit"),
         ],
     )
 
@@ -1050,13 +1062,8 @@ async def test_multi_edge_fan_out_detects_fan_in(tmp_path):
     outcome = await engine.run()
 
     assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
-    # E (fan-in) should execute after B, C, D
-    assert "E" in executed_nodes
-    # B, C, D should all appear before E
-    e_index = executed_nodes.index("E")
-    assert "B" in executed_nodes[:e_index]
-    assert "C" in executed_nodes[:e_index]
-    assert "D" in executed_nodes[:e_index]
+    assert "aaa" in executed_nodes, "aaa (lexically first) must be selected"
+    assert "zzz" not in executed_nodes, "zzz must NOT execute (lexically later)"
 
 
 @pytest.mark.asyncio
@@ -1102,66 +1109,17 @@ async def test_multi_edge_single_match_still_works(tmp_path):
     assert "no_path" not in backend.calls
 
 
-@pytest.mark.asyncio
-async def test_multi_edge_parallel_context_isolation(tmp_path):
-    """Each parallel branch gets its own context copy — mutations don't leak."""
-    seen_values: dict[str, str | None] = {}
-
-    class ContextMutatingBackend:
-        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
-            if node.id == "branch_a":
-                context.set("branch_key", "from_a")
-                return Outcome(status=StageStatus.SUCCESS)
-            if node.id == "branch_b":
-                # branch_b should NOT see branch_a's mutation
-                seen_values["branch_b_saw"] = context.get("branch_key")
-                return Outcome(status=StageStatus.SUCCESS)
-            if node.id == "merge":
-                seen_values["merge_saw"] = context.get("branch_key")
-                return Outcome(status=StageStatus.SUCCESS)
-            return Outcome(status=StageStatus.SUCCESS)
-
-    graph = Graph(
-        name="test-isolation",
-        nodes={
-            "start": Node(id="start", shape="Mdiamond"),
-            "check": Node(id="check", shape="box", prompt="Check"),
-            "branch_a": Node(id="branch_a", shape="box", prompt="A"),
-            "branch_b": Node(id="branch_b", shape="box", prompt="B"),
-            "merge": Node(id="merge", shape="box", prompt="Merge"),
-            "exit": Node(id="exit", shape="Msquare"),
-        },
-        edges=[
-            Edge(from_node="start", to_node="check"),
-            Edge(from_node="check", to_node="branch_a", condition="outcome=success"),
-            Edge(from_node="check", to_node="branch_b", condition="outcome=success"),
-            Edge(from_node="branch_a", to_node="merge"),
-            Edge(from_node="branch_b", to_node="merge"),
-            Edge(from_node="merge", to_node="exit"),
-        ],
-    )
-
-    context = PipelineContext()
-    registry = HandlerRegistry(HandlerContext(backend=ContextMutatingBackend()))
-    engine = PipelineEngine(
-        graph=graph,
-        context=context,
-        handler_registry=registry,
-        logs_root=str(tmp_path),
-    )
-    outcome = await engine.run()
-
-    assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
-    # branch_b should NOT have seen branch_a's context mutation
-    assert seen_values.get("branch_b_saw") is None
-
-
-# --- Parallel fan-out: concurrency timing and clone-per-branch isolation ---
+# --- Parallel fan-out: shape=component (spec-sanctioned explicit parallelism) ---
+#
+# shape=component nodes fan out ALL outgoing edges via ParallelHandler.
+# This is the spec-sanctioned path for explicit parallelism (§3.8, §4.8,
+# EXTENSIONS.md #18).  It is structurally separate from the retired
+# multi-match fan-out path and is untouched by T0-4.
 
 
 @pytest.mark.asyncio
 async def test_parallel_fan_out_branches_run_concurrently(tmp_path):
-    """Three parallel branches each sleeping 0.2s finish in < 0.5s wall-clock."""
+    """shape=component: three parallel branches each sleeping 0.2s finish in < 0.5s wall-clock."""
 
     class SlowCloningBackend:
         def clone(self):
@@ -1176,18 +1134,19 @@ async def test_parallel_fan_out_branches_run_concurrently(tmp_path):
         name="test-timing",
         nodes={
             "start": Node(id="start", shape="Mdiamond"),
-            "src": Node(id="src", shape="box", prompt="Source"),
+            "src": Node(id="src", shape="component"),
             "b1": Node(id="b1", shape="box", prompt="B1"),
             "b2": Node(id="b2", shape="box", prompt="B2"),
             "b3": Node(id="b3", shape="box", prompt="B3"),
-            "converge": Node(id="converge", shape="box", prompt="Converge"),
+            "converge": Node(id="converge", shape="tripleoctagon"),
             "exit": Node(id="exit", shape="Msquare"),
         },
         edges=[
             Edge(from_node="start", to_node="src"),
-            Edge(from_node="src", to_node="b1", condition="outcome=success"),
-            Edge(from_node="src", to_node="b2", condition="outcome=success"),
-            Edge(from_node="src", to_node="b3", condition="outcome=success"),
+            # shape=component fans out ALL unconditional outgoing edges.
+            Edge(from_node="src", to_node="b1"),
+            Edge(from_node="src", to_node="b2"),
+            Edge(from_node="src", to_node="b3"),
             Edge(from_node="b1", to_node="converge"),
             Edge(from_node="b2", to_node="converge"),
             Edge(from_node="b3", to_node="converge"),
@@ -1215,7 +1174,7 @@ async def test_parallel_fan_out_branches_run_concurrently(tmp_path):
 
 @pytest.mark.asyncio
 async def test_parallel_fan_out_clones_registry_per_branch(tmp_path):
-    """Each parallel branch gets its own cloned handler registry."""
+    """shape=component: each parallel branch gets its own cloned handler registry."""
     from unittest.mock import patch
 
     class CloningBackend:
@@ -1229,18 +1188,18 @@ async def test_parallel_fan_out_clones_registry_per_branch(tmp_path):
         name="test-clone-isolation",
         nodes={
             "start": Node(id="start", shape="Mdiamond"),
-            "src": Node(id="src", shape="box", prompt="Source"),
+            "src": Node(id="src", shape="component"),
             "b1": Node(id="b1", shape="box", prompt="B1"),
             "b2": Node(id="b2", shape="box", prompt="B2"),
             "b3": Node(id="b3", shape="box", prompt="B3"),
-            "converge": Node(id="converge", shape="box", prompt="Converge"),
+            "converge": Node(id="converge", shape="tripleoctagon"),
             "exit": Node(id="exit", shape="Msquare"),
         },
         edges=[
             Edge(from_node="start", to_node="src"),
-            Edge(from_node="src", to_node="b1", condition="outcome=success"),
-            Edge(from_node="src", to_node="b2", condition="outcome=success"),
-            Edge(from_node="src", to_node="b3", condition="outcome=success"),
+            Edge(from_node="src", to_node="b1"),
+            Edge(from_node="src", to_node="b2"),
+            Edge(from_node="src", to_node="b3"),
             Edge(from_node="b1", to_node="converge"),
             Edge(from_node="b2", to_node="converge"),
             Edge(from_node="b3", to_node="converge"),

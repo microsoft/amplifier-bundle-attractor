@@ -40,7 +40,7 @@ and the chosen disposition for each gap. The goal is not 100% literal conformanc
 |------|----------------|---------------|----------|------|
 | unified-llm | ~35 | 13 | 4 (structured output, all providers) | 9 |
 | coding-agent-loop | ~17 | 9 | 2 (bugs CAL-1, CAL-2) | 7 |
-| attractor | ~29 | 7 | 1 (bug ATX-1) | 6 |
+| attractor | ~30 | 8 | 2 (ATX-1, ATX-10) | 6 |
 
 The engine layer (attractor) is the strongest — substantially a **superset** of the spec. The
 material weaknesses are concentrated in the LLM client's per-provider metadata and a small set
@@ -103,6 +103,7 @@ keys. Do not mark "live" until exercised against real providers (e.g. in a DTU w
 | ATX-5 | `outcome=` condition resolves to `preferred_label` first | `§10.4 :1693` | `conditions.py:75` returns `preferred_label or status` | OPEN | DIVERGE (intentional; load-bearing for report_outcome routing) |
 | ATX-6 | Retry on FAIL | spec self-contradicts: `§3.5 :519` (no) vs DoD `:1833` (yes) | retries RETRY only (`retry.py:238`) | OPEN | ALIGN-spec-first (reconcile the spec) |
 | ATX-7 | `stack.child_workdir`; condition literal unquoting (`§10.5`) | `:1743` | not handled | OPEN | ALIGN (minor) |
+| ATX-10 | Multi-match fan-out: non-component nodes with ≥2 simultaneously-matching conditional edges routed to ALL targets in parallel (unledgered dialect; never in spec §3.3) | `§3.3 :421-458` (`best_by_weight_then_lexical`) | `engine.py` (retired `select_all_matching_edges` gate; now routes through `select_edge()` only) | **DONE** | ALIGN — conformance restored (T0-4) |
 
 **Shipped extensions (IMPROVE — fold into `specs/EXTENSIONS.md`):** fail-fast edge routing with
 `runs_on`/`continue_on_fail`; skip-propagation contracts (`requires=`/`outputs=`/`failed_outputs`,

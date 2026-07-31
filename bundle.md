@@ -18,6 +18,18 @@ includes:
   - bundle: git+https://github.com/microsoft/amplifier-foundation@main
   - bundle: attractor:behaviors/attractor-core
 
+tools:
+  # Registers the bundle's skills with the Agent Skills system (slash-command
+  # registration comes from each skill's `user-invocable: true` frontmatter).
+  # Same registration pattern other bundles use for their own skills/ directory.
+  - module: tool-skills
+    source: git+https://github.com/microsoft/amplifier-bundle-skills@main#subdirectory=modules/tool-skills
+    config:
+      skills:
+        # Resolves post-merge (skills/ lands on main with this PR); local installs may
+        # also place the skill in ~/.amplifier/skills/ (standard skills discovery).
+        - "git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=skills"
+
 agents:
   # IMPORTANT: each child agent MUST declare an inline session.orchestrator running a
   # non-pipeline loop (e.g. loop-agent).  The spawn capability merges this agent's session:

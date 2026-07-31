@@ -168,8 +168,11 @@ decision point for ordinary non-convergence: the postmortem node writes
 `.ai/postmortem/report.md` with what was attempted, whether the loop was
 descending or oscillating, and options for a human to decide (change approach /
 split the task / escalate). `escalated` then writes an actionable handoff.
-`escalated` has no outgoing edge, so the engine reports failure after these
-artifacts exist -- a salvageable failure, not a bare FAIL.
+`escalated` fails loudly by its own exit code (`exit 1`, after the artifacts
+are written, with `max_retries=0` so the deliberate failure is not retried),
+so the run reports failure once these artifacts exist -- a salvageable
+failure, not a bare FAIL, and portable: it does not depend on any particular
+engine dead-end semantics.
 
 To override the default budget, write a number to `.ai/budget` before running:
 ```bash

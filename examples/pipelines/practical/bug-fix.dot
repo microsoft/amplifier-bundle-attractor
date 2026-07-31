@@ -47,11 +47,16 @@ digraph BugFix {
     // Escalation is a deterministic non-terminal handoff, not a second
     // successful pipeline exit. It writes a minimal fallback handoff even if
     // the postmortem LLM itself failed, so every LLM-node hard failure is
-    // absorbed before the engine returns failure.
+    // absorbed before the run reports failure. It then exits 1 DELIBERATELY:
+    // the run's failure is carried by the node's own exit code, portable
+    // under either dead-end semantics (the canonical spec treats a no-edge
+    // dead-end as SUCCESS; this engine hard-fails). max_retries=0 because
+    // the failure is the point, not a flake to retry.
     escalated [
         shape=parallelogram,
         label="Escalated",
-        tool_command="mkdir -p .ai/postmortem; if [ ! -f .ai/postmortem/report.md ]; then echo 'Postmortem could not be produced. Preserve the run logs and escalate the LLM failure to a human.' > .ai/postmortem/escalation.md; else echo 'Read .ai/postmortem/report.md and the run logs; choose change approach, split task, or human escalation.' > .ai/postmortem/escalation.md; fi; printf escalated"
+        max_retries=0,
+        tool_command="mkdir -p .ai/postmortem; if [ ! -f .ai/postmortem/report.md ]; then echo 'Postmortem could not be produced. Preserve the run logs and escalate the LLM failure to a human.' > .ai/postmortem/escalation.md; else echo 'Read .ai/postmortem/report.md and the run logs; choose change approach, split task, or human escalation.' > .ai/postmortem/escalation.md; fi; printf escalated; exit 1"
     ]
 
     // Reproduce: establish the failure before touching code.

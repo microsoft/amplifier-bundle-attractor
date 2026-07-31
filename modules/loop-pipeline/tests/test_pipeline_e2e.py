@@ -56,7 +56,13 @@ def _load_fixture(name: str) -> str:
 
 
 class SuccessBackend:
-    """Backend that returns SUCCESS for every node."""
+    """Backend that returns an explicit SUCCESS verdict for every node.
+
+    Returns a pure-JSON verdict string so that goal_gate=true nodes are
+    satisfied under the fail-closed contract (EXTENSIONS.md \u00a725): the JSON
+    goes through the verdict-recovery ladder and yields is_explicit=True.
+    A plain-prose string would leave goal gates unsatisfied by design.
+    """
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -65,7 +71,7 @@ class SuccessBackend:
     async def run(self, node: Node, prompt: str, context: PipelineContext, incoming_edge=None, graph=None) -> str:
         self.calls.append(node.id)
         self.prompts[node.id] = prompt
-        return f"Completed: {node.id}"
+        return json.dumps({"status": "success", "notes": f"Completed: {node.id}"})
 
 
 class OutcomeBackend:
@@ -116,6 +122,9 @@ class RetryThenSucceedBackend:
         return Outcome(
             status=StageStatus.SUCCESS,
             notes=f"Completed: {node.id}",
+            # This double represents "the backend produced an explicit result"
+            # — required for goal_gate satisfaction (EXTENSIONS.md §25).
+            is_explicit=True,
         )
 
 

@@ -80,6 +80,7 @@ class DirectProviderBackend:
         from .backend import (
             _build_unified_tools,
             _find_report_outcome_call,
+            _outcome_from_structured_output,
             _parse_outcome,
             _resolve_concrete_model,
             _resolve_model,
@@ -262,10 +263,19 @@ class DirectProviderBackend:
             }
             if parsed_obj is not None:
                 ctx_ext23[node.id] = parsed_obj
-            outcome = Outcome(
-                status=StageStatus.SUCCESS,
-                notes=raw_json,
-                context_updates=ctx_ext23,
+            # EXTENSIONS.md §25 policy (corrected in independent review round
+            # 2): format ≠ verdict. Schema output is explicit ONLY when it
+            # carries a recognized verdict (captured report_outcome, or a
+            # `status` field with a recognized value — the same verdict
+            # ladder as every other path). Generic structured output stays
+            # DERIVED (is_explicit=False) so a goal_gate schema node
+            # returning non-verdict JSON fails closed. See
+            # backend._outcome_from_structured_output.
+            outcome = _outcome_from_structured_output(
+                raw_json=raw_json,
+                parsed_obj=parsed_obj,
+                ctx_updates=ctx_ext23,
+                result=result,
             )
             self._completed_nodes[node.id] = outcome
             self._last_node_id = node.id
@@ -280,7 +290,7 @@ class DirectProviderBackend:
                 r"^```(?:json)?\s*([\s\S]*?)\s*```$", stripped, re.DOTALL
             )
             if bool(_fence_match) or stripped.startswith("{"):
-                outcome = _parse_outcome(text)
+                outcome = _parse_outcome(text, node=node)
                 outcome.context_updates = {
                     "last_stage": node.id,
                     "last_response": text[:200],
@@ -299,18 +309,34 @@ class DirectProviderBackend:
                 preferred_label=lo.get("preferred_label"),
                 suggested_next_ids=lo.get("suggested_next_ids"),
                 notes=lo.get("notes"),
+                is_explicit=True,
             )
             self._completed_nodes[node.id] = outcome
             self._last_node_id = node.id
             return outcome
 
         if text:
-            outcome = _parse_outcome(text)
+            outcome = _parse_outcome(text, node=node)
         else:
-            outcome = Outcome(
-                status=StageStatus.SUCCESS,
-                notes=f"Stage completed: {node.id}",
-            )
+            # No text and no report_outcome.
+            # EXTENSIONS.md §25 scope decision: apply fail-closed only to
+            # goal_gate nodes. Non-goal-gate nodes retain spec §4.5 SUCCESS
+            # default. goal_gate nodes require an explicit verdict.
+            _is_goal_gate = node.attrs.get("goal_gate") in (True, "true")
+            if _is_goal_gate:
+                outcome = Outcome(
+                    status=StageStatus.FAIL,
+                    notes=f"No output from DirectProviderBackend: {node.id}",
+                    failure_reason="Empty DirectProviderBackend response — goal_gate node requires explicit verdict",
+                    is_explicit=False,
+                )
+            else:
+                # Non-goal-gate: spec §4.5 SUCCESS default preserved.
+                outcome = Outcome(
+                    status=StageStatus.SUCCESS,
+                    notes=f"Stage completed: {node.id}",
+                    is_explicit=False,
+                )
 
         outcome.context_updates = {
             "last_stage": node.id,

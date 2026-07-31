@@ -130,12 +130,20 @@ class FanInHandler:
         if best_status == "fail":
             return Outcome(
                 status=StageStatus.FAIL,
+                # EXTENSIONS.md §25: the ranking rule over branch statuses is
+                # this node's verdict mechanism — deterministic, not an LLM
+                # default.
+                is_explicit=True,
                 failure_reason=f"All candidates failed. Best: {best_id}",
                 notes=best.get("notes"),
             )
 
         return Outcome(
             status=StageStatus.SUCCESS,
+            # EXTENSIONS.md §25: deterministic aggregation verdict (ranking
+            # over branch statuses) — cannot be an LLM default. Without this,
+            # a goal_gate=true fan-in node is unsatisfiable.
+            is_explicit=True,
             notes=f"Selected best candidate: {best_id} ({best_status})",
             context_updates={
                 "parallel.fan_in.best_id": best_id,

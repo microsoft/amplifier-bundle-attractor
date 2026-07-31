@@ -86,6 +86,9 @@ class ParallelHandler:
             return Outcome(
                 status=StageStatus.SUCCESS,
                 notes="Parallel node with no branches",
+                # EXTENSIONS.md §25: deterministic structural fact (no
+                # branches to run) — cannot be an LLM default.
+                is_explicit=True,
             )
 
         max_parallel = int(node.attrs.get("max_parallel", 4))
@@ -407,8 +410,15 @@ def _apply_join_policy(
     Supports: wait_all, first_success, k_of_n, quorum.
     Unknown policies fall back to wait_all behaviour.
     """
+    # EXTENSIONS.md §25: every join-policy outcome below is is_explicit=True.
+    # The join policy is a deterministic counting rule over branch statuses —
+    # the parallel node's own verdict mechanism (analogous to a tool node's
+    # exit code). It cannot be a defaulted LLM completion. Without this, a
+    # goal_gate=true parallel node would be unsatisfiable.
     if not results:
-        return Outcome(status=StageStatus.SUCCESS, notes="No branches")
+        return Outcome(
+            status=StageStatus.SUCCESS, notes="No branches", is_explicit=True
+        )
 
     attrs = node_attrs or {}
 
@@ -424,10 +434,12 @@ def _apply_join_policy(
             return Outcome(
                 status=StageStatus.SUCCESS,
                 notes=f"All {total} branches succeeded",
+                is_explicit=True,
             )
         return Outcome(
             status=StageStatus.PARTIAL_SUCCESS,
             notes=f"{success_count}/{total} branches succeeded, {fail_count} failed",
+            is_explicit=True,
         )
 
     # -- first_success ---------------------------------------------------
@@ -436,10 +448,12 @@ def _apply_join_policy(
             return Outcome(
                 status=StageStatus.SUCCESS,
                 notes=f"At least one branch succeeded ({success_count}/{total})",
+                is_explicit=True,
             )
         return Outcome(
             status=StageStatus.FAIL,
             failure_reason=f"No branches succeeded out of {total}",
+            is_explicit=True,
         )
 
     # -- k_of_n ----------------------------------------------------------
@@ -449,6 +463,7 @@ def _apply_join_policy(
             return Outcome(
                 status=StageStatus.SUCCESS,
                 notes=f"{success_count}/{total} branches succeeded (needed {k})",
+                is_explicit=True,
             )
         return Outcome(
             status=StageStatus.FAIL,
@@ -456,6 +471,7 @@ def _apply_join_policy(
                 f"Only {success_count}/{k} required branches succeeded "
                 f"(out of {total} total)"
             ),
+            is_explicit=True,
         )
 
     # -- quorum ----------------------------------------------------------
@@ -469,6 +485,7 @@ def _apply_join_policy(
                     f"{success_count}/{total} branches succeeded "
                     f"(needed {needed}, fraction={fraction})"
                 ),
+                is_explicit=True,
             )
         return Outcome(
             status=StageStatus.FAIL,
@@ -476,6 +493,7 @@ def _apply_join_policy(
                 f"Only {success_count}/{needed} required branches succeeded "
                 f"(fraction={fraction}, total={total})"
             ),
+            is_explicit=True,
         )
 
     # -- Unknown policy: fall back to wait_all ---------------------------
@@ -483,8 +501,10 @@ def _apply_join_policy(
         return Outcome(
             status=StageStatus.SUCCESS,
             notes=f"All {total} branches succeeded",
+            is_explicit=True,
         )
     return Outcome(
         status=StageStatus.PARTIAL_SUCCESS,
         notes=f"{success_count}/{total} branches succeeded",
+        is_explicit=True,
     )

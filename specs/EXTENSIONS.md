@@ -551,3 +551,233 @@ this extension documents the behavior here.
 - `engine.py: run() Step 6 (loop_restart)` — increments and re-seeds both keys on restart
 - `engine.py: _write_node_status()` — writes iteration-scoped path and appends to `trace.jsonl`
 - `modules/pipeline-runner/amplifier_module_pipeline_runner/cli.py: cmd_trace()` — trace subcommand
+
+---
+
+## 25. Fail-Closed Goal-Gate Outcomes
+
+> **This extension DIVERGES from canonical spec §4.5.** The canonical spec pseudocode (§4.5,
+> `CodergenHandler`) returns `Outcome(status=SUCCESS, notes="Stage completed: …")` unconditionally
+> for any non-empty string response. This extension changes that behavior for `goal_gate=true`
+> nodes. See walk-upstream note in `PRINCIPLES.md`.
+
+### Incident motivation
+
+2026-07-28: a 20-node pipeline ran 2.4 hours via the standalone attractor CLI and exited
+`status=success` with zero work product. The convergence judge node (marked `goal_gate=true`)
+wrote "NOT CONVERGED — 2 of 7 criteria pass. The networking implementation does not work and
+the harness was never created." — and was recorded `outcome=success` because `_parse_outcome`'s
+final fallback converted the plain-prose response to SUCCESS. The designed replan loop
+(`max_retries=4, retry_target=analyze_plan`) never fired. This extension closes that class of
+false success.
+
+### What the canonical spec says
+
+Canonical spec §4.5 `CodergenHandler` pseudocode:
+
+```
+any string response → write response.md → Outcome(status=SUCCESS, notes="Stage completed: …")
+```
+
+This is unconditional: even a response that literally says "NOT CONVERGED" is recorded as
+SUCCESS. The spec is fail-open by design (it assumes the node's prose is advisory and routing
+is the caller's responsibility).
+
+### What this extension does instead
+
+**Scope decision: goal_gate=true nodes only.** A global default flip to RETRY/FAIL for all
+plain-text responses would break nearly every existing pipeline (most `box` nodes in tutorials
+and examples end in prose — see backward-compat inventory below). The fail-closed contract
+applies only when the node carries `goal_gate=true`, which already signals that the node's
+outcome is load-bearing for pipeline exit.
+
+**The verdict-recovery ladder is preserved.** `_parse_outcome` already tries (in order):
+1. Fenced JSON (` ```json … ``` `) → strip fence, parse as JSON
+2. Pure JSON (`stripped.startswith("{")`) → parse, honor `status` field
+3. Embedded verdict recovery → find last balanced `{…}` in prose, parse if it carries `status`
+
+The fail-closed rule sits **below** this ladder. Only when every recovery attempt has failed
+(the output is genuinely plain prose with no parseable verdict) does the fail-closed rule fire.
+Judges that emit prose + trailing JSON verdicts keep working via path 3.
+
+**Status choice: RETRY, not FAIL.** FAIL is fail-fast — it does not traverse plain edges
+(EXTENSIONS.md §16; `edge_selection.py:79-101`). A naive FAIL default would convert observer/
+reporter nodes with only plain out-edges into hard stops. RETRY respects `max_retries` (then
+degrades to FAIL) and is the appropriate signal for "try again with an explicit verdict." When
+`max_retries=0`, RETRY degrades immediately to FAIL at the goal-gate check.
+
+**`is_explicit` field on `Outcome`.** A new `is_explicit: bool` field (default `False`)
+distinguishes an asserted verdict from a defaulted one. `is_explicit=True` is set by every
+producer with an unambiguous verdict mechanism:
+
+- `report_outcome` tool call (tool-loop, direct-provider, and spawn paths)
+- pure JSON / fenced JSON / recovered embedded JSON verdicts (`_parse_outcome`)
+- a tool (parallelogram) node's exit code — 0 is an explicit success, nonzero an explicit
+  fail (`handlers/tool.py`); the exit code IS the verdict
+- **verdict-shaped** `response_schema` structured output — a captured `report_outcome`
+  call or a `status` field with a recognized value (see policy decision below)
+- deterministic handler verdicts that cannot be LLM-defaulted: human-gate selections and
+  freeform input (`handlers/human.py`), structural no-op SUCCESS (`start`/`exit`/
+  `conditional` handlers), fan-in ranking (`handlers/fan_in.py`), and parallel join-policy
+  aggregation (`handlers/parallel.py`)
+
+`is_explicit=False` marks defaulted statuses: the plain-prose fallback, empty-response
+defaults, a spawn wrapper's status-only completion, **non-verdict** structured output
+(parseable or not — format is not a verdict), and config/environment failures (timeout,
+missing `tool_command`, handler exception) where no verdict was produced.
+
+**Enforcement is two-layer (belt and suspenders).**
+
+1. *Parser layer:* `_parse_outcome` returns RETRY (not SUCCESS) for plain-prose goal_gate
+   responses, so retry machinery fires at the node.
+2. *Gate layer (centralized):* `_check_goal_gates()` treats a gate as satisfied only when
+   `outcome.is_success AND outcome.is_explicit` (`engine.py`). This closes bypass paths that
+   never reach the parser's plain-prose rung — notably the spawn path's status-only SUCCESS
+   and unparseable structured output.
+
+`is_explicit` is therefore load-bearing at the gate check, not just observability metadata.
+Any new Outcome producer must classify itself: set `is_explicit=True` iff the status comes
+from an unambiguous verdict mechanism.
+
+**`response_schema` policy decision (corrected in independent review round 2).**
+**Format ≠ verdict.** Parseable schema output proves the model followed the requested
+FORMAT; it does not prove the node asserted a VERDICT. Schema-parsed output is explicit
+ONLY when it carries a recognized verdict, routed through the same verdict ladder as every
+other path: a captured `report_outcome` tool call (authoritative), or a `status` field
+whose value is a recognized StageStatus. Generic structured output — `{"name": "Alice"}`,
+`{"assessment": "NOT CONVERGED"}` — stays DERIVED (`is_explicit=False`): the node still
+returns SUCCESS (ordinary schema nodes are unchanged), but a `goal_gate=true` schema node
+cannot satisfy its gate with it. The original round-1 policy ("parseable schema output IS
+explicit") was a false-success side door: a goal_gate structured-output judge returning
+`{"assessment": "NOT CONVERGED"}` — or a name-extraction payload — would have shipped
+success. Both structured-output paths (`backend.py` tool-loop and
+`DirectProviderBackend.run()`) share one classifier
+(`backend._outcome_from_structured_output`); empty or unparseable schema output also
+stays `is_explicit=False`, so a goal_gate schema node fails closed in every non-verdict
+case.
+
+**CodergenHandler string path.** When a backend returns a raw string (the spec §4.5
+`CodergenHandler` path — exercised by simple/custom backends and test doubles), a
+`goal_gate=true` node's string is routed through the verdict-recovery ladder
+(`_parse_outcome`): JSON verdicts are honored, plain prose returns RETRY. This implements in
+our own handler the exact goal_gate check the walk-upstream note recommends for the spec.
+Non-goal_gate string responses keep the unconditional-SUCCESS wrap (spec §4.5 preserved).
+
+**Spawn-path consistency.** `_outcome_from_spawn_result()` returns `is_explicit=False` when
+recovering from the orchestrator's completion status alone (no `report_outcome`, no JSON). A
+goal_gate child that produces no final text and no report_outcome cannot satisfy its gate via
+the spawn wrapper's status field alone — the gate layer rejects it.
+
+### Backward-compat inventory
+
+**Producer classification (every Outcome-producing path that can reach a goal-gate check):**
+
+| Producer | Verdict mechanism | `is_explicit` |
+|---|---|---|
+| `report_outcome` tool call (tool-loop / direct-provider / spawn metadata) | asserted by node | `True` |
+| Pure / fenced / embedded JSON verdict (`_parse_outcome`) | asserted by node | `True` |
+| Tool node exit code (`handlers/tool.py`) — 0 and nonzero | process exit code | `True` |
+| `response_schema` output carrying a verdict — captured `report_outcome`, or `status` field with a recognized value (`backend._outcome_from_structured_output`) | verdict via the standard ladder | `True` |
+| `response_schema` output WITHOUT a verdict — generic data such as `{"name": "Alice"}`; also empty/unparseable | format only, no verdict | `False` (gate fails closed) |
+| Plain-prose fallback (`_parse_outcome`) | none — defaulted | `False` (+ RETRY for goal_gate) |
+| Codergen string-wrap for non-goal_gate nodes (spec §4.5) | none — defaulted | `False` (not gate-relevant) |
+| Spawn status-only completion (`_outcome_from_spawn_result`) | wrapper status, not node verdict | `False` (gate fails closed) |
+| Empty response (any path) | none | `False` (FAIL) |
+| Tool timeout / missing `tool_command` / handler exception | environment failure | `False` (FAIL — not gate-relevant) |
+| Human gate selection / freeform input (`handlers/human.py`) | deterministic human action — cannot be LLM-defaulted | `True` |
+| Human gate SKIPPED (`handlers/human.py`) | deterministic interviewer decision | `True` (FAIL) |
+| Start / Exit / Conditional structural no-ops | deterministic structural SUCCESS — no LLM in the loop | `True` |
+| Fan-in ranking verdict (`handlers/fan_in.py`) | deterministic aggregation over branch statuses | `True` |
+| Fan-in with no `parallel.results` (`handlers/fan_in.py`) | environment/wiring failure | `False` (FAIL) |
+| Parallel join-policy verdict, incl. no-branch SUCCESS (`handlers/parallel.py`) | deterministic counting rule over branch statuses | `True` |
+| Parallel branch exception / missing engine (`handlers/parallel.py`) | environment failure | `False` (FAIL) |
+| Manager-loop stop/guard completion (`handlers/manager_loop.py`) | the child's verdict | propagates child's `is_explicit` |
+| Manager-loop cycle exhaustion / config failure (`handlers/manager_loop.py`) | environment failure | `False` (FAIL) |
+| Folder / pipeline (subgraph) node (`handlers/pipeline.py`) | child pipeline's terminal outcome — CAN carry a defaulted LLM completion | propagates child's `is_explicit` (outcome returned verbatim) |
+
+**Shipped examples with `goal_gate=true` nodes (complete sweep of `examples/`):**
+
+| File | Gate node(s) | Behavior delta |
+|---|---|---|
+| `examples/patterns/task-runner.dot` | `verify`, `verdict` (parallelogram tool gates) | **None** — tool exit codes are explicit verdicts; gates satisfied on exit 0 exactly as before |
+| `examples/pipelines/practical/feature-build.dot` | `integration_test` (LLM, retry_target=self) | Plain-prose completion now RETRYs instead of silently satisfying the gate |
+| `examples/pipelines/02-plan-implement-test.dot` | `implement` (LLM) | Same — explicit verdict (report_outcome / JSON) now required |
+| `examples/pipelines/04-retry-with-fallback.dot` | `implement`, `simple_implement` (LLM) | Same |
+| `examples/pipelines/10-full-attractor.dot` | `implement_backend`, `implement_frontend` (LLM) | Same |
+| `examples/pipelines/practical/pr-review.dot` | `generate_comments` (LLM, no retry_target) | Same; with no retry_target an unsatisfied gate ends the pipeline FAIL (see hazard note) |
+| `examples/pipelines/practical/multi-lens-review.dot` | `synthesize` (LLM, no retry_target) | Same |
+| `examples/pipelines/practical/refactor.dot` | `snapshot_tests` (LLM, retry_target=self) | Same |
+| `examples/pipelines/practical/test-gen.dot` | `write_tests` (LLM, retry_target) | Same |
+
+For the LLM gate nodes above this is the intended breaking change: in the default Amplifier
+backend the child session has the `report_outcome` tool available and is prompted to use it;
+completions that end in bare prose now RETRY (then degrade to FAIL) instead of silently
+recording success — which is the incident class this extension closes.
+
+**Tests affected and updated in this change:**
+
+| Test | Why affected | Resolution |
+|---|---|---|
+| `test_goal_gate_retry_clears_failures.py` (3 tests, tool-node gates) | tool exits lacked `is_explicit` | fixed by `handlers/tool.py` (exit codes are explicit) |
+| `test_pipeline_e2e.py::TestGoalGate::test_success_with_satisfied_gate` | `SuccessBackend` returned plain prose | `SuccessBackend` now returns a pure-JSON verdict |
+| `test_pipeline_e2e.py::TestGoalGate::test_retry_on_unsatisfied_gate` | `RetryThenSucceedBackend` Outcome lacked `is_explicit` | double now sets `is_explicit=True` |
+| `test_pipeline_e2e.py::TestSpecSmokeTest::test_step3_execute` | `SuccessBackend` plain prose on `goal_gate` node | same `SuccessBackend` fix |
+| `tests/test_backend.py:576` `test_backend_plain_text_returns_success` | tests a **non**-goal_gate node | unaffected (plain prose → SUCCESS preserved) |
+| `tests/test_backend.py:1096` `test_parse_outcome_plain_text_returns_success` | `_parse_outcome` with no `node` arg | unaffected |
+| `tests/test_goal_gates.py` | MockBackend returns explicit Outcomes | updated with `is_explicit=True` on mock verdicts |
+
+**Plain-edge silent-hard-stop hazard:** Observer and reporter nodes that have only plain
+out-edges and no `goal_gate=true` are **unaffected** — they still get SUCCESS for plain prose
+(spec §4.5 preserved). For `goal_gate=true` nodes with only plain out-edges, the RETRY status
+will not traverse those edges (RETRY routes like FAIL for edge selection). Authors should
+ensure goal_gate nodes have explicit `condition="outcome=fail"` or `retry_target` edges, or
+use `report_outcome` / JSON verdicts to produce the expected routing signal. The lint sweep
+(`test_examples_lint_clean.py`) and `dot_graph validate` catch isolated nodes and missing
+fallback edges.
+
+### Walk-upstream note
+
+The canonical spec §4.5 default should change to: when a node carries `goal_gate=true`, a
+plain-prose response (no JSON, no `report_outcome`) must NOT be recorded as SUCCESS. The
+recommended upstream change is to add a `goal_gate` check in `CodergenHandler` before the
+final SUCCESS fallback, returning RETRY (or FAIL with a clear message) instead. Until the
+upstream spec adopts this, this extension documents the divergence.
+
+### Implementation locations
+
+- `backend.py: _parse_outcome()` — fail-closed rule at the final rung; `node` parameter added
+- `backend.py: _outcome_from_spawn_result()` — status-only success is `is_explicit=False`
+- `backend.py: _run_with_spawn()` — passes `node=node` to `_parse_outcome`
+- `backend.py: _run_with_tool_loop()` — passes `node=node` to `_parse_outcome`; no-text path
+  now returns FAIL for goal_gate nodes (consistent with spawn path's empty→FAIL); non-goal_gate
+  no-text keeps the spec §4.5 SUCCESS default; structured-output path delegates to
+  `_outcome_from_structured_output` (verdict-shaped → explicit; generic data → derived)
+- `backend.py: _outcome_from_structured_output()` — the single structured-output classifier
+  shared by both backends (format ≠ verdict; see policy decision above)
+- `__init__.py: DirectProviderBackend.run()` — passes `node=node` to `_parse_outcome`; same
+  no-text scoping; structured-output path delegates to the shared classifier
+- `outcome.py: Outcome` — `is_explicit: bool = False` field added
+- `handlers/tool.py: ToolHandler.execute()` — exit-code outcomes are explicit verdicts
+  (`is_explicit=True` for both exit 0 → SUCCESS and nonzero → FAIL); timeout, missing
+  `tool_command`, and handler exceptions remain non-explicit (no verdict was produced)
+- `handlers/codergen.py: CodergenHandler.execute()` — goal_gate string responses are routed
+  through `_parse_outcome` (verdict ladder + fail-closed); non-goal_gate string responses keep
+  the spec §4.5 unconditional-SUCCESS wrap
+- `handlers/human.py` — selections, freeform input, and SKIP are explicit (deterministic
+  human/interviewer actions); a `goal_gate=true` human gate is satisfiable
+- `handlers/start.py`, `handlers/exit.py`, `handlers/conditional.py` — structural no-op
+  SUCCESS is explicit (deterministic, no LLM in the loop)
+- `handlers/fan_in.py`, `handlers/parallel.py` — aggregation/join-policy verdicts are
+  explicit (deterministic rules over branch statuses); wiring/environment failures stay
+  non-explicit
+- `handlers/manager_loop.py` — stop/guard completions propagate the child's `is_explicit`;
+  exhaustion and config failures stay non-explicit
+- `handlers/pipeline.py` — returns the child outcome verbatim, so the child's `is_explicit`
+  propagates (a folder node's outcome CAN carry a defaulted LLM completion)
+- `engine.py: _check_goal_gates()` — centralized gate enforcement:
+  `gate_satisfied = outcome.is_success and outcome.is_explicit`. The gate DOES consult
+  `is_explicit` directly; this is what closes the spawn status-only bypass and any future
+  producer that forgets to classify itself
+- `engine.py: _write_node_status()` and `handlers/codergen.py: _write_status()` —
+  `is_explicit` is serialized into every `status.json` (flat + iteration-scoped) and every
+  `trace.jsonl` record, making it durable audit data rather than an in-memory-only flag

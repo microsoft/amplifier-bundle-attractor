@@ -565,7 +565,7 @@ class AmplifierBackend:
                 failure_reason="Empty spawn output",
             )
 
-        outcome = _parse_outcome(output)
+        outcome = _parse_outcome(output, node=node)
 
         # Capture session_id from spawn result for status.json observability.
         # session_id is kept on the Outcome for telemetry/debugging — it no longer
@@ -739,10 +739,21 @@ class AmplifierBackend:
             }
             if parsed_obj is not None:
                 ctx_updates[node.id] = parsed_obj
-            return Outcome(
-                status=StageStatus.SUCCESS,
-                notes=raw_json,
-                context_updates=ctx_updates,
+            # EXTENSIONS.md §25 policy (corrected in independent review round
+            # 2): FORMAT is not a VERDICT. Schema-parsed output is explicit
+            # ONLY when it carries a recognized verdict — a captured
+            # report_outcome tool call, or a `status` field with a recognized
+            # StageStatus value (the same verdict ladder every other path
+            # uses). Generic structured output (e.g. {"name": "Alice"} or
+            # {"assessment": "NOT CONVERGED"}) proves the model followed the
+            # schema, not that it asserted a verdict — it stays DERIVED
+            # (is_explicit=False), so a goal_gate schema node returning
+            # non-verdict JSON does not satisfy its gate (fail-closed).
+            return _outcome_from_structured_output(
+                raw_json=raw_json,
+                parsed_obj=parsed_obj,
+                ctx_updates=ctx_updates,
+                result=result,
             )
 
         # Map GenerateResult → Outcome
@@ -761,8 +772,11 @@ class AmplifierBackend:
         #      are cloned for parallel branches.
         #   2. No report_outcome call → result.text (JSON, fenced JSON, embedded
         #      JSON, or plain prose) → _parse_outcome handles all of these,
-        #      falling back to SUCCESS for plain prose per spec 4.5.
-        #   3. No text at all → SUCCESS.
+        #      falling back to SUCCESS for plain prose per spec 4.5 (or RETRY
+        #      for goal_gate=true nodes per EXTENSIONS.md §25).
+        #   3. No text at all → FAIL for goal_gate=true nodes (consistent with
+        #      the spawn path's empty→FAIL; EXTENSIONS.md §25); non-goal_gate
+        #      nodes keep the spec 4.5 SUCCESS default.
         lo = _find_report_outcome_call(result)
         if lo is not None:
             return Outcome(
@@ -772,13 +786,40 @@ class AmplifierBackend:
                 preferred_label=lo.get("preferred_label"),
                 suggested_next_ids=lo.get("suggested_next_ids"),
                 notes=lo.get("notes"),
+                is_explicit=True,
             )
 
         if result.text:
-            return _parse_outcome(result.text)
+            return _parse_outcome(result.text, node=node)
+        # No text and no report_outcome call.
+        # EXTENSIONS.md §25 scope decision: apply fail-closed only to goal_gate
+        # nodes. Non-goal-gate nodes retain the spec §4.5 SUCCESS default so
+        # that observer/reporter nodes with plain out-edges are not broken.
+        # goal_gate nodes require an explicit verdict; no-text is treated as
+        # FAIL (same as the spawn path's empty→FAIL).
+        is_goal_gate = node.attrs.get("goal_gate") in (True, "true")
+        if is_goal_gate:
+            logger.warning(
+                "Node %s (goal_gate=true): tool loop returned no text and no "
+                "report_outcome call. Fail-closed contract (EXTENSIONS.md §25).",
+                node.id,
+            )
+            return Outcome(
+                status=StageStatus.FAIL,
+                notes=f"No output from tool loop: {node.id}",
+                failure_reason="Empty tool-loop response — goal_gate node requires explicit verdict",
+                is_explicit=False,
+            )
+        # Non-goal-gate node: spec §4.5 SUCCESS default preserved.
+        logger.warning(
+            "Node %s: tool loop returned no text and no report_outcome call "
+            "(non-goal-gate node; SUCCESS per spec §4.5).",
+            node.id,
+        )
         return Outcome(
             status=StageStatus.SUCCESS,
             notes=f"Stage completed: {node.id}",
+            is_explicit=False,
         )
 
     # ------------------------------------------------------------------
@@ -1085,6 +1126,85 @@ def _find_report_outcome_call(result: Any) -> dict[str, Any] | None:
     return found
 
 
+def _outcome_from_structured_output(
+    raw_json: str,
+    parsed_obj: Any,
+    ctx_updates: dict[str, Any],
+    result: Any,
+) -> Outcome:
+    """Build the Outcome for a response_schema (EXT-23) structured-output node.
+
+    EXTENSIONS.md §25 policy, corrected in independent review round 2:
+    **format ≠ verdict.** Parseable schema output proves the model followed
+    the requested FORMAT; it does not prove the node asserted a VERDICT.
+    Schema-parsed output is therefore explicit ONLY when it carries a
+    recognized verdict, routed through the same verdict ladder as every
+    other outcome path:
+
+      1. a captured ``report_outcome`` tool call (authoritative, mirrors the
+         priority order of the non-schema paths), or
+      2. a ``status`` field whose value is a recognized ``StageStatus``
+         (the same rule ``_parse_outcome`` applies to JSON responses).
+
+    Generic structured output — ``{"name": "Alice"}``,
+    ``{"assessment": "NOT CONVERGED"}`` — stays DERIVED
+    (``is_explicit=False``): the node still returns SUCCESS (EXT-23
+    behavior for ordinary schema nodes is unchanged), but a
+    ``goal_gate=true`` schema node cannot satisfy its gate with it
+    (fail-closed at the gate layer).
+
+    ``ctx_updates`` (the ``last_stage``/``last_response``/``node.id`` data
+    stash) is preserved on every branch so downstream nodes keep access to
+    the structured payload regardless of verdict classification.
+    """
+    ro = _find_report_outcome_call(result)
+    if ro is not None:
+        ro_extra = ro.get("context_updates")
+        return Outcome(
+            status=_STATUS_MAP.get(ro.get("status", ""), StageStatus.FAIL),
+            notes=ro.get("notes") or raw_json,
+            failure_reason=ro.get("failure_reason"),
+            preferred_label=ro.get("preferred_label"),
+            suggested_next_ids=ro.get("suggested_next_ids"),
+            context_updates={
+                **ctx_updates,
+                **(ro_extra if isinstance(ro_extra, dict) else {}),
+            },
+            is_explicit=True,
+        )
+
+    verdict: StageStatus | None = None
+    if isinstance(parsed_obj, dict):
+        status_val = parsed_obj.get("status")
+        if isinstance(status_val, str):
+            verdict = _STATUS_MAP.get(status_val)
+    if verdict is not None:
+        assert isinstance(parsed_obj, dict)  # narrowed above
+        extra = parsed_obj.get("context_updates")
+        return Outcome(
+            status=verdict,
+            notes=parsed_obj.get("notes") or raw_json,
+            failure_reason=parsed_obj.get("failure_reason"),
+            preferred_label=parsed_obj.get("preferred_label"),
+            suggested_next_ids=parsed_obj.get("suggested_next_ids"),
+            context_updates={
+                **ctx_updates,
+                **(extra if isinstance(extra, dict) else {}),
+            },
+            is_explicit=True,
+        )
+
+    # Non-verdict structured output (including empty/unparseable): node
+    # DATA, not a verdict. SUCCESS per EXT-23 (non-gate schema nodes are
+    # unchanged) but DERIVED — a goal_gate on this node fails closed.
+    return Outcome(
+        status=StageStatus.SUCCESS,
+        notes=raw_json,
+        context_updates=ctx_updates,
+        is_explicit=False,
+    )
+
+
 # Spawn-result status strings that count as a real, non-failing completion.
 # These map 1:1 to non-FAIL StageStatus members; any other string (e.g.
 # "error", "", or a missing status) is treated as "no success signal".
@@ -1132,25 +1252,48 @@ def _outcome_from_spawn_result(result: Any) -> Outcome | None:
                 preferred_label=report_outcome.get("preferred_label"),
                 suggested_next_ids=report_outcome.get("suggested_next_ids"),
                 context_updates=report_outcome.get("context_updates"),
+                is_explicit=True,
             )
 
     if result.get("status") in _SPAWN_SUCCESS_STATUSES:
         status = _STATUS_MAP[result["status"]]
+        # The orchestrator's completion status is NOT an explicit verdict from
+        # the node itself (no report_outcome, no JSON, no embedded recovery).
+        # is_explicit=False so that a goal_gate node cannot satisfy its gate
+        # solely because the spawn wrapper reported a clean exit.
+        # EXTENSIONS.md §25: a goal_gate node requires is_explicit=True.
         return Outcome(
             status=status,
             notes="Child session completed with empty final message",
+            is_explicit=False,
         )
 
     return None
 
 
-def _parse_outcome(output: str) -> Outcome:
+def _parse_outcome(output: str, *, node: object = None) -> Outcome:
     """Parse an outcome from child session output.
 
     Tries JSON first (from tool-report-outcome). Plain text responses return
-    SUCCESS per spec Section 4.5 — the backend is only responsible for
-    producing Outcome objects when it wants non-SUCCESS status. Empty output
-    returns FAIL (no work was done).
+    SUCCESS per spec Section 4.5 for ordinary nodes — the backend is only
+    responsible for producing Outcome objects when it wants non-SUCCESS status.
+    Empty output returns FAIL (no work was done).
+
+    EXTENSIONS.md §25 — fail-closed goal-gate contract:
+    When ``node`` is provided and the node carries ``goal_gate=true``, a
+    plain-text response (no JSON, no report_outcome, no embedded verdict) is
+    NOT sufficient to satisfy the gate.  In that case the outcome is RETRY
+    (respects max_retries, then degrades to FAIL) rather than silent SUCCESS.
+    ``is_explicit=True`` is set on every outcome that came from a real verdict
+    (JSON / fenced JSON / embedded recovery); the plain-text fallback leaves
+    ``is_explicit=False`` so downstream checks and analysts can distinguish the
+    two cases without reverse-engineering the notes prefix.
+
+    Args:
+        output: The raw text output from the LLM node.
+        node: Optional graph Node object.  When supplied and the node has
+            ``goal_gate=true``, the fail-closed contract applies to the
+            plain-text fallback path.
     """
     # Empty/whitespace-only output means no work was done
     stripped = output.strip()
@@ -1159,6 +1302,7 @@ def _parse_outcome(output: str) -> Outcome:
             status=StageStatus.FAIL,
             notes="No output from LLM",
             failure_reason="Empty LLM response",
+            is_explicit=False,
         )
 
     # Strip markdown code fences (```json...``` or ```...```) that LLMs sometimes
@@ -1184,6 +1328,7 @@ def _parse_outcome(output: str) -> Outcome:
                         preferred_label=data.get("preferred_label"),
                         suggested_next_ids=data.get("suggested_next_ids"),
                         context_updates=data.get("context_updates"),
+                        is_explicit=True,
                     )
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
@@ -1233,12 +1378,42 @@ def _parse_outcome(output: str) -> Outcome:
                             preferred_label=_embedded.get("preferred_label"),
                             suggested_next_ids=_embedded.get("suggested_next_ids"),
                             context_updates=_embedded.get("context_updates"),
+                            is_explicit=True,
                         )
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass
 
-    # Plain text response — per spec Section 4.5, treat as SUCCESS
+    # Plain text response — no explicit verdict recovered.
+    # EXTENSIONS.md §25: for goal_gate=true nodes, a plain-text response is NOT
+    # sufficient — the gate requires an explicit verdict.  Return RETRY so the
+    # engine respects max_retries and degrades to FAIL rather than silently
+    # satisfying the gate.  For all other nodes, fall through to SUCCESS per
+    # spec Section 4.5 (backward-compatible default).
+    _is_goal_gate = (
+        node is not None
+        and hasattr(node, "attrs")
+        and node.attrs.get("goal_gate") in (True, "true")  # type: ignore[union-attr]
+    )
+    if _is_goal_gate:
+        logger.warning(
+            "Node %r (goal_gate=true) produced plain-text output with no "
+            "explicit verdict (no report_outcome, no JSON, no embedded verdict). "
+            "Fail-closed contract (EXTENSIONS.md §25): returning RETRY so the "
+            "gate is not satisfied by a defaulted plain-text response. "
+            "Node output (first 200 chars): %r",
+            getattr(node, "id", repr(node)),
+            output[:200],
+        )
+        return Outcome(
+            status=StageStatus.RETRY,
+            notes=f"No explicit verdict from goal_gate node — plain text only: {output[:200]}",
+            failure_reason="goal_gate node requires an explicit verdict (report_outcome / JSON)",
+            is_explicit=False,
+        )
+
+    # Non-goal_gate node: plain text response — per spec Section 4.5, treat as SUCCESS.
     return Outcome(
         status=StageStatus.SUCCESS,
         notes=f"Plain text response: {output[:200]}",
+        is_explicit=False,
     )

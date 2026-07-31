@@ -129,18 +129,62 @@ Source: `substitution.py`; `node_outputs.py:68-75`; `handlers/tool.py:116-123`.
 
 ## 5. Verdict contract
 
-Source: `backend.py:604-637, 903-951`.
+Source: `backend.py:_parse_outcome, _outcome_from_spawn_result`; `outcome.py`.
 
-- A verdict status is taken from the response **only if the entire stripped response is a
-  JSON object** (`stripped.startswith("{")`) or a ` ```json ``` ` fenced block
-  (`backend.py:614-618`). Not "JSON on the last line" — the **whole** message.
-- **Prose-then-JSON recovery (FIXED):** if a response is prose with a trailing/embedded JSON
-  verdict object, the engine now extracts the LAST balanced `{...}` and, if it carries a recognized
-  `status`, HONORS it (with a logged warning) instead of coercing to SUCCESS (`backend.py:947-994`).
-  An explicit FAIL/RETRY is no longer silently dropped. Empty response → FAIL. (Still prefer pure
-  JSON / `report_outcome` — the recovery is a safety net, not a contract.)
-- **Robust path:** have the node call the **`report_outcome` tool** rather than emit
-  free-text JSON.
+**The verdict-recovery ladder** (tried in order for every LLM response):
+
+1. **`report_outcome` tool call** — authoritative; checked before any text parsing (tool-loop
+   path: `backend.py:_find_report_outcome_call`; spawn path: `metadata["report_outcome"]`).
+2. **Fenced JSON** — ` ```json … ``` ` stripped, then parsed as JSON.
+3. **Pure JSON** — entire stripped response starts with `{`, parsed, `status` field honored.
+4. **Embedded verdict recovery** — last balanced `{…}` in prose extracted; if it carries a
+   recognized `status`, honored with a warning. This catches "prose + trailing JSON" patterns.
+5. **Plain-prose fallback** — no parseable verdict found (see fail-closed rule below).
+
+Empty response → FAIL (no work was done).
+
+**Fail-closed goal-gate contract (EXTENSIONS.md §25 — diverges from canonical spec §4.5):**
+A `goal_gate=true` node MUST provide an explicit verdict (paths 1–4 above). If the response
+reaches the plain-prose fallback (path 5), the outcome is **RETRY** (not SUCCESS). RETRY
+respects `max_retries` and then degrades to FAIL; it is the correct signal for "try again
+with an explicit verdict." A goal gate cannot be satisfied by silence or by prose that says
+the work is not done.
+
+For **non-goal_gate nodes**, path 5 still returns SUCCESS per canonical spec §4.5 — backward
+compatible default for ordinary `box` nodes that end in prose.
+
+**`is_explicit` field on `Outcome`:** `outcome.is_explicit=True` means the status was asserted
+by an unambiguous mechanism: paths 1–4 above, a tool (parallelogram) node's exit code
+(0 = explicit success, nonzero = explicit fail; `handlers/tool.py`), **verdict-shaped**
+`response_schema` structured output (a captured `report_outcome` call or a `status` field
+with a recognized value — `backend._outcome_from_structured_output`), or a deterministic
+handler verdict that cannot be LLM-defaulted (human-gate selections/freeform input,
+start/exit/conditional structural SUCCESS, fan-in ranking, parallel join-policy results).
+`is_explicit=False` means the status was defaulted: plain-prose fallback, empty-response
+default, a status-only spawn result with no node-level verdict, or **non-verdict**
+structured output (format ≠ verdict — `{"name": "Alice"}` parses but asserts nothing, and
+does not satisfy a gate). Compositional handlers whose outcome IS a child's outcome
+(folder/pipeline nodes, manager-loop stop) propagate the child's `is_explicit`. The
+`"Plain text response:"` notes prefix is the legacy signal; `is_explicit` is the durable
+field, serialized into every node `status.json` (flat and iteration-scoped) and every
+`trace.jsonl` record (`engine.py:_write_node_status`, `codergen.py:_write_status`).
+
+**The gate check enforces both flags:** `_check_goal_gates()` (`engine.py`) treats a goal gate
+as satisfied only when `outcome.is_success AND outcome.is_explicit`. A SUCCESS with
+`is_explicit=False` (e.g. a spawn wrapper's clean exit with no `report_outcome`, or a schema
+node whose output carried no recognized verdict) does NOT satisfy the gate. This centralized enforcement
+closes bypass paths that never go through `_parse_outcome`. The RETRY-from-`_parse_outcome`
+rule above is the belt; the gate's `is_explicit` requirement is the suspenders.
+
+**Author guidance:** For `goal_gate=true` nodes, always call the **`report_outcome` tool** or
+emit a pure JSON response (or use a parallelogram tool node — its exit code is the verdict).
+Do not rely on prose output — even prose that says "CONVERGED" will return RETRY under the
+fail-closed contract. The recovery ladder (paths 2–4) is a safety net, not a contract.
+
+**Plain-edge hazard:** RETRY (like FAIL) does not traverse plain unconditional edges — it
+routes only via `condition="outcome=fail"`, `retry_target`, or `runs_on=always|failure` nodes.
+Goal_gate nodes should have explicit `condition="outcome=fail"` or `retry_target` edges. For
+non-goal_gate nodes, the plain-prose SUCCESS default means plain edges still work as before.
 
 ---
 

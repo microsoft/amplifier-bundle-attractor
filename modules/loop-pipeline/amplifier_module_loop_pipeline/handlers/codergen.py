@@ -128,15 +128,40 @@ class CodergenHandler:
         # 4. Write response to logs
         _write_file(os.path.join(stage_dir, "response.md"), response_text)
 
-        # 5. Build and write outcome
-        outcome = Outcome(
-            status=StageStatus.SUCCESS,
-            notes=f"Stage completed: {node.id}",
-            context_updates={
+        # 5. Build and write outcome.
+        #
+        # EXTENSIONS.md §25 — fail-closed goal-gate contract: when the node
+        # carries goal_gate=true, a string response from the backend must go
+        # through the verdict-recovery ladder (_parse_outcome). JSON / fenced
+        # JSON / embedded verdicts are honored (is_explicit=True); plain prose
+        # returns RETRY so the gate is never satisfied by a defaulted response.
+        # This is the exact goal_gate check that PRINCIPLES.md Delta 1
+        # recommends adding to the spec's CodergenHandler pseudocode.
+        #
+        # Non-goal_gate nodes keep the spec §4.5 unconditional-SUCCESS wrap
+        # (is_explicit defaults to False — the status is defaulted, not
+        # asserted; that is only load-bearing for goal_gate nodes).
+        if node.attrs.get("goal_gate") in (True, "true"):
+            # Deferred import: avoid a handlers <-> backend import cycle at
+            # module load time.
+            from ..backend import _parse_outcome
+
+            outcome = _parse_outcome(response_text, node=node)
+            merged_updates: dict[str, Any] = {
                 "last_stage": node.id,
                 "last_response": response_text[:200],
-            },
-        )
+            }
+            merged_updates.update(outcome.context_updates or {})
+            outcome.context_updates = merged_updates
+        else:
+            outcome = Outcome(
+                status=StageStatus.SUCCESS,
+                notes=f"Stage completed: {node.id}",
+                context_updates={
+                    "last_stage": node.id,
+                    "last_response": response_text[:200],
+                },
+            )
         _write_status(stage_dir, outcome)
         return outcome
 
@@ -193,5 +218,8 @@ def _write_status(stage_dir: str, outcome: Outcome) -> None:
         "context_updates": outcome.context_updates,
         "notes": outcome.notes,
         "failure_reason": outcome.failure_reason,
+        # EXTENSIONS.md §25: is_explicit is durable audit data; the codergen
+        # early-writer must carry it too, not just the engine's writers.
+        "is_explicit": outcome.is_explicit,
     }
     _write_file(os.path.join(stage_dir, "status.json"), json.dumps(data, indent=2))

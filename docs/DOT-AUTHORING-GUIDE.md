@@ -39,6 +39,21 @@ an acceptance check, a human approval gate, or an evidence-backed review node.
 Shipped positive example: `examples/pipelines/practical/bug-fix.dot`'s exit is
 gated on `verdict_gate` output -- implementation completing earns nothing.
 
+**`goal_gate` nodes require an explicit verdict (fail-closed).** A goal gate is
+satisfied only by an explicit verdict: a `report_outcome` tool call, a pure or
+fenced JSON response with a `status` field, an embedded trailing JSON verdict,
+or -- for `shape=parallelogram` tool nodes -- the command's exit code. A
+plain-prose response ("looks good, all done") returns RETRY instead of SUCCESS,
+so the gate is never satisfied by a defaulted response; even prose that says
+"CONVERGED" does not count (`specs/EXTENSIONS.md` §25). Prompt your gate nodes
+to call `report_outcome` (or emit pure JSON), or make the gate a parallelogram
+tool node whose exit code is the verdict:
+
+```dot
+judge [shape=box, goal_gate=true, retry_target="implement",
+    prompt="Evaluate the work against the criteria. You MUST call the report_outcome tool with status=success only if all criteria pass; otherwise status=retry with what is missing."]
+```
+
 **Recipes vs. attractor pipelines.** Recipes are for staged sequential workflows
 with human approval gates; attractor pipelines are for machine-verified
 convergence. If your pipeline graph has no cycle, it should probably have been a
@@ -571,7 +586,7 @@ Every node in a DOT pipeline can have these attributes:
 | `label` | String | node ID | Display name. Used as prompt fallback if `prompt` is empty. |
 | `prompt` | String | `""` | Primary instruction for LLM nodes. Supports `$goal` expansion. |
 | `type` | String | `""` | Explicit handler type override. Takes precedence over shape. |
-| `goal_gate` | Boolean | `false` | Node must succeed before pipeline can exit. |
+| `goal_gate` | Boolean | `false` | Node must succeed **with an explicit verdict** (report_outcome / JSON / tool exit code) before pipeline can exit. Plain prose returns RETRY (fail-closed, EXTENSIONS.md §25). |
 | `max_retries` | Integer | `0` | Additional attempts beyond the first. `max_retries=3` = 4 total. |
 | `retry_target` | String | `""` | Node to jump to when retries exhausted. |
 | `fallback_retry_target` | String | `""` | Secondary retry target if primary is missing. |

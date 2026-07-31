@@ -73,7 +73,10 @@ async def test_satisfied_goal_gates_allow_exit(tmp_path):
     """When all goal gates succeed, pipeline exits successfully."""
     backend = MockBackend(
         outcomes={
-            "critical": Outcome(status=StageStatus.SUCCESS, notes="All good"),
+            # is_explicit=True: this mock represents a backend that returned an
+            # explicit verdict (report_outcome / JSON). EXTENSIONS.md §25:
+            # goal_gate nodes require is_explicit=True to satisfy the gate.
+            "critical": Outcome(status=StageStatus.SUCCESS, notes="All good", is_explicit=True),
         }
     )
     engine = _make_engine(
@@ -97,8 +100,10 @@ async def test_partial_success_satisfies_goal_gate(tmp_path):
     """PARTIAL_SUCCESS counts as satisfying a goal gate."""
     backend = MockBackend(
         outcomes={
+            # is_explicit=True: explicit verdict (EXTENSIONS.md §25 — goal_gate
+            # requires is_explicit=True to satisfy the gate).
             "critical": Outcome(
-                status=StageStatus.PARTIAL_SUCCESS, notes="Mostly done"
+                status=StageStatus.PARTIAL_SUCCESS, notes="Mostly done", is_explicit=True
             ),
         }
     )
@@ -159,7 +164,9 @@ async def test_unsatisfied_goal_gate_jumps_to_node_retry_target(tmp_path):
         outcomes_by_call={
             "critical": [
                 Outcome(status=StageStatus.FAIL, failure_reason="broken"),
-                Outcome(status=StageStatus.SUCCESS, notes="Fixed"),
+                # is_explicit=True: second call succeeds with an explicit verdict
+                # (EXTENSIONS.md §25 — goal_gate requires is_explicit=True).
+                Outcome(status=StageStatus.SUCCESS, notes="Fixed", is_explicit=True),
             ],
         }
     )
@@ -193,7 +200,9 @@ async def test_unsatisfied_goal_gate_uses_graph_retry_target(tmp_path):
         outcomes_by_call={
             "critical": [
                 Outcome(status=StageStatus.FAIL, failure_reason="broken"),
-                Outcome(status=StageStatus.SUCCESS, notes="Fixed"),
+                # is_explicit=True: second call succeeds with an explicit verdict
+                # (EXTENSIONS.md §25 — goal_gate requires is_explicit=True).
+                Outcome(status=StageStatus.SUCCESS, notes="Fixed", is_explicit=True),
             ],
         }
     )
@@ -225,7 +234,8 @@ async def test_multiple_goal_gates_all_must_pass(tmp_path):
     """All goal gates must be satisfied, not just the first one."""
     backend = MockBackend(
         outcomes={
-            "review": Outcome(status=StageStatus.SUCCESS),
+            # is_explicit=True: explicit verdict (EXTENSIONS.md §25).
+            "review": Outcome(status=StageStatus.SUCCESS, is_explicit=True),
             "test": Outcome(status=StageStatus.FAIL, failure_reason="tests fail"),
         }
     )

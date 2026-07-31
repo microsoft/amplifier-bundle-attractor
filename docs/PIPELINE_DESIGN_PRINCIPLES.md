@@ -35,7 +35,21 @@ swallowed the intelligence.
 **Recipes vs. attractor pipelines.** Recipes are for staged sequential workflows
 with human approval gates; attractor pipelines are for machine-verified
 convergence. If your pipeline graph has no cycle, it should probably have been a
-recipe.
+recipe. The "probably" is load-bearing: this is a heuristic, not a gate.
+
+### The three-question test
+
+A quick diagnosis for whether work warrants an attractor at all:
+
+1. **Is there a cycle?**
+2. **Is the exit gated on evidence** (machine-checkable, external to the worker)
+   rather than on step-completion?
+3. **Would it still land if any one LLM node had a bad day** — a single response
+   that is plausible but wrong?
+
+A "no" is a signal to reconsider the shape — one-shot it, write a recipe, or
+reuse a shipped exemplar (`examples/patterns/task-runner.dot`) — not a verdict.
+Like the one-sentence rule, the test is a heuristic applied in context.
 
 **Why the skeleton must stay external.** In one live run, the worker
 hand-authored its own convergence evidence (a fabricated `convergence.jsonl`) to

@@ -1,0 +1,60 @@
+// Pipeline designed by /attractorify in evidence session B.
+// Use case: automated PR review — reads a pull request diff, produces a
+// structured review, and converges until the review passes a completeness check.
+//
+// Invocation:
+//   attractor run session-b-generated.dot \
+//       --param pr_diff=/abs/path/to/pr.diff \
+//       --param target_dir=$PWD \
+//       --cwd .
+//
+// Three-question test (from docs/PIPELINE_DESIGN_PRINCIPLES.md §0):
+//   Q1. Is there a cycle?  YES — review -> check_gate -> review (on fail).
+//   Q2. Is the exit gated on evidence?  YES — check_gate is a tool node
+//       (parallelogram) that runs a completeness script; exit requires
+//       outcome=success from that external check.
+//   Q3. Would it survive a bad day?  YES — a review that misses a required
+//       section, or skips a changed file in the per-file notes, fails
+//       check_gate (external, deterministic) and loops back; the LLM does
+//       not self-certify.
+
+digraph PRReview {
+    graph [
+        goal="Produce a complete, structured PR review for the diff at $pr_diff: summary, risk assessment, and at least one actionable suggestion per changed file.",
+        params="pr_diff, target_dir",
+        default_fidelity="compact",
+        max_pipeline_duration="1800s"
+    ]
+
+    start [shape=Mdiamond]
+    done  [shape=Msquare]
+
+    // Read the diff and produce a structured review.
+    review [shape=box,
+        prompt="Read the PR diff at $pr_diff. Produce a structured review with three sections: (1) Summary — what this PR does in 2-3 sentences; (2) Risk — any correctness, security, or maintainability concerns; (3) Per-file notes — at least one actionable comment per changed file. Write the review to .ai/review.md."]
+
+    // Deterministic completeness check, verifying the goal's own DoD:
+    //   1. all three required sections present (grep -q exits 1 -> outcome=fail);
+    //   2. the Per-file section has actual content, not just a header;
+    //   3. every changed file named in the diff ('+++ b/<path>' lines) appears
+    //      in the Per-file section — an empty or partial per-file list fails.
+    // Substitution notes: $pr_diff is a --param (seeded as a flat context key,
+    // so it substitutes in tool_command); $$ is the engine's escape for a
+    // literal '$', keeping the shell's $(...) and $f out of context substitution.
+    // Whether each per-file note is genuinely ACTIONABLE is judgment, not a
+    // machine check — this gate verifies structure and coverage; add an
+    // independent LLM critique node if adequacy of content must also be gated.
+    check_gate [shape=parallelogram, goal_gate=true, retry_target="review",
+        tool_command="grep -qE '^## Summary' .ai/review.md && grep -qE '^## Risk' .ai/review.md && awk '/^## Per-file/{p=1;next} p' .ai/review.md > .ai/per-file-notes.txt && grep -q '[^[:space:]]' .ai/per-file-notes.txt && for f in $$(grep -oE '^[+]{3} b/[^ ]+' $pr_diff | cut -c7-); do grep -qF \"$$f\" .ai/per-file-notes.txt || exit 1; done"]
+
+    // If incomplete, explain what is missing and retry.
+    fix_review [shape=box,
+        prompt="The review at .ai/review.md failed its completeness check. Read it and the diff at $pr_diff, identify what is missing — an absent or empty Summary / Risk / Per-file notes section, or a changed file with no per-file note — and produce a corrected version covering every changed file. Overwrite .ai/review.md."]
+
+    start -> review
+    review -> check_gate
+
+    check_gate -> done        [condition="outcome=success"]
+    check_gate -> fix_review  [condition="outcome=fail"]
+    fix_review -> check_gate
+}

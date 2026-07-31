@@ -92,6 +92,15 @@ The bundle includes 15 example pipelines you can reference:
   `feature-build.dot`, `pr-review.dot`, `refactor.dot`, `test-gen.dot`
 - Programmatic usage: `@attractor:examples/programmatic_usage.py`
 
+## Session entry point
+
+If a user is deciding whether to build a pipeline at all, or needs a guided
+design conversation, direct them to `/attractorify` — the inline session skill
+that applies the three-question test, asks targeted clarifying questions when
+context is thin, and produces a linted `.dot` artifact. This expert is the
+consultation target the skill delegates to; `/attractorify` is the session-facing
+entry point.
+
 ## How to Help
 
 When asked about pipeline design:

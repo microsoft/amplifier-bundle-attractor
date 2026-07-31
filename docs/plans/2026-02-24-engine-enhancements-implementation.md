@@ -1,5 +1,10 @@
 # Attractor Engine Enhancements — Implementation Plan
 
+> **Historical document (2026-02-24).** The multi-edge parallel fan-out built
+> by Group B below shipped and was later RETIRED: T0-4 restored spec §3.3
+> single-best-edge selection (`shape=component` + `ParallelHandler` is now the
+> only fan-out mechanism). Kept for history.
+
 > **Execution:** Use the subagent-driven-development workflow to implement this plan.
 
 **Goal:** Implement 8 engine enhancements across attribute passthrough, edge traversal, and HTTP server mode to make the attractor pipeline engine production-ready for real-world DOT files (`semport.dot`, `consensus_task.dot`).

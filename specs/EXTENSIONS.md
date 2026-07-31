@@ -781,3 +781,33 @@ upstream spec adopts this, this extension documents the divergence.
 - `engine.py: _write_node_status()` and `handlers/codergen.py: _write_status()` —
   `is_explicit` is serialized into every `status.json` (flat + iteration-scoped) and every
   `trace.jsonl` record, making it durable audit data rather than an in-memory-only flag
+
+---
+
+## Conformance Restoration Note (T0-4)
+
+**What was retired:** An unledgered dialect where non-`shape=parallel`, non-component nodes
+with two or more simultaneously-matching conditional outgoing edges fanned out to ALL matching
+targets in parallel (via `select_all_matching_edges` → `_execute_parallel_fan_out`), then
+required a fan-in node.  This behavior was never documented in this ledger.
+
+**What was restored:** §3.3 single-edge selection — `best_by_weight_then_lexical(condition_matched)` —
+is now the sole edge-selection path for non-`shape=parallel`, non-component nodes.  When
+multiple conditional edges simultaneously match, the engine deterministically picks exactly one:
+the highest-weight match, with lexical target-id tiebreak.
+
+**What is unchanged:** `shape=parallel` fan-out (extension #18) and component-node parallelism
+(ParallelHandler) are untouched.  These are spec-sanctioned explicit parallelism constructs.
+
+**Walk-upstream note (PRINCIPLES.md):** This is a conformance restoration, not a new extension.
+No spec change is needed.  The canonical spec at §3.3 already prescribes single-edge selection;
+this implementation now fulfills it.  See `SPEC_CONFORMANCE.md` ATX-10 for the ledger entry.
+
+**Compatibility-banner note:** The banner at the top of this ledger promises that community
+`.dot` files written against the canonical spec continue to work without modification.  While
+the multi-match dialect was live, that promise was compromised for any spec-conformant graph
+in which two conditional edges could simultaneously match (the spec prescribes one deterministic
+successor; the engine ran both).  With this restoration the engine's edge selection matches the
+spec letter, and the banner is true again for edge selection.  Graphs that deliberately relied
+on the retired dialect must express parallelism explicitly (`shape=component` or `shape=parallel`,
+extension #18).

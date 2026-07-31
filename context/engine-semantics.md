@@ -84,12 +84,20 @@ Source: `edge_selection.py`; `handlers/tool.py`; nlspec §3.3, §3.7, §10.
   `tool.last_line` = last non-empty stripped stdout line (`tool.py:212-220`) — set **only on
   success**. A **failing tool node does NOT refresh `tool.last_line`** (`tool.py:158-176`
   early FAIL return precedes the `context.set` at `tool.py:220`); the key retains the value
-  from the last *successful* execution. **Stale-label rule:** on the second+ visit to a gate,
-  a stale `tool.last_line` value from a prior successful run can match a
-  `context.tool.last_line=X` edge even when the current run failed, causing an unintended
-  parallel fan-out. **Discipline:** any edge with `condition="context.tool.last_line=X"` that
-  shares a source node with an `outcome=fail` edge MUST also assert `&& outcome=success`;
-  otherwise a stale label plus a FAIL match both edges on the second visit.
+  from the last *successful* execution.
+  **Stale-label rule (T0-4 — historical note + determinism note):** on the second+ visit to a
+  gate, a stale `tool.last_line` value from a prior successful run can match a
+  `context.tool.last_line=X` edge even when the current run failed. Prior to T0-4, this caused
+  an *unintended parallel fan-out* (both the stale-label edge and the `outcome=fail` edge
+  executed simultaneously). **After T0-4**, the engine conforms to spec §3.3: when multiple
+  conditional edges simultaneously match, `select_edge()` deterministically picks **exactly
+  one** — the highest-weight edge, with lexical target-id tiebreak. The fan-out consequence is
+  gone; the staleness is not. The deterministic pick can still be the wrong edge (e.g. the
+  stale-label edge wins over the `outcome=fail` edge if it has higher weight or comes first
+  lexically). **Discipline:** add `&& outcome=success` to `context.tool.last_line=X` edges
+  that share a source node with an `outcome=fail` edge — this ensures the label edge only
+  fires when the tool actually succeeded and the label is fresh. The conjunction is good
+  explicitness discipline; it is no longer a safety requirement against fan-out.
   `tool.output` = **full stdout** (`tool.py:179`) — conditioning on it silently never matches.
 - **Bare-token condition** = truthy lookup: `condition="context.flag"` is true iff the value
   is non-empty (nlspec §10.5; `conditions.py`).

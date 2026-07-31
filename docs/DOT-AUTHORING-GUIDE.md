@@ -868,41 +868,48 @@ observe upstream outcomes.  Use `context.preferred_label` (set via
 
 ---
 
-### TOPO-002 — Stale-label collision on a tool node
+### TOPO-002 — Ambiguous multi-match on a tool node
 
 **What it detects:** A `parallelogram` (ToolHandler) node that has BOTH:
 - an outgoing edge conditioned on `context.tool.last_line=X` (without also
   asserting `&& outcome=success`), AND
 - an outgoing edge conditioned on `outcome=fail`
 
-**Why it's wrong:** `ToolHandler` sets `context.tool.last_line` only on
+**Why it matters:** `ToolHandler` sets `context.tool.last_line` only on
 success (`tool.py`).  On failure, it returns `FAIL` early before setting the
 label.  On the second visit after a failure, `tool.last_line` still holds the
 stale value from the prior success.  Both edges then match simultaneously —
-the stale `last_line` edge AND the `outcome=fail` edge — causing a silent
-double-dispatch.  This bug is invisible in single-pass testing.
+the stale `last_line` edge AND the `outcome=fail` edge.  The engine (spec
+§3.3) deterministically picks **one** edge: the highest-weight match, with
+lexical target-id tiebreak.  That deterministic pick may not be the edge the
+author intended.
 
-**Severity:** ERROR — silent correctness bug on the second visit.
+**Severity:** WARNING — the engine does not fan out (T0-4 restored spec §3.3
+single-edge selection), but the selected edge may be the wrong one.  Make
+intent explicit.
 
 **Fix:** Add `&& outcome=success` to the `last_line` edge so it only fires
 when the tool actually succeeded and the label is fresh:
 
 ```dot
-// WRONG — stale-label collision on second visit
+// AMBIGUOUS — on second visit, stale last_line + FAIL both match;
+//             engine picks one deterministically (weight/lexical tiebreak)
 tool -> done [condition="context.tool.last_line=green"]
 tool -> fix  [condition="outcome=fail"]
 
-// CORRECT — conjunction ensures label is fresh
+// EXPLICIT — conjunction ensures label edge only fires on fresh success
 tool -> done [condition="context.tool.last_line=green && outcome=success"]
 tool -> fix  [condition="outcome=fail"]
 ```
 
-> **Spec-reconciliation note:** This defensive rule exists because the current
-> engine selects ALL matching edges (parallel fan-out) where the canonical spec
-> prescribes deterministic single-best-edge selection; that divergence is under
-> active reconciliation.  If the engine adopts single-edge selection, the
-> `&& outcome=success` conjunction becomes unnecessary — but it is harmless, so
-> pipelines written with it stay correct either way.
+> **Note:** The engine now selects ONE best edge per spec §3.3 (deterministic
+> priority order, weight then lexical tiebreak) — multiple matching edges no
+> longer fan out in parallel. (Historically, a since-retired engine dialect
+> selected ALL matching edges; this rule dates from that era.) The
+> `&& outcome=success` conjunction is therefore no longer required for
+> correctness, but it remains harmless legacy defense and still documents
+> intent: it makes the label edge's freshness requirement explicit rather
+> than relying on tiebreak order, so the lint keeps recommending it.
 
 ---
 

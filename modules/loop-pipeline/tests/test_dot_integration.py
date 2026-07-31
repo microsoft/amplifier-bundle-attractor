@@ -16,7 +16,7 @@ Test coverage:
 - Deny hook: hook deny prevents LLM call, node outcome is FAIL
 - Existing spec fixtures: spec_simple_linear.dot, spec_stylesheet.dot
 - Production semport.dot: 2-provider loop with conditional branching
-- Production consensus_task.dot: 3-provider fan-out with retry loop
+- Production consensus_task.dot: 3-provider component fan-out with retry loop
 """
 
 import json
@@ -1070,9 +1070,13 @@ class TestConsensusPipeline:
     Key features exercised:
     - Three providers: anthropic (claude-opus-4-5), openai (gpt-5.2),
       gemini (gemini-3-flash-preview)
-    - Conditional fan-out from CheckDoD (needs_dod vs has_dod)
-    - Fan-in: multiple Review* nodes -> ReviewConsensus
-    - Retry loop: ReviewConsensus -> Postmortem -> Plan*
+    - Conditional single-edge routing from CheckDoD (needs_dod vs has_dod,
+      spec §3.3 pick-one-best-edge)
+    - Explicit spec-sanctioned parallelism: shape=component fan-out nodes
+      (DefineDoD_FanOut, Plan_FanOut, Review_FanOut) dispatch three agent
+      branches in parallel, converging on shape=tripleoctagon fan-in nodes
+      (T0-4: migrated from the retired conditional multi-match fan-out)
+    - Retry loop: ReviewConsensus -> Postmortem -> Plan_FanOut
     - Graph-level retry_target and fallback_retry_target
     - Variable expansion ($task, $definition_of_done)
     """
@@ -1083,31 +1087,43 @@ class TestConsensusPipeline:
     # --- Parse-only tests ---
 
     def test_consensus_parses_successfully(self):
-        """consensus_task.dot parses into a valid graph with all 17 nodes."""
+        """consensus_task.dot parses into a valid graph with all 23 nodes."""
         graph = parse_dot(self._dot())
 
-        assert len(graph.nodes) == 17
+        assert len(graph.nodes) == 23
 
         expected_ids = {
             "Start",
             "CheckDoD",
+            "DefineDoD_FanOut",
             "DefineDoD_Gemini",
             "DefineDoD_GPT",
             "DefineDoD_Opus",
+            "DefineDoD_Join",
             "ConsolidateDoD",
+            "Plan_FanOut",
             "PlanGemini",
             "PlanGPT",
             "PlanOpus",
+            "Plan_Join",
             "DebateConsolidate",
             "Implement",
+            "Review_FanOut",
             "ReviewGemini",
             "ReviewGPT",
             "ReviewOpus",
+            "Review_Join",
             "ReviewConsensus",
             "Postmortem",
             "Exit",
         }
         assert set(graph.nodes.keys()) == expected_ids
+
+        # Explicit-parallelism constructs (T0-4 migration)
+        for fan_out in ("DefineDoD_FanOut", "Plan_FanOut", "Review_FanOut"):
+            assert graph.nodes[fan_out].shape == "component"
+        for fan_in in ("DefineDoD_Join", "Plan_Join", "Review_Join"):
+            assert graph.nodes[fan_in].shape == "tripleoctagon"
 
         # Graph-level attributes
         assert graph.graph_attrs.get("retry_target") == "CheckDoD"
@@ -1115,7 +1131,7 @@ class TestConsensusPipeline:
         assert graph.default_fidelity == "truncate"
 
         # Verify edge count
-        assert len(graph.edges) > 20  # 24 edges in total
+        assert len(graph.edges) == 30
 
     def test_consensus_identifies_three_providers(self):
         """Nodes span three providers: anthropic, openai, gemini."""
@@ -1136,26 +1152,31 @@ class TestConsensusPipeline:
 
     @pytest.mark.asyncio
     async def test_consensus_has_dod_path(self, tmp_path):
-        """has_dod: CheckDoD routes to Plan nodes, skipping DoD definition.
+        """has_dod: CheckDoD routes to Plan_FanOut, skipping DoD definition.
 
-        Start -> CheckDoD(has_dod) -> PlanGemini+PlanGPT+PlanOpus (parallel)
-        -> DebateConsolidate -> Implement -> ReviewGPT (lexical first)
+        Start -> CheckDoD(has_dod) -> Plan_FanOut (component)
+        -> PlanGemini+PlanGPT+PlanOpus (parallel) -> Plan_Join
+        -> DebateConsolidate -> Implement -> Review_FanOut (component)
+        -> ReviewGemini+ReviewGPT+ReviewOpus (parallel) -> Review_Join
         -> ReviewConsensus(yes) -> Exit
 
-        preferred_label="has_dod" matches condition="outcome=has_dod" on all
-        three Plan edges, triggering parallel fan-out.
+        preferred_label="has_dod" matches condition="outcome=has_dod" on the
+        single Plan_FanOut edge (spec §3.3 single-edge selection); the
+        shape=component node then dispatches all three Plan branches.
         ReviewConsensus uses preferred_label="yes" to match condition="outcome=yes".
         """
         hooks = RecordingHooks()
         client = MockUnifiedClient(
             [
-                _routing_response(preferred_label="has_dod"),  # CheckDoD -> 3 Plan nodes parallel
-                _routing_response(),  # PlanGemini (parallel)
-                _routing_response(),  # PlanGPT (parallel)
-                _routing_response(),  # PlanOpus (parallel)
+                _routing_response(preferred_label="has_dod"),  # CheckDoD -> Plan_FanOut
+                _routing_response(),  # PlanGemini (parallel branch)
+                _routing_response(),  # PlanGPT (parallel branch)
+                _routing_response(),  # PlanOpus (parallel branch)
                 _routing_response(),  # DebateConsolidate
-                _routing_response(),  # Implement -> ReviewGPT (lexical: ReviewGPT < ReviewGemini)
-                _routing_response(),  # ReviewGPT
+                _routing_response(),  # Implement -> Review_FanOut
+                _routing_response(),  # ReviewGemini (parallel branch)
+                _routing_response(),  # ReviewGPT (parallel branch)
+                _routing_response(),  # ReviewOpus (parallel branch)
                 _routing_response(preferred_label="yes"),  # ReviewConsensus -> Exit
             ]
         )
@@ -1166,37 +1187,46 @@ class TestConsensusPipeline:
         assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
 
         executed = {d["node_id"] for d in hooks.get_data(PIPELINE_NODE_START)}
-        # Plan node present, DoD definition nodes absent
+        # ALL three Plan agents ran (explicit component fan-out), DoD
+        # definition nodes absent (conditional single-edge routing).
         assert "PlanGemini" in executed
+        assert "PlanGPT" in executed
+        assert "PlanOpus" in executed
         assert "DefineDoD_Gemini" not in executed
         assert "DefineDoD_GPT" not in executed
         assert "ConsolidateDoD" not in executed
 
     @pytest.mark.asyncio
     async def test_consensus_needs_dod_path(self, tmp_path):
-        """needs_dod: CheckDoD -> DefineDoD (parallel) -> Consolidate -> Plan -> Exit.
+        """needs_dod: CheckDoD -> DefineDoD fan-out -> Consolidate -> Plan fan-out -> Exit.
 
-        Start -> CheckDoD(needs_dod) -> DefineDoD_Gemini+GPT+Opus (parallel)
-        -> ConsolidateDoD -> PlanGPT (lexical: PlanGPT < PlanGemini) -> Debate
-        -> Implement -> ReviewGPT (lexical first) -> ReviewConsensus(yes) -> Exit
+        Start -> CheckDoD(needs_dod) -> DefineDoD_FanOut (component)
+        -> DefineDoD_Gemini+GPT+Opus (parallel) -> DefineDoD_Join
+        -> ConsolidateDoD -> Plan_FanOut (component)
+        -> PlanGemini+GPT+Opus (parallel) -> Plan_Join -> Debate -> Implement
+        -> Review_FanOut -> 3 Reviews (parallel) -> Review_Join
+        -> ReviewConsensus(yes) -> Exit
 
-        preferred_label="needs_dod" matches condition="outcome=needs_dod" on all
-        three DoD-definition edges, triggering parallel fan-out.
-        ConsolidateDoD has three unconditional edges to Plan nodes; engine picks
-        PlanGPT (lexically first: 'G'+'P' < 'G'+'e' in ASCII).
+        preferred_label="needs_dod" matches condition="outcome=needs_dod" on
+        the single DefineDoD_FanOut edge (spec §3.3 single-edge selection);
+        the shape=component node then dispatches all three DoD branches.
         """
         hooks = RecordingHooks()
         client = MockUnifiedClient(
             [
-                _routing_response(preferred_label="needs_dod"),  # CheckDoD -> 3 DoD nodes parallel
-                _routing_response(),  # DefineDoD_Gemini (parallel)
-                _routing_response(),  # DefineDoD_GPT (parallel)
-                _routing_response(),  # DefineDoD_Opus (parallel)
-                _routing_response(),  # ConsolidateDoD -> PlanGPT (lexical first)
-                _routing_response(),  # PlanGPT -> DebateConsolidate
+                _routing_response(preferred_label="needs_dod"),  # CheckDoD -> DefineDoD_FanOut
+                _routing_response(),  # DefineDoD_Gemini (parallel branch)
+                _routing_response(),  # DefineDoD_GPT (parallel branch)
+                _routing_response(),  # DefineDoD_Opus (parallel branch)
+                _routing_response(),  # ConsolidateDoD -> Plan_FanOut
+                _routing_response(),  # PlanGemini (parallel branch)
+                _routing_response(),  # PlanGPT (parallel branch)
+                _routing_response(),  # PlanOpus (parallel branch)
                 _routing_response(),  # DebateConsolidate
-                _routing_response(),  # Implement -> ReviewGPT (lexical first)
-                _routing_response(),  # ReviewGPT
+                _routing_response(),  # Implement -> Review_FanOut
+                _routing_response(),  # ReviewGemini (parallel branch)
+                _routing_response(),  # ReviewGPT (parallel branch)
+                _routing_response(),  # ReviewOpus (parallel branch)
                 _routing_response(preferred_label="yes"),  # ReviewConsensus -> Exit
             ]
         )
@@ -1207,28 +1237,34 @@ class TestConsensusPipeline:
         assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
 
         executed = {d["node_id"] for d in hooks.get_data(PIPELINE_NODE_START)}
+        # All three DoD-definition agents ran (explicit component fan-out)
         assert "DefineDoD_Gemini" in executed
+        assert "DefineDoD_GPT" in executed
+        assert "DefineDoD_Opus" in executed
         assert "ConsolidateDoD" in executed
-        # Plan nodes should follow DoD consolidation
+        # Plan consolidation follows DoD consolidation
         assert "DebateConsolidate" in executed
 
     @pytest.mark.asyncio
     async def test_consensus_review_pass(self, tmp_path):
         """ReviewConsensus with yes -> exits pipeline successfully.
 
-        has_dod path: CheckDoD -> Plans (parallel) -> Debate -> Implement
-        -> ReviewGPT -> ReviewConsensus(yes) -> Exit
+        has_dod path: CheckDoD -> Plan_FanOut -> 3 Plans (parallel) -> Plan_Join
+        -> Debate -> Implement -> Review_FanOut -> 3 Reviews (parallel)
+        -> Review_Join -> ReviewConsensus(yes) -> Exit
         """
         hooks = RecordingHooks()
         client = MockUnifiedClient(
             [
-                _routing_response(preferred_label="has_dod"),  # CheckDoD -> 3 Plans parallel
-                _routing_response(),  # PlanGemini (parallel)
-                _routing_response(),  # PlanGPT (parallel)
-                _routing_response(),  # PlanOpus (parallel)
+                _routing_response(preferred_label="has_dod"),  # CheckDoD -> Plan_FanOut
+                _routing_response(),  # PlanGemini (parallel branch)
+                _routing_response(),  # PlanGPT (parallel branch)
+                _routing_response(),  # PlanOpus (parallel branch)
                 _routing_response(),  # DebateConsolidate
-                _routing_response(),  # Implement -> ReviewGPT (lexical first)
-                _routing_response(),  # ReviewGPT
+                _routing_response(),  # Implement -> Review_FanOut
+                _routing_response(),  # ReviewGemini (parallel branch)
+                _routing_response(),  # ReviewGPT (parallel branch)
+                _routing_response(),  # ReviewOpus (parallel branch)
                 _routing_response(preferred_label="yes"),  # ReviewConsensus -> Exit
             ]
         )
@@ -1238,44 +1274,55 @@ class TestConsensusPipeline:
 
         assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS)
 
-        # ReviewConsensus executed exactly once
+        # ReviewConsensus executed exactly once, fed by all three reviewers
         executed = [d["node_id"] for d in hooks.get_data(PIPELINE_NODE_START)]
         assert executed.count("ReviewConsensus") == 1
+        assert executed.count("ReviewGemini") == 1
+        assert executed.count("ReviewGPT") == 1
+        assert executed.count("ReviewOpus") == 1
 
     @pytest.mark.asyncio
     async def test_consensus_review_retry(self, tmp_path):
-        """ReviewConsensus retry -> Postmortem -> Plan* -> pass on 2nd try.
+        """ReviewConsensus retry -> Postmortem -> Plan_FanOut -> pass on 2nd try.
 
         First pass:
-          CheckDoD(has_dod) -> Plans(parallel) -> Debate -> Implement
-          -> ReviewGPT -> ReviewConsensus(retry) -> Postmortem
+          CheckDoD(has_dod) -> Plan_FanOut -> 3 Plans (parallel) -> Plan_Join
+          -> Debate -> Implement -> Review_FanOut -> 3 Reviews (parallel)
+          -> Review_Join -> ReviewConsensus(retry) -> Postmortem
         Second pass:
-          Postmortem -> PlanGPT (lexical first via unconditional loop_restart)
-          -> Debate -> Implement -> ReviewGPT -> ReviewConsensus(yes) -> Exit
+          Postmortem -> Plan_FanOut (loop_restart) -> 3 Plans (parallel)
+          -> Plan_Join -> Debate -> Implement -> Review_FanOut -> 3 Reviews
+          -> Review_Join -> ReviewConsensus(yes) -> Exit
 
         preferred_label="retry" matches condition="outcome=retry" on the
-        ReviewConsensus -> Postmortem edge.
-        Postmortem has three unconditional loop_restart edges to Plan nodes;
-        engine picks PlanGPT (lexically first).
+        ReviewConsensus -> Postmortem edge. Postmortem has a single
+        loop_restart edge back to Plan_FanOut, so the full three-agent
+        planning stage reruns on retry.
         """
         hooks = RecordingHooks()
         client = MockUnifiedClient(
             [
                 # --- First pass ---
-                _routing_response(preferred_label="has_dod"),  # CheckDoD -> 3 Plans parallel
-                _routing_response(),  # PlanGemini (parallel)
-                _routing_response(),  # PlanGPT (parallel)
-                _routing_response(),  # PlanOpus (parallel)
+                _routing_response(preferred_label="has_dod"),  # CheckDoD -> Plan_FanOut
+                _routing_response(),  # PlanGemini (parallel branch)
+                _routing_response(),  # PlanGPT (parallel branch)
+                _routing_response(),  # PlanOpus (parallel branch)
                 _routing_response(),  # DebateConsolidate
-                _routing_response(),  # Implement -> ReviewGPT (lexical first)
-                _routing_response(),  # ReviewGPT
+                _routing_response(),  # Implement -> Review_FanOut
+                _routing_response(),  # ReviewGemini (parallel branch)
+                _routing_response(),  # ReviewGPT (parallel branch)
+                _routing_response(),  # ReviewOpus (parallel branch)
                 _routing_response(preferred_label="retry"),  # ReviewConsensus -> Postmortem
-                _routing_response(),  # Postmortem -> PlanGPT (lexical first, loop_restart)
+                _routing_response(),  # Postmortem -> Plan_FanOut (loop_restart)
                 # --- Second pass ---
-                _routing_response(),  # PlanGPT -> DebateConsolidate
+                _routing_response(),  # PlanGemini (parallel branch)
+                _routing_response(),  # PlanGPT (parallel branch)
+                _routing_response(),  # PlanOpus (parallel branch)
                 _routing_response(),  # DebateConsolidate
-                _routing_response(),  # Implement -> ReviewGPT (lexical first)
-                _routing_response(),  # ReviewGPT
+                _routing_response(),  # Implement -> Review_FanOut
+                _routing_response(),  # ReviewGemini (parallel branch)
+                _routing_response(),  # ReviewGPT (parallel branch)
+                _routing_response(),  # ReviewOpus (parallel branch)
                 _routing_response(preferred_label="yes"),  # ReviewConsensus -> Exit
             ]
         )
@@ -1289,25 +1336,33 @@ class TestConsensusPipeline:
         assert "Postmortem" in executed
         # ReviewConsensus executed twice (retry + pass)
         assert executed.count("ReviewConsensus") == 2
+        # The full three-agent planning stage ran on both passes
+        assert executed.count("PlanGemini") == 2
+        assert executed.count("PlanGPT") == 2
+        assert executed.count("PlanOpus") == 2
 
     @pytest.mark.asyncio
     async def test_consensus_hook_events_include_all_three_providers(self, tmp_path):
         """Hook events show anthropic, openai, AND gemini."""
         hooks = RecordingHooks()
-        # has_dod parallel path:
-        #   CheckDoD (anthropic) -> PlanGemini (gemini) + PlanGPT (openai) + PlanOpus (anthropic)
-        #   -> DebateConsolidate (anthropic) -> Implement (anthropic)
-        #   -> ReviewGPT (openai) -> ReviewConsensus (anthropic)
+        # has_dod path:
+        #   CheckDoD (anthropic) -> Plan_FanOut (component)
+        #   -> PlanGemini (gemini) + PlanGPT (openai) + PlanOpus (anthropic)
+        #   -> Plan_Join -> DebateConsolidate (anthropic) -> Implement (anthropic)
+        #   -> Review_FanOut -> ReviewGemini (gemini) + ReviewGPT (openai)
+        #      + ReviewOpus (anthropic) -> Review_Join -> ReviewConsensus (anthropic)
         # All three providers covered: anthropic, openai, gemini.
         client = MockUnifiedClient(
             [
                 _routing_response(preferred_label="has_dod"),  # CheckDoD (anthropic)
-                _routing_response(),  # PlanGemini (gemini, parallel)
-                _routing_response(),  # PlanGPT (openai, parallel)
-                _routing_response(),  # PlanOpus (anthropic, parallel)
+                _routing_response(),  # PlanGemini (gemini, parallel branch)
+                _routing_response(),  # PlanGPT (openai, parallel branch)
+                _routing_response(),  # PlanOpus (anthropic, parallel branch)
                 _routing_response(),  # DebateConsolidate (anthropic)
-                _routing_response(),  # Implement (anthropic) -> ReviewGPT (lexical first)
-                _routing_response(),  # ReviewGPT (openai)
+                _routing_response(),  # Implement (anthropic) -> Review_FanOut
+                _routing_response(),  # ReviewGemini (gemini, parallel branch)
+                _routing_response(),  # ReviewGPT (openai, parallel branch)
+                _routing_response(),  # ReviewOpus (anthropic, parallel branch)
                 _routing_response(preferred_label="yes"),  # ReviewConsensus (anthropic)
             ]
         )

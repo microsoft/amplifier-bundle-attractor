@@ -1,5 +1,10 @@
 # Attractor Engine Enhancements Design
 
+> **Historical document (2026-02-24).** The multi-edge parallel fan-out
+> described below (enhancement 6) shipped and was later RETIRED: T0-4
+> restored spec §3.3 single-best-edge selection, and `shape=component` +
+> `ParallelHandler` is now the only fan-out mechanism. Kept for history.
+
 ## Goal
 
 Implement 6 enhancements to make the attractor pipeline engine production-ready for real-world DOT files like `semport.dot` (9 nodes, multi-provider, loop-restart) and `consensus_task.dot` (17 nodes, parallel fan-out, consensus).

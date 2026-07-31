@@ -118,9 +118,16 @@ def select_all_matching_edges(
 ) -> list[Edge]:
     """Return ALL condition-matching edges from a node's outgoing edges.
 
-    Unlike select_edge() which returns the single best edge, this returns
-    every edge whose condition evaluates to True. Used by the engine to
-    detect multi-edge fan-out patterns (parallel execution).
+    Unlike select_edge() which returns the single best edge (spec §3.3),
+    this returns every edge whose condition evaluates to True.
+
+    Note (T0-4): this function is NO LONGER called from the engine's main
+    dispatch path. The multi-match fan-out dialect it supported has been
+    retired in favor of spec-conformant single-edge selection via
+    select_edge(). It is retained as a test/analysis utility: exercised by
+    its own unit tests in test_edge_selection.py and used by
+    test_dot_parser.py to assert that shipped graphs have at most one
+    simultaneously-matching conditional edge.
 
     Returns an empty list if no edges have matching conditions.
     """

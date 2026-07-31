@@ -1,25 +1,16 @@
 """Tests for parallel-branch nested backend/session isolation.
 
-TDD: These tests are written BEFORE the implementation.
-
 Test group descriptions:
   G1  Core regression — component parallel (ParallelHandler) backend isolation
   G2  Three nested topologies inside a component branch
-  G3  Multi-edge fan-out (_execute_parallel_fan_out) branch-engine isolation
+  G3  shape=component fan-out (ParallelHandler) branch-engine isolation
+      (T0-4: updated from multi-match conditional edges to shape=component, the
+      spec-sanctioned explicit parallelism path)
   G4  Artifact store shared across branches (critic C1)
   G5  S5 guard — clone_for_branch engine raises on run()
   G6  Fan-in correctness on both fan-out paths (critic S3)
 
-RED on current main (pre-fix): G1, G2a, G2b, G2c, G3, G5.
-GREEN on baseline AND after fix: G4, G6a, G6b, regression tests.
-
 Spec coverage: PAR-001–013, ISOL-001–005, NEST-001–003.
-
-Implementation note on select_all_matching_edges:
-  Multi-edge fan-out requires conditional edges (condition="outcome=success").
-  Unconditional edges are not returned by select_all_matching_edges and do NOT
-  trigger _execute_parallel_fan_out.  Tests that probe the multi-edge path
-  must use edges with explicit conditions.
 """
 
 from __future__ import annotations
@@ -385,16 +376,20 @@ async def test_g2c_nested_fanout_inside_parallel_is_isolated(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# G3 — Multi-edge fan-out (_execute_parallel_fan_out) branch-engine isolation
+# G3 — shape=component fan-out (ParallelHandler) branch-engine isolation
+#
+# T0-4: This group originally tested the retired multi-match conditional-edge
+# fan-out path (engine-level _execute_parallel_fan_out, now deleted along with
+# its only call site).  Updated to use shape=component, the spec-sanctioned
+# explicit parallelism path (§3.8, §4.8, EXTENSIONS.md #18): ParallelHandler
+# executes each branch via run_subgraph.  The branch-engine isolation contract
+# is identical.
 #
 # Key notes:
-#   - select_all_matching_edges returns edges ONLY when e.condition is truthy
-#     AND matches.  Unconditional edges do NOT trigger _execute_parallel_fan_out.
-#     Edges must have condition="outcome=success" (or similar) to be selected.
-#   - The bug: _execute_parallel_fan_out passes engine=self (parent) to
-#     execute_with_retry.  A CapturingHandler records the received engine.
-#     Before fix: both branches receive the SAME parent engine.
-#     After fix: each branch receives a distinct clone_for_branch() engine.
+#   - shape=component fans out ALL outgoing edges (unconditional) via
+#     ParallelHandler → run_subgraph per branch.
+#   - The historical bug (fixed before T0-4): branches received engine=self
+#     (parent).  After fix: each branch gets clone_for_branch().
 # ---------------------------------------------------------------------------
 
 
@@ -418,14 +413,17 @@ class _CapturingHandler:
 
 
 def _make_multiedge_graph() -> Graph:
-    """Graph with a codergen gate that fans out (condition=outcome=success)
-    to two custom-type branch nodes, both converging on a codergen node.
+    """Graph with a shape=component fan-out node that dispatches to two
+    custom-type branch nodes, both converging on a tripleoctagon fan-in node.
+
+    T0-4: Updated from multi-match conditional edges to shape=component, the
+    spec-sanctioned explicit parallelism path (§3.8, §4.8, EXTENSIONS.md #18).
 
     Structure:
-        start -> gate (box/codergen)
-        gate -> branch_c (condition="outcome=success")
-        gate -> branch_d (condition="outcome=success")
-        branch_c -> converge (box/codergen)
+        start -> gate (component/parallel fan-out)
+        gate -> branch_c (unconditional)
+        gate -> branch_d (unconditional)
+        branch_c -> converge (tripleoctagon/fan-in)
         branch_d -> converge
         converge -> done (exit)
     """
@@ -433,16 +431,17 @@ def _make_multiedge_graph() -> Graph:
         name="multiedge-isolation-test",
         nodes={
             "start": Node(id="start", shape="Mdiamond"),
-            "gate": Node(id="gate", shape="box", prompt="Gate triggers fan-out"),
+            "gate": Node(id="gate", shape="component"),
             "branch_c": Node(id="branch_c", shape="box", type="capturing"),
             "branch_d": Node(id="branch_d", shape="box", type="capturing"),
-            "converge": Node(id="converge", shape="box", prompt="Converge"),
+            "converge": Node(id="converge", shape="tripleoctagon"),
             "done": Node(id="done", shape="Msquare"),
         },
         edges=[
             Edge(from_node="start", to_node="gate"),
-            Edge(from_node="gate", to_node="branch_c", condition="outcome=success"),
-            Edge(from_node="gate", to_node="branch_d", condition="outcome=success"),
+            # shape=component fans out ALL unconditional outgoing edges.
+            Edge(from_node="gate", to_node="branch_c"),
+            Edge(from_node="gate", to_node="branch_d"),
             Edge(from_node="branch_c", to_node="converge"),
             Edge(from_node="branch_d", to_node="converge"),
             Edge(from_node="converge", to_node="done"),
@@ -452,13 +451,17 @@ def _make_multiedge_graph() -> Graph:
 
 @pytest.mark.asyncio
 async def test_g3_multiedge_fanout_passes_branch_engine_to_handlers(tmp_path):
-    """G3: _execute_parallel_fan_out must pass a branch engine to each handler.
+    """G3: shape=component fan-out (ParallelHandler) must pass a branch engine
+    to each handler.
 
     Before fix: execute_with_retry is called with engine=self (parent) for all
     branches → both capturing handlers see the SAME engine object.
 
     After fix: each branch gets clone_for_branch() → distinct branch engine →
     handlers see DIFFERENT engine objects per branch.
+
+    T0-4: Updated to use shape=component (spec-sanctioned explicit parallelism)
+    instead of the retired multi-match conditional-edge fan-out path.
     """
     captured_engines: list[Any] = []
 
@@ -477,7 +480,7 @@ async def test_g3_multiedge_fanout_passes_branch_engine_to_handlers(tmp_path):
 
     outcome = await engine.run()
     assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS), (
-        f"Multi-edge fan-out must complete: {outcome.failure_reason}"
+        f"shape=component fan-out must complete: {outcome.failure_reason}"
     )
 
     assert len(captured_engines) == 2, (
@@ -486,7 +489,7 @@ async def test_g3_multiedge_fanout_passes_branch_engine_to_handlers(tmp_path):
 
     # Before fix: both branches receive the parent engine → same object → FAILS here
     assert captured_engines[0] is not captured_engines[1], (
-        "_execute_parallel_fan_out must pass a distinct branch engine to each "
+        "component fan-out must pass a distinct branch engine to each "
         "handler, not the parent engine (pre-fix: same object for all branches)"
     )
 
@@ -612,11 +615,15 @@ async def test_g6a_component_parallel_fan_in_aggregates_results(tmp_path):
 
 @pytest.mark.asyncio
 async def test_g6b_multiedge_fanout_branch_outcomes_reach_parent(tmp_path):
-    """G6b (S3-multiedge): branch top-node outcomes reach parent node_outcomes.
+    """G6b (S3-component): branch outcomes are recorded via ParallelHandler.
 
-    _execute_parallel_fan_out records each branch outcome in
-    self.node_outcomes[target_node_id].  After the fix (branch engine), this
-    recording must still happen on the PARENT engine, not the branch engine.
+    T0-4: _make_multiedge_graph() now uses shape=component (spec-sanctioned
+    explicit parallelism), so branch outcomes are collected by ParallelHandler
+    into parallel.results in context, not directly into engine.node_outcomes.
+
+    This test verifies that both branches (branch_c, branch_d) execute and
+    their outcomes are reflected in the gate node's outcome (gate records
+    'All N branches succeeded') and in parallel.results.
     """
     captured_engines: list[Any] = []
 
@@ -634,23 +641,32 @@ async def test_g6b_multiedge_fanout_branch_outcomes_reach_parent(tmp_path):
     outcome = await engine.run()
 
     assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS), (
-        f"Multi-edge fan-out must complete: {outcome.failure_reason}"
+        f"Component fan-out must complete: {outcome.failure_reason}"
     )
 
-    # branch_c and branch_d are the top-level branch nodes
-    assert "branch_c" in engine.node_outcomes, (
-        "branch_c outcome must be in parent engine.node_outcomes (S3)"
+    # Both branch handlers must have been called (captured_engines has one entry per branch)
+    assert len(captured_engines) == 2, (
+        f"Both branches (branch_c, branch_d) must execute via ParallelHandler; "
+        f"got {len(captured_engines)} captured engine(s)"
     )
-    assert "branch_d" in engine.node_outcomes, (
-        "branch_d outcome must be in parent engine.node_outcomes (S3)"
+
+    # The gate node (shape=component) outcome is recorded in engine.node_outcomes
+    assert "gate" in engine.node_outcomes, (
+        "gate (shape=component) outcome must be in engine.node_outcomes"
     )
-    assert engine.node_outcomes["branch_c"].status in (
-        StageStatus.SUCCESS,
-        StageStatus.PARTIAL_SUCCESS,
+    gate_outcome = engine.node_outcomes["gate"]
+    assert gate_outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS), (
+        f"gate outcome must be SUCCESS or PARTIAL_SUCCESS, got {gate_outcome.status}"
     )
-    assert engine.node_outcomes["branch_d"].status in (
-        StageStatus.SUCCESS,
-        StageStatus.PARTIAL_SUCCESS,
+
+    # parallel.results is populated by ParallelHandler (shape=component path)
+    results = engine.context.get("parallel.results")
+    assert results is not None, (
+        "parallel.results must be set after shape=component fan-out (S3)"
+    )
+    assert len(results) == 2, (
+        f"parallel.results must have 2 branch results (branch_c + branch_d), "
+        f"got {len(results)}"
     )
 
 

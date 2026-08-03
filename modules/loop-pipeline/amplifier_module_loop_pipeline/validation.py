@@ -7,10 +7,16 @@ with severity ERROR (blocks execution) or WARNING (informational).
 Spec coverage: LINT-001–018.  TOPO-001–005 are topological basin-lint rules
 implemented here beyond the canonical spec; they are lint-only (exposed via
 ``lint()``, not ``validate()``) and do not change run-time behaviour.
+
+CMD-001–002 are command-content lint rules that inspect ``tool_command``
+strings for two specific hazard shapes: pipe-masked exit codes (CMD-001) and
+always-true trailing sentinels (CMD-002).  Both are lint-only (WARNING
+severity) and do not change run-time behaviour.
 """
 
 from __future__ import annotations
 
+import re
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -105,16 +111,17 @@ def validate(
 
 
 def lint(graph: Graph) -> list[Diagnostic]:
-    """Run topological (basin-lint) rules in addition to structural rules.
+    """Run topological (basin-lint) and command-content rules in addition to structural rules.
 
     This is the entry point for the ``attractor lint`` CLI command.  It runs
-    the full structural ``validate()`` suite plus the five new topological
-    rules (TOPO-001–005) that reason about cycle structure, handler semantics,
-    and evidence-routing patterns.
+    the full structural ``validate()`` suite plus the five topological rules
+    (TOPO-001–005) that reason about cycle structure, handler semantics, and
+    evidence-routing patterns, plus the two command-content rules (CMD-001–002)
+    that inspect ``tool_command`` strings for hazard shapes.
 
-    Topological rules are lint-only: they do not change run-time validation
-    behaviour.  Existing graphs that execute today will not start failing at
-    ``run`` time because of new WARNINGs produced here.
+    All lint-only rules do not change run-time validation behaviour.  Existing
+    graphs that execute today will not start failing at ``run`` time because of
+    new WARNINGs produced here.
 
     Exit-code contract (for CLI use):
         ERROR-severity diagnostics → non-zero exit.
@@ -128,6 +135,8 @@ def lint(graph: Graph) -> list[Diagnostic]:
     _check_acyclic_graph(graph, diags)
     _check_cycle_no_conditional_exit(graph, diags)
     _check_cycle_no_deterministic_exit(graph, diags)
+    _check_pipe_masked_exit_code(graph, diags)
+    _check_always_true_sentinel(graph, diags)
     return diags
 
 
@@ -1242,3 +1251,568 @@ def _check_cycle_no_deterministic_exit(graph: Graph, diags: list[Diagnostic]) ->
                 ),
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# Command-content lint rules — CMD-001 and CMD-002
+#
+# These rules inspect ``tool_command`` attribute strings on parallelogram
+# (ToolHandler) nodes for two specific hazard shapes that cause the gate's
+# exit code to lie: pipe-masked exit codes (CMD-001) and always-true trailing
+# sentinels (CMD-002).
+#
+# Both rules are lint-only (WARNING severity) and do not change run-time
+# behaviour.  They are conservative by design: a regex/tokenizer catching the
+# two named shapes with low false positives beats an ambitious parser that
+# misfires.  Each rule's docstring states what it does NOT catch.
+#
+# Real-world incident (2026-07-28): a 20-node pipeline ran 2.4 h and exited
+# success with zero work product.  Every one of its 5 tool nodes was shaped
+# ``cmd 2>&1 | tail -N``, and 4 ended ``&& echo SENTINEL``.  The incident
+# graph linted "OK, no findings" on the pre-CMD main — these rules exist to
+# close that gap.
+#
+# Severity decision: WARNING (not ERROR).
+#   • Consistent with TOPO-002–005 (design smells, not provable defects).
+#   • Does not break existing users' lint runs or force fixing shipped examples.
+#   • The hazard is real but command content is not fully statically analysable;
+#     conservative analysis may miss complex cases.
+#   • ``test_examples_lint_clean.py`` only blocks on ERRORs, so WARNING leaves
+#     the sweep untouched.
+#
+# Engine pipefail-default recommendation: DEFER.
+#   • ``create_subprocess_shell`` targets ``/bin/sh``; ``pipefail`` is not
+#     POSIX sh and is unavailable on some platforms.
+#   • A behaviour change for every existing graph requires an EXTENSIONS.md
+#     ledger entry and a compat inventory — that is a separate ledgered change.
+#   • These lint rules are valuable either way: even under pipefail, a trailing
+#     ``&& echo SENTINEL`` still masks nothing-happened cases, and authors
+#     reading lint output learn the hazard.
+# ---------------------------------------------------------------------------
+
+# Recognised filter/pager programs whose presence as the final pipeline stage
+# masks the real command's exit code.  ``tee`` is intentionally excluded: it
+# preserves output (and is typically combined with redirection for logging).
+_PIPE_FILTER_PROGRAMS: frozenset[str] = frozenset(
+    {"tail", "head", "grep", "sed", "awk", "cut", "sort", "uniq", "wc", "xargs"}
+)
+
+# Regex for pipefail options following a standalone ``set`` builtin.  Detection
+# is deliberately limited to a top-level command statement whose first word is
+# ``set``; arbitrary text such as an ``echo`` argument or shell comment must
+# not suppress a real finding.
+_PIPEFAIL_OPTIONS_RE = re.compile(r"^set\s+-(?:[A-Za-z]*o\s+pipefail|o\s+pipefail)\b")
+
+# Regex: matches ``&& echo TOKEN`` or ``&& printf TOKEN`` (with optional
+# whitespace) at the end of a command segment.  The sentinel may be followed
+# only by whitespace or end-of-string.
+_SENTINEL_RE = re.compile(r"&&\s*(?:echo|printf)\s+\S+\s*$")
+
+
+def _strip_command_substitutions(cmd: str) -> str:
+    """Remove ``$(...)`` command substitutions from a shell command string.
+
+    This is a conservative, non-recursive strip: it removes the innermost
+    ``$(...)`` groups first (depth-1 only) so that pipes inside substitutions
+    do not confuse the top-level pipeline analysis.  Nested substitutions are
+    replaced with a placeholder that cannot match any pipe pattern.
+
+    This is NOT a full shell parser — it handles the common case of
+    ``sig=$(... | ...)`` without misidentifying the inner pipe as a top-level
+    gate pipe.
+    """
+    # Iteratively strip innermost $(...) groups (no nested $() inside)
+    # until no more are found.  Limit iterations to avoid pathological inputs.
+    placeholder = "__SUBST__"
+    for _ in range(20):
+        new_cmd, count = re.subn(r"\$\([^()]*\)", placeholder, cmd)
+        if count == 0:
+            break
+        cmd = new_cmd
+    return cmd
+
+
+def _strip_quoted_strings(cmd: str) -> str:
+    """Return the command with all quoted string contents replaced by a placeholder.
+
+    Removes the contents of single-quoted (``'...'``) and double-quoted
+    (``"..."``) strings, replacing them with ``__QUOTED__``.  Backslash
+    escapes inside double-quoted strings are respected.
+
+    Used to make ``_has_executable_pipefail`` quote-aware: ``echo "set -o pipefail"``
+    should not suppress CMD-001 because the ``set`` is inside a quoted
+    argument to ``echo``, not an executable shell statement.
+
+    This is NOT a full shell parser.  It does not handle ``$'...'`` ANSI-C
+    quoting, heredocs, or nested quoting.  Conservative: when in doubt,
+    the quoted content is stripped (reducing false suppressions).
+    """
+    result: list[str] = []
+    in_single = False
+    in_double = False
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if in_single:
+            if ch == "'":
+                in_single = False
+                result.append("__QUOTED__")
+            # else: skip quoted content
+        elif in_double:
+            if ch == "\\":
+                i += 2  # skip escaped character
+                continue
+            elif ch == "\"":
+                in_double = False
+                result.append("__QUOTED__")
+            # else: skip quoted content
+        else:
+            if ch == "'":
+                in_single = True
+            elif ch == "\"":
+                in_double = True
+            else:
+                result.append(ch)
+        i += 1
+    return "".join(result)
+
+
+def _has_executable_pipefail(cmd: str) -> bool:
+    """Return whether a top-level ``set -o pipefail`` statement is present.
+
+    This is intentionally narrower than searching for the words ``pipefail``.
+    It recognizes a standalone ``set`` statement at the beginning of the
+    command or immediately after a top-level semicolon/newline.  Thus quoted
+    output, comments, and conditional text such as ``false && set -o
+    pipefail`` cannot suppress a finding when the setting may not execute.
+    This conservative scanner is not a general shell parser.
+    """
+    unquoted = _strip_quoted_strings(cmd)
+    for statement in re.split(r"[;\n]", unquoted):
+        statement = statement.strip()
+        if not statement or statement.startswith("#"):
+            continue
+        if _PIPEFAIL_OPTIONS_RE.match(statement):
+            return True
+    return False
+
+
+def _final_semicolon_segment(cmd: str) -> str:
+    """Return the final ``;``-separated segment of a shell command string.
+
+    Splits only on top-level ``;`` (not ``&&`` or ``||``) outside quotes and
+    parentheses, and returns the last segment.  This is the segment that
+    unconditionally executes last and whose exit code determines the overall
+    command's exit code when the command uses ``;`` as a separator.
+
+    Deliberately does NOT split on ``&&`` or ``||`` — those chains are
+    preserved within the final segment.  That is important for CMD-001:
+    ``cmd | tail && echo SENTINEL``
+    is a single semicolon-segment whose pipe is still the hazard, whereas
+    ``cmd | tail; echo done`` has a clean final segment (``echo done``) that
+    determines the exit code.
+
+    Conservative: does not handle here-docs, process substitution, or deeply
+    nested constructs.  Returns the whole command if no ``;`` is found.
+    """
+    segments: list[str] = []
+    depth = 0
+    in_single = False
+    in_double = False
+    current: list[str] = []
+    i = 0
+    while i < len(cmd):
+        ch = cmd[i]
+        if in_single:
+            if ch == "'":
+                in_single = False
+            current.append(ch)
+        elif in_double:
+            if ch == "\\":
+                current.append(ch)
+                i += 1
+                if i < len(cmd):
+                    current.append(cmd[i])
+            elif ch == "\"":
+                in_double = False
+                current.append(ch)
+            else:
+                current.append(ch)
+        else:
+            if ch == "'":
+                in_single = True
+                current.append(ch)
+            elif ch == "\"":
+                in_double = True
+                current.append(ch)
+            elif ch == "(":
+                depth += 1
+                current.append(ch)
+            elif ch == ")":
+                depth = max(0, depth - 1)
+                current.append(ch)
+            elif depth == 0 and ch == ";":
+                seg = "".join(current).strip()
+                if seg:
+                    segments.append(seg)
+                current = []
+            else:
+                current.append(ch)
+        i += 1
+    seg = "".join(current).strip()
+    if seg:
+        segments.append(seg)
+    return segments[-1] if segments else cmd.strip()
+
+
+def _last_pipe_stage_program(segment: str) -> str | None:
+    """Return the program name of the last pipe stage in a command segment.
+
+    Given a segment like ``cmd 2>&1 | tail -30``, returns ``"tail"``.
+    Returns ``None`` if the segment contains no pipe.
+
+    Conservative: splits on ``|`` but excludes ``||`` (logical OR).
+    Does not handle pipes inside subshells or quotes.
+    """
+    # Split on | but not ||
+    # Replace || with a placeholder to avoid splitting on it
+    safe = segment.replace("||", "\x00\x00")
+    if "|" not in safe:
+        return None
+    stages = safe.split("|")
+    if len(stages) < 2:
+        return None
+    last_stage = stages[-1].strip()
+    if not last_stage:
+        return None
+    # Extract the first word (program name), ignoring leading env vars (VAR=val)
+    # and redirections (2>&1, >/dev/null, etc.)
+    tokens = last_stage.split()
+    for token in tokens:
+        # Skip redirections and env-var assignments
+        if re.match(r"^\d*[<>]", token) or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token):
+            continue
+        # Return the base program name (strip path prefix)
+        return token.split("/")[-1]
+    return None
+
+
+def _check_pipe_masked_exit_code(graph: Graph, diags: list[Diagnostic]) -> None:
+    """CMD-001: Tool node whose exit code is a filter's, not the real command's.
+
+    Detects parallelogram (ToolHandler) nodes whose ``tool_command`` ends in a
+    filter/pager stage (``tail``, ``head``, ``grep``, ``sed``, ``awk``,
+    ``cut``, ``sort``, ``uniq``, ``wc``, ``xargs``) without ``set -o pipefail``.
+
+    In plain ``/bin/sh`` (the engine's execution environment), a pipeline's
+    exit status is the LAST stage's.  ``false | tail -1`` exits 0 whenever
+    ``tail`` succeeds — always.  The gate records SUCCESS no matter what the
+    real command did.
+
+    What this rule does NOT catch:
+    - Pipes inside ``$(...)`` command substitutions (intentionally excluded —
+      the substitution result is captured, not used as the gate's exit code).
+    - Pipes inside ``$'...'`` ANSI-C quoting or backtick substitutions.
+    - Complex nested subshells or here-docs.
+    - Filter programs not in the recognised set (e.g. custom scripts).
+    - ``bash -o pipefail -c '...'`` wrappers (pipefail not detected inside
+      the quoted string argument — ``bash -o pipefail`` wrapping is a valid
+      but undetected suppression).
+    - Pipes inside single- or double-quoted strings ARE correctly skipped by
+      the quote-aware scanner (e.g. ``echo 'false | tail -1'`` is safe).
+    - Explicit exit-code capture (``cmd | tail; rc=$?; ...``) is not
+      recognised as a suppressor — use ``set -o pipefail`` or the redirect
+      idiom (``cmd > out.log 2>&1``) for a suppression that lint detects.
+    - Commands where the pipe appears in a non-final ``;``-separated segment
+      (e.g. ``false | tail -1; echo done``) are NOT flagged — the final
+      segment ``echo done`` determines the exit code.
+
+    Severity: WARNING — the hazard is real but static analysis cannot prove
+    the command is a meaningful gate; conservative analysis may miss cases.
+    """
+    for node in graph.nodes.values():
+        if not _is_tool(node):
+            continue
+        raw_cmd: str = str(node.attrs.get("tool_command") or "").strip()
+        if not raw_cmd:
+            continue
+
+        # If the command explicitly sets pipefail, the hazard is mitigated.
+        # _has_executable_pipefail matches only standalone ``set`` statements
+        # in quote-stripped text, so ``echo "set -o pipefail"; false | tail -1``
+        # is NOT suppressed — the ``set`` is inside a quoted argument to
+        # ``echo``, not an executable shell statement.
+        if _has_executable_pipefail(raw_cmd):
+            continue
+
+        # Strip command substitutions so inner pipes don't confuse analysis.
+        cmd = _strip_command_substitutions(raw_cmd)
+
+        # Scope the analysis to the final ``;``-separated segment.
+        # ``false | tail -1; echo done`` — the final segment is ``echo done``
+        # (exit code 0, no pipe hazard), so CMD-001 must NOT fire.
+        # ``false | tail -1 && echo SENTINEL`` — the whole command is one
+        # semicolon-segment; the pipe is still the exit-code hazard, so
+        # CMD-001 DOES fire (and CMD-002 catches the sentinel separately).
+        final_seg = _final_semicolon_segment(cmd)
+
+        # Find the last non-|| pipe position in the final segment.
+        last_pipe_pos = _find_last_bare_pipe(final_seg)
+        if last_pipe_pos is None:
+            continue
+
+        # Extract the stage after the last bare pipe.
+        after_pipe = final_seg[last_pipe_pos + 1 :]
+        program = _last_pipe_stage_program("|" + after_pipe)  # re-use helper
+        if program is None or program not in _PIPE_FILTER_PROGRAMS:
+            continue
+
+        # NOTE: a ``||`` branch after the pipe does NOT suppress CMD-001.
+        # ``false | tail -1 && printf green || printf red`` prints ``green``
+        # unconditionally — ``tail`` exits 0, so ``|| printf red`` never fires
+        # for the original failure.  The only genuinely honest ``||`` shapes
+        # are those WITHOUT a masking pipe: ``cmd && printf green || printf
+        # red`` (no pipe), which are already not flagged because
+        # ``_find_last_bare_pipe`` finds no filter in that position.
+
+        diags.append(
+            Diagnostic(
+                rule="CMD-001",
+                severity="WARNING",
+                message=(
+                    f"Tool node '{node.id}' tool_command ends in a pipe to "
+                    f"'{program}' without pipefail: the gate's "
+                    f"exit code is '{program}'s (always 0 on success), not the "
+                    f"real command's.  In /bin/sh a pipeline's exit status is "
+                    f"the last stage's — so 'false | tail -1' exits 0.  The "
+                    f"gate may record SUCCESS even when the wrapped command "
+                    f"failed.  Fix: redirect output to a file "
+                    f"('cmd > out.log 2>&1') to preserve exit code, or capture "
+                    f"exit code explicitly ('cmd; rc=$?; ... && printf ok || "
+                    f"printf fail').  See DOT-AUTHORING-GUIDE.md (CMD-001)."
+                ),
+                node_id=node.id,
+                fix=(
+                    "Replace 'cmd 2>&1 | tail -N' with 'cmd > out.log 2>&1' "
+                    "to preserve the real exit code.  Alternatively, capture "
+                    "the exit code: 'cmd; rc=$?; [ $rc -eq 0 ] && printf ok "
+                    "|| { printf fail; exit 1; }'.  If you need to see the "
+                    "last N lines, write to a file and read it separately."
+                ),
+            )
+        )
+
+
+def _find_last_bare_pipe(cmd: str) -> int | None:
+    """Return the index of the last ``|`` that is not part of ``||``.
+
+    Quote-aware: pipes inside single-quoted or double-quoted strings are
+    skipped so that ``echo 'false | tail -1'`` does not produce a false
+    positive.  Backslash escapes inside double-quoted strings are respected.
+
+    Returns ``None`` if no bare pipe is found outside of quotes.
+    """
+    in_single = False
+    in_double = False
+    last_pipe: int | None = None
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if in_single:
+            if ch == "'":
+                in_single = False
+        elif in_double:
+            if ch == "\\":
+                i += 2  # skip escaped character
+                continue
+            elif ch == "\"":
+                in_double = False
+        else:
+            if ch == "'":
+                in_single = True
+            elif ch == "\"":
+                in_double = True
+            elif ch == "|":
+                # Check it's not part of ||
+                prev_is_pipe = i > 0 and cmd[i - 1] == "|"
+                next_is_pipe = i + 1 < n and cmd[i + 1] == "|"
+                if not prev_is_pipe and not next_is_pipe:
+                    last_pipe = i
+        i += 1
+    return last_pipe
+
+
+def _check_always_true_sentinel(graph: Graph, diags: list[Diagnostic]) -> None:
+    """CMD-002: Trailing ``&& echo/printf TOKEN`` after a pipe-masked command.
+
+    Detects parallelogram (ToolHandler) nodes whose ``tool_command`` contains
+    a pipe to a filter/pager followed by ``&& echo TOKEN`` or
+    ``&& printf TOKEN`` at the end of the command.  The sentinel fires
+    regardless of whether the wrapped command succeeded, making
+    ``tool.last_line`` the sentinel string rather than evidence.
+
+    Example hazard: ``sh -c 'exit 1' 2>&1 | tail -5 && echo GREEN``
+    - ``tail`` exits 0 (it read stdin fine), so ``&& echo GREEN`` fires.
+    - ``tool.last_line`` becomes ``GREEN`` regardless of the inner command.
+    - The routing channel says "success" unconditionally.
+
+    Contrast with the honest token-gate idiom (NOT flagged):
+    - ``cmd && printf green || printf red`` — no pipe; the token gate is
+      honest because ``cmd``'s exit code gates the ``&&``.
+    - ``cmd && printf green || { printf red; exit 1; }`` — exit-code gate;
+      failure is preserved.  Neither has a masking pipe before the sentinel.
+
+    NOTE: a ``||`` branch does NOT suppress CMD-002.  For example,
+    ``false | tail -1 && printf green || printf red`` is still hazardous:
+    ``tail`` exits 0 so ``printf green`` fires unconditionally.
+
+    What this rule does NOT catch:
+    - Sentinels inside ``$(...)`` substitutions.
+    - Sentinels after non-pipe-masked commands (where ``&& echo TOKEN`` is the
+      honest token-gate idiom and is safe — CMD-002 only fires when the
+      command is already pipe-masked).
+    - Multi-line or heredoc command structures.
+    - Variable-interpolated filter names (e.g. ``| $FILTER``).
+    - Commands where the sentinel is followed by ``|| ...`` at the end (those
+      end with the ``||`` branch, not the sentinel, so ``_SENTINEL_RE`` does
+      not match).
+
+    Severity: WARNING — consistent with CMD-001 and the TOPO rule family.
+    """
+    for node in graph.nodes.values():
+        if not _is_tool(node):
+            continue
+        raw_cmd: str = str(node.attrs.get("tool_command") or "").strip()
+        if not raw_cmd:
+            continue
+
+        # If the command explicitly sets pipefail, the hazard is mitigated.
+        # _has_executable_pipefail matches only standalone ``set`` statements
+        # in quote-stripped text, so ``echo "set -o pipefail"; false | tail -1
+        # && echo GREEN`` is NOT suppressed — the ``set`` is inside a quoted
+        # argument, not executed.
+        if _has_executable_pipefail(raw_cmd):
+            continue
+
+        # Strip command substitutions so inner pipes don't confuse analysis.
+        cmd = _strip_command_substitutions(raw_cmd)
+
+        # Scope the analysis to the final ``;``-separated segment.
+        # ``false | tail -1; echo done && echo SENTINEL`` — the final segment
+        # is ``echo done && echo SENTINEL`` (no pipe), so CMD-002 must NOT
+        # fire.  ``false | tail -1 && echo SENTINEL`` — the whole command is
+        # one semicolon-segment; the pipe+sentinel hazard is present.
+        final_seg = _final_semicolon_segment(cmd)
+
+        # CMD-002 pattern: a pipe to a filter FOLLOWED BY && echo/printf TOKEN
+        # at the end of the final segment.
+        #
+        # We look for: ... | <filter> [args] && (echo|printf) TOKEN [end]
+        # where [end] means end-of-string or only whitespace.
+        #
+        # NOTE: a || branch does NOT suppress this rule.  The sentinel fires
+        # unconditionally when the pipe stage is a filter that always exits 0.
+        #
+        # The sentinel must NOT be followed by || (that would be an honest
+        # token gate).
+
+        # Find positions of all bare pipes in the final segment.
+        pipe_positions = _find_all_bare_pipes(final_seg)
+        if not pipe_positions:
+            continue
+
+        for pipe_pos in pipe_positions:
+            after_pipe = final_seg[pipe_pos + 1 :]
+            program = _last_pipe_stage_program("|" + after_pipe)
+            if program is None or program not in _PIPE_FILTER_PROGRAMS:
+                continue
+
+            # There's a pipe to a filter.  Now check if the remainder of the
+            # final segment (after this pipe's stage) ends with
+            # && echo/printf TOKEN.
+            #
+            # Extract the text from this pipe to the end of the final segment.
+            remainder = final_seg[pipe_pos:]
+
+            # Does the remainder contain a sentinel?
+            sentinel_match = _SENTINEL_RE.search(remainder)
+            if not sentinel_match:
+                continue
+
+            # NOTE: a ``||`` branch does NOT suppress CMD-002.
+            # ``false | tail -1 && printf green || printf red`` is still a
+            # hazard: ``tail`` exits 0 so ``printf green`` fires unconditionally
+            # and ``|| printf red`` never fires for the original failure.
+            # The honest token-gate idiom is ``cmd && printf green || printf
+            # red`` WITHOUT a masking pipe — those are not flagged because
+            # ``_find_all_bare_pipes`` finds no filter stage in that position.
+
+            diags.append(
+                Diagnostic(
+                    rule="CMD-002",
+                    severity="WARNING",
+                    message=(
+                        f"Tool node '{node.id}' tool_command has a trailing "
+                        f"'&& echo/printf TOKEN' sentinel after a pipe-masked "
+                        f"command (pipe to '{program}').  The sentinel fires "
+                        f"unconditionally because '{program}' always exits 0 "
+                        f"when it can read its input — so tool.last_line "
+                        f"becomes the sentinel string regardless of whether the "
+                        f"wrapped command succeeded.  The gate always says yes.  "
+                        f"Fix: use the honest token-gate idiom "
+                        f"'cmd && printf ok || printf fail' (no pipe), or "
+                        f"redirect output to a file and test the exit code "
+                        f"explicitly.  See DOT-AUTHORING-GUIDE.md (CMD-002)."
+                    ),
+                    node_id=node.id,
+                    fix=(
+                        "Replace '... | tail -N && echo TOKEN' with the honest "
+                        "token-gate idiom: 'cmd && printf ok || printf fail' "
+                        "(no pipe; exit code gates the token).  Or redirect to "
+                        "a file: 'cmd > out.log 2>&1 && printf ok || printf "
+                        "fail'.  The || branch is what makes the gate honest."
+                    ),
+                )
+            )
+            break  # One CMD-002 diagnostic per node is enough
+
+
+def _find_all_bare_pipes(cmd: str) -> list[int]:
+    """Return indices of all ``|`` characters that are not part of ``||``.
+
+    Quote-aware: pipes inside single-quoted or double-quoted strings are
+    skipped so that ``printf "false | tail -1"`` does not produce a false
+    positive.  Backslash escapes inside double-quoted strings are respected.
+
+    Scans left-to-right.
+    """
+    positions: list[int] = []
+    in_single = False
+    in_double = False
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if in_single:
+            if ch == "'":
+                in_single = False
+        elif in_double:
+            if ch == "\\":
+                i += 2  # skip escaped character
+                continue
+            elif ch == "\"":
+                in_double = False
+        else:
+            if ch == "'":
+                in_single = True
+            elif ch == "\"":
+                in_double = True
+            elif ch == "|":
+                prev_is_pipe = i > 0 and cmd[i - 1] == "|"
+                next_is_pipe = i + 1 < n and cmd[i + 1] == "|"
+                if not prev_is_pipe and not next_is_pipe:
+                    positions.append(i)
+        i += 1
+    return positions

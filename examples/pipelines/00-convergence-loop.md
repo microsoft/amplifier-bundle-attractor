@@ -148,7 +148,7 @@ Every tutorial after this one is a variation on the bowl:
 | `01-simple-linear.md` | Engine demo: the simplest possible pipeline (no gate, no loop) |
 | `02-plan-implement-test.md` | Convergence tutorial: staged `plan → implement → test_gate` with `goal_gate` + `retry_target` + corrective back-edge (graduated from engine demo) |
 | `03-conditional-routing.md` | Engine demo: `diamond` routing node |
-| `04-retry-with-fallback.md` | Engine demo: retry ladder (`max_retries`, fallback targets) |
+| `04-retry-with-fallback.md` | Retry ladder demo + renegotiation exemplar: what to do when the basin is out of reach — explicit, recorded criteria relaxation (graduated from engine demo) |
 | `05-parallel-fan-out.md` | Engine demo: `component` fan-out / `tripleoctagon` fan-in |
 
 The canonical convergence exemplars (this file, `02-plan-implement-test`, `bug-fix`, `task-runner`) teach

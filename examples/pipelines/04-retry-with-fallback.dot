@@ -1,8 +1,68 @@
-// 04-retry-with-fallback.dot -- Retry logic and failure routing.
+// 04-retry-with-fallback.dot -- Retry logic, fallback, and explicit criteria renegotiation.
 //
-// A pipeline that exercises retry logic and fallback targets.
+// A pipeline that exercises the engine's retry ladder and teaches the
+// renegotiation pattern: when a hard criterion cannot be met within budget,
+// the graph routes through an explicit decision point, records the downgrade
+// (enforced deterministically by a tool gate), and names what was actually
+// achieved versus what was originally asked.
+//
 // Tests: max_retries attribute, retry_target, fallback_retry_target,
-//        retry policy, goal gate + retry interaction, allow_partial.
+//        retry policy, goal gate + retry interaction, allow_partial,
+//        evidence-gated cycle exit (TOPO-004/005), explicit renegotiation,
+//        deterministic enforcement of disclosure artifact.
+//
+// Walk-up invocation (run from the repo root):
+//
+//   DOT="$PWD/examples/pipelines/04-retry-with-fallback.dot"
+//   mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+//   attractor run "$DOT" --cwd .
+//
+// SHAPE (the doctrine, made visible):
+//   HARD PATH:  plan -> implement -> validate_gate -(gate_pass)-> done
+//               validate_gate -(gate_fail)-> implement  [corrective loop]
+//               validate_gate -(budget_exhausted)-> renegotiate  [budget wall]
+//   FALLBACK:   implement returns FAIL -> drawn outcome=fail edge routes to renegotiate
+//               -> renegotiate (LLM writes renegotiation.md)
+//               -> check_renegotiation (tool ENFORCES renegotiation.md exists + complete)
+//               -> simple_implement -> validate_relaxed -(relaxed_pass)-> done
+//   KEY TEACHING: renegotiation is legitimate only when EXPLICIT and RECORDED.
+//     The renegotiate node is the visible decision point; it writes
+//     renegotiation.md. The check_renegotiation tool gate enforces that the
+//     file exists and contains all required sections BEFORE the relaxed path
+//     can proceed -- making the disclosure artifact a pipeline-enforced
+//     requirement, not an LLM promise. Two drawn TRIGGER edges lead to
+//     renegotiate: the budget-exhaustion edge from validate_gate (cannot
+//     meet criteria within budget) and the implementation-failure edge from
+//     implement (handler failure, API error). (A third incoming edge is the
+//     record_missing retry from check_renegotiation.) All are visible to
+//     topology readers without opening node attributes.
+//
+// ROUTING MECHANICS:
+//   Budget exhaustion: validate_gate tracks how many times it has been entered
+//     (validate_count.txt). When count exceeds the budget (3), it emits
+//     "budget_exhausted" and the drawn edge validate_gate -> renegotiate fires.
+//     This is the primary renegotiation trigger the exemplar teaches: "cannot
+//     meet criteria A within budget -> explicit renegotiation."
+//   Implementation failure: the drawn edge implement -> renegotiate fires when
+//     implement returns a FAIL outcome (handler failure, API error). This is a
+//     secondary path that also routes to the renegotiation decision point.
+//   The retry-ladder attributes (retry_target, fallback_retry_target) on
+//     implement are belt-and-suspenders for topologies where no drawn edge
+//     exists -- they are NOT the active routing mechanism in this graph (the
+//     drawn edges are selected first by spec §3.3 Step 1).
+//
+// GATE TRUTHFULNESS (CMD-001/002): the python3 check scripts exit 1 when any
+//   case fails, so the shell's `|| printf gate_fail` fires correctly. The
+//   gate commands always exit 0 (printf does not set exit code), so
+//   tool.last_line is always fresh -- no stale-label hazard.
+//
+// STALE-LABEL RULE: validate_gate and validate_relaxed both always exit 0
+//   (the budget/pass/fail sentinels are emitted via printf, not via exit code).
+//   The `&& outcome=success` conjunction on the pass and budget_exhausted edges
+//   is general-case discipline: if the tool ever exits nonzero, a stale
+//   last_line could be the deterministic pick on a FAIL visit (spec §3.3
+//   single-best-edge). See DOT-AUTHORING-GUIDE.md (CMD-001/002) and
+//   bug-fix.dot for the pattern.
 
 digraph RetryWithFallback {
     graph [
@@ -16,43 +76,181 @@ digraph RetryWithFallback {
 
     // Structural nodes
     start [shape=Mdiamond, label="Start"]
-    done  [shape=Msquare, label="Done"]
+    done  [shape=Msquare,  label="Done"]
 
-    // Primary implementation path -- attempts the hard version
+    // --- Planning ---
     plan [
         label="Plan",
         prompt="Plan the implementation of an RFC 5322 compliant email regex for: $goal"
     ]
 
+    // --- Primary implementation: attempts the hard (RFC 5322) version ---
+    // max_retries=2: up to 3 total executions (1 initial + 2 retries).
+    // retry_target="plan": belt-and-suspenders -- if no drawn edge matches a FAIL
+    //   outcome, the engine would jump back to plan for a fresh approach (spec §3.7 step 2).
+    //   In this graph, the drawn outcome=fail edge below takes precedence.
+    // fallback_retry_target="renegotiate": belt-and-suspenders -- if retry_target were
+    //   also exhausted and no drawn edge matched, the engine would fire the fallback
+    //   (spec §3.7 step 3). In this graph, the drawn edge is the active mechanism.
+    // Both attributes are present to demonstrate the engine's retry-ladder API;
+    // the drawn edge implement -> renegotiate is the active routing mechanism here.
     implement [
-        label="Implement (Hard)",
-        prompt="Write a comprehensive RFC 5322 email validation regex. This is complex -- handle all edge cases including quoted strings, domain literals, and comments.",
+        label="Implement (RFC 5322)",
+        prompt="Write a comprehensive RFC 5322 email validation regex. Handle all edge cases including quoted strings, domain literals, and comments. Write the regex (and ONLY the regex pattern, no delimiters) to email_regex.txt. If validate_output.txt exists, read it -- it holds the latest validation results and tells you exactly what to fix.",
         max_retries=2,
         goal_gate=true,
         retry_target="plan",
-        fallback_retry_target="simple_implement"
+        fallback_retry_target="renegotiate"
     ]
 
-    // Fallback path -- a simpler alternative if the hard version keeps failing
+    // --- Evidence gate: mechanically checks the hard (RFC 5322) criteria ---
+    // shape=parallelogram: runs the tool_command directly (not via LLM).
+    // Tests a fixed case set against the regex written to email_regex.txt.
+    //
+    // BUDGET TRACKING: increments validate_count.txt on every entry (inner
+    //   loop AND outer-loop revisits). When the count exceeds 3, emits
+    //   "budget_exhausted" and routes to renegotiate -- a decision point, not
+    //   a bare FAIL. This is the primary renegotiation trigger: "cannot meet
+    //   criteria A within budget -> explicit renegotiation."
+    //
+    // GATE TRUTHFULNESS: the python3 script exits 1 when any case fails, so
+    //   the shell's `|| printf gate_fail` fires correctly. The gate command
+    //   always exits 0 (printf does not set exit code), so tool.last_line is
+    //   always fresh.
+    //
+    // The case set deliberately includes RFC 5322 edge cases (quoted strings,
+    //   domain literals) that the relaxed path does NOT test -- the visible
+    //   difference between the two gate commands IS the renegotiation.
+    validate_gate [
+        shape=parallelogram,
+        label="Validate (RFC 5322)",
+        tool_command="n=$(($(cat validate_count.txt 2>/dev/null || echo 0)+1)); echo $n > validate_count.txt; B=3; if [ \"$n\" -gt \"$B\" ]; then printf budget_exhausted; else python3 -c \"\nimport re, sys\ntry:\n    pat = open('email_regex.txt').read().strip()\nexcept FileNotFoundError:\n    print('MISSING: email_regex.txt', file=sys.stderr); sys.exit(1)\nresults = []\nquoted = chr(34) + 'quoted' + chr(34) + '@example.com'\ncases = [\n    ('valid@email.com',          True),\n    ('user+tag@domain.co.uk',    True),\n    (quoted,                     True),\n    ('user@[192.168.1.1]',       True),\n    ('invalid@',                 False),\n    ('@nodomain',                False),\n    ('plaintext',                False),\n]\nfor addr, expect in cases:\n    m = bool(re.fullmatch(pat, addr))\n    ok = (m == expect)\n    status = 'PASS' if ok else 'FAIL'\n    exp = 'valid' if expect else 'invalid'\n    results.append(status + ': ' + addr + ' (expected ' + exp + ')')\nfor r in results:\n    print(r)\nall_pass = all(r.startswith('PASS') for r in results)\nsys.exit(0 if all_pass else 1)\n\" > validate_output.txt 2>&1 && printf gate_pass || printf gate_fail; fi",
+        retry_target="implement"
+    ]
+
+    // --- Renegotiation decision point ---
+    // This node is the explicit, visible decision point where criteria are
+    // relaxed. It is TRIGGERED via two drawn edges (a third incoming edge,
+    // the record_missing retry from check_renegotiation, re-enters it):
+    //   1. validate_gate -> renegotiate [condition="context.tool.last_line=budget_exhausted"]
+    //      -- when validate_gate has run N times without the RFC 5322 case set
+    //      passing. This is the primary teaching: "cannot meet criteria A within
+    //      budget -> explicit renegotiation."
+    //   2. implement -> renegotiate [condition="outcome=fail"]
+    //      -- when implement returns a FAIL outcome (handler failure, API error).
+    //      This is a secondary path that also routes to the decision point.
+    //
+    // The node writes renegotiation.md. The NEXT node (check_renegotiation)
+    // is a tool gate that ENFORCES the file exists and is complete before
+    // the relaxed path can proceed. This makes the disclosure artifact a
+    // pipeline-enforced requirement, not an LLM promise.
+    // A SUCCESS that is indistinguishable from full-criteria success is a
+    // failure of the renegotiation pattern.
+    renegotiate [
+        label="Renegotiate Criteria",
+        prompt="This is an explicit criteria-renegotiation decision point. The pipeline could not meet the RFC 5322 goal within budget (either validate_gate exhausted its retry budget, or implement returned a FAIL outcome).\n\nCheck validate_count.txt and validate_output.txt to understand which path triggered renegotiation. If check_renegotiation_output.txt exists, read it -- it explains exactly why a previous record was rejected.\n\nWrite renegotiation.md with ALL FIVE of these sections, in this order:\n1. ORIGINAL GOAL -- the RFC 5322 email validation goal\n2. RELAXED CRITERIA -- common email formats only (user@domain.com style), NOT full RFC 5322\n3. REASON -- state whether this was budget exhaustion (validate_gate ran N times without passing) or implementation failure (implement returned FAIL)\n4. WHAT THIS RUN WILL ACHIEVE -- a regex that handles common formats, NOT full RFC 5322 compliance\n5. WHAT THIS RUN WILL NOT ACHIEVE -- quoted strings, domain literals, comments, and other RFC 5322 edge cases\n\nFORMAT REQUIREMENTS (the check_renegotiation gate enforces these mechanically):\n- Each heading must be on its OWN line, exactly as written above (plain text or markdown ## form; a trailing colon is fine)\n- The section content goes on the line(s) BELOW its heading, never on the heading line itself\n- Keep the five headings in the order listed; do not repeat a heading; do not put headings inside code fences\n\nDo NOT write email_regex.txt here -- that is done by simple_implement after this record is verified."
+    ]
+
+    // --- Renegotiation record enforcement gate ---
+    // shape=parallelogram: runs the tool_command directly (not via LLM).
+    // This is the ENFORCEMENT gate: it checks that renegotiation.md exists
+    // and is a real disclosure, not a forgeable shape. The parser is strict
+    // by design -- a lenient parser is itself the wrong-but-plausible bug:
+    //   * Each required heading must be its OWN line (exact match after
+    //     stripping markdown heading markers, list numbering, bold markers,
+    //     and a trailing colon). Substring matching is forgeable: a single
+    //     line containing all five heading strings plus one unrelated
+    //     sentence would satisfy a substring check.
+    //   * Headings must appear exactly once each, in the prescribed order.
+    //   * Headings inside ``` code fences do not count.
+    //   * Every section (heading line to next heading line) must contain at
+    //     least one non-empty content line. Bare headings are rejected --
+    //     heading presence is not section presence.
+    // The gate enforces that the downgrade is RECORDED (substantive content,
+    // correctly structured), not merely LABELED. The relaxed path CANNOT
+    // proceed to simple_implement until this check passes.
+    //
+    // This makes the disclosure artifact a pipeline-enforced requirement,
+    // not an LLM promise. Without this gate, the pipeline could exit SUCCESS
+    // on the relaxed path with no renegotiation.md -- indistinguishable from
+    // full-criteria success. With this gate, that is structurally impossible.
+    //
+    // GATE TRUTHFULNESS: the python3 script exits 1 when any structural or
+    //   content check fails, so `|| printf record_missing` fires correctly.
+    //   Always exits 0 overall (printf does not set exit code), so
+    //   tool.last_line is fresh. Rejection diagnostics land in
+    //   check_renegotiation_output.txt so the retry can fix the record.
+    check_renegotiation [
+        shape=parallelogram,
+        label="Check Renegotiation Record",
+        tool_command="python3 -c \"\nimport sys, os, re\npath = 'renegotiation.md'\nif not os.path.exists(path):\n    print('MISSING: renegotiation.md does not exist', file=sys.stderr)\n    sys.exit(1)\nlines = open(path).read().splitlines()\nrequired = [\n    'ORIGINAL GOAL',\n    'RELAXED CRITERIA',\n    'REASON',\n    'WHAT THIS RUN WILL ACHIEVE',\n    'WHAT THIS RUN WILL NOT ACHIEVE',\n]\nfmark = chr(96) * 3\nheadings = []\nfence = False\nfor j, l in enumerate(lines):\n    s = l.strip()\n    if s.startswith(fmark):\n        fence = not fence\n        continue\n    if fence:\n        continue\n    t = re.sub(r'^#{1,6} *', '', s)\n    t = re.sub(r'^[0-9]+[.)] *', '', t)\n    t = t.strip('*_ ').rstrip(':').strip('*_ ')\n    if t.upper() in required:\n        headings.append((j, t.upper()))\nnames = [n for j, n in headings]\nproblems = []\nfor r in required:\n    c = names.count(r)\n    if c == 0:\n        problems.append('missing heading line: ' + r + ' (each heading must be its own line)')\n    elif c > 1:\n        problems.append('duplicate heading line: ' + r)\nif not problems and names != required:\n    problems.append('headings out of order: found ' + str(names))\nif not problems:\n    for k, h in enumerate(headings):\n        end = headings[k + 1][0] if k + 1 < len(headings) else len(lines)\n        body = [b for b in lines[h[0] + 1:end] if b.strip() and not b.strip().startswith(fmark)]\n        if not body:\n            problems.append('no content under: ' + h[1])\nif problems:\n    print('REJECTED renegotiation.md:', file=sys.stderr)\n    for p in problems:\n        print('  - ' + p, file=sys.stderr)\n    sys.exit(1)\nprint('renegotiation.md verified: five heading lines in prescribed order, each with content')\nsys.exit(0)\n\" > check_renegotiation_output.txt 2>&1 && printf record_ok || printf record_missing",
+        retry_target="renegotiate"
+    ]
+
+    // --- Relaxed implementation: simpler alternative after renegotiation ---
+    // allow_partial=true: PARTIAL_SUCCESS satisfies the goal gate here.
+    // retry_target="renegotiate": if this also fails, retry from the
+    //   renegotiation point (clearing goal_gate_has_retry warning).
+    // This node is reached ONLY after check_renegotiation has verified the
+    // disclosure record -- the relaxed path cannot bypass the disclosure gate.
     simple_implement [
-        label="Implement (Simple)",
-        prompt="Write a basic email validation regex. Don't worry about RFC 5322 edge cases -- just handle common email formats like user@domain.com.",
+        label="Implement (Common Formats)",
+        prompt="Write a basic email validation regex for common formats like user@domain.com. Don't worry about RFC 5322 edge cases -- the criteria have been explicitly relaxed and recorded in renegotiation.md. Write the regex (and ONLY the regex pattern, no delimiters) to email_regex.txt.",
         goal_gate=true,
-        allow_partial=true
+        allow_partial=true,
+        retry_target="renegotiate"
     ]
 
-    // Validation
-    validate [
-        label="Validate",
-        prompt="Test the email regex against these cases: valid@email.com, user+tag@domain.co.uk, 'quoted'@example.com, invalid@, @nodomain, plaintext. Report which pass and which fail."
+    // --- Relaxed evidence gate: checks common-format criteria only ---
+    // A DIFFERENT case set than validate_gate -- no quoted strings or domain
+    // literals. The visible difference between the two gate commands IS the
+    // renegotiation: a reader of the .dot can see exactly what was relaxed.
+    //
+    // GATE TRUTHFULNESS: same fix as validate_gate -- python3 exits 1 on
+    //   failure, so `|| printf relaxed_fail` fires correctly. Always exits 0.
+    validate_relaxed [
+        shape=parallelogram,
+        label="Validate (Common Formats)",
+        tool_command="python3 -c \"\nimport re, sys\ntry:\n    pat = open('email_regex.txt').read().strip()\nexcept FileNotFoundError:\n    print('MISSING: email_regex.txt', file=sys.stderr); sys.exit(1)\nresults = []\ncases = [\n    ('valid@email.com',       True),\n    ('user+tag@domain.co.uk', True),\n    ('user.name@example.org', True),\n    ('invalid@',              False),\n    ('@nodomain',             False),\n    ('plaintext',             False),\n]\nfor addr, expect in cases:\n    m = bool(re.fullmatch(pat, addr))\n    ok = (m == expect)\n    status = 'PASS' if ok else 'FAIL'\n    results.append(status + ': ' + addr)\nfor r in results:\n    print(r)\nall_pass = all(r.startswith('PASS') for r in results)\nsys.exit(0 if all_pass else 1)\n\" > validate_relaxed_output.txt 2>&1 && printf relaxed_pass || printf relaxed_fail",
+        retry_target="simple_implement"
     ]
 
-    // Primary path
-    start -> plan -> implement -> validate -> done
+    // ===== Edges =====
 
-    // Fallback path merges into validation
-    simple_implement -> validate
+    // Primary (hard) path
+    start -> plan -> implement -> validate_gate
 
-    // Explicit fail edge from validate back to implement
-    validate -> implement [label="Retry", condition="outcome=fail"]
+    // Evidence-gated cycle exit: routes on context.tool.last_line.
+    // `&& outcome=success` on pass/budget edges: STALE-LABEL discipline.
+    // The gate always exits 0 (printf), so tool.last_line is always fresh;
+    // the conjunction is general-case discipline for future-proofing.
+    validate_gate -> done       [label="RFC 5322 pass",     condition="context.tool.last_line=gate_pass && outcome=success"]
+    validate_gate -> implement  [label="fix and retry",     condition="context.tool.last_line=gate_fail", loop_restart="true"]
+
+    // Budget-exhaustion renegotiation: the primary teaching path.
+    // When validate_gate has run N times without passing, it emits
+    // "budget_exhausted" and this drawn edge routes to the renegotiation
+    // decision point -- "cannot meet criteria A within budget -> renegotiate."
+    // `&& outcome=success`: STALE-LABEL discipline (see STALE-LABEL RULE above).
+    validate_gate -> renegotiate [label="budget exhausted -- renegotiate criteria", condition="context.tool.last_line=budget_exhausted && outcome=success"]
+
+    // Implementation-failure renegotiation: secondary path.
+    // When implement returns FAIL (handler failure, API error), spec §3.3
+    // Step 1 selects this edge directly -- routing to the same decision point.
+    implement -> renegotiate [label="FAIL -- renegotiate criteria", condition="outcome=fail"]
+
+    // Renegotiation flow: record the downgrade, enforce the record, then implement the relaxed version.
+    // check_renegotiation is the ENFORCEMENT gate: the relaxed path cannot proceed
+    // to simple_implement without renegotiation.md existing and containing all
+    // required disclosure sections. This makes the disclosure a pipeline-enforced
+    // requirement, not an LLM promise.
+    renegotiate -> check_renegotiation
+    check_renegotiation -> simple_implement   [label="record verified",    condition="context.tool.last_line=record_ok && outcome=success"]
+    check_renegotiation -> renegotiate        [label="record missing -- retry renegotiation", condition="context.tool.last_line=record_missing", loop_restart="true"]
+    simple_implement -> validate_relaxed
+
+    // Relaxed evidence-gated exit
+    // `&& outcome=success` on relaxed_pass edge: STALE-LABEL discipline.
+    validate_relaxed -> done          [label="relaxed criteria pass", condition="context.tool.last_line=relaxed_pass && outcome=success"]
+    validate_relaxed -> simple_implement [label="fix and retry",      condition="context.tool.last_line=relaxed_fail", loop_restart="true"]
 }

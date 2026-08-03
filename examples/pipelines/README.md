@@ -59,7 +59,7 @@ after `00` when you need that specific feature:
 |---|-------|--------------------|
 | 01 | [01-simple-linear.md](01-simple-linear.md) | Linear `A → B → C` — the simplest possible pipeline |
 | 03 | [03-conditional-routing.md](03-conditional-routing.md) | `diamond` routing node / conditional branches |
-| 04 | [04-retry-with-fallback.md](04-retry-with-fallback.md) | Retry loop with fallback path |
+| 04 | [04-retry-with-fallback.md](04-retry-with-fallback.md) | Retry ladder + explicit criteria renegotiation (recorded, gate-enforced downgrade) |
 | 05 | [05-parallel-fan-out.md](05-parallel-fan-out.md) | `component` fan-out / `tripleoctagon` fan-in |
 | 06 | [06-model-stylesheet.md](06-model-stylesheet.md) | CSS-like per-node model routing |
 | 07 | [07-fidelity-modes.md](07-fidelity-modes.md) | Fidelity + `thread_id` context control |

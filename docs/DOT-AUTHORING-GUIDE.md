@@ -1305,6 +1305,52 @@ where the pipe appears in a non-final `;`-separated segment (e.g.
 
 ---
 
+### Record-validating gates: parse, don't grep
+
+A companion design rule to the CMD family, for gates whose evidence is a
+**record written by another actor**.  A gate that validates an LLM-authored
+artifact — a renegotiation disclosure, a review verdict file, anything a
+worker node writes — must match **structure**: anchored, ordered, whole-line
+headings with non-empty section content.  Never bare substring presence.  A
+keyword grep on someone else's record is routing on typed sentinels — the
+sentinel has just moved into the record.
+
+Two live forge shapes break every substring check (use them as the breaking
+inputs for your gate's negative tests):
+
+```text
+# Forge 1 — every heading keyword on one line, plus an unrelated sentence
+ORIGINAL GOAL RELAXED CRITERIA REASON ... and the weather is nice today.
+
+# Forge 2 — bare headings, empty sections
+ORIGINAL GOAL
+RELAXED CRITERIA
+REASON
+...
+```
+
+Both contain every required keyword; neither records anything.  A structural
+parser rejects both: each heading must be its own line, appear exactly once,
+in the prescribed order, outside code fences, and every section must contain
+at least one non-empty content line.
+
+**Scope — this is a trust boundary, not a blanket rule:**
+
+- An anchored single-token line contract (e.g. `^VERDICT: SHIP$` as the last
+  line) is a degenerate parse, and fine.
+- A gate may grep artifacts **it authored itself** — its own ledgers,
+  counters, and state files are inside the trust boundary.
+
+Reference implementation: the `check_renegotiation` gate in
+[`examples/pipelines/04-retry-with-fallback.dot`](../examples/pipelines/04-retry-with-fallback.dot)
+and its negative-test battery in
+[`modules/loop-pipeline/tests/test_retry_with_fallback_evidence.py`](../modules/loop-pipeline/tests/test_retry_with_fallback_evidence.py).
+
+This is deliberately not a lint rule: content forgery is semantic, and lint
+checks shape.
+
+---
+
 ## Further Reading
 
 - [DOT-SYNTAX.md](DOT-SYNTAX.md) -- Quick reference tables and copy-paste patterns

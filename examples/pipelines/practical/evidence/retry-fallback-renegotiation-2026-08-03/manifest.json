@@ -1,0 +1,22 @@
+{
+  "graph_name": "RetryWithFallback",
+  "graph_file": "examples/pipelines/04-retry-with-fallback.dot",
+  "goal": "Generate a complex regex pattern that validates email addresses per RFC 5322",
+  "captured": "2026-08-03",
+  "provenance": "Both directories were captured verbatim from live `attractor run` invocations of this graph (installed pipeline-runner CLI, real LLM backend) on 2026-08-03. Nothing is hand-authored except this manifest.",
+  "runs": {
+    "hard-path": {
+      "invocation": "attractor run <repo>/examples/pipelines/04-retry-with-fallback.dot --cwd . (clean run directory)",
+      "result": "status=success on the FULL criteria: the model's regex passed all 7 RFC 5322 cases (including quoted-string and domain-literal) on the first validate_gate entry (validate_count.txt = 1). No renegotiation.md exists -- nothing was relaxed, so there is nothing to disclose.",
+      "files": "validate_output.txt (7/7 PASS), email_regex.txt (RFC-capable regex), validate_count.txt, trace.jsonl (node-by-node route: start, plan, implement, validate_gate, done)"
+    },
+    "relaxed-path": {
+      "invocation": "echo 3 > validate_count.txt; attractor run <repo>/examples/pipelines/04-retry-with-fallback.dot --cwd .  -- the budget counter was pre-seeded per the guide's 'Demo: force the renegotiation path' instructions, so the first validate_gate entry lands past budget (4 > 3) and the budget_exhausted edge fires deterministically.",
+      "result": "status=success on the RELAXED criteria, explicitly distinguished from full success: renegotiation.md was written by the renegotiate node and verified by check_renegotiation before the relaxed path could proceed. Route (trace.jsonl): start, plan, implement, validate_gate (budget_exhausted), renegotiate, check_renegotiation (record_ok), simple_implement, validate_relaxed (relaxed_pass), done.",
+      "files": "renegotiation.md (the recorded downgrade: all five disclosure sections with substantive content), check_renegotiation_output.txt (gate verification), validate_relaxed_output.txt (6/6 PASS on the relaxed case set), email_regex.txt (common-format regex -- visibly NOT the RFC-capable one from hard-path/), validate_count.txt, trace.jsonl"
+    }
+  },
+  "how_to_tell_the_two_successes_apart": "Both runs exit status=success. The hard-path run has validate_output.txt showing the full case set passing and NO renegotiation.md. The relaxed-path run has renegotiation.md naming what was achieved versus the original goal, a gate-verification transcript, and a regex that fails the hard case set. That inspectable difference is the point of the exemplar.",
+  "reproducible_fixture": "modules/loop-pipeline/tests/test_retry_with_fallback_evidence.py",
+  "fixture_note": "The pytest fixture extracts the gate tool_commands through the repository DOT parser (byte-identical to what the engine executes) and pins the enforcement claims: forged-record rejection battery for check_renegotiation, gate truthfulness on negative evidence, the budget wall, and the drawn-topology invariants. Run it to re-verify the gates without an LLM backend; run the guide's invocations to regenerate live evidence like this directory."
+}

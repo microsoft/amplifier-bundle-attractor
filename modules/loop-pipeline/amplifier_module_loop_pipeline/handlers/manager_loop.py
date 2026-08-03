@@ -214,6 +214,12 @@ class ManagerLoopHandler:
                     )
                 else:
                     assert engine is not None
+                    # support#373 (related-issue note) / support#379 (fix 1):
+                    # this in-graph subgraph path previously emitted zero
+                    # events (engine.run_subgraph() had no _emit calls at
+                    # all). No opt-in needed here — run_subgraph() now emits
+                    # by default; only ParallelHandler suppresses it (it has
+                    # its own via_parallel event mechanism, see parallel.py).
                     child_outcome = await engine.run_subgraph(
                         child_start_id, context=child_context
                     )
@@ -370,6 +376,16 @@ class ManagerLoopHandler:
             context=child_context,
             handler_registry=child_registry,
             logs_root=child_logs,
+            hooks=self._hooks,
+            cancel_event=self._cancel_event,
+        )
+        # support#379 (fix 3): thread a scope discriminator onto child-engine
+        # events, reusing the existing _branch_id mechanism (S4) — mirrors
+        # the equivalent fix in handlers/pipeline.py for folder subgraphs.
+        _parent_branch = getattr(engine, "_branch_id", None) if engine else None
+        _scope = f"cycle:{manager_node_id}:{cycle}"
+        child_engine._branch_id = (
+            f"{_parent_branch}>{_scope}" if _parent_branch else _scope
         )
 
         # Run child engine
@@ -405,6 +421,13 @@ class ManagerLoopHandler:
             "status": outcome.status.value,
             "execution_path": list(child_engine.completed_nodes),
             "node_outcomes": node_outcomes_summary,
+            # support#379 (fix 4, additive): normalized 0-based repetition
+            # counter, consistent with pipeline.py's cycle_index (its _inv).
+            # `cycle` here is 1-based; does NOT rename the
+            # `{manager_node_id}_cycle_{cycle}` dict key or the
+            # subgraph_{manager_node_id}_cycle_{cycle} on-disk directory
+            # (see _run_child_dotfile above) — only adds a consistent field.
+            "cycle_index": cycle - 1,
             "total_elapsed_ms": elapsed_ms,
             "nodes_completed": len(child_engine.completed_nodes),
             "nodes_total": len(child_graph.nodes),

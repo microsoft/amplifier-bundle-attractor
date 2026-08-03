@@ -235,13 +235,32 @@ async def execute_with_retry(
                 return Outcome(
                     status=StageStatus.FAIL,
                     failure_reason=str(e),
+                    attempt_count=attempt,
                 )
             if attempt < policy.max_attempts:
+                # support#379: exception-driven retries previously emitted no
+                # stage_retrying event at all — only RETRY-status and
+                # must_write-violation retries did. Mirror that emission here
+                # so the timeline doesn't go dark on transient exceptions.
+                if hooks is not None:
+                    from .pipeline_events import PIPELINE_STAGE_RETRYING
+
+                    await hooks.emit(
+                        PIPELINE_STAGE_RETRYING,
+                        {
+                            "node_id": node.id,
+                            "attempt": attempt,
+                            "max_attempts": policy.max_attempts,
+                            "delay_ms": policy.backoff.delay_for_attempt(attempt),
+                            "reason": f"exception:{type(e).__name__}",
+                        },
+                    )
                 await _sleep_backoff(policy.backoff, attempt)
                 continue
             return Outcome(
                 status=StageStatus.FAIL,
                 failure_reason=str(e),
+                attempt_count=attempt,
             )
 
         # SUCCESS or PARTIAL_SUCCESS — check the must_write= artifact contract
@@ -255,6 +274,7 @@ async def execute_with_retry(
         if outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS):
             must_write_fail = check_must_write(node, outcome, node_start_wall, context)
             if must_write_fail is None:
+                outcome.attempt_count = attempt
                 return outcome
             last_outcome = must_write_fail
             if attempt < policy.max_attempts:
@@ -284,10 +304,12 @@ async def execute_with_retry(
             # Attempts exhausted: the artifact contract is still violated.
             # Return the FAIL directly — allow_partial does NOT soften a
             # must_write violation (fail-closed).
+            must_write_fail.attempt_count = attempt
             return must_write_fail
 
         # FAIL — return immediately, no retries
         if outcome.status == StageStatus.FAIL:
+            outcome.attempt_count = attempt
             return outcome
 
         # SKIPPED — return immediately.  Decision (EXTENSIONS.md §27): SKIPPED
@@ -339,6 +361,7 @@ async def execute_with_retry(
             status=StageStatus.PARTIAL_SUCCESS,
             notes="Retries exhausted, partial accepted",
             failure_reason=last_outcome.failure_reason if last_outcome else None,
+            attempt_count=policy.max_attempts,
         )
         # The must_write= artifact contract (EXTENSIONS.md §27) holds on the
         # manufactured verdict too: retries exhausted + allow_partial + NO
@@ -356,6 +379,7 @@ async def execute_with_retry(
         final_outcome = Outcome(
             status=StageStatus.FAIL,
             failure_reason="Max retries exceeded",
+            attempt_count=policy.max_attempts,
         )
 
     if hooks is not None:

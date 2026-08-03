@@ -251,3 +251,75 @@ async def test_no_branch_events_when_no_hooks() -> None:
         par_node, PipelineContext(), graph, "/tmp/logs", engine=_SuccessEngine()
     )
     assert outcome.is_success
+
+
+@pytest.mark.asyncio
+async def test_branch_nodes_emit_exactly_one_node_start_via_real_engine(
+    tmp_path,
+) -> None:
+    """support#379 regression guard: with a REAL PipelineEngine (not the
+
+    _SuccessEngine stub used above), each branch node must emit exactly
+    ONE pipeline:node_start / pipeline:node_complete pair — not two.
+
+    Background: engine.run_subgraph() was given its own node_start/
+    node_complete emission (support#379 fix 1) to un-darken
+    ManagerLoopHandler's in-graph subgraph path. ParallelHandler already
+    emits equivalent events for branch nodes (this file's Fix #1, tagged
+    via_parallel=True). During this PR's own development, a first-pass
+    implementation let BOTH emit, silently double-counting every branch
+    node in the timeline (caught by the full test suite, not by any single
+    targeted test — this test exists so it can never regress silently
+    again). The tests above all use `_SuccessEngine`, a stub whose
+    run_subgraph() never emits anything itself, so they could not catch
+    this class of bug; this test uses the real engine + clone_for_branch()
+    path exactly as production does.
+    """
+    from amplifier_module_loop_pipeline.engine import PipelineEngine
+    from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+    from amplifier_module_loop_pipeline.handlers.context import HandlerContext
+
+    class _AlwaysSucceedHandler:
+        async def execute(self, node, context, graph, logs_root, *, engine=None):
+            return Outcome(status=StageStatus.SUCCESS, notes=f"{node.id} ran")
+
+    hooks = FakeHooks()
+    branch_ids = ["b0", "b1", "b2"]
+    par_node, graph = _make_fanout_graph(branch_ids)
+
+    registry = HandlerRegistry(HandlerContext())
+    registry.register("parallelogram", _AlwaysSucceedHandler())
+
+    engine = PipelineEngine(
+        graph=graph,
+        context=PipelineContext(),
+        handler_registry=registry,
+        logs_root=str(tmp_path),
+        hooks=hooks,
+    )
+
+    handler = ParallelHandler(hooks=hooks)
+    outcome = await handler.execute(
+        par_node, PipelineContext(), graph, str(tmp_path), engine=engine
+    )
+
+    assert outcome.is_success
+
+    start_events = hooks.events_of_type(PIPELINE_NODE_START)
+    complete_events = hooks.events_of_type(PIPELINE_NODE_COMPLETE)
+
+    for branch_id in branch_ids:
+        starts_for_branch = [e for e in start_events if e["node_id"] == branch_id]
+        completes_for_branch = [e for e in complete_events if e["node_id"] == branch_id]
+        assert len(starts_for_branch) == 1, (
+            f"Expected exactly 1 pipeline:node_start for branch '{branch_id}', "
+            f"got {len(starts_for_branch)} — run_subgraph()'s own emission "
+            f"was not suppressed for ParallelHandler branches "
+            f"(support#379 double-emission regression)."
+        )
+        assert len(completes_for_branch) == 1, (
+            f"Expected exactly 1 pipeline:node_complete for branch '{branch_id}', "
+            f"got {len(completes_for_branch)} — run_subgraph()'s own emission "
+            f"was not suppressed for ParallelHandler branches "
+            f"(support#379 double-emission regression)."
+        )

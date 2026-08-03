@@ -149,6 +149,12 @@ class PipelineEngine:
         self._is_branch_clone: bool = False
         self._branch_id: str | None = None
 
+        # support#379 (fix 1): internal flag letting ParallelHandler
+        # suppress run_subgraph()'s own node_start/node_complete emission
+        # (it emits equivalent via_parallel=True events itself). Not part
+        # of run_subgraph()'s public signature — see its docstring.
+        self._suppress_subgraph_node_events: bool = False
+
     def clone_for_branch(self, *, context: PipelineContext) -> "PipelineEngine":
         """Create a branch-isolated clone of this engine for parallel execution.
 
@@ -694,6 +700,11 @@ class PipelineEngine:
                     # Populated by ToolHandler on failure; None on success or for
                     # non-tool nodes.  Consumers check for None before reading.
                     "failed_step": outcome.failed_step,
+                    # support#379: real attempt count consumed by the retry
+                    # ladder (execute_with_retry sets Outcome.attempt_count).
+                    # Falls back to 1 for outcomes that never entered the
+                    # retry ladder (e.g. the requires= backstop above).
+                    "attempt": outcome.attempt_count or 1,
                 },
             )
 
@@ -887,6 +898,21 @@ class PipelineEngine:
         This is the subgraph runner used by ParallelHandler and
         ManagerLoopHandler to execute branches and child subgraphs.
 
+        support#379 (fix 1): this method now emits pipeline:node_start /
+        pipeline:node_complete for each node it executes — previously it
+        emitted nothing at all, leaving ManagerLoopHandler's in-graph
+        subgraph path (and any other direct caller) entirely dark. Emission
+        is suppressed when ``self._suppress_subgraph_node_events`` is True
+        (an internal, unset-by-default instance flag — NOT part of this
+        method's public signature, so existing test doubles implementing a
+        narrower ``run_subgraph(start_node_id, *, context=...)`` override
+        are unaffected). ParallelHandler sets this flag on the branch engine
+        it constructs before calling run_subgraph, because it already emits
+        the equivalent events itself, tagged via_parallel=True (see
+        handlers/parallel.py's per-branch event contract, documented in
+        this repo's AGENTS.md) — a second emission here would double-count
+        every branch node in the timeline.
+
         Args:
             start_node_id: Node ID to begin execution from.
             context: Optional isolated context for this subgraph run.
@@ -895,6 +921,7 @@ class PipelineEngine:
         Returns:
             The final Outcome of the subgraph execution.
         """
+        emit_node_events = not getattr(self, "_suppress_subgraph_node_events", False)
         ctx = context if context is not None else self.context
 
         if start_node_id not in self.graph.nodes:
@@ -927,19 +954,69 @@ class PipelineEngine:
 
             # Execute node handler (no retry policy in subgraph -- parent manages retries)
             handler = self.handler_registry.get(current_node)
+            handler_type = current_node.type or current_node.shape
 
-            # Skip start nodes (no-op)
+            # Skip start nodes (no-op) -- mirrors run()'s handling; no events
+            # emitted for the synthetic start-node no-op, consistent with the
+            # top-level run() loop which also does not emit node_start/
+            # node_complete for the pipeline's own start node.
             if current_node.is_start_node():
                 outcome = Outcome(status=StageStatus.SUCCESS)
             else:
+                # support#379 (fix 1): run_subgraph() previously emitted NO
+                # events at all -- it is the shared subgraph runner used by
+                # ManagerLoopHandler's in-graph path and ParallelHandler's
+                # branch bodies, so both execution classes were entirely
+                # dark. Mirror the top-level run() loop's node_start /
+                # node_complete emission (minus retry-ladder fields, since
+                # run_subgraph has no retry policy of its own).
+                node_start_time = time.monotonic()
+                if emit_node_events:
+                    await self._emit(
+                        PIPELINE_NODE_START,
+                        {
+                            "node_id": current_node.id,
+                            "handler_type": handler_type,
+                            "attempt": 1,
+                        },
+                    )
                 try:
                     outcome = await handler.execute(
                         current_node, ctx, self.graph, self.logs_root, engine=self
                     )
                 except Exception as exc:
-                    return Outcome(
+                    fail_outcome = Outcome(
                         status=StageStatus.FAIL,
                         failure_reason=f"Subgraph node '{current_node.id}' raised: {exc}",
+                    )
+                    if emit_node_events:
+                        await self._emit(
+                            PIPELINE_NODE_COMPLETE,
+                            {
+                                "node_id": current_node.id,
+                                "status": fail_outcome.status.value,
+                                "duration_ms": (time.monotonic() - node_start_time)
+                                * 1000,
+                                "notes": fail_outcome.notes,
+                                "failure_reason": fail_outcome.failure_reason,
+                                "session_id": None,
+                                "attempt": 1,
+                            },
+                        )
+                    return fail_outcome
+                if emit_node_events:
+                    await self._emit(
+                        PIPELINE_NODE_COMPLETE,
+                        {
+                            "node_id": current_node.id,
+                            "status": outcome.status.value,
+                            "duration_ms": (time.monotonic() - node_start_time) * 1000,
+                            "notes": outcome.notes,
+                            "failure_reason": outcome.failure_reason,
+                            "session_id": outcome.session_id,
+                            "failed_step": outcome.failed_step,
+                            "attempt": outcome.attempt_count or 1,
+                        },
                     )
 
             last_outcome = outcome

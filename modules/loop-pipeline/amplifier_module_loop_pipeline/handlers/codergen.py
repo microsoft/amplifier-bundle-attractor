@@ -147,7 +147,20 @@ class CodergenHandler:
                 return result
             response_text = str(result)
         except Exception as e:
-            outcome = Outcome(status=StageStatus.FAIL, failure_reason=str(e))
+            outcome = Outcome(
+                status=StageStatus.FAIL,
+                failure_reason=str(e),
+                # support#381: generalize failed_step (previously ToolHandler-only)
+                # to CodergenHandler — the highest-value gap since it covers
+                # every LLM node in every pipeline. Outcome.notes/failure_reason
+                # alone gave consumers no prompt/response context to diagnose
+                # an LLM-node failure with.
+                failed_step=_build_failed_step(
+                    prompt=prompt,
+                    response_text=None,
+                    error=str(e),
+                ),
+            )
             _write_status(stage_dir, outcome)
             return outcome
 
@@ -179,6 +192,16 @@ class CodergenHandler:
             }
             merged_updates.update(outcome.context_updates or {})
             outcome.context_updates = merged_updates
+            # support#381: a goal_gate=true node's verdict-recovery ladder can
+            # return FAIL (see _parse_outcome); attach failed_step here too so
+            # the failure carries the same prompt/response diagnostic detail
+            # as the exception path above, instead of only notes/failure_reason.
+            if outcome.status == StageStatus.FAIL and outcome.failed_step is None:
+                outcome.failed_step = _build_failed_step(
+                    prompt=prompt,
+                    response_text=response_text,
+                    error=outcome.failure_reason,
+                )
         else:
             outcome = Outcome(
                 status=StageStatus.SUCCESS,
@@ -228,6 +251,47 @@ def _write_file(path: str, content: str) -> None:
     """Write content to a file."""
     with open(path, "w") as f:
         f.write(content)
+
+
+_PROMPT_TAIL_CHARS = 500
+_RESPONSE_TAIL_CHARS = 2000
+_TOTAL_CAP_BYTES = 8192
+
+
+def _build_failed_step(
+    *,
+    prompt: str,
+    response_text: str | None,
+    error: str | None,
+) -> dict[str, Any]:
+    """Build the ``failed_step`` payload for a failed codergen (LLM) node.
+
+    support#381: generalizes the ``failed_step`` structured-detail pattern
+    (previously ToolHandler-only, see handlers/tool.py's
+    ``_build_failed_step``) to CodergenHandler — the highest-value gap since
+    it covers every LLM node in every pipeline. ``Outcome.notes`` /
+    ``failure_reason`` alone give consumers no prompt/response context to
+    diagnose an LLM-node failure with; this mirrors ToolHandler's
+    command/stdout/stderr shape with the LLM-appropriate analogs
+    (prompt/response/error) plus the same bounded-size discipline.
+
+    Empty/absent response text produces ``""``, never ``None`` (mirrors
+    ToolHandler's stdout_tail/stderr_tail convention).
+    """
+    failed_step: dict[str, Any] = {
+        "prompt": prompt[:_PROMPT_TAIL_CHARS],
+        "response_tail": (response_text or "")[-_RESPONSE_TAIL_CHARS:],
+        "error": error,
+    }
+
+    # Bounded total size, mirroring ToolHandler's 8 KiB cap discipline:
+    # drop response_tail first (least useful once the prompt/error are known).
+    if len(json.dumps(failed_step)) > _TOTAL_CAP_BYTES:
+        failed_step = dict(failed_step)
+        del failed_step["response_tail"]
+        failed_step["verification_gap"] = {"log_filtered": True}
+
+    return failed_step
 
 
 def _write_status(stage_dir: str, outcome: Outcome) -> None:

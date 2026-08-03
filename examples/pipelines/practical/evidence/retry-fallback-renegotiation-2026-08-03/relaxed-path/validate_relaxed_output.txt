@@ -1,0 +1,6 @@
+PASS: valid@email.com
+PASS: user+tag@domain.co.uk
+PASS: user.name@example.org
+PASS: invalid@
+PASS: @nodomain
+PASS: plaintext

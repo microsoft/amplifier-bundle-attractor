@@ -1,0 +1,7 @@
+PASS: valid@email.com (expected valid)
+PASS: user+tag@domain.co.uk (expected valid)
+PASS: "quoted"@example.com (expected valid)
+PASS: user@[192.168.1.1] (expected valid)
+PASS: invalid@ (expected invalid)
+PASS: @nodomain (expected invalid)
+PASS: plaintext (expected invalid)

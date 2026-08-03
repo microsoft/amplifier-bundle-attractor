@@ -54,12 +54,13 @@ includes:
 session:
   orchestrator:
     config:
-      dot_file: examples/pipelines/02-plan-implement-test.dot   # or dot_source: "digraph { ... }"
+      dot_file: examples/pipelines/00-convergence-loop.dot   # or dot_source: "digraph { ... }"
 ```
 
 Then run the configured bundle -- there are no pipeline-specific CLI flags. The
-goal is carried by the DOT graph attribute `graph [goal="Add input validation to
-the login endpoint"]` (or via `params`), not a `--goal` flag.
+goal is carried by the DOT graph attribute `graph [goal="Write a Python function
+count_words(text) ..."]` (or via `params`), not a `--goal` flag. The pipeline
+loops until `pytest` passes -- that is the convergence loop in action.
 
 **3. Or just ask conversationally:**
 
@@ -134,28 +135,43 @@ The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 s
 
 ## Pipeline Gallery
 
-| Pipeline | Pattern | Use Case |
-|----------|---------|----------|
-| [Simple Linear](examples/pipelines/01-simple-linear.md) | `A -> B -> C` | Quick single-task |
-| [Plan-Implement-Test](examples/pipelines/02-plan-implement-test.md) | `plan -> impl -> test` | Standard dev workflow |
-| [Conditional Routing](examples/pipelines/03-conditional-routing.md) | `if/else` branches | Outcome-based flow |
-| [Retry with Fallback](examples/pipelines/04-retry-with-fallback.md) | Retry loop | Resilient execution |
-| [Parallel Fan-Out](examples/pipelines/05-parallel-fan-out.md) | Fork/join | Concurrent work |
-| [Model Stylesheet](examples/pipelines/06-model-stylesheet.md) | CSS-like config | Multi-provider |
-| [Fidelity Modes](examples/pipelines/07-fidelity-modes.md) | Context control | Execution fidelity |
-| [Human Gate](examples/pipelines/08-human-gate.md) | Approval gate | Human-in-the-loop |
-| [Manager-Supervisor](examples/pipelines/09-manager-supervisor.md) | Hierarchical | Agent supervision |
-| [Full Attractor](examples/pipelines/10-full-attractor.md) | All features | Complete pipeline |
-| [Manager Child + HITL](examples/pipelines/11-manager-child-dotfile-hitl/) | Nested pipeline + gate | Supervised sub-pipeline |
-| [Graph Resume](examples/pipelines/12-graph-resume.md) | File-state guards | Resumable / rewindable |
-| [PR Review](examples/pipelines/practical/pr-review.md) | Parallel analysis | Code review |
-| [Test Generation](examples/pipelines/practical/test-gen.md) | Retry loop | Test authoring |
-| [Bug Fix](examples/pipelines/practical/bug-fix.md) | Diagnose + verify | Debugging |
-| [Feature Build](examples/pipelines/practical/feature-build.md) | Parallel + gate | Feature development |
-| [Refactoring](examples/pipelines/practical/refactor.md) | Snapshot safety | Code improvement |
-| [Multi-Lens Review](examples/pipelines/practical/multi-lens-review.md) | 3 providers × 3 lenses | Multi-perspective review |
+### Canonical attractor exemplars — teach the shape
 
-The bottom six are [**practical** task pipelines](examples/pipelines/practical/) -- links go to each one's walk-up guide. `Bug Fix`, `Test Generation`, and `Refactoring` ship a runnable sample, so they work with no setup.
+| Pipeline | What it teaches |
+|----------|----------------|
+| [Convergence Loop](examples/pipelines/00-convergence-loop.md) | **The bowl** — minimal 4-node convergence loop. Start here. |
+| [Bug Fix](examples/pipelines/practical/bug-fix.md) | The bowl applied to real work: inner fix loop + root-cause wall + outer feedback loop |
+| [Task Runner](examples/patterns/task-runner.md) | Battle-hardened goal+DoD runner (orient/attempt/verify/critique/triage) |
+
+### Engine-feature demos — teach individual mechanisms
+
+| Pipeline | Mechanism |
+|----------|-----------|
+| [Simple Linear](examples/pipelines/01-simple-linear.md) | `A -> B -> C` linear flow |
+| [Plan-Implement-Test](examples/pipelines/02-plan-implement-test.md) | `goal_gate` on an LLM node |
+| [Conditional Routing](examples/pipelines/03-conditional-routing.md) | `diamond` routing node |
+| [Retry with Fallback](examples/pipelines/04-retry-with-fallback.md) | Retry loop with fallback |
+| [Parallel Fan-Out](examples/pipelines/05-parallel-fan-out.md) | `component` fork / `tripleoctagon` join |
+| [Model Stylesheet](examples/pipelines/06-model-stylesheet.md) | CSS-like per-node model routing |
+| [Fidelity Modes](examples/pipelines/07-fidelity-modes.md) | Context fidelity control |
+| [Human Gate](examples/pipelines/08-human-gate.md) | `hexagon` human-approval gate |
+| [Manager-Supervisor](examples/pipelines/09-manager-supervisor.md) | `house` manager/supervisor loop |
+| [Full Attractor](examples/pipelines/10-full-attractor.md) | All features together |
+| [Manager Child + HITL](examples/pipelines/11-manager-child-dotfile-hitl/) | Nested pipeline + gate |
+| [Graph Resume](examples/pipelines/12-graph-resume.md) | File-state guards / resumable |
+
+### Practical task pipelines — real work, walk-up runnable
+
+| Pipeline | Use Case |
+|----------|----------|
+| [PR Review](examples/pipelines/practical/pr-review.md) | Parallel multi-dimension code review |
+| [Test Generation](examples/pipelines/practical/test-gen.md) | Test authoring with validation loop |
+| [Bug Fix](examples/pipelines/practical/bug-fix.md) | Reproduce → diagnose → fix → verify |
+| [Feature Build](examples/pipelines/practical/feature-build.md) | Parallel implementation + human gate |
+| [Refactoring](examples/pipelines/practical/refactor.md) | Snapshot-safe code improvement |
+| [Multi-Lens Review](examples/pipelines/practical/multi-lens-review.md) | 3 providers × 3 lenses |
+
+`Bug Fix`, `Test Generation`, and `Refactoring` ship a runnable sample, so they work with no setup. See [examples/pipelines/practical/](examples/pipelines/practical/) for the full set.
 
 ## How It Works
 

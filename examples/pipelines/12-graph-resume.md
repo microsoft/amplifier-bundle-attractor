@@ -1,5 +1,11 @@
 # 12 - Graph-Level Resume Pattern
 
+> **Engine-feature demo** — this guide teaches a single mechanism: graph-level
+> resume via file-state guard nodes. The implement/test loop at its core is
+> Tutorial 00's convergence shape; the guards decorate it with durability
+> (skip-if-done). For the canonical attractor shape itself, start with
+> [Tutorial 00: The Convergence Loop](00-convergence-loop.md).
+
 ## What This Exercises
 
 - **Graph-level resume**: The correct way to make a pipeline resumable. The engine always

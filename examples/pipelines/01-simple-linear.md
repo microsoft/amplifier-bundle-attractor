@@ -1,5 +1,10 @@
 # 01 - Simple Linear Pipeline
 
+> **Engine-feature demo** — this guide teaches a single mechanism: linear
+> traversal with start/exit node detection and basic DOT parsing. For the
+> canonical attractor shape used in real work, start with
+> [Tutorial 00: The Convergence Loop](00-convergence-loop.md).
+
 ## Run it
 
 Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.

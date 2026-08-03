@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path
 
 from . import runner
+from .compat import IncompatibleEngineError, check_engine_compatibility
 from .params import parse_params
 
 
@@ -456,6 +457,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Fail loud at startup if the installed engine is incompatible with this
+    # runner.  This catches version-skew before any node runs (incident
+    # 2026-07-28: remote_dot absent in cached engine caused mid-run crash).
+    try:
+        check_engine_compatibility()
+    except IncompatibleEngineError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
     parser = build_parser()
     args = parser.parse_args(argv)
 

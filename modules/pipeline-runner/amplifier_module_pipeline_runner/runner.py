@@ -168,6 +168,12 @@ async def drive_engine(
 ) -> "Outcome":
     """Drive the attractor engine directly against an already-built coordinator.
 
+    Compatibility gate: ``check_engine_compatibility()`` is called first
+    (before any engine imports execute) so a version-skew crash surfaces as
+    an actionable ``IncompatibleEngineError`` rather than a bare
+    ``ModuleNotFoundError`` mid-pipeline.  This covers both the CLI path and
+    any consumer using this function as a library seam (incident 2026-07-28).
+
     Low-level API: the caller is responsible for building the session and
     registering ``session.spawn`` on ``coordinator`` before calling this
     (see ``run_pipeline`` for the high-level convenience that does this).
@@ -212,6 +218,13 @@ async def drive_engine(
     Returns:
         The engine's ``Outcome`` (``outcome.status.value``, ``outcome.notes``).
     """
+    # Compat gate: probe required engine symbols before any engine import
+    # executes.  Raises IncompatibleEngineError with an actionable message on
+    # skew; idempotent (symbol probe only, no I/O).
+    from .compat import check_engine_compatibility
+
+    check_engine_compatibility()
+
     from amplifier_module_loop_pipeline.backend import AmplifierBackend
     from amplifier_module_loop_pipeline.context import PipelineContext
     from amplifier_module_loop_pipeline.engine import PipelineEngine
@@ -536,6 +549,52 @@ async def _build_prepared(
     return prepared
 
 
+def _get_runner_provenance() -> dict[str, str]:
+    """Return runner package identity from install-time metadata.
+
+    PEP 610 records a resolved VCS commit for git installs.  Editable installs
+    may not have that identity, so provenance deliberately says ``"unknown"``
+    rather than inferring a commit from a checkout that may not be the code
+    being executed.
+    """
+    import contextlib
+    from importlib import metadata
+
+    runner_version = "unknown"
+    runner_commit = "unknown"
+    with contextlib.suppress(metadata.PackageNotFoundError):
+        runner_version = metadata.version("amplifier-module-pipeline-runner")
+
+    # Provenance must never break a completed run -- suppress broadly.
+    with contextlib.suppress(Exception):
+        direct_url_text = metadata.distribution(
+            "amplifier-module-pipeline-runner"
+        ).read_text("direct_url.json")
+        if direct_url_text:
+            commit_id = json.loads(direct_url_text).get("vcs_info", {}).get("commit_id")
+            if commit_id:
+                runner_commit = commit_id
+
+    return {"runner_version": runner_version, "runner_commit": runner_commit}
+
+
+def _augment_manifest_provenance(logs_dir: Path, provider: str) -> None:
+    """Add runner-owned provenance fields after the engine writes its manifest.
+
+    The engine owns ``engine_*`` fields.  This sequential post-run update owns
+    only runner identity and the CLI/API provider selection, avoiding two
+    writers for the same field while preserving all engine-owned legacy fields.
+    """
+    manifest_path = logs_dir / "manifest.json"
+    if not manifest_path.exists():
+        return
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(_get_runner_provenance())
+    manifest["provider"] = provider
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
 async def run_pipeline(
     dot_source: str,
     *,
@@ -566,9 +625,9 @@ async def run_pipeline(
             absent). Defaults to ``Path.cwd()`` if not given.
         logs_root: Directory for this run's logs (created if absent).
             Defaults to a fresh tempdir if not given.
-        provider: Recorded for parity with the CLI's own preflight checks
-            (e.g. the fail-loud API-key check). Not currently used to alter
-            engine behavior -- the DOT's own llm_provider node attributes
+        provider: Stamped into ``manifest.json`` as runner-owned provenance
+            and used for the CLI's own preflight checks. It does not alter
+            engine routing -- the DOT's own ``llm_provider`` node attributes
             and the profiles map determine routing.
         profiles: llm_provider -> agent-name routing map. Defaults to
             ``DEFAULT_PROFILES`` if not given.
@@ -598,8 +657,6 @@ async def run_pipeline(
     Returns:
         A ``PipelineResult`` with status, notes, logs_dir, and raw JSON.
     """
-    del provider  # not yet used inside the engine call; see docstring.
-
     if logs_root is not None:
         logs_dir = Path(logs_root).expanduser().resolve()
     else:
@@ -634,19 +691,25 @@ async def run_pipeline(
         ),
     )
 
-    async with session:
-        outcome = await drive_engine(
-            dot_source,
-            session.coordinator,
-            params=params,
-            cwd=cwd_path,
-            logs_root=logs_dir,
-            hooks=hooks,
-            profiles=resolved_profiles,
-            interviewer=interviewer,
-            transform=transform,
-            validate=validate,
-        )
+    try:
+        async with session:
+            outcome = await drive_engine(
+                dot_source,
+                session.coordinator,
+                params=params,
+                cwd=cwd_path,
+                logs_root=logs_dir,
+                hooks=hooks,
+                profiles=resolved_profiles,
+                interviewer=interviewer,
+                transform=transform,
+                validate=validate,
+            )
+    finally:
+        # The engine creates its manifest at run start. Stamp runner-owned
+        # fields even when later execution raises, so failed run directories
+        # remain self-describing for incident analysis.
+        _augment_manifest_provenance(logs_dir, provider)
 
     failure_reason = getattr(outcome, "failure_reason", None)
     data = {

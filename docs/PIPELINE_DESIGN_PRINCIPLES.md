@@ -388,6 +388,117 @@ by adding runs. Conflating them wastes iterations on a question evidence already
 
 ---
 
+## 7. Delta-Assertion and Shared-Checkout Discipline
+
+> **Working-tree claims are not evidence in a shared checkout — durable commits are.**
+
+**The incident (2026-07-28).** A 20-node pipeline ran 2.4h and exited success with
+zero work product. The per-slice test gates ran `cargo test` green on an **unmodified
+tree** — green tests certify the tree's state, not that new work exists in it. The
+pipeline could not distinguish "the work was never written" from "concurrent agents
+clobbered uncommitted work" (~29 overlapping agent sessions in the same repo during
+the final hour) — precisely because nothing was committed. A delta-assertion gate
+makes that ambiguity structurally impossible: durable commits or the gate is red.
+
+**The doctrine sentence:** Working-tree claims are not evidence in a shared checkout
+— durable commits are. This is the gate-design analog of the goal-gate rule: done
+must be unreachable until evidence of the *work* exists, not evidence that the world
+is still consistent.
+
+### Pattern A — Base-SHA anchor
+
+A deterministic preflight node records the current HEAD SHA before work begins:
+
+```dot
+RecordBaseSHA [
+    shape=parallelogram,
+    label="Record Base SHA",
+    tool_command="mkdir -p .ai && git rev-parse HEAD > .ai/base-sha && printf ok || { printf fail; exit 1; }"
+]
+```
+
+This anchor is what makes a delta assertable. Without it, `git diff` can only answer
+"is the tree dirty?" — which goes permanently green after any unrelated dirtying.
+
+### Pattern B — Delta-assertion gate
+
+A downstream gate reads `.ai/base-sha` and asserts commits exist in the expected
+paths since that base:
+
+```dot
+AssertDelta [
+    shape=parallelogram,
+    label="Assert Delta (commits since base)",
+    goal_gate=true,
+    retry_target=work,
+    tool_command="if [ ! -f .ai/base-sha ]; then printf no_anchor; exit 1; fi; BASE=$(cat .ai/base-sha); COUNT=$(git log ${BASE}..HEAD -- $expected_paths | wc -l | tr -d ' '); [ \"$COUNT\" -gt 0 ] && printf changed || { printf unchanged; exit 1; }"
+]
+
+work      -> AssertDelta
+AssertDelta -> done [condition="context.tool.last_line=changed && outcome=success", label="durable delta confirmed"]
+AssertDelta -> work [condition="outcome=fail",                                       label="no durable commits -- retry"]
+```
+
+**Scope `$expected_paths`** to the paths the work was expected to touch. Unrelated
+concurrent commits do not fake the delta. Use `.` to assert any commit since base
+(less precise but simpler).
+
+**Idiom B discipline:** The `&& outcome=success` conjunction on the green edge is
+required. A failing gate does not refresh `tool.last_line`; a stale `changed` + FAIL
+can match both edges on a second visit. The conjunction makes intent unambiguous.
+
+### Anchored vs unanchored diff
+
+| Form | Question answered | When to use |
+|---|---|---|
+| `! git diff --quiet` | Is the tree dirty? | Cheap smoke check in a private checkout |
+| `git log BASE..HEAD -- <paths>` | Did durable work land since we started? | Completion gate |
+
+The unanchored form is useful as a cheap work-happened smoke check in a private
+checkout. It is wrong as a completion gate: it goes permanently green after any
+unrelated dirtying and cannot distinguish "work happened" from "the tree was already
+dirty when the pipeline started."
+
+### Pattern C — Preflight evidence-file (the positive lesson)
+
+The incident's preflight vantage gates that DID work wrote truthful results to a
+durable env file (`.verify-vantages.env`, `TIER_B=ok/TIER_C=ok`) before work began.
+The same discipline applies to any environment check:
+
+```dot
+CheckEnvironment [
+    shape=parallelogram,
+    label="Check Environment (write evidence)",
+    tool_command="mkdir -p .ai; { which git >/dev/null 2>&1 && echo TOOL_GIT=ok || echo TOOL_GIT=missing; } > .ai/env-check.env; grep -q TOOL_GIT=missing .ai/env-check.env && { printf blocked; exit 1; } || printf ready"
+]
+```
+
+A downstream gate reads `.ai/env-check.env` — it does not re-run the checks. This
+preserves what was true at pipeline start even if the environment changes mid-run.
+See §3 (Loop Convergence Patterns) for the environment-identity lesson: verify
+running-code identity before entering a loop.
+
+### When delta assertion matters most
+
+- **Shared checkouts:** multiple agents or sessions touching the same repo
+- **Long runs:** work from early nodes may be clobbered before completion
+- **Concurrent agents:** overlapping sessions make uncommitted work invisible
+
+### Honest limits
+
+Delta-assertion proves durable work landed, not that the work is correct. A
+hostile actor can commit garbage; quality gates remain necessary. This gate proves
+the "work happened" question; correctness is the quality gate's job.
+
+### Gate library
+
+Copy-paste `.dot` snippets for these patterns live in
+[`examples/gates/`](../examples/gates/), the seed of a growing gate-primitive
+library. The README there documents the full gate contract (token contract,
+stale-label rule, idiom selection).
+
+---
+
 ## Cross-References
 
 | Topic | Where to look |
@@ -397,3 +508,4 @@ by adding runs. Conflating them wastes iterations on a question evidence already
 | Conditional routing edge selection algorithm | [`docs/ROUTING-REFERENCE.md`](ROUTING-REFERENCE.md) |
 | Retry-with-fallback and convergence example | [`examples/pipelines/04-retry-with-fallback.dot`](../examples/pipelines/04-retry-with-fallback.dot) |
 | Engine-level contracts (M5 substitution, fail-fast, structural concurrency) | [`docs/CONTRACTS.md`](CONTRACTS.md) |
+| Delta-assertion gate primitives (base-SHA anchor, preflight evidence) | [`examples/gates/`](../examples/gates/) |

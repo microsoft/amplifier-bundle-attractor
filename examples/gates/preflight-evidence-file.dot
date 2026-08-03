@@ -1,0 +1,123 @@
+// preflight-evidence-file.dot -- Gate primitive: deterministic preflight writes
+// durable evidence; a later gate reads it.
+//
+// WHAT IT DOES:
+//   A deterministic preflight node runs environment/vantage checks and writes the
+//   results to a durable evidence file (e.g. .ai/env-check.env) BEFORE work begins.
+//   A downstream gate reads that file and routes on its contents. This is the
+//   positive lesson from the 2026-07-28 incident: the tiered environment checks
+//   that DID work wrote durable evidence before work began.
+//
+// THE PATTERN (from the incident's positive side):
+//   The incident's preflight vantage gates wrote truthful results to a durable env
+//   file (.verify-vantages.env, TIER_B=ok/TIER_C=ok) before work began -- durable
+//   evidence files, written by deterministic nodes, read by later gates. This is the
+//   same discipline as the base-SHA anchor: write evidence durably, read it later.
+//
+// DESIGN PRINCIPLES:
+//   1. The preflight node is DETERMINISTIC (shape=parallelogram) -- no LLM judgment.
+//   2. The evidence file is DURABLE -- written to .ai/ so it survives the run.
+//   3. The downstream gate READS the file -- it does not re-run the checks.
+//   4. The preflight node writes TRUTHFULLY -- it does not guess or fabricate.
+//   5. The evidence file is HUMAN-READABLE -- operators can inspect it post-run.
+//
+// CWD ASSUMPTION:
+//   tool_command runs with cwd = context.target_dir (seeded from --cwd at invocation).
+//   The .ai/env-check.env file lands under that directory. The downstream gate reads
+//   from the same directory.
+//
+// TOKEN CONTRACT (Idiom B -- exit-code gate):
+//   ready    -> all required environment checks passed; proceed to work
+//   blocked  -> required environment unavailable; pipeline must halt (exit 1)
+//
+//   Routing edges consume outcome=fail for the blocked path. The && outcome=success
+//   conjunction on the ready edge prevents stale-label issues (stale-label
+//   discipline -- see README.md, Gate contract).
+//
+// GATE IDIOM: Idiom B (exit-code gate) for the blocked path. The preflight must
+//   fail hard when required environment is unavailable -- a vacuous ok would let
+//   work proceed into a broken environment and produce misleading results.
+//
+// ENVIRONMENT-IDENTITY LESSON:
+//   Verify running-code identity before entering a loop (PIPELINE_DESIGN_PRINCIPLES
+//   §3). The preflight evidence file is how you record that identity durably. If the
+//   environment changes mid-run (e.g. a tool is updated, a service goes down), the
+//   durable evidence file preserves what was true at pipeline start -- the loop
+//   cannot converge on a defect that lives outside the graph's reach.
+//
+// INTEGRATION: Drop CheckEnvironment into your pipeline's setup/preflight cluster,
+//   before the first work node. Customize the tool_command to check the environment
+//   your pipeline depends on. The ReadEnvCheck gate reads the evidence file and
+//   routes on its contents. Rename edge targets to match your graph.
+//
+// LIBRARY: Part of the examples/gates/ primitive library (see README.md there
+//   for the full gate contract). Cross-reference: base-sha-anchor.dot (same
+//   pattern: preflight writes durably).
+
+digraph PreflightEvidenceFile {
+    graph [goal="Run environment checks before work begins and write durable evidence a later gate can read"]
+
+    start [shape=Mdiamond]
+    done  [shape=Msquare]
+
+    // Halt loudly when the required environment is unavailable. Routing a
+    // FAIL to done would end the pipeline with SUCCESS status -- a silent
+    // no-op run. A terminal hexagon escalates instead: a human decides, and
+    // a non-interactive run exits nonzero.
+    halt [shape=hexagon,
+        prompt="Preflight blocked: a required environment check failed. Inspect .ai/env-check.env for the recorded results, fix the environment, and re-run."]
+
+    // Work placeholder -- replace with your actual work node(s).
+    work [shape=box, prompt="Do the work described in $goal. The environment has been verified and the evidence is in .ai/env-check.env."]
+
+    // CheckEnvironment: deterministic preflight node.
+    // Runs tiered environment checks and writes results to .ai/env-check.env.
+    // The file format is KEY=value, one per line, for easy grepping downstream.
+    // Customize the checks to match your pipeline's environment dependencies.
+    //
+    // Example checks shown:
+    //   TOOL_AVAILABLE=ok/missing    -- required CLI tool present
+    //   WORKING_TREE_CLEAN=ok/dirty  -- working tree state at pipeline start
+    //                                   (includes untracked files; .ai/ excluded
+    //                                    because the pipeline's own evidence dir
+    //                                    is always present and not work product)
+    //   NETWORK_REACHABLE=ok/fail    -- external service reachable
+    //
+    // NOTE ON WORKING_TREE_CLEAN: uses `git status --porcelain -- . ':!.ai'`
+    // (not `git diff --quiet`) so that untracked files are detected. `git diff
+    // --quiet` ignores untracked files and would report CLEAN when the working
+    // tree contains exactly the uncommitted work that this library warns should not
+    // be mistaken for evidence. The field is named WORKING_TREE_CLEAN (not
+    // REPO_CLEAN) to make the scope explicit.
+    //
+    // Exits nonzero (blocked) when a required check fails. Exits 0 (ready) when
+    // all required checks pass. The evidence file records the full check results
+    // (including non-fatal states like WORKING_TREE_CLEAN=dirty) for later
+    // inspection.
+    CheckEnvironment [
+        shape=parallelogram,
+        label="Check Environment (write evidence)",
+        tool_command="mkdir -p .ai; { which git >/dev/null 2>&1 && echo TOOL_GIT=ok || echo TOOL_GIT=missing; [ -z \"$(git status --porcelain -- . ':!.ai' 2>/dev/null)\" ] && echo WORKING_TREE_CLEAN=ok || echo WORKING_TREE_CLEAN=dirty; } > .ai/env-check.env; grep -q TOOL_GIT=missing .ai/env-check.env && { printf blocked; exit 1; } || printf ready"
+    ]
+
+    // ReadEnvCheck: downstream gate that reads the evidence file.
+    // Runs after work to verify the environment is still consistent, or
+    // at any point in the pipeline where environment state matters.
+    // Reads .ai/env-check.env written by CheckEnvironment.
+    ReadEnvCheck [
+        shape=parallelogram,
+        label="Read Env Evidence",
+        tool_command="[ -f .ai/env-check.env ] && grep -q TOOL_GIT=ok .ai/env-check.env && printf env_ok || { printf env_fail; exit 1; }"
+    ]
+
+    start -> CheckEnvironment
+
+    // Idiom B: && outcome=success guards against stale-label on FAIL re-entry.
+    CheckEnvironment -> work         [condition="context.tool.last_line=ready && outcome=success",   label="environment ready"]
+    CheckEnvironment -> halt         [condition="outcome=fail",                                       label="required environment unavailable -- halt loudly"]
+
+    work -> ReadEnvCheck
+
+    ReadEnvCheck -> done [condition="context.tool.last_line=env_ok && outcome=success", label="environment consistent"]
+    ReadEnvCheck -> work [condition="outcome=fail",                                      label="environment changed mid-run"]
+}

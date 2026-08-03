@@ -1,0 +1,85 @@
+// base-sha-anchor.dot -- Gate primitive: record the base SHA at pipeline start.
+//
+// WHAT IT DOES:
+//   A deterministic preflight node writes the current HEAD SHA to .ai/base-sha
+//   before any work begins. Downstream delta-assertion gates read this file to
+//   determine whether durable commits have landed since the pipeline started.
+//
+// WHY THIS MATTERS (incident 2026-07-28):
+//   A 20-node pipeline ran 2.4h and exited success with zero work product. The
+//   per-slice test gates ran green on an UNMODIFIED tree -- green tests certify
+//   the tree's state, not that new work exists in it. Without a recorded base,
+//   "did work happen?" is structurally unanswerable. With the anchor, a downstream
+//   gate can ask "did durable commits land in the expected paths since we started?"
+//   -- and the answer is machine-checkable, not a claim.
+//
+// CWD ASSUMPTION:
+//   tool_command runs with cwd = context.target_dir (seeded from --cwd at
+//   invocation). The .ai/base-sha file lands under that directory. All downstream
+//   delta-assertion gates must agree on this cwd.
+//
+// TOKEN CONTRACT (Idiom B -- exit-code gate):
+//   ok       -> anchor written; proceed to work
+//   fail     -> git rev-parse failed (not a git repo, or .ai/ unwritable); FAIL
+//
+//   Routing edges consume outcome=fail (not tool.last_line=fail) because a
+//   nonzero exit sets outcome=FAIL and does not refresh tool.last_line. The
+//   && outcome=success conjunction on the ok edge prevents a stale "ok" from
+//   matching on a subsequent FAIL visit (stale-label discipline).
+//
+// GATE IDIOM: Idiom B (exit-code gate). The anchor must fail hard when git is
+//   unavailable -- a vacuous ok would silently disable all downstream delta gates.
+//
+// INTEGRATION: Drop RecordBaseSHA into your pipeline's setup/preflight cluster,
+//   before the first work node. Rename edge targets to match your graph. The
+//   delta-assertion gate (delta-assertion-gate.dot) reads .ai/base-sha.
+//
+// LIBRARY: Part of the examples/gates/ primitive library (see README.md there
+//   for the full gate contract). Cross-reference: delta-assertion-gate.dot
+//   (the consumer of this anchor).
+
+digraph BaseSHAAnchor {
+    graph [goal="Record the base SHA before work begins so downstream gates can assert a durable delta exists"]
+
+    start [shape=Mdiamond]
+    done  [shape=Msquare]
+
+    // Halt loudly on preflight failure. Routing a FAIL to done would end the
+    // pipeline with SUCCESS status -- a silent no-op run, the exact disease
+    // this library exists to prevent. A terminal hexagon escalates instead:
+    // a human decides, and a non-interactive run exits nonzero.
+    halt [shape=hexagon,
+        prompt="RecordBaseSHA failed: not a git repo, or .ai/ is unwritable. Downstream delta-assertion gates cannot run without an anchor. Fix the environment and re-run."]
+
+    // Work placeholder -- replace with your actual work node(s).
+    work [shape=box, prompt="Do the work described in $goal. Your changes will be verified by a delta-assertion gate after this node."]
+
+    // RecordBaseSHA: deterministic preflight node.
+    // Writes HEAD SHA to .ai/base-sha before any work begins.
+    // Idiom B: exits nonzero on failure so the pipeline halts early
+    // rather than silently proceeding without an anchor.
+    RecordBaseSHA [
+        shape=parallelogram,
+        label="Record Base SHA",
+        tool_command="mkdir -p .ai && git rev-parse HEAD > .ai/base-sha && printf ok || { printf fail; exit 1; }"
+    ]
+
+    // Downstream delta-assertion gate placeholder.
+    // Replace with delta-assertion-gate.dot's AssertDelta node.
+    assert_delta [
+        shape=parallelogram,
+        label="Assert Delta (see delta-assertion-gate.dot)",
+        tool_command="BASE=$(cat .ai/base-sha); COUNT=$(git log ${BASE}..HEAD -- . | wc -l | tr -d ' '); [ \"$COUNT\" -gt 0 ] && printf changed || { printf unchanged; exit 1; }"
+    ]
+
+    start -> RecordBaseSHA
+    // Idiom B: && outcome=success guards against stale-label on FAIL re-entry.
+    RecordBaseSHA -> work          [condition="context.tool.last_line=ok && outcome=success", label="anchor written"]
+    RecordBaseSHA -> halt          [condition="outcome=fail",                                 label="no anchor -- halt loudly"]
+
+    work -> assert_delta
+
+    // Idiom B: && outcome=success on the green path; outcome=fail on the red path.
+    assert_delta -> done [condition="context.tool.last_line=changed && outcome=success",  label="durable delta confirmed"]
+    assert_delta -> work [condition="outcome=fail",                                        label="no durable commits -- retry"]
+}

@@ -8,6 +8,7 @@ This folder has three kinds:
 | **`00` + `01`–`12` (numbered)** | **Tutorials** — `00` and `02` are convergence tutorials (the bowl, then staged convergence); the rest of `01`–`12` are engine-feature demos, each isolating one mechanism. Self-contained: the goal is embedded in the `.dot`. |
 | [**`practical/`**](practical/) | **Task pipelines** for real work — bug fix, refactor, test-gen, PR review, feature build, multi-lens review. Three ship a runnable sample. See [practical/README.md](practical/README.md). |
 | [**`patterns/`**](../patterns/) | **Canonical attractor exemplars** (convergence factory, task-runner) and reusable DOT patterns to drop into your own graphs. These teach the philosophy; the numbered tutorials teach the mechanics. |
+| [**`gates/`**](../gates/) | **Gate primitives** — copy-paste gate snippets (base-SHA anchor, delta-assertion, preflight evidence file) with the full gate contract in [gates/README.md](../gates/README.md). |
 
 Each pipeline is a pair: a `.dot` (the graph) and a `.md` (the guide — start there).
 

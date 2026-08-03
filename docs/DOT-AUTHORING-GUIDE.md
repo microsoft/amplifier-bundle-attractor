@@ -189,8 +189,12 @@ should call `report_outcome(status="success", preferred_label="pass")` or
 ### Retry with Fallback
 
 Use `max_retries`, `retry_target`, and `fallback_retry_target` for resilient
-execution. When a node fails and retries are exhausted, flow jumps to the
-retry target. If that also fails, the fallback target catches it.
+execution. When a node's retries are exhausted, execution jumps to its
+`retry_target`. If the node has no `retry_target`, its `fallback_retry_target`
+is tried instead — these are two separate fallback slots on the same failing
+node, not a chain where the retry target's failure triggers the fallback.
+Graph-level `retry_target` and `fallback_retry_target` are consulted only on
+unsatisfied goal-gate exit (spec §3.4), not on per-node failure.
 
 ```dot
 digraph {
@@ -225,6 +229,122 @@ digraph {
     validate -> implement [condition="outcome=fail"]
 }
 ```
+
+### Causal Retry Patterns
+
+The basic retry pattern (`retry_target="attempt"`) works well when all failure
+classes have the same cause. For convergence pipelines with multiple
+independent gates, **causal per-gate retry targets** and **per-failure-class
+fix nodes** give the engine a more precise recovery path — routing to the node
+that can change the cause, not always back to a single generic attempt node.
+
+**Causal per-gate `retry_target`s:**
+
+```dot
+digraph ConvergencePipeline {
+    graph [
+        goal="Build, test, and security-scan a feature branch",
+        default_max_retry=2,
+        // graph-level targets fire on unsatisfied goal-gate exit (spec §3.4),
+        // NOT on per-node failure (spec §3.7). Per-node failure uses node-level
+        // retry_target or a conditional edge.
+        retry_target="implement",           // goal-gate exit: retry at the work node
+        fallback_retry_target="analyze_plan" // goal-gate exit: last resort — replan
+    ]
+
+    start [shape=Mdiamond]
+    done  [shape=Msquare]
+
+    analyze_plan [shape=box,
+        prompt="Analyze the goal and write an implementation plan."]
+
+    implement [shape=box, thread_id="work",
+        prompt="Implement the plan."]
+
+    // Each gate routes failure to the node that can change its cause:
+    build_gate [shape=parallelogram, goal_gate=true,
+        tool_command="make build > build.log 2>&1 && printf ok || { printf fail; exit 1; }"]
+
+    test_gate [shape=parallelogram, goal_gate=true,
+        retry_target="fix_tests",           // tests fail? run the test-fix node
+        tool_command="make test > test.log 2>&1 && printf ok || { printf fail; exit 1; }"]
+
+    security_gate [shape=parallelogram, goal_gate=true,
+        retry_target="fix_security",        // security fails? run the security-fix node
+        tool_command="make security-scan > sec.log 2>&1 && printf ok || { printf fail; exit 1; }"]
+
+    fix_tests    [shape=box, prompt="Read test.log and fix the failing tests."]
+    fix_security [shape=box, prompt="Read sec.log and fix the security findings."]
+
+    start -> analyze_plan -> implement -> build_gate
+
+    // Build failures route straight back to the work node — an explicit,
+    // evidence-gated corrective loop (the back-edge form of causal routing):
+    build_gate -> implement [condition="outcome=fail"]
+    build_gate -> test_gate [condition="outcome=pass"]
+
+    test_gate -> security_gate -> done
+
+    // Close every corrective loop: a fix node must route back to the gate it
+    // serves, so the gate's evidence — not the fix's optimism — decides
+    // convergence. A fix node with no outgoing edge is a dead end: the fix
+    // succeeds, no edge matches, and the run terminates FAIL.
+    fix_tests    -> test_gate
+    fix_security -> security_gate
+}
+```
+
+Two causal routing forms appear above, and both need a *complete* loop:
+
+- **Conditional corrective edge** (`build_gate -> implement
+  [condition="outcome=fail"]`): routes on failure evidence immediately.
+  This is the lint-visible back-edge — `attractor lint` sees the cycle.
+- **Node-level `retry_target`** (`test_gate`, `security_gate`): fires only
+  when no edge matches after failure (spec §3.7) — fail-fast means a FAIL
+  outcome does not traverse plain unconditional edges, so the gate dispatches
+  to its fix node. The fix node's ordinary success edge back to the gate is
+  the return half of the loop. Without it, the loop is dead: fix succeeds,
+  no edge matches, run terminates FAIL.
+
+**Per-failure-class fix nodes** (differentiated failure edges):
+
+```dot
+// Instead of one generic corrective edge:
+verify -> attempt [condition="outcome=fail"]
+
+// Use per-class routing when failures have distinct causes:
+verify -> fix_build    [condition="tool.last_line=build_failed",   weight=3]
+verify -> fix_tests    [condition="tool.last_line=test_failed",    weight=2]
+verify -> fix_security [condition="tool.last_line=security_failed", weight=1]
+```
+
+This is the mechanized form of the differentiated-failure-edges pattern. Use
+it when failure classes are distinct and have different remediation strategies.
+
+**Graph-level `fallback_retry_target` as convergence doctrine:**
+
+Graph-level `retry_target` and `fallback_retry_target` are consulted on
+**unsatisfied goal-gate exit** (spec §3.4) — they are the final steps in the
+resolution order: node retry → node fallback → graph retry → graph fallback.
+They are NOT consulted on per-node failure (spec §3.7); per-node failure with
+no matching edge and no node-level retry target terminates FAIL. For per-node
+recovery, use a node-level `retry_target` or a conditional corrective edge.
+
+In convergence pipelines, set graph-level targets as the last resort in
+goal-gate-exit resolution:
+
+```dot
+graph [
+    goal="...",
+    retry_target="implement",            // goal-gate exit: retry at the work node
+    fallback_retry_target="analyze_plan" // goal-gate exit: last resort — replan
+]
+```
+
+This is convergence doctrine — not just a tutorial feature. The graph-level
+fallback is the final safety net when all goal gates are unsatisfied and the
+primary retry cannot address the failure (e.g., a fundamentally wrong approach).
+See `examples/pipelines/04-retry-with-fallback.dot` for a minimal working example.
 
 ### Iterative Pipelines (`loop_restart`)
 

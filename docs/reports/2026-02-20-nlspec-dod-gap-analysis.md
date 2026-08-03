@@ -589,3 +589,17 @@ One additional item warranting note (counted as PASS with interpretation):
 | Spec | Section | DoD Item | Note |
 |---|---|---|---|
 | Attractor | 11.8 | Question type names: SINGLE_SELECT, MULTI_SELECT, FREE_TEXT, CONFIRM | Implementation uses YES_NO, MULTIPLE_CHOICE, FREEFORM, CONFIRMATION. Functionally equivalent naming convention difference — all four question types are supported with identical behavior. |
+
+---
+
+## Errata
+
+**2026-08-03 — §11.5 Retry Logic, row 1.** The row "Nodes with `max_retries > 0` are
+retried on RETRY or FAIL outcomes | PASS" misstates the implemented behavior: the retry
+ladder (`execute_with_retry()`) retries RETRY outcomes, retryable-classified exceptions
+(classified by exception type and message content), and — since EXTENSIONS.md §27 —
+`must_write=` artifact-contract violations. A plain FAIL outcome is returned
+immediately and is never retried in place (`test_fail_not_retried`; the fail-fast
+choice is deliberate). Graph-level `retry_target` and `condition="outcome=fail"` edges
+are the mechanism for re-attempting failures. The DoD line's "or FAIL" does not hold in
+this engine, and the PASS verdict should have flagged the divergence.

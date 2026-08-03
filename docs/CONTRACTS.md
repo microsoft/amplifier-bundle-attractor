@@ -70,7 +70,7 @@ Three mechanisms let pipeline authors override fail-fast for specific scenarios:
 
 | Attribute / pattern | Applied to | Effect |
 |---|---|---|
-| `continue_on_fail="true"` | Source node | Engine converts FAIL→SUCCESS before edge selection. Downstream nodes see a success outcome and follow unconditional edges normally. Use for optional/informational nodes whose failure must not block the main flow. |
+| `continue_on_fail="true"` | Source node | Engine converts FAIL→SUCCESS before edge selection. Downstream nodes see a success outcome and follow unconditional edges normally. Use for optional/informational nodes whose failure must not block the main flow. Exception: a `must_write=` artifact-contract violation is non-overridable — the engine re-checks the contract after this override and fails the node (EXTENSIONS.md §27). Behavior change with §27: a `continue_on_fail=true` node that declares `must_write=` and fails without writing its artifact now ends FAIL where it previously flipped to silent SUCCESS. |
 | `runs_on=always` | Downstream node | Node executes even if predecessors failed. Use for cleanup nodes (teardown, notifications) that must run regardless of upstream outcome. |
 | `runs_on=failure` | Downstream node | Node executes ONLY if predecessors failed. Use for error-handling or recovery nodes. |
 | `condition="outcome=fail"` edge | Outgoing edge | Matched in Step 1 of edge selection; explicit failure-routing edge. Most semantically clear when paired with a `condition="outcome=success"` edge on the same source node. |
@@ -79,12 +79,12 @@ Three mechanisms let pipeline authors override fail-fast for specific scenarios:
 `continue_on_fail=true` that fails has its outcome flipped FAIL→SUCCESS before edge
 selection; a downstream `runs_on=failure` node will NOT see that predecessor as failed
 (the failure was swallowed). Use `runs_on=always` on cleanup nodes that must fire after
-a `continue_on_fail` predecessor. See engine.py lines 578–592 for the canonical
+a `continue_on_fail` predecessor. See engine.py lines 582–596 for the canonical
 explanation.
 
 **Reference:** `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py`
-(lines 593–596 for the `continue_on_fail` check; lines 1299–1323 for `_get_runs_on` and
-1350–1447 for the skip-gate `_check_node_skip`). Also: `edge_selection.py` lines 65–78
+(lines 597–600 for the `continue_on_fail` check; lines 1332–1357 for `_get_runs_on` and
+1383–1481 for the skip-gate `_check_node_skip`). Also: `edge_selection.py` lines 65–78
 for the edge-level routing comment.
 
 ---

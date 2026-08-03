@@ -764,6 +764,8 @@ Set these on the `graph` element:
 | Using `full` fidelity everywhere | High cost, slow execution | Use `full` only where conversation continuity matters |
 | Circular dependencies without exit | Infinite loop | Ensure every cycle has a conditional exit path |
 | `condition=\"key=value\"` (backslash delimiters) | Parser error (or, before the fail-loud fix, silent wrong routing) | Use plain quotes: `condition="key=value"` — see callout above |
+| `tool_command="cmd 2>&1 \| tail -N"` (pipe-masked exit code, CMD-001) | In `/bin/sh`, the pipeline's exit code is `tail`'s — always 0.  The gate records SUCCESS even when `cmd` failed. | Redirect instead: `cmd > out.log 2>&1`.  See CMD-001 below. |
+| `tool_command="cmd \| tail -N && echo TOKEN"` (always-true sentinel, CMD-002) | `tail` exits 0, so `&& echo TOKEN` fires unconditionally.  `tool.last_line` becomes the sentinel regardless of `cmd`'s result. | Use the honest token gate: `cmd && printf ok \|\| printf fail` (no pipe).  See CMD-002 below. |
 
 ## Complete Example: Feature Build Pipeline
 
@@ -1039,6 +1041,124 @@ loop via fail-fast before the LLM assessor ever judges the work.
 
 The check runs per SCC so that a compliant loop does not suppress diagnostics
 for a separate non-compliant loop.
+
+---
+
+### CMD-001 — Pipe-masked exit code
+
+**What it detects:** A `parallelogram` (tool) node whose `tool_command` ends
+in a pipe to a filter or pager program (`tail`, `head`, `grep`, `sed`, `awk`,
+`cut`, `sort`, `uniq`, `wc`, `xargs`) without `set -o pipefail`.
+
+**Why it matters:** In `/bin/sh` (the engine's execution environment), a
+pipeline's exit status is the **last stage's** — not the real command's.
+`false | tail -1` exits 0 whenever `tail` can read its input, which is always.
+The gate records SUCCESS even when the wrapped command failed with a fatal
+error.
+
+This was the root cause of the 2026-07-28 incident: a `run_harness` node
+printed `bash: scripts/verify-remote-access.sh: No such file or directory`
+and recorded **SUCCESS** (duration ~1 s) because its `tool_command` was
+`cmd 2>&1 | tail -N`.  The pipeline ran 2.4 h and exited success with zero
+work product.
+
+**The two honest gate idioms (not flagged):**
+
+```sh
+# Token gate — always exits 0; routing on the emitted token
+cmd && printf green || printf red
+
+# Exit-code gate — preserves failure
+cmd && printf green || { printf red; exit 1; }
+```
+
+Both idioms preserve the wrapped command's result.  The hazard shape destroys
+it.
+
+**Doctrinally-correct alternative:** redirect output to a file instead of
+piping to `tail`.  This preserves the exit code AND keeps `tool.last_line`
+clean (it becomes the routing token, not noise):
+
+```sh
+# WRONG — exit code is tail's (always 0)
+cmd 2>&1 | tail -30
+
+# CORRECT — exit code is cmd's; output in out.log for diagnostics
+cmd > out.log 2>&1
+```
+
+If you need to see the last N lines, write to a file and read it separately
+from the routing logic.
+
+**Severity:** WARNING — consistent with the TOPO rule family.  The hazard is
+real but static analysis cannot prove the command is a meaningful gate;
+conservative analysis may miss complex cases.
+
+**Suppression:** The lint rule is suppressed when `set -o pipefail` appears as
+an **executable shell statement** in the command (not inside a quoted string).
+`echo "set -o pipefail"; false | tail -1` does NOT suppress the rule — the
+`set` is inside a quoted argument to `echo`, not executed.  Only a bare
+`set -o pipefail` (or `set -eo pipefail`, `set -euo pipefail`, etc.) that
+appears outside quotes suppresses CMD-001.
+
+**Important:** `pipefail` is not POSIX sh — on Debian/Ubuntu-family systems
+`/bin/sh` is `dash`, where `set -o pipefail` exits 2 with `Illegal option`.  The engine
+runs tool commands under `/bin/sh`.  If you write `set -o pipefail` to suppress
+this warning, your tool command must explicitly invoke bash:
+`bash -c 'set -o pipefail; ...'`.  The portable alternative is the redirect
+idiom (shown above) or the honest token gate without a pipe:
+`cmd && printf ok || printf fail`.
+
+**What this rule does NOT catch:** pipes inside `$(...)` command substitutions,
+pipes inside single- or double-quoted strings (e.g. `echo 'false | tail -1'`
+is safe), `bash -o pipefail -c '...'` wrappers (pipefail not detected inside
+the quoted string argument), explicit exit-code capture (`cmd | tail; rc=$?;
+...` — use the redirect idiom or `set -o pipefail` for a suppression that lint
+detects), custom filter scripts not in the recognised set, or pipes in a
+non-final `;`-separated segment (e.g. `false | tail -1; echo done` is CLEAN —
+`echo done` determines the exit code).
+
+---
+
+### CMD-002 — Always-true sentinel
+
+**What it detects:** A `parallelogram` (tool) node whose `tool_command`
+contains a pipe to a filter/pager followed by `&& echo TOKEN` or
+`&& printf TOKEN` at the end of the command.  The sentinel fires
+unconditionally because the filter always exits 0 when it can read its input.
+
+**Why it matters:** `tool.last_line` (the primary routing channel) becomes
+the sentinel string regardless of whether the wrapped command succeeded.
+The gate always says yes.
+
+Example hazard (incident shape):
+```sh
+sh -c 'exit 1' 2>&1 | tail -5 && echo GREEN
+# tail exits 0 → && echo GREEN fires → tool.last_line = "GREEN"
+# The routing channel says success unconditionally.
+```
+
+Contrast with the honest token-gate idiom (NOT flagged):
+```sh
+# Both branches fire — the || distinguishes success from failure
+cmd && printf green || printf red
+
+# Exit-code gate — failure is preserved
+cmd && printf green || { printf red; exit 1; }
+```
+
+**The key discriminator:** does the command's success or failure still
+influence either the exit code or the emitted token?  The hazard shapes
+destroy that influence.  The honest idioms preserve it.
+
+**Severity:** WARNING — consistent with CMD-001 and the TOPO rule family.
+
+**What this rule does NOT catch:** sentinels inside `$(...)` substitutions,
+sentinels after non-pipe-masked commands (where `&& echo TOKEN` is the honest
+token-gate idiom and is safe), variable-interpolated filter names, or sentinels
+where the pipe appears in a non-final `;`-separated segment (e.g.
+`false | tail -1; echo done && echo SENTINEL` is CLEAN — the final segment
+`echo done && echo SENTINEL` has no pipe).
 
 ---
 

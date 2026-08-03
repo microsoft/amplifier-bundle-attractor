@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from .aggregator import StateAggregator
+from .session_events import register_session_event_persister
 from .status_bar import StatusBarContributor
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,8 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> None:
     2. StatusBarContributor — compact system-reminder for context injection
     3. pipeline.state contribution channel — makes state queryable
     4. observability.events contribution — ensures pipeline events are discoverable
+    5. SessionEventPersister — persists worker-session event streams to the
+       run dir (EXTENSIONS.md §26; no-op outside a codergen backend call)
     """
     hooks = coordinator.get("hooks")
     aggregator = StateAggregator()
@@ -76,6 +79,15 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> None:
     for event_name, handler_name in _AGGREGATOR_HANDLER_MAP.items():
         handler = getattr(aggregator, handler_name)
         hooks.register(event_name, handler, name="pipeline-observability")
+
+    # Worker-session event persistence (EXTENSIONS.md §26).  This module is
+    # composed into every spawned worker session (attractor-core mounts it on
+    # the parent bundle; PreparedBundle.spawn composes parent + child), so
+    # these handlers receive each worker's REAL event stream — session
+    # lifecycle, tool:pre/tool:post, orchestrator completion — and append it
+    # to <stage_dir>/sessions/<session_id>/events.jsonl.  Gracefully no-ops
+    # when the loop-pipeline seam is absent or unset.
+    register_session_event_persister(hooks)
 
     # Status bar contributor for context injection
     status_bar = StatusBarContributor(aggregator)

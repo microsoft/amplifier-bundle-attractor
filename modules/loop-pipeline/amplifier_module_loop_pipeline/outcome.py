@@ -61,6 +61,16 @@ class Outcome:
     #: unsatisfied and the gate fails closed (RETRY / FAIL, never silent success).
     is_explicit: bool = field(default=False)
 
+    #: EXTENSIONS.md §26 — full response text from the LLM/spawn path, carried
+    #: through the Outcome so the codergen handler can write response.md even
+    #: when the backend returns an Outcome (not a raw string).  Set by
+    #: _parse_outcome() to the verbatim ``output`` text before any truncation.
+    #: The codergen handler writes this to <stage_dir>/response.md and then
+    #: discards it (it is NOT included in status.json or context_updates).
+    #: None when the Outcome was constructed by a path that did not go through
+    #: _parse_outcome (e.g. spawn infrastructure failures, tool handlers).
+    response_text: str | None = None
+
     #: Issue 10 / analog of WS-4 Sub-fix C: structured tool-invocation payload
     #: populated by ToolHandler on failure so the dashboard can display the
     #: command and output instead of the "command lost on failure" placeholder.

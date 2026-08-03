@@ -28,9 +28,18 @@ intelligence belongs in the worker node's context, not in the graph structure.
 When you find yourself adding `plan -> implement -> test` as graph nodes, stop:
 you are encoding the recipe plane into the control plane. The graph should encode
 *when* to verify and *how* to loop, not *which cognitive steps* the model takes.
-The shipped counter-example (at time of writing: `examples/pipelines/02-plan-implement-test.dot`)
-hardcodes cognitive phases and exact test cases in the graph -- the graph
-swallowed the intelligence.
+
+The anti-pattern: a pipeline that hardcodes cognitive phases (plan/implement/test)
+and exact test cases as graph nodes -- the graph swallowed the intelligence.
+`examples/pipelines/01-simple-linear.dot` is the deliberate one-pass shape;
+for the opposite failure mode, imagine any graph where three sequential LLM
+nodes each encode a domain step with no convergence skeleton around them.
+`examples/pipelines/02-plan-implement-test.dot` deliberately uses staged nodes
+as a *teaching device* (so the reader can see multi-stage traversal and
+`goal_gate` + `retry_target` interaction) while wrapping them in a convergence
+skeleton -- its guide explicitly names this tension. The lesson: staged nodes
+are acceptable when the convergence skeleton is load-bearing; they are the
+anti-pattern when the graph has no cycle and the stages ARE the architecture.
 
 **Recipes vs. attractor pipelines.** Recipes are for staged sequential workflows
 with human approval gates; attractor pipelines are for machine-verified

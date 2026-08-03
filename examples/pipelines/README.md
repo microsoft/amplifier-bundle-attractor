@@ -5,7 +5,7 @@ This folder has three kinds:
 
 | Folder / file | What it is |
 |---------------|-----------|
-| **`00` + `01`–`12` (numbered)** | **Tutorials** — `00` is the canonical convergence exemplar (the bowl); `01`–`12` are engine-feature demos, each isolating one mechanism. Self-contained: the goal is embedded in the `.dot`. |
+| **`00` + `01`–`12` (numbered)** | **Tutorials** — `00` and `02` are convergence tutorials (the bowl, then staged convergence); the rest of `01`–`12` are engine-feature demos, each isolating one mechanism. Self-contained: the goal is embedded in the `.dot`. |
 | [**`practical/`**](practical/) | **Task pipelines** for real work — bug fix, refactor, test-gen, PR review, feature build, multi-lens review. Three ship a runnable sample. See [practical/README.md](practical/README.md). |
 | [**`patterns/`**](../patterns/) | **Canonical attractor exemplars** (convergence factory, task-runner) and reusable DOT patterns to drop into your own graphs. These teach the philosophy; the numbered tutorials teach the mechanics. |
 
@@ -36,6 +36,20 @@ These files teach the philosophy — the convergence shape and why it matters:
 | [../patterns/task-runner.md](../patterns/task-runner.md) | Battle-hardened goal+DoD runner: orient/attempt/verify/critique/triage/postmortem/package. |
 | [../patterns/convergence-factory.dot](../patterns/convergence-factory.dot) | Parent-injectable form of the bowl — for folder-node composition. |
 
+## Convergence tutorials
+
+These files teach the convergence shape with increasing complexity:
+
+| # | Guide | What it teaches |
+|---|-------|----------------|
+| 00 | [00-convergence-loop.md](00-convergence-loop.md) | **The bowl** — minimal 4-node convergence loop. Start here. |
+| 02 | [02-plan-implement-test.md](02-plan-implement-test.md) | Staged convergence: `plan → implement → test_gate` with `goal_gate` + `retry_target` + corrective back-edge |
+
+Tutorial 02 graduated from an engine demo to a convergence tutorial: it now has
+a corrective loop (tool gate + back-edge + budget), teaches `goal_gate` +
+`retry_target` together, and explicitly owns the recipe-plane tension (staged
+nodes as a teaching device, not a real-work pattern).
+
 ## Engine-feature demos
 
 These files teach individual mechanisms. Each isolates one concept. Read them
@@ -44,7 +58,6 @@ after `00` when you need that specific feature:
 | # | Guide | Mechanism it demos |
 |---|-------|--------------------|
 | 01 | [01-simple-linear.md](01-simple-linear.md) | Linear `A → B → C` — the simplest possible pipeline |
-| 02 | [02-plan-implement-test.md](02-plan-implement-test.md) | `goal_gate` on an LLM node |
 | 03 | [03-conditional-routing.md](03-conditional-routing.md) | `diamond` routing node / conditional branches |
 | 04 | [04-retry-with-fallback.md](04-retry-with-fallback.md) | Retry loop with fallback path |
 | 05 | [05-parallel-fan-out.md](05-parallel-fan-out.md) | `component` fan-out / `tripleoctagon` fan-in |

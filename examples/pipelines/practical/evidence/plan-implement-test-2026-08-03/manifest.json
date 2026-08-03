@@ -1,0 +1,10 @@
+{
+  "graph_name": "PlanImplementTest",
+  "goal": "Build a Python add(a,b) function with a pytest test file",
+  "start_time": "2026-08-03T00:00:00.000000+00:00",
+  "node_count": 5,
+  "edge_count": 5,
+  "reproducible_fixture": "modules/loop-pipeline/tests/test_plan_implement_test_evidence.py",
+  "fixture_note": "Engine run with mock LLM backend and controlled tool handler: iteration 1 = gate_fail (back-edge fires, loop_restart), iteration 2 = gate_pass (convergence, goal_gate satisfied). The reproducible_fixture above is a pytest test that runs the actual PipelineEngine and asserts the event sequence -- it is the auditable proof that the loop fires. The events.jsonl in this directory was captured from one actual run of that fixture harness.",
+  "events_note": "events.jsonl is a captured transcript of one fixture run; run the reproducible_fixture to regenerate an equivalent stream yourself."
+}

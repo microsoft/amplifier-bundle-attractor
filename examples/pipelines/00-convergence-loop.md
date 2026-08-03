@@ -146,12 +146,12 @@ Every tutorial after this one is a variation on the bowl:
 | Tutorial | What it adds |
 |----------|--------------|
 | `01-simple-linear.md` | Engine demo: the simplest possible pipeline (no gate, no loop) |
-| `02-plan-implement-test.md` | Engine demo: `goal_gate` on an LLM node |
+| `02-plan-implement-test.md` | Convergence tutorial: staged `plan → implement → test_gate` with `goal_gate` + `retry_target` + corrective back-edge (graduated from engine demo) |
 | `03-conditional-routing.md` | Engine demo: `diamond` routing node |
 | `04-retry-with-fallback.md` | Engine demo: retry ladder (`max_retries`, fallback targets) |
 | `05-parallel-fan-out.md` | Engine demo: `component` fan-out / `tripleoctagon` fan-in |
 
-The canonical convergence exemplars (this file, `bug-fix`, `task-runner`) teach
-the philosophy. The numbered engine-feature demos (01-09, 12) teach individual
+The canonical convergence exemplars (this file, `02-plan-implement-test`, `bug-fix`, `task-runner`) teach
+the philosophy. The numbered engine-feature demos (01, 03-09, 12) teach individual
 mechanisms; `10-full-attractor` is the extended application that layers every
 feature onto this shape. See `examples/pipelines/README.md` for the full ramp.

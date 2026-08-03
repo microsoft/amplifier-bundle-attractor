@@ -101,6 +101,65 @@ context is thin, and produces a linted `.dot` artifact. This expert is the
 consultation target the skill delegates to; `/attractorify` is the session-facing
 entry point.
 
+## Design-Time Self-Check
+
+Apply this checklist at design START, mid-build, and final review. These are
+the layers static lint cannot see — the agent is the only defense at design
+time. Full patterns and compliant examples are in the companion context file.
+
+@attractor:context/attractor-expert-defenses.md
+
+**Command-content hazards** (catch before lint runs):
+- [ ] **CMD-001 — Pipe-masked exit code:** does any tool node pipe its primary
+  command into a filter (`tail`, `head`, `grep`, `sed`, `awk`, …) without
+  `set -o pipefail`? In `/bin/sh`, the pipeline exits with the filter's code
+  (always 0). Use the redirect idiom (`cmd > out.log 2>&1`) or an honest
+  token gate (`cmd && printf ok || printf fail`) instead.
+- [ ] **CMD-002 — Always-true sentinel:** does any tool node end with
+  `&& echo TOKEN` or `&& printf TOKEN` after a pipe to a filter? The filter
+  exits 0 unconditionally, so the sentinel fires regardless of whether the
+  real command succeeded. `tool.last_line` always says yes. Remove the pipe
+  or use the honest token gate idiom.
+
+**Judge verdict contracts** (lint cannot see inside node prompts):
+- [ ] Every `goal_gate=true` LLM node has an explicit outcome instruction:
+  call `report_outcome`, emit a pure-JSON verdict, or write a verdict file
+  that a downstream deterministic `parallelogram` gate reads. Prose verdicts
+  are discarded under the fail-closed contract (engine-semantics.md §5).
+  Never leave a judge to prose.
+
+**Delta-assertion gates** (green tests on an unmodified tree prove nothing):
+- [ ] Work-completion gates anchor to a recorded base SHA and assert that
+  the expected commits or file changes exist beyond the baseline. Record
+  `git rev-parse HEAD > .ai/base-sha` in a setup node; assert
+  `git log "$base"..HEAD` is non-empty in the gate.
+
+**Deferral/observer routing power** (an observation with no routing is
+decoration):
+- [ ] Every node whose job is to NOTICE a problem (audit, health-check,
+  preflight, deferral) either (a) has conditional out-edges keyed to what it
+  observes — requiring a machine-readable evidence file and a deterministic
+  gate — or (b) is explicitly documented as advisory-only and kept off the
+  success path's certification chain.
+
+## Retry Sophistication
+
+When designing convergence pipelines, prefer causal retry routing over
+uniform retry routing:
+- **Causal per-gate `retry_target`s:** route to the node that can change the
+  cause (`run_harness` → `retry_target="fix_harness"`), not always back to a
+  single `attempt` node.
+- **Per-failure-class fix nodes:** differentiate failure edges to dedicated
+  fix nodes per failure class (build failure, test failure, security failure).
+- **Graph-level `fallback_retry_target`:** graph-level `retry_target` and
+  `fallback_retry_target` are consulted on **unsatisfied goal-gate exit**
+  (spec §3.4), in the order: node retry → node fallback → graph retry →
+  graph fallback. They are NOT consulted on per-node failure (spec §3.7) —
+  per-node failure needs a node-level `retry_target` or a conditional edge.
+  Set graph-level targets as the last step in goal-gate-exit resolution for
+  convergence pipelines. See DOT-AUTHORING-GUIDE.md §"Retry with Fallback"
+  and the Causal Retry Patterns section.
+
 ## How to Help
 
 When asked about pipeline design:
@@ -108,6 +167,7 @@ When asked about pipeline design:
 2. Provide a complete, valid DOT graph
 3. Explain attribute choices (fidelity, goal gates, retries)
 4. Point to relevant example pipelines
+5. Apply the design-time self-check above before finalizing
 
 When debugging pipeline issues:
 1. Check DOT syntax (missing start/exit nodes, invalid conditions)

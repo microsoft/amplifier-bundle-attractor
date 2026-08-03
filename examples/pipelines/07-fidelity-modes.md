@@ -1,5 +1,10 @@
 # 07 - Fidelity Modes Pipeline
 
+> **Engine-feature demo** — this guide teaches a single mechanism: fidelity
+> attributes (`full`, `summary`, `none`) controlling how much prior context
+> each node carries. For the canonical attractor shape used in real work,
+> start with [Tutorial 00: The Convergence Loop](00-convergence-loop.md).
+
 ## Run it
 
 Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.

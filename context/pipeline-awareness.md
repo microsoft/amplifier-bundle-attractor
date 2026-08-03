@@ -81,12 +81,21 @@ For a one-pass task with no corrective loop, use a recipe instead of an inline p
 
 ## Available Example Pipelines
 
-- `@attractor:examples/pipelines/01-simple-linear.dot` — Minimal start -> implement -> done
-- `@attractor:examples/pipelines/02-plan-implement-test.dot` — Plan, implement, test cycle
-- `@attractor:examples/pipelines/03-conditional-routing.dot` — Conditional branching based on outcomes
+### Canonical attractor exemplars (teach the shape)
+
+- `@attractor:examples/pipelines/00-convergence-loop.dot` — **The bowl**: minimal 4-node convergence loop (attempt → evidence gate → corrective back-edge → done). Start here.
+- `@attractor:examples/pipelines/practical/bug-fix.dot` — The bowl applied to real work: inner fix loop + root-cause wall + outer feedback loop + budget wall.
+- `@attractor:examples/patterns/task-runner.dot` — Battle-hardened goal+DoD runner (orient/attempt/verify/critique/triage/postmortem/package).
+- `@attractor:examples/patterns/convergence-factory.dot` — Parent-injectable convergence loop for folder-node composition.
+
+### Engine-feature demos (teach individual mechanisms)
+
+- `@attractor:examples/pipelines/01-simple-linear.dot` — Minimal start -> implement -> done (linear flow demo)
+- `@attractor:examples/pipelines/02-plan-implement-test.dot` — goal_gate on an LLM node
+- `@attractor:examples/pipelines/03-conditional-routing.dot` — diamond routing node / conditional branches
 - `@attractor:examples/pipelines/04-retry-with-fallback.dot` — Retry logic with fallback paths
-- `@attractor:examples/pipelines/05-parallel-fan-out.dot` — Parallel execution with fan-in
-- `@attractor:examples/pipelines/06-model-stylesheet.dot` — Multi-provider model selection
+- `@attractor:examples/pipelines/05-parallel-fan-out.dot` — component fan-out / tripleoctagon fan-in
+- `@attractor:examples/pipelines/06-model-stylesheet.dot` — CSS-like per-node model routing
 
 ### Practical Pipelines
 

@@ -84,11 +84,19 @@ confidently wrong about the running engine.**
 
 ## Example Pipelines
 
-The bundle includes 15 example pipelines you can reference:
+The bundle includes 16 example pipelines you can reference:
 
-- Tutorial examples: `@attractor:examples/pipelines/01-simple-linear.dot`
-  through `@attractor:examples/pipelines/10-full-attractor.dot`
-- Practical templates: `@attractor:examples/pipelines/practical/bug-fix.dot`,
+- **Canonical convergence exemplar** (start here):
+  `@attractor:examples/pipelines/00-convergence-loop.dot` — the bowl: minimal
+  4-node convergence loop with evidence gate and corrective back-edge.
+- **Engine-feature demos**: `@attractor:examples/pipelines/01-simple-linear.dot`
+  through `@attractor:examples/pipelines/10-full-attractor.dot` — each isolates
+  one mechanism (linear flow, goal_gate, diamond routing, fan-out, stylesheets,
+  fidelity, human gate, manager loop).
+- **Canonical exemplars in patterns/**: `@attractor:examples/patterns/task-runner.dot`
+  (battle-hardened goal+DoD runner), `@attractor:examples/patterns/convergence-factory.dot`
+  (parent-injectable convergence loop for folder-node composition).
+- **Practical templates**: `@attractor:examples/pipelines/practical/bug-fix.dot`,
   `feature-build.dot`, `pr-review.dot`, `refactor.dot`, `test-gen.dot`
 - Programmatic usage: `@attractor:examples/programmatic_usage.py`
 

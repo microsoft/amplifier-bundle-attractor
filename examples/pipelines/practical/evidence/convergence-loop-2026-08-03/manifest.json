@@ -1,0 +1,8 @@
+{
+  "graph_name": "convergence_loop",
+  "goal": "Write a Python function count_words(text) that counts whitespace-separated words and returns an integer.",
+  "start_time": "2026-08-03T00:00:00.000000+00:00",
+  "node_count": 4,
+  "edge_count": 4,
+  "fixture_note": "Engine run with mock LLM backend and controlled tool handler: iteration 1 = gate_fail (loop fires), iteration 2 = gate_pass (convergence). Demonstrates the corrective back-edge firing before the success path."
+}

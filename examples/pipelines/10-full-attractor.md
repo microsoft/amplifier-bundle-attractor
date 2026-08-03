@@ -1,5 +1,12 @@
 # 10 - Full Attractor (Kitchen Sink)
 
+> **Extended convergence application** — unlike the single-mechanism demos,
+> this kitchen-sink pipeline layers every engine feature onto the canonical
+> shape from [Tutorial 00: The Convergence Loop](00-convergence-loop.md): the
+> same evidence-gated test loop (`test_gate` routes on
+> `context.tool.last_line`, corrective back-edge through `fix_tests`),
+> decorated with fan-out, a human gate, stylesheets, and retries.
+
 ## Run it
 
 Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.

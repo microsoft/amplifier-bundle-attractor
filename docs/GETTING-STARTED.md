@@ -24,8 +24,9 @@ Available profiles: `attractor-profile-anthropic`, `attractor-profile-openai`, `
 
 ## Run Your First Pipeline
 
-The simplest pipeline is a linear start-implement-done. Point the pipeline
-orchestrator at a `.dot` file via bundle config:
+The first tutorial is the convergence loop: a worker node, a deterministic
+evidence gate, and a corrective back-edge. Point the pipeline orchestrator at
+its `.dot` file via bundle config:
 
 ```yaml
 # .amplifier/config.yaml (or any bundle file)
@@ -34,14 +35,19 @@ includes:
 session:
   orchestrator:
     config:
-      dot_file: examples/pipelines/01-simple-linear.dot   # or dot_source: "digraph { ... }"
+      dot_file: examples/pipelines/00-convergence-loop.dot   # or dot_source: "digraph { ... }"
 ```
 
 Then run the configured bundle -- there are no pipeline-specific CLI flags. The
 goal is carried by the DOT graph attribute
-`graph [goal="Create a Python script that prints hello world"]` (or via
+`graph [goal="Write a Python function count_words(text) ..."]` (or via
 `params`), not a `--goal` flag. Running parses the DOT graph, spawns an LLM agent
-for the `implement` node, and runs it to completion.
+for the `implement` node, runs `pytest` at the `test_gate`, and loops back if
+tests fail -- until the gate reports success.
+
+See [examples/pipelines/00-convergence-loop.md](../examples/pipelines/00-convergence-loop.md)
+for the full guide including the walk-up CLI invocation and the WHY behind the
+loop-first design.
 
 ### Or run standalone with the CLI
 

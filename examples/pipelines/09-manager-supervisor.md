@@ -1,5 +1,10 @@
 # 09 - Manager Supervisor Pipeline
 
+> **Engine-feature demo** — this guide teaches a single mechanism: the `house`
+> manager/supervisor loop (observe/evaluate/act cycles over a child subgraph).
+> For the canonical attractor shape used in real work, start with
+> [Tutorial 00: The Convergence Loop](00-convergence-loop.md).
+
 ## Run it
 
 Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.

@@ -1,5 +1,11 @@
 # 02 - Plan-Implement-Test Pipeline
 
+> **Engine-feature demo** — this guide teaches a single mechanism: `goal_gate`
+> on an LLM node. Note the shape: plan → implement → test is a linear chain
+> with no corrective back-edge, so it demonstrates the gate mechanism, not the
+> convergence loop. For the canonical attractor shape used in real work, start
+> with [Tutorial 00: The Convergence Loop](00-convergence-loop.md).
+
 ## Run it
 
 Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.

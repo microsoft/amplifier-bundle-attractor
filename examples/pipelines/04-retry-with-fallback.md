@@ -1,5 +1,13 @@
 # 04 - Retry with Fallback Pipeline
 
+> **Engine-feature demo** — this guide teaches a single mechanism family: the
+> engine's retry ladder (`max_retries`, `retry_target`,
+> `fallback_retry_target`, fail-edges). The retry loop here routes on the
+> validating node's own outcome rather than a machine-checked signal —
+> contrast with the evidence-gated loop in
+> [Tutorial 00: The Convergence Loop](00-convergence-loop.md), the canonical
+> attractor shape used in real work.
+
 ## Run it
 
 Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.

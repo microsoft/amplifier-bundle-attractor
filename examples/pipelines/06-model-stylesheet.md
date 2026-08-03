@@ -1,5 +1,10 @@
 # 06 - Model Stylesheet Pipeline
 
+> **Engine-feature demo** — this guide teaches a single mechanism: CSS-style
+> `model_stylesheet` rules for per-node model selection. For the canonical
+> attractor shape used in real work, start with
+> [Tutorial 00: The Convergence Loop](00-convergence-loop.md).
+
 ## Run it
 
 Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.

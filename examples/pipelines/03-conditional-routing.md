@@ -1,5 +1,11 @@
 # 03 - Conditional Routing Pipeline
 
+> **Engine-feature demo** — this guide teaches a single mechanism:
+> evidence-based conditional routing (`context.tool.last_line`) from a
+> parallelogram gate, plus edge weights — the same routing idiom Tutorial 00's
+> gate uses. For the canonical attractor shape used in real work, start with
+> [Tutorial 00: The Convergence Loop](00-convergence-loop.md).
+
 ## Run it
 
 Self-contained -- the goal is baked into the `.dot`, so no `--param` is needed.

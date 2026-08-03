@@ -71,9 +71,67 @@ pipelines are legitimate -- the "probably" is load-bearing.)
 
 ## Pipeline Patterns
 
-### Linear Pipeline
+### Convergence Loop (canonical attractor shape)
 
-The simplest pattern. Stages execute in sequence.
+**Start here.** The convergence loop is the recommended shape for any task where
+the first attempt may not succeed -- which is most coding tasks.
+
+```
+start → implement → test_gate ──(gate_pass)──→ done
+                       ↑
+                       └──────(gate_fail)──────────
+```
+
+A worker node produces an artifact, a deterministic evidence gate checks it, and
+a corrective back-edge routes the worker back when the gate fails. The exit is
+structurally unreachable until the gate reports success.
+
+**Why loops beat chains:** a 6-step linear chain of 0.90-probability nodes has
+~0.53 end-to-end reliability; one corrective loop around the same nodes raises
+it to ~0.94. See `examples/pipelines/00-convergence-loop.dot` for the
+walk-up-runnable tutorial.
+
+```dot
+digraph {
+    graph [
+        goal="Build a Python add(a,b) function with pytest tests",
+        default_fidelity="full",
+        default_thread_id="dev"
+    ]
+
+    start     [shape=Mdiamond]
+    implement [prompt="Create or improve calculator.py with add(a,b) and pytest tests in test_calculator.py, to satisfy: $goal. If test_output.txt exists, read it -- it holds the latest test results."]
+    test_gate [shape=parallelogram, goal_gate=true,
+               tool_command="pytest -q test_calculator.py > test_output.txt 2>&1 && echo gate_pass || echo gate_fail"]
+    done      [shape=Msquare]
+
+    start -> implement -> test_gate
+    test_gate -> done      [condition="context.tool.last_line=gate_pass"]
+    test_gate -> implement [condition="context.tool.last_line=gate_fail", label="fix and retry", loop_restart="true"]
+}
+```
+
+The `test_gate` is a deterministic tool node (not an LLM self-report): it runs
+`pytest` and echoes a routing label as its last stdout line. The engine stores
+that label in `context.tool.last_line`; outgoing edges condition on it.
+`goal_gate=true` is on the evidence-bearing node, not on `implement`.
+
+Three mechanics worth copying exactly:
+
+1. **Test output travels through a file** (`test_output.txt`), not a prompt
+   variable. LLM-node prompts expand only `$goal`, `$context`, and plain
+   (dot-free) context keys -- `tool.output` is a dotted key available to
+   `tool_command` strings, not to prompts.
+2. **The gate uses plain redirection** (`> test_output.txt 2>&1`) rather than
+   a pipe. `tool_command` runs under `/bin/sh`, where a pipe would make the
+   exit code `tee`'s, not pytest's. Redirection preserves pytest's exit code.
+3. **`loop_restart="true"` on the back-edge** resets iteration state so
+   `implement` starts fresh on each retry.
+
+### Linear Pipeline (engine-feature demo)
+
+The simplest pattern. Stages execute in sequence. Use this to learn the engine
+mechanics; use the convergence loop for real work.
 
 ```dot
 digraph {
@@ -87,44 +145,9 @@ digraph {
 }
 ```
 
-A convergence-shaped pipeline -- a worker node with an evidence gate and a corrective
-back-edge. This is the recommended shape for any task where the first attempt may not succeed:
-
-```dot
-digraph {
-    graph [
-        goal="Build a Python add(a,b) function with pytest tests",
-        default_fidelity="full",
-        default_thread_id="dev"
-    ]
-
-    start     [shape=Mdiamond]
-    implement [prompt="Create or improve calculator.py with add(a,b) and pytest tests in test_calculator.py, to satisfy: $goal. If test_output.txt exists, read it -- it holds the latest test results."]
-    test_gate [shape=parallelogram, tool_command="pytest -q test_calculator.py > test_output.txt 2>&1", goal_gate=true]
-    done      [shape=Msquare]
-
-    start -> implement -> test_gate
-    test_gate -> done          [condition="outcome=success"]
-    test_gate -> implement     [condition="outcome=fail", label="fix and retry"]
-}
-```
-
-The `test_gate` is a deterministic tool node (not an LLM self-report): it runs
-`pytest` and routes on the exit code. `goal_gate=true` is on the evidence-bearing node,
-not on `implement`. The corrective back-edge (`test_gate -> implement`) is what makes
-this a convergence graph rather than a recipe.
-
-Two mechanics worth copying exactly. First, test output travels through a *file*
-(`test_output.txt`), not a prompt variable: LLM-node prompts expand only `$goal`,
-`$context`, and plain (dot-free) context keys -- `tool.output` is a dotted key
-available to `tool_command` strings, not to prompts. Second, the gate uses plain
-redirection (`> test_output.txt 2>&1`) rather than a pipe: `tool_command` runs under
-`/bin/sh`, where a pipe would make the exit code `tee`'s, not pytest's (and bash-isms
-like `PIPESTATUS` are unavailable). Redirection preserves pytest's exit code, which is
-what the edges route on.
-
-The linear `start -> implement -> test -> done` shape (no back-edge) is a recipe shape
-and will trigger TOPO-003. If that is intentional -- a one-pass workflow -- use a recipe.
+The linear `start -> implement -> test -> done` shape (no back-edge) is a recipe
+shape and will trigger TOPO-003. If that is intentional -- a one-pass workflow --
+use a recipe.
 
 ### Conditional Routing
 

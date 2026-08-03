@@ -161,6 +161,13 @@ the work is not done.
 For **non-goal_gate nodes**, path 5 still returns SUCCESS per canonical spec §4.5 — backward
 compatible default for ordinary `box` nodes that end in prose.
 
+**What `max_retries` actually retries (the retry ladder):** the ladder retries RETRY
+outcomes, retryable-classified exceptions (classified by exception type and message
+content — timeouts, connection errors, HTTP 429/5xx), and `must_write=` artifact-contract
+violations (EXTENSIONS.md §27); a plain FAIL is returned immediately, never retried.
+Graph-level retries of a FAIL are a separate mechanism: `retry_target` and
+`condition="outcome=fail"` edges.
+
 **`is_explicit` field on `Outcome`:** `outcome.is_explicit=True` means the status was asserted
 by an unambiguous mechanism: paths 1–4 above, a tool (parallelogram) node's exit code
 (0 = explicit success, nonzero = explicit fail; `handlers/tool.py`), **verdict-shaped**

@@ -500,3 +500,109 @@ async def test_retryable_exception_is_retried():
     # TimeoutError is retryable — should retry and eventually succeed
     assert result.status == StageStatus.SUCCESS
     assert handler.call_count == 2
+
+
+# --- Exhaustion telemetry truth (council amendment) ---
+
+
+class _EventCollector:
+    """Minimal hooks stand-in: collects emitted (event, payload) pairs."""
+
+    def __init__(self):
+        self.events: list[tuple[str, dict]] = []
+
+    async def emit(self, event: str, payload: dict) -> None:
+        self.events.append((event, payload))
+
+
+def _failed_events(collector: _EventCollector) -> list[dict]:
+    from amplifier_module_loop_pipeline.pipeline_events import (
+        PIPELINE_STAGE_FAILED,
+    )
+
+    return [p for (e, p) in collector.events if e == PIPELINE_STAGE_FAILED]
+
+
+@pytest.mark.asyncio
+async def test_exhaustion_event_matches_return_for_string_false():
+    """allow_partial="false" (string, as DOT attrs are) must NOT emit a
+    partial_success failure event while returning FAIL.
+
+    Regression: the event once used raw truthiness of the attr while the
+    return path used a strict check — event and return disagreed.
+    """
+    handler = MockHandler(
+        [Outcome(status=StageStatus.RETRY), Outcome(status=StageStatus.RETRY)]
+    )
+    policy = RetryPolicy(max_attempts=2, backoff=BackoffConfig(initial_delay_ms=0))
+    collector = _EventCollector()
+    result = await execute_with_retry(
+        handler,
+        _make_node(attrs={"allow_partial": "false"}),
+        PipelineContext(),
+        _make_graph(),
+        "/tmp",
+        policy,
+        hooks=collector,
+    )
+    assert result.status == StageStatus.FAIL
+    failed = _failed_events(collector)
+    assert len(failed) == 1
+    assert failed[0]["final_status"] == "fail", (
+        "Event must match the returned outcome: allow_partial='false' returns "
+        f"FAIL, but the event claimed {failed[0]['final_status']!r}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_exhaustion_event_partial_success_when_partial_returned():
+    """allow_partial="true": event says partial_success AND partial is returned."""
+    handler = MockHandler(
+        [Outcome(status=StageStatus.RETRY), Outcome(status=StageStatus.RETRY)]
+    )
+    policy = RetryPolicy(max_attempts=2, backoff=BackoffConfig(initial_delay_ms=0))
+    collector = _EventCollector()
+    result = await execute_with_retry(
+        handler,
+        _make_node(attrs={"allow_partial": "true"}),
+        PipelineContext(),
+        _make_graph(),
+        "/tmp",
+        policy,
+        hooks=collector,
+    )
+    assert result.status == StageStatus.PARTIAL_SUCCESS
+    failed = _failed_events(collector)
+    assert len(failed) == 1
+    assert failed[0]["final_status"] == "partial_success"
+
+
+@pytest.mark.asyncio
+async def test_exhaustion_event_fail_when_must_write_vetoes_partial(tmp_path):
+    """allow_partial="true" + must_write= violated at exhaustion: the
+    manufactured partial is vetoed by the artifact contract (EXTENSIONS §27)
+    and the failure event reports the actual final status: fail.
+    """
+    artifact = tmp_path / "never_written.md"
+    handler = MockHandler(
+        [Outcome(status=StageStatus.RETRY), Outcome(status=StageStatus.RETRY)]
+    )
+    policy = RetryPolicy(max_attempts=2, backoff=BackoffConfig(initial_delay_ms=0))
+    collector = _EventCollector()
+    result = await execute_with_retry(
+        handler,
+        _make_node(attrs={"allow_partial": "true", "must_write": str(artifact)}),
+        PipelineContext(),
+        _make_graph(),
+        "/tmp",
+        policy,
+        hooks=collector,
+    )
+    assert result.status == StageStatus.FAIL
+    assert "must_write" in (result.failure_reason or "")
+    failed = _failed_events(collector)
+    assert len(failed) == 1
+    assert failed[0]["final_status"] == "fail", (
+        "must_write vetoed the manufactured partial; the event must say fail, "
+        f"got {failed[0]['final_status']!r}."
+    )

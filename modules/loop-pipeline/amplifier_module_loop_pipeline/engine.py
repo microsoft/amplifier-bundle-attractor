@@ -29,6 +29,7 @@ from .context import PipelineContext
 from .edge_selection import select_edge
 from .graph import Graph, Node
 from .handlers import HandlerRegistry
+from .must_write import check_must_write
 from .node_outputs import SUBSTITUTABLE_ATTRS, build_output_table
 from .outcome import Outcome, StageStatus
 from .pipeline_events import (
@@ -467,6 +468,9 @@ class PipelineEngine:
             )
 
             node_start_time = time.monotonic()
+            node_start_wall = (
+                time.time()
+            )  # wall-clock epoch for must_write= mtime comparison
             retry_policy = RetryPolicy.from_node(current_node, self.graph)
 
             if _requires_fail is not None:
@@ -579,8 +583,8 @@ class PipelineEngine:
             #
             # NOTE — continue_on_fail and runs_on are NOT orthogonal:
             # - continue_on_fail (per-predecessor-node override) flips FAIL→SUCCESS
-            #   BEFORE _populate_failed_outputs runs (see the FAIL check at
-            #   engine.py:512 which tests the already-overridden outcome).
+            #   BEFORE _populate_failed_outputs runs (see the M2/R12 FAIL check
+            #   below, which tests the already-overridden outcome).
             # - runs_on=failure (per-cleanup-node gate) checks the failed_outputs
             #   table populated by _populate_failed_outputs.
             # - A predecessor with continue_on_fail=true that "fails" will appear
@@ -610,6 +614,19 @@ class PipelineEngine:
                     preferred_label=outcome.preferred_label,
                     suggested_next_ids=outcome.suggested_next_ids,
                 )
+
+            # Step 2.7: must_write= final backstop (EXTENSIONS.md §27).
+            # The per-attempt check inside execute_with_retry() already consumed
+            # max_retries attempts for violations on completed attempts; this
+            # backstop runs AFTER the auto_status and continue_on_fail overrides
+            # so that NO override can convert an artifact-contract violation into
+            # a silent success.  Running last — not a flag on the override blocks —
+            # is what makes the must_write FAIL non-overridable by construction.
+            must_write_fail = self._check_must_write(
+                current_node, outcome, node_start_wall
+            )
+            if must_write_fail is not None:
+                outcome = must_write_fail
 
             # Step 3: Record completion
             self.completed_nodes.append(current_node.id)
@@ -1607,6 +1624,24 @@ class PipelineEngine:
                 f"node runs. Set requires= to declare file preconditions."
             ),
         )
+
+    def _check_must_write(
+        self, node: Node, outcome: Outcome, node_start_wall: float
+    ) -> Outcome | None:
+        """Artifact contract for the ``must_write=`` attribute (EXTENSIONS.md §27).
+
+        Thin delegate to :func:`must_write.check_must_write` (shared with the
+        retry ladder, which runs the same check per-attempt so that violations
+        consume ``max_retries`` attempts — see ``retry.execute_with_retry``).
+        The engine calls this as the FINAL backstop, after the ``auto_status``
+        and ``continue_on_fail`` overrides, so no override can convert an
+        artifact-contract violation into a silent success.
+
+        Returns:
+            A FAIL ``Outcome`` if the contract is violated, ``None`` if the
+            contract is satisfied or the node has no ``must_write=`` attribute.
+        """
+        return check_must_write(node, outcome, node_start_wall, self.context)
 
     # -- Event helpers -------------------------------------------------------
 

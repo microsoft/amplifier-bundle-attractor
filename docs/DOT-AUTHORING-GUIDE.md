@@ -429,8 +429,12 @@ attractor trace <run-dir>
 This prints a human-readable summary of iterations, nodes, statuses, and
 durations — the empirical form of the convergence claim.
 
-**Difference from `max_retries`:** `max_retries` retries a single node on
-failure; `loop_restart` resets the entire pipeline pass for intentional
+**Difference from `max_retries`:** `max_retries` re-attempts a single node
+in place — and only for RETRY-class outcomes, retryable exceptions
+(timeouts, connection errors, HTTP 429/5xx), and `must_write=`
+artifact-contract violations; a plain FAIL is returned immediately, never
+retried (route FAILs with `retry_target` or `outcome=fail` edges instead).
+`loop_restart` resets the entire pipeline pass for intentional
 multi-iteration refinement. Use `max_retries` for transient failures, use
 `loop_restart` for structured convergence loops.
 

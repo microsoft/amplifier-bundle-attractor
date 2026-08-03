@@ -13,11 +13,13 @@ import asyncio
 import logging
 import random
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from .context import PipelineContext
 from .graph import Graph, Node
+from .must_write import check_must_write
 from .outcome import Outcome, StageStatus
 
 logger = logging.getLogger(__name__)
@@ -193,9 +195,21 @@ async def execute_with_retry(
     Retries on RETRY outcomes and exceptions. Returns immediately on
     SUCCESS, PARTIAL_SUCCESS, FAIL, and SKIPPED.
 
+    ``must_write=`` (EXTENSIONS.md §27): a completed attempt (SUCCESS or
+    PARTIAL_SUCCESS) that violates the node's declared artifact contract
+    consumes a retry attempt exactly like a RETRY outcome — the same shape
+    as the fail-closed goal-gate verdict retries (EXTENSIONS.md §25).  When
+    attempts are exhausted, the violation is returned as a loud FAIL;
+    ``allow_partial`` does not soften it (fail-closed).
+
     Spec Section 3.5: execute_with_retry algorithm.
     """
     last_outcome: Outcome | None = None
+    # Wall-clock epoch for the must_write= freshness floor: the artifact must
+    # be written strictly after the node's execution began (all attempts
+    # belong to this node's execution, so the floor is ladder entry — an
+    # artifact written by an earlier attempt still satisfies a later one).
+    node_start_wall = time.time()
 
     for attempt in range(1, policy.max_attempts + 1):
         # Execute the handler
@@ -230,16 +244,60 @@ async def execute_with_retry(
                 failure_reason=str(e),
             )
 
-        # SUCCESS or PARTIAL_SUCCESS — return immediately
+        # SUCCESS or PARTIAL_SUCCESS — check the must_write= artifact contract
+        # (EXTENSIONS.md §27) before accepting the completion.  A violation
+        # consumes a retry attempt exactly like a RETRY outcome (the same
+        # shape as the fail-closed goal-gate verdict retries, EXTENSIONS.md
+        # §25): a no-write completion is the flaky-failure class where an
+        # in-place re-invocation helps.  When attempts are exhausted the
+        # violation is returned as a loud FAIL; allow_partial does not
+        # soften it (fail-closed — see the engine's final backstop too).
         if outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS):
-            return outcome
+            must_write_fail = check_must_write(node, outcome, node_start_wall, context)
+            if must_write_fail is None:
+                return outcome
+            last_outcome = must_write_fail
+            if attempt < policy.max_attempts:
+                logger.info(
+                    "Node %s attempt %d/%d completed without satisfying its "
+                    "must_write= contract, retrying... (%s)",
+                    node.id,
+                    attempt,
+                    policy.max_attempts,
+                    must_write_fail.failure_reason,
+                )
+                if hooks is not None:
+                    from .pipeline_events import PIPELINE_STAGE_RETRYING
+
+                    await hooks.emit(
+                        PIPELINE_STAGE_RETRYING,
+                        {
+                            "node_id": node.id,
+                            "attempt": attempt,
+                            "max_attempts": policy.max_attempts,
+                            "delay_ms": policy.backoff.delay_for_attempt(attempt),
+                            "reason": "must_write_violation",
+                        },
+                    )
+                await _sleep_backoff(policy.backoff, attempt)
+                continue
+            # Attempts exhausted: the artifact contract is still violated.
+            # Return the FAIL directly — allow_partial does NOT soften a
+            # must_write violation (fail-closed).
+            return must_write_fail
 
         # FAIL — return immediately, no retries
         if outcome.status == StageStatus.FAIL:
             return outcome
 
-        # SKIPPED — return immediately; the engine's auto_status check may
-        # promote this to SUCCESS when auto_status=true (spec §2.6 / Appendix C).
+        # SKIPPED — return immediately.  Decision (EXTENSIONS.md §27): SKIPPED
+        # means the node did not execute; the must_write= artifact contract
+        # applies only to completed executions, so a SKIPPED outcome passes
+        # through unconverted (check_must_write exempts it explicitly).  If
+        # auto_status=true later promotes this SKIPPED to SUCCESS (spec §2.6 /
+        # Appendix C), the promotion happens BEFORE the engine's final
+        # backstop — a promoted node counts as a completed execution and the
+        # contract applies to it there.
         # Do not retry a SKIPPED outcome — retrying would not produce a status.
         if outcome.status == StageStatus.SKIPPED:
             return outcome
@@ -268,7 +326,38 @@ async def execute_with_retry(
             await _sleep_backoff(policy.backoff, attempt)
             continue
 
-    # All retries exhausted
+    # All retries exhausted (the final attempt returned RETRY).  Decide the
+    # final outcome FIRST so the failure event below reports the truth
+    # (event final_status must always match the returned outcome; a raw
+    # truthiness check here once made allow_partial="false" emit
+    # "partial_success" while returning FAIL).
+    _ap = node.attrs.get("allow_partial")
+    _allow_partial = _ap is True or str(_ap).lower() == "true"
+
+    if _allow_partial:
+        final_outcome = Outcome(
+            status=StageStatus.PARTIAL_SUCCESS,
+            notes="Retries exhausted, partial accepted",
+            failure_reason=last_outcome.failure_reason if last_outcome else None,
+        )
+        # The must_write= artifact contract (EXTENSIONS.md §27) holds on the
+        # manufactured verdict too: retries exhausted + allow_partial + NO
+        # artifact must NOT become a partial acceptance — no artifact means
+        # there is nothing to accept partially.  Fail loudly instead.  (The
+        # engine's final backstop would also catch this; checking here keeps
+        # the ladder self-consistent with its in-loop exhaustion path and
+        # keeps the failure event truthful.)
+        must_write_fail = check_must_write(
+            node, final_outcome, node_start_wall, context
+        )
+        if must_write_fail is not None:
+            final_outcome = must_write_fail
+    else:
+        final_outcome = Outcome(
+            status=StageStatus.FAIL,
+            failure_reason="Max retries exceeded",
+        )
+
     if hooks is not None:
         from .pipeline_events import PIPELINE_STAGE_FAILED
 
@@ -278,23 +367,14 @@ async def execute_with_retry(
                 "node_id": node.id,
                 "attempts": policy.max_attempts,
                 "final_status": (
-                    "partial_success" if node.attrs.get("allow_partial") else "fail"
+                    "partial_success"
+                    if final_outcome.status == StageStatus.PARTIAL_SUCCESS
+                    else "fail"
                 ),
             },
         )
 
-    _ap = node.attrs.get("allow_partial")
-    if _ap is True or str(_ap).lower() == "true":
-        return Outcome(
-            status=StageStatus.PARTIAL_SUCCESS,
-            notes="Retries exhausted, partial accepted",
-            failure_reason=last_outcome.failure_reason if last_outcome else None,
-        )
-
-    return Outcome(
-        status=StageStatus.FAIL,
-        failure_reason="Max retries exceeded",
-    )
+    return final_outcome
 
 
 async def _sleep_backoff(backoff: BackoffConfig, attempt: int) -> None:

@@ -33,7 +33,7 @@ digraph {
 |-----------|------|---------|-------------|
 | `prompt` | string | -- | Instructions for the LLM. `$goal` and `$param` tokens are expanded. |
 | `goal_gate` | bool | false | Must succeed **with an explicit verdict** (report_outcome / JSON / tool exit code) for pipeline to complete; plain prose returns RETRY (fail-closed, `specs/EXTENSIONS.md` §25) |
-| `max_retries` | int | graph default | Retry count on failure |
+| `max_retries` | int | graph default | In-place re-attempts for RETRY-class outcomes, retryable exceptions, and `must_write=` violations. A plain FAIL is returned immediately, never retried (use `retry_target` / `outcome=fail` edges for that) |
 | `retry_target` | string | -- | Node to jump to on gate failure |
 | `fidelity` | string | "compact" | Context carryover mode |
 | `llm_provider` | string | -- | Override provider (anthropic/openai/gemini) |

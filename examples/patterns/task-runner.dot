@@ -183,6 +183,7 @@ digraph TaskRunner {
 
     // ---------- budget exhaustion: a decision point, not a fuse ----------
     postmortem [shape=box, class="gate",
+        must_write=".ai/postmortem/report.md",
         prompt="The run has hit a decision point without convergence: either the iteration budget is exhausted (repeated verification failures) or the quality loop has stalled (repeated critique refusals on mechanically-green work). Read .ai/convergence.jsonl (the descent record), .ai/critique.md, .ai/verify.log, and .ai/feedback/. Write .ai/postmortem/report.md: what each iteration attempted, whether the loop was DESCENDING, OSCILLATING, or WANDERING (cite the convergence record), your best hypothesis for why it has not converged, and the options (continue with more budget / change approach / split the task / abandon). Be honest — this report is the value salvaged from a non-converging run."]
 
     // Deterministic guard: the postmortem node has been observed returning

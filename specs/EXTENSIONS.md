@@ -1140,6 +1140,59 @@ is for nodes that explicitly add the attribute.
 
 ---
 
+## 28. Run Provenance Stamping in `manifest.json`
+
+**What:** `manifest.json` (written by the engine at run-directory creation, Spec §5.6) now
+includes two additional provenance fields:
+
+```json
+{
+  "graph_name": "...",
+  "goal": "...",
+  "start_time": "2026-08-03T00:00:00+00:00",
+  "node_count": 3,
+  "edge_count": 2,
+  "engine_version": "0.1.0",
+  "engine_commit": "abc1234..."
+}
+```
+
+- `engine_version` — the `amplifier-module-loop-pipeline` package version string from
+  `importlib.metadata`.  Today this is the static `pyproject.toml` value (`"0.1.0"`);
+  it becomes discriminating when the package adopts release tags.
+- `engine_commit` — the resolved git commit hash from PEP 610 `direct_url.json`, written
+  by uv for git installs.  For editable/dev installs where `direct_url.json` is absent or
+  carries no commit, the value is `"unknown"` — stamped honestly rather than guessed.
+
+The standalone runner augments the manifest after each engine run, including a
+failed run, with `runner_version`, `runner_commit`, and `provider` fields. Runner
+version and commit use the same install-time metadata / PEP 610 mechanism and use
+`"unknown"` when that identity is unavailable. `provider` is the runner API/CLI
+selection (DOT node-level provider attributes remain the routing authority). One
+writer per field — no races.
+
+**Why:** Incident 2026-07-28: the run directory could not self-describe what code produced
+it.  The incident analysis had to reconstruct engine identity from install history.  In a
+fast-moving repo, "which engine produced this run?" is the first triage question; this
+extension makes the run directory answer it durably.  Any cross-run comparison tooling
+likewise needs per-run code provenance to be meaningful.
+
+**Honesty contract:** `"unknown"` is the correct value when identity cannot be determined
+from install-time metadata without fabricating.  A fabricated provenance field is worse
+than an honest gap — stamp `"unknown"` over guessing.
+
+**Compatibility:** Fully backward-compatible.  The five legacy fields (`graph_name`, `goal`,
+`start_time`, `node_count`, `edge_count`) are unchanged.  The new fields are additive.
+Existing manifest consumers (dashboards, tests reading `manifest.json`) continue to work.
+
+**Runner-engine compatibility assertion:** The `pipeline-runner` package now includes a
+startup compatibility assertion (`compat.py`) that checks for required engine symbols before
+any node runs.  The chosen shape is a compat-assert (not a pinned dep or single-package
+collapse) — see `compat.py` for the tradeoff rationale and the `amplifier-foundation @main`
+deferral note.
+
+---
+
 ## Conformance Restoration Note (T0-4)
 
 **What was retired:** An unledgered dialect where non-`shape=parallel`, non-component nodes

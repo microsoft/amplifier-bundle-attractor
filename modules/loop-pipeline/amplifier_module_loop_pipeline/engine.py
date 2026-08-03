@@ -50,6 +50,50 @@ from .substitution import extract_refs
 logger = logging.getLogger(__name__)
 
 
+def _get_engine_provenance() -> dict:
+    """Return engine version/commit provenance for manifest stamping.
+
+    Reads install-time metadata only — no shell-out to git at runtime.
+    Strategy (in order of discriminating power):
+
+    1. PEP 610 ``direct_url.json``: for git installs uv records the resolved
+       commit hash here.  Editable installs (``uv sync`` in-tree) may omit the
+       ``requested_revision`` / ``commit_id`` fields — we stamp ``"unknown"``
+       rather than guessing.
+    2. ``importlib.metadata.version()``: the static ``pyproject.toml`` version
+       string (``"0.1.0"`` today).  Low-information but honest.
+
+    Returns a dict with keys ``engine_version`` and ``engine_commit``.
+    Values are ``"unknown"`` when identity cannot be determined without
+    fabricating — a fabricated provenance field is worse than an honest gap.
+    """
+    import importlib.metadata as _meta
+
+    engine_version: str = "unknown"
+    engine_commit: str = "unknown"
+
+    try:
+        engine_version = _meta.version("amplifier-module-loop-pipeline")
+    except _meta.PackageNotFoundError:
+        pass
+
+    try:
+        # PEP 610: uv writes direct_url.json for git/url installs.
+        # Path: <site-packages>/amplifier_module_loop_pipeline-*.dist-info/direct_url.json
+        dist = _meta.distribution("amplifier-module-loop-pipeline")
+        direct_url_text = dist.read_text("direct_url.json")
+        if direct_url_text:
+            direct_url = json.loads(direct_url_text)
+            vcs_info = direct_url.get("vcs_info", {})
+            commit_id = vcs_info.get("commit_id", "")
+            if commit_id:
+                engine_commit = commit_id
+    except Exception as exc:  # noqa: BLE001 — provenance is best-effort; never crash
+        logger.debug("engine commit provenance unavailable: %s", exc)
+
+    return {"engine_version": engine_version, "engine_commit": engine_commit}
+
+
 class PipelineEngine:
     """Graph-walking execution engine.
 
@@ -1106,16 +1150,33 @@ class PipelineEngine:
         """Write manifest.json and create the artifacts/ directory.
 
         Spec Section 5.6: Run Directory Structure.
+
+        Extension #28: Run provenance stamping.  The manifest includes
+        ``engine_version`` and ``engine_commit`` so an incident analyst can
+        tell from the run directory alone what code produced the run.  Values
+        are ``"unknown"`` for editable/dev installs where commit identity is
+        not available from install-time metadata (PEP 610 direct_url.json).
+        The runner layer may augment the manifest with ``runner_version``,
+        ``runner_commit``, and ``provider`` fields after this call — one
+        writer per field, no races.  Existing fields are additive-only;
+        ``graph_name``, ``goal``, ``start_time``, ``node_count``,
+        ``edge_count`` are unchanged for backward compatibility.
         """
         os.makedirs(self.logs_root, exist_ok=True)
         os.makedirs(os.path.join(self.logs_root, "artifacts"), exist_ok=True)
 
+        provenance = _get_engine_provenance()
         manifest = {
             "graph_name": self.graph.name,
             "goal": self.graph.goal or goal or "",
             "start_time": datetime.now(timezone.utc).isoformat(),
             "node_count": len(self.graph.nodes),
             "edge_count": len(self.graph.edges),
+            # Provenance fields (Extension #28): additive, backward-compatible.
+            # Values are "unknown" when identity cannot be determined without
+            # fabricating — stamp honestly, never guess.
+            "engine_version": provenance["engine_version"],
+            "engine_commit": provenance["engine_commit"],
         }
         manifest_path = os.path.join(self.logs_root, "manifest.json")
         with open(manifest_path, "w") as f:

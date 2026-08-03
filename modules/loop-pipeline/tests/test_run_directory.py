@@ -169,6 +169,22 @@ class TestManifest:
         assert data["goal"] == "build auth"
 
     @pytest.mark.asyncio
+    async def test_manifest_has_honest_engine_provenance(self, tmp_path):
+        """Engine identity is additive and never omitted from a run manifest."""
+        engine = _make_engine(
+            dot_source="""
+            digraph { start [shape=Mdiamond]; exit [shape=Msquare]; start -> exit }
+            """,
+            backend=MockBackend(),
+            logs_root=str(tmp_path),
+        )
+        await engine.run()
+        with open(tmp_path / "manifest.json") as f:
+            data = json.load(f)
+        assert {"engine_version", "engine_commit"} <= data.keys()
+        assert all(isinstance(data[key], str) and data[key] for key in ("engine_version", "engine_commit"))
+
+    @pytest.mark.asyncio
     async def test_manifest_has_node_and_edge_counts(self, tmp_path):
         """manifest.json includes node_count and edge_count."""
         engine = _make_engine(

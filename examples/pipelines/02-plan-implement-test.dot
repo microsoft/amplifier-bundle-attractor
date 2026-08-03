@@ -1,44 +1,90 @@
-// 02-plan-implement-test.dot -- Multi-stage pipeline with a goal gate.
+// 02-plan-implement-test.dot -- Staged pipeline with a convergence loop.
 //
-// The classic plan -> implement -> test cycle.
-// Tests: multi-node traversal, multiple codergen handlers, goal_gate
-//        attribute, context updates flowing between stages.
+// THE SHAPE: plan -> implement -> test_gate (evidence) -> done
+//                                     |
+//                                     +-- (gate_fail) --> implement  [back-edge]
 //
-// Prompts are intentionally simple so each completes in a single LLM call
-// (target: < 2 minutes total).
+// This is Tutorial 02: multi-stage staging (plan -> implement -> test) with
+// a corrective loop.  The exit is structurally unreachable until a tool gate
+// reports the tests pass -- no LLM self-report can fake a green run.
+//
+// Teaching purpose: staging + goal_gate + gate-vs-exit interaction.
+// What 00 does not show: explicit plan/implement/test phases as nodes,
+// and the goal_gate+retry_target pairing that makes the gate meaningful.
+//
+// Walk-up invocation (run from the repo root):
+//
+//   DOT="$PWD/examples/pipelines/02-plan-implement-test.dot"
+//   mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
+//   attractor run "$DOT" --cwd .
+//
+// Goal: write a Python add(a,b) function with a pytest test file.
+// Self-contained -- no --param needed.
 
 digraph PlanImplementTest {
     graph [
         goal="Build a Python add(a,b) function with a pytest test file",
         label="Plan-Implement-Test Pipeline",
         default_fidelity="full",
-        default_thread_id="plan-implement-test"
+        default_thread_id="plan-implement-test",
+        max_pipeline_duration=300000
     ]
     rankdir=LR
 
-    // Structural nodes
+    // --- Entry ---
     start [shape=Mdiamond, label="Start"]
-    done  [shape=Msquare, label="Done"]
 
-    // Stage 1: Planning
+    // --- Stage 1: Planning ---
+    // plan: produces a brief outline the implement stage can follow.
+    // In real work this staging belongs in the worker's prompt, not the graph
+    // (see docs/PIPELINE_DESIGN_PRINCIPLES.md §0).  Here it is an explicit node
+    // so the reader can see multi-stage traversal and context flow between stages.
     plan [
         label="Plan",
-        prompt="List 3 steps to create a Python add(a,b) function with a pytest test file. Be brief — 1 sentence per step."
+        prompt="List 3 steps to create a Python add(a,b) function with a pytest test file. Be brief -- 1 sentence per step."
     ]
 
-    // Stage 2: Implementation (this MUST succeed before pipeline can exit)
+    // --- Stage 2: Implementation ---
+    // implement: writes calculator.py and test_calculator.py.
+    // On retry iterations it reads test_output.txt to see what failed.
     implement [
         label="Implement",
-        prompt="Create calculator.py with a function add(a, b) that returns a+b. Include type hints and a docstring. Use write_file.",
-        goal_gate=true
+        prompt="You are implementing a small Python task.\n\nGoal: $goal\n\nIf test_output.txt exists, read it -- it holds the latest pytest output and tells you exactly what to fix.\n\nWrite calculator.py with a function add(a, b) that returns a+b. Include type hints and a docstring.\nWrite test_calculator.py with pytest tests for add(): positive numbers, negative numbers, zero, and floats.\nUse write_file for both files."
     ]
 
-    // Stage 3: Testing — creates a real test file on disk, then runs it
-    test [
-        label="Test",
-        prompt="Create test_calculator.py with pytest tests for the add function. Include tests for: positive numbers, negative numbers, zero, and floats. Then run pytest test_calculator.py using bash and report the results. Use write_file to create the test file first, then bash to run it."
+    // --- Evidence gate (parallelogram = tool node) ---
+    // test_gate: runs pytest mechanically and echoes a routing label as its
+    // last output line.  The engine stores that line in context.tool.last_line,
+    // which the outgoing edges condition on.
+    //
+    // Why a tool gate, not an LLM verdict?  The gate is deterministic: the
+    // test suite either passes or it does not.  No LLM self-report can fake
+    // a green test run.  This is what makes the exit structurally unreachable
+    // until the work is actually done.
+    //
+    // goal_gate=true: the pipeline cannot exit unless this gate succeeded.
+    // retry_target=implement: if the gate fails at the exit, retry from implement.
+    test_gate [
+        shape=parallelogram,
+        label="pytest",
+        tool_command="pytest -q test_calculator.py > test_output.txt 2>&1 && echo gate_pass || echo gate_fail",
+        goal_gate=true,
+        retry_target=implement
     ]
 
-    // Linear flow through all three stages
-    start -> plan -> implement -> test -> done
+    // --- Exit ---
+    done [shape=Msquare, label="Done"]
+
+    // --- Flow ---
+    start -> plan
+    plan -> implement
+
+    // implement always feeds the evidence gate
+    implement -> test_gate
+
+    // Gate routes on context.tool.last_line (the last line echoed by the command).
+    // "gate_pass" => tests passed, proceed to done.
+    // "gate_fail" => tests failed, loop back to implement for another attempt.
+    test_gate -> done      [label="tests pass",   condition="context.tool.last_line=gate_pass && outcome=success"]
+    test_gate -> implement [label="fix and retry", condition="context.tool.last_line=gate_fail", loop_restart="true"]
 }

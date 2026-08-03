@@ -140,6 +140,7 @@ The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 s
 | Pipeline | What it teaches |
 |----------|----------------|
 | [Convergence Loop](examples/pipelines/00-convergence-loop.md) | **The bowl** — minimal 4-node convergence loop. Start here. |
+| [Plan-Implement-Test](examples/pipelines/02-plan-implement-test.md) | Staged convergence: `plan → implement → test_gate` with `goal_gate` + `retry_target` + corrective back-edge |
 | [Bug Fix](examples/pipelines/practical/bug-fix.md) | The bowl applied to real work: inner fix loop + root-cause wall + outer feedback loop |
 | [Task Runner](examples/patterns/task-runner.md) | Battle-hardened goal+DoD runner (orient/attempt/verify/critique/triage) |
 
@@ -148,7 +149,6 @@ The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 s
 | Pipeline | Mechanism |
 |----------|-----------|
 | [Simple Linear](examples/pipelines/01-simple-linear.md) | `A -> B -> C` linear flow |
-| [Plan-Implement-Test](examples/pipelines/02-plan-implement-test.md) | `goal_gate` on an LLM node |
 | [Conditional Routing](examples/pipelines/03-conditional-routing.md) | `diamond` routing node |
 | [Retry with Fallback](examples/pipelines/04-retry-with-fallback.md) | Retry loop with fallback |
 | [Parallel Fan-Out](examples/pipelines/05-parallel-fan-out.md) | `component` fork / `tripleoctagon` join |

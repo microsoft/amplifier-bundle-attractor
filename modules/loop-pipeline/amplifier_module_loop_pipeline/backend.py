@@ -1329,6 +1329,7 @@ def _parse_outcome(output: str, *, node: object = None) -> Outcome:
                         suggested_next_ids=data.get("suggested_next_ids"),
                         context_updates=data.get("context_updates"),
                         is_explicit=True,
+                        response_text=output,  # EXTENSIONS.md §26: carry full text
                     )
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
@@ -1379,6 +1380,7 @@ def _parse_outcome(output: str, *, node: object = None) -> Outcome:
                             suggested_next_ids=_embedded.get("suggested_next_ids"),
                             context_updates=_embedded.get("context_updates"),
                             is_explicit=True,
+                            response_text=output,  # EXTENSIONS.md §26: carry full text
                         )
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass
@@ -1409,6 +1411,7 @@ def _parse_outcome(output: str, *, node: object = None) -> Outcome:
             notes=f"No explicit verdict from goal_gate node — plain text only: {output[:200]}",
             failure_reason="goal_gate node requires an explicit verdict (report_outcome / JSON)",
             is_explicit=False,
+            response_text=output,  # EXTENSIONS.md §26: carry full text
         )
 
     # Non-goal_gate node: plain text response — per spec Section 4.5, treat as SUCCESS.
@@ -1416,4 +1419,5 @@ def _parse_outcome(output: str, *, node: object = None) -> Outcome:
         status=StageStatus.SUCCESS,
         notes=f"Plain text response: {output[:200]}",
         is_explicit=False,
+        response_text=output,  # EXTENSIONS.md §26: carry full text
     )

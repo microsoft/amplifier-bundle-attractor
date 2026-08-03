@@ -20,6 +20,7 @@ from ..context import PipelineContext
 from ..graph import Graph, Node
 from ..outcome import Outcome, StageStatus
 from ..transforms import expand_goal_variable, expand_params
+from ..worker_observability import current_worker_sessions_dir
 
 
 @runtime_checkable
@@ -113,10 +114,35 @@ class CodergenHandler:
             # with defaults), so this unconditional call is the whole contract:
             # the production AmplifierBackend accepts them and all conforming test
             # doubles match this signature.
-            result = await self._backend.run(
-                node, prompt, context, incoming_edge=None, graph=graph
+            # EXTENSIONS.md §26: while the backend call is in flight, expose
+            # <stage_dir>/sessions as the destination for worker-session event
+            # persistence.  The spawned child session runs in-process within
+            # this same task context, so the session-event persister mounted in
+            # the child (hooks-pipeline-observability) reads this ContextVar
+            # and appends the child's REAL event stream (session lifecycle,
+            # tool:pre/tool:post, ...) to
+            # <stage_dir>/sessions/<session_id>/events.jsonl as it happens.
+            # try/finally guarantees the reset even when the backend raises.
+            sessions_token = current_worker_sessions_dir.set(
+                os.path.join(stage_dir, "sessions")
             )
+            try:
+                result = await self._backend.run(
+                    node, prompt, context, incoming_edge=None, graph=graph
+                )
+            finally:
+                current_worker_sessions_dir.reset(sessions_token)
             if isinstance(result, Outcome):
+                # EXTENSIONS.md §26: write response.md from the full text carried
+                # on the Outcome (set by _parse_outcome before any truncation).
+                # The production AmplifierBackend spawn path always returns an
+                # Outcome, so this is the only place response.md is written on
+                # that path.  If response_text is None (infrastructure failures,
+                # tool handlers) we skip the write — there is no text to save.
+                if result.response_text:
+                    _write_file(
+                        os.path.join(stage_dir, "response.md"), result.response_text
+                    )
                 _write_status(stage_dir, result)
                 return result
             response_text = str(result)
@@ -221,5 +247,11 @@ def _write_status(stage_dir: str, outcome: Outcome) -> None:
         # EXTENSIONS.md §25: is_explicit is durable audit data; the codergen
         # early-writer must carry it too, not just the engine's writers.
         "is_explicit": outcome.is_explicit,
+        # EXTENSIONS.md §26: session_id is the join key from this node's
+        # status record to the persisted worker-session event stream at
+        # <stage_dir>/sessions/<session_id>/events.jsonl — the engine's
+        # writers carry it (engine.py _write_node_status); the early-writer
+        # must too, or the Outcome path leaves a dangling trail.
+        "session_id": outcome.session_id,
     }
     _write_file(os.path.join(stage_dir, "status.json"), json.dumps(data, indent=2))

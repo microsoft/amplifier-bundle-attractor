@@ -784,6 +784,131 @@ upstream spec adopts this, this extension documents the divergence.
 
 ---
 
+## 26. Worker-Session Observability: Durable `response.md` + Real Session-Event Persistence
+
+> **This extension is additive** — it implements the canonical spec's own run-dir layout
+> contract (§5.6 requires per-node `prompt.md`/`response.md`) and adds worker-session event
+> persistence the spec does not specify. It also FIXES a spec self-contradiction; see the
+> walk-upstream note below.
+
+### Incident motivation
+
+Worker sessions inside a pipeline run were write-only compute: they thought, acted, and
+vanished. Three separate post-mortems (one on the 2026-07-28 external incident that also
+motivated §25, two on internal runs) all dead-ended on the same missing evidence:
+
+- The node's full final response survived only as a ~200-char scrap
+  (`notes="Plain text response: {output[:200]}"` / `last_response[:200]`), because the
+  codergen handler wrote `response.md` only when the backend returned a *string* — and the
+  production `AmplifierBackend` spawn path always returns an `Outcome`, early-returning past
+  the write. Diagnostic analyses produced by pipeline nodes were cut off mid-sentence.
+- The `session_id` recorded in `status.json` was a dangling pointer: no `events.jsonl` or
+  `transcript.jsonl` existed anywhere on disk for spawned worker sessions (foundation's spawn
+  path never persists; see walk-upstream note). "Which tools did the worker call?" — the
+  first question of every wrong-but-plausible audit — was unanswerable.
+
+### What this extension does
+
+**1. Full-response durability (`Outcome.response_text` → `response.md`).**
+`_parse_outcome()` (backend.py) now carries the verbatim child output on
+`Outcome.response_text` — set on every return path, *before* any truncation. The codergen
+handler writes it to `<stage_dir>/response.md` on the Outcome path, closing the early-return
+gap. The field is a file-write concern only: it is NOT serialized into `status.json`,
+`trace.jsonl`, or `context_updates`, and the ≤200-char `last_response` context truncation is
+unchanged (context economy working as designed).
+
+**2. `session_id` in the codergen early-writer.** The engine's status writers already
+serialize `session_id`; the codergen handler's own `_write_status()` now does too, so the
+Outcome path never leaves a status record without its join key.
+
+**3. Real worker-session event persistence.** The worker's actual event stream is captured
+and persisted per session:
+
+- `amplifier_module_loop_pipeline.worker_observability` exposes a `ContextVar`
+  (`current_worker_sessions_dir`); the codergen handler sets it to `<stage_dir>/sessions`
+  for the duration of each backend call (try/finally-reset, task-local so parallel branches
+  cannot cross-talk).
+- `hooks-pipeline-observability` — already mounted into the parent session by the
+  attractor-core behavior, and composed into **every spawned worker session** by
+  `PreparedBundle.spawn`'s parent+child bundle composition — registers a
+  `SessionEventPersister` that appends each received event to
+  `<stage_dir>/sessions/<session_id>/events.jsonl`. The `session_id` comes from the event
+  payload itself: the amplifier-core kernel merges it into every event via
+  `hooks.set_default_fields` at session construction.
+- Persisted events (curated for forensic value; streaming deltas excluded):
+  `session:start`, `session:resume`, `session:end`, `prompt:submit`, `prompt:complete`,
+  `tool:pre`, `tool:post`, `orchestrator:complete`. Record shape is the standard session
+  observer shape — `{"event": <name>, "timestamp": <utc-iso>, "data": {...}}` — one JSON
+  object per line, append-only.
+
+These are the events the worker's own orchestrator/kernel emit as they happen (e.g.
+loop-agent's `tool:pre`/`tool:post` at tool-execution time) — captured, not reconstructed.
+An earlier design that fabricated a 3-event ledger after the child completed was rejected in
+review: a synthetic record cannot answer "which tools did the worker call?" and amounts to a
+second, invented session store.
+
+### Forensic navigation contract
+
+Starting from ONLY the run dir:
+
+```
+<logs_root>/<node_id>/status.json        → read "session_id"
+<logs_root>/<node_id>/sessions/<session_id>/events.jsonl
+                                         → the worker's real event stream
+<logs_root>/<node_id>/response.md        → the worker's full final response
+```
+
+### Walk-upstream note: where persistence belongs
+
+Session persistence is a *session* concern owned by amplifier-foundation: ordinary sessions
+persist `events.jsonl`/`transcript.jsonl` under `~/.amplifier/projects/<project>/sessions/<id>/`
+(`amplifier_foundation/session/store.py`, `finder.py`). On this stack that idiom never fires
+for pipeline workers: `PreparedBundle.spawn()` has **zero persist call sites** —
+`DEFAULT_SESSIONS_ROOT` is never written for spawned children; they are ephemeral by
+construction. The right long-term home for worker persistence is therefore foundation's spawn
+path (an upstream change to a different repo). Until that exists, this bundle captures the
+real event stream at the seam it owns — the hooks module it already mounts into every worker
+session — and persists it in the run dir, which is (a) the canonical pipeline-scoped forensic
+record (`prompt.md`, `response.md`, `status.json` already live there) and (b) durable in
+CI/sandbox environments where `$HOME` is ephemeral. Standard file name, standard record
+shape, real events — pointers stay resolvable without inventing a parallel session store.
+
+**Spec self-contradiction (flagged upstream):** canonical spec §5.6 *requires* per-node
+`prompt.md` and `response.md` in the run-dir layout, and its conformance checklist asserts
+`artifacts_exist(logs_root, <node>, ["prompt.md", "response.md", "status.json"])` — yet the
+spec's own CodergenHandler pseudocode contains an
+`IF result is an Outcome: write_status(stage_dir, result); RETURN result` early-return that
+skips the `response.md` write for Outcome-returning backends. The shipped handler had
+faithfully transcribed that self-contradiction. This extension implements the layout
+contract; the spec's pseudocode should be corrected to match its own §5.6.
+
+### Files touched
+
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/outcome.py` — `response_text` field
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py` — `_parse_outcome()`
+  sets `response_text` on all return paths
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/worker_observability.py` — the
+  ContextVar seam (new)
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/codergen.py` — Outcome-path
+  `response.md` write, ContextVar set/reset, `session_id` in `_write_status()`
+- `modules/hooks-pipeline-observability/amplifier_module_hooks_pipeline_observability/session_events.py`
+  — `SessionEventPersister` (new), registered in the module's `mount()`
+
+### Compatibility
+
+Fully backward-compatible and fail-safe:
+
+- Existing pipelines run unchanged; `last_response` truncation and spawn/continuity semantics
+  (thread transcripts, CR-1 invariant) are untouched.
+- Persistence degrades to a silent no-op at every missing seam: hooks module not mounted →
+  no subscriber; loop-pipeline not importable in the mounting session → resolver returns
+  `None`; ContextVar unset (session not spawned by a codergen node) → no write; event without
+  `session_id` → skipped. Persister handlers never raise into the session.
+- `response.md` is written only when `response_text` is present; infrastructure-failure
+  Outcomes (no child output) skip it.
+
+---
+
 ## Conformance Restoration Note (T0-4)
 
 **What was retired:** An unledgered dialect where non-`shape=parallel`, non-component nodes

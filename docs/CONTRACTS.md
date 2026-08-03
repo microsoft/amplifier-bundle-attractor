@@ -124,7 +124,38 @@ provider module's responsibility.
 
 ---
 
-## 5. Code Reference Index
+## 5. Worker-Session Observability Contract
+
+**Behavior:** Every codergen (`box`) node execution leaves a durable forensic record in the
+run directory (EXTENSIONS.md §26):
+
+- `<logs_root>/<node_id>/response.md` — the node's **full final response**, written on both
+  backend return shapes (string and `Outcome`). The ≤200-char `last_response` context value
+  remains truncated by design (context economy); the file is the full record.
+- `<logs_root>/<node_id>/status.json` — carries `session_id`, the join key to the worker's
+  event stream.
+- `<logs_root>/<node_id>/sessions/<session_id>/events.jsonl` — the worker session's REAL
+  event stream (session lifecycle, `prompt:submit`/`prompt:complete`, `tool:pre`/`tool:post`
+  with tool names, arguments, and results, `orchestrator:complete`), appended as it happens
+  by the session-event persister in `hooks-pipeline-observability`. Record shape:
+  `{"event": <name>, "timestamp": <utc-iso>, "data": {...}}`.
+
+**Navigation:** starting from only the run dir — read `status.json` → `session_id` → open
+`sessions/<session_id>/events.jsonl` beside it. This answers "which tools did the worker
+call?" without any external session store.
+
+**Implication for consumers:** persistence requires the `hooks-pipeline-observability`
+module in the mounted bundle (the shipped attractor-core behavior includes it; spawned
+workers inherit it through bundle composition). Custom bundles that omit the module get
+graceful no-op: pipelines run identically, but worker event streams are not persisted and
+recorded `session_id`s are dangling pointers.
+
+**Spec basis:** canonical spec §5.6 requires per-node `prompt.md`/`response.md`; the session
+event stream is a documented extension (EXTENSIONS.md §26).
+
+---
+
+## 6. Code Reference Index
 
 | Contract | File | Location |
 |---|---|---|
@@ -133,3 +164,5 @@ provider module's responsibility.
 | `continue_on_fail` override | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 593–596 and comment block at 578–592 |
 | `runs_on` logic | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 1299–1323 (`_get_runs_on`) and 1350–1447 (`_check_node_skip`) |
 | Structural concurrency (component) | `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py` | Lines 91–94 (`max_parallel` + semaphore) |
+| Worker observability seam | `modules/loop-pipeline/amplifier_module_loop_pipeline/worker_observability.py` | Module docstring (`current_worker_sessions_dir`) |
+| Session-event persistence | `modules/hooks-pipeline-observability/amplifier_module_hooks_pipeline_observability/session_events.py` | `SessionEventPersister` |

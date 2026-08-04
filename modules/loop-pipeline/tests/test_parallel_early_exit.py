@@ -59,7 +59,7 @@ class TestFirstSuccessEarlyExit:
         completed_branches: list[str] = []
 
         class SlowFastEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 if node_id == "fast":
                     completed_branches.append(node_id)
                     return Outcome(status=StageStatus.SUCCESS, notes="fast done")
@@ -108,7 +108,7 @@ class TestFirstSuccessEarlyExit:
         call_count = 0
 
         class FirstSuccessEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 nonlocal call_count
                 call_count += 1
                 if node_id == "b1":
@@ -145,7 +145,7 @@ class TestFirstSuccessEarlyExit:
         """first_success returns FAIL when no branches succeed."""
 
         class FailEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 return Outcome(
                     status=StageStatus.FAIL, failure_reason=f"{node_id} failed"
                 )
@@ -194,7 +194,7 @@ class TestKOfNEarlyExit:
         completed_branches: list[str] = []
 
         class KOfNFastEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 if node_id in ("fast1", "fast2"):
                     completed_branches.append(node_id)
                     return Outcome(status=StageStatus.SUCCESS, notes=f"{node_id} done")
@@ -242,7 +242,7 @@ class TestKOfNEarlyExit:
         """k_of_n waits for more branches when threshold not met yet."""
 
         class KOfNThresholdEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 if node_id == "b1":
                     return Outcome(status=StageStatus.FAIL, failure_reason="broke")
                 return Outcome(status=StageStatus.SUCCESS)
@@ -279,7 +279,7 @@ class TestKOfNEarlyExit:
         """k_of_n fails when not enough remaining branches can meet threshold."""
 
         class ImpossibleThresholdEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 if node_id in ("b1", "b2"):
                     return Outcome(status=StageStatus.FAIL, failure_reason="broke")
                 await asyncio.sleep(5.0)
@@ -324,7 +324,7 @@ class TestKOfNEarlyExit:
         """k_of_n stores collected results in parent context."""
 
         class StoreResultsEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 return Outcome(status=StageStatus.SUCCESS, notes=f"{node_id} ok")
 
         handler = ParallelHandler()

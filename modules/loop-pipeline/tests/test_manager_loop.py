@@ -9,16 +9,16 @@ Spec coverage: MGR-001-010, COMP-001-002, Section 4.11.
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import AsyncMock
 
 import pytest
 
 from amplifier_module_loop_pipeline.context import PipelineContext
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 from amplifier_module_loop_pipeline.handlers.manager_loop import ManagerLoopHandler
 from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
-from amplifier_module_loop_pipeline.handlers.context import HandlerContext
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -690,6 +690,123 @@ class TestManagerChildDotfile:
 # ---------------------------------------------------------------------------
 # Cycle-indexed observability tests
 # ---------------------------------------------------------------------------
+
+
+class TestManagerChildDotfileEngineWiring:
+    """support#373 regression guard: hooks= / cancel_event= must reach the
+
+    child PipelineEngine constructed by _run_child_dotfile(), not just the
+    child HandlerRegistry's HandlerContext. Before the fix, the child
+    PipelineEngine(...) call omitted both kwargs, so the entire child
+    dotfile execution class emitted zero events and was cooperatively
+    uncancellable -- even though hooks/cancel_event were captured on
+    ManagerLoopHandler and threaded into the child HandlerContext.
+    """
+
+    @pytest.mark.asyncio
+    async def test_hooks_reach_child_engine(self, tmp_path):
+        """hooks= passed to ManagerLoopHandler must propagate to the child
+
+        engine so the child dotfile pipeline's own node-level events
+        (pipeline:node_start / node_complete, at minimum) are observable.
+        Without the fix, child_engine.hooks is None and zero events fire.
+        """
+        child_dot = tmp_path / "child.dot"
+        child_dot.write_text(
+            "digraph child {\n"
+            "  start [shape=Mdiamond];\n"
+            "  task [shape=box];\n"
+            "  done [shape=Msquare];\n"
+            "  start -> task -> done;\n"
+            "}\n"
+        )
+
+        class _RecordingHooks:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, dict]] = []
+
+            async def emit(self, event_name: str, data: dict) -> None:
+                self.events.append((event_name, data))
+
+        recorder = _RecordingHooks()
+        handler = ManagerLoopHandler(hooks=recorder)
+        graph = _make_graph(
+            manager_attrs={
+                "manager.max_cycles": "1",
+                "stack.child_dotfile": str(child_dot),
+            },
+            has_child_edge=True,
+        )
+
+        await handler.execute(
+            graph.nodes["manager"], PipelineContext(), graph, str(tmp_path)
+        )
+
+        assert recorder.events, (
+            "child dotfile pipeline emitted zero events -- hooks= was not "
+            "propagated to the child PipelineEngine (support#373 regression)"
+        )
+        # At minimum, the child's own node_start should have fired.
+        event_names = [name for name, _ in recorder.events]
+        assert "pipeline:node_start" in event_names
+
+    @pytest.mark.asyncio
+    async def test_cancel_event_reaches_child_engine(self, tmp_path):
+        """cancel_event= passed to ManagerLoopHandler must propagate to the
+
+        child engine so a pre-set cancellation signal cooperatively stops
+        the child dotfile pipeline before any node executes. Without the
+        fix, child_engine's _cancel_event is None, cancellation is silently
+        ignored, and the child's "task" node executes normally (emitting a
+        node_start event) instead of short-circuiting.
+        """
+        child_dot = tmp_path / "child.dot"
+        child_dot.write_text(
+            "digraph child {\n"
+            "  start [shape=Mdiamond];\n"
+            "  task [shape=box];\n"
+            "  done [shape=Msquare];\n"
+            "  start -> task -> done;\n"
+            "}\n"
+        )
+
+        class _RecordingHooks:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, dict]] = []
+
+            async def emit(self, event_name: str, data: dict) -> None:
+                self.events.append((event_name, data))
+
+        recorder = _RecordingHooks()
+        cancel_event = threading.Event()
+        cancel_event.set()  # already cancelled before the child engine runs
+        handler = ManagerLoopHandler(hooks=recorder, cancel_event=cancel_event)
+        graph = _make_graph(
+            manager_attrs={
+                "manager.max_cycles": "1",
+                "stack.child_dotfile": str(child_dot),
+            },
+            has_child_edge=True,
+        )
+
+        result = await handler.execute(
+            graph.nodes["manager"], PipelineContext(), graph, str(tmp_path)
+        )
+
+        # Cancellation short-circuits child_engine.run() before any node
+        # executes, so no pipeline:node_start should ever fire for "task".
+        event_names = [name for name, _ in recorder.events]
+        assert "pipeline:node_start" not in event_names, (
+            "child engine executed a node despite a pre-set cancel_event -- "
+            "cancel_event= was not propagated to the child PipelineEngine "
+            "(support#373 regression)"
+        )
+        # The manager loop's default guard only stops early on success/
+        # partial_success; on a cancelled (FAIL) child it keeps cycling
+        # until max_cycles is exhausted, so we assert on the recorded
+        # per-cycle child status rather than the manager's own generic
+        # "Manager exhausted N cycle(s)" wrapper outcome.
+        assert result.status == StageStatus.FAIL
 
 
 class TestManagerChildDotfileObservability:

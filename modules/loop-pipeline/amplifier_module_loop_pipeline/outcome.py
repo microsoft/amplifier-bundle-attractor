@@ -86,6 +86,16 @@ class Outcome:
     #:   verification_gap.log_filtered — True when payload was truncated
     failed_step: dict[str, Any] | None = None
 
+    #: support#379 \u2014 the real attempt count consumed by execute_with_retry
+    #: (1-indexed: 1 means the initial try succeeded/finalized with no
+    #: retries, INCLUDING skipped nodes -- they pass through the retry
+    #: ladder without looping within it, so attempt_count is set for them
+    #: too). None when the outcome did not pass through the retry ladder at
+    #: all (e.g. the must_write backstop at the engine level, subgraph/
+    #: branch execution which has no retry policy). Additive field
+    #: \u2014 not part of status.json's existing shape; consumers must opt in.
+    attempt_count: int | None = None
+
     @property
     def is_success(self) -> bool:
         """True if status is SUCCESS or PARTIAL_SUCCESS."""

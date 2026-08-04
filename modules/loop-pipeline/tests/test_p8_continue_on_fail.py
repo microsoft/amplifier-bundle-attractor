@@ -298,6 +298,179 @@ class TestContinueOnFail:
         )
 
     @pytest.mark.asyncio
+    async def test_continue_on_fail_preserves_attempt_count(self, tmp_path):
+        """attempt_count from the retry ladder must survive continue_on_fail.
+
+        (S2 lossy-reconstruction regression guard, docs/designs/RECURRING-BUG-CLASSES.md.)
+
+        A node with max_retries='2' (max_attempts=3) whose handler returns
+        RETRY on the first two attempts and FAIL on the third has
+        attempt_count=3 set by execute_with_retry's FAIL path. When
+        continue_on_fail='true' then overrides that FAIL outcome to SUCCESS,
+        the emitted pipeline:node_complete event must still report
+        attempt=3, not the attempt_count=None fallback of 1.
+        """
+
+        class _RecordingHooks:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, dict]] = []
+
+            async def emit(self, event_name: str, data: dict) -> None:
+                self.events.append((event_name, data))
+
+        class RetryThenFailHandler:
+            """Returns RETRY on the first two calls, FAIL on the third."""
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def execute(self, node, context, graph, logs_root, *, engine=None):
+                self.calls += 1
+                if self.calls < 3:
+                    return Outcome(status=StageStatus.RETRY)
+                return Outcome(status=StageStatus.FAIL, failure_reason="boom")
+
+        graph = Graph(
+            name="test",
+            nodes={
+                "start": Node(id="start", shape="Mdiamond"),
+                "fail_node": Node(
+                    id="fail_node",
+                    shape="box",
+                    prompt="work",
+                    attrs={"continue_on_fail": "true", "max_retries": "2"},
+                ),
+                "exit": Node(id="exit", shape="Msquare"),
+            },
+            edges=[
+                Edge(from_node="start", to_node="fail_node"),
+                Edge(from_node="fail_node", to_node="exit"),
+            ],
+        )
+        context = PipelineContext()
+        registry = HandlerRegistry(HandlerContext())
+        handler = RetryThenFailHandler()
+        registry.register("codergen", handler)
+        hooks = _RecordingHooks()
+        engine = PipelineEngine(
+            graph=graph,
+            context=context,
+            handler_registry=registry,
+            logs_root=str(tmp_path),
+            hooks=hooks,
+        )
+        await engine.run()
+
+        assert handler.calls == 3, f"Expected 3 handler calls, got {handler.calls}"
+        assert engine.node_outcomes["fail_node"].status == StageStatus.SUCCESS
+        assert engine.node_outcomes["fail_node"].attempt_count == 3, (
+            f"Expected attempt_count=3 to survive continue_on_fail override, "
+            f"got {engine.node_outcomes['fail_node'].attempt_count!r} "
+            f"(S2 lossy reconstruction regression)"
+        )
+
+        complete_events = [
+            data for name, data in hooks.events if name == "pipeline:node_complete"
+        ]
+        fail_node_events = [e for e in complete_events if e["node_id"] == "fail_node"]
+        assert len(fail_node_events) == 1, (
+            f"Expected exactly one pipeline:node_complete for fail_node, "
+            f"got {len(fail_node_events)}"
+        )
+        assert fail_node_events[0]["attempt"] == 3, (
+            f"Expected pipeline:node_complete attempt=3 after continue_on_fail "
+            f"override, got {fail_node_events[0]['attempt']!r} "
+            f"(S2 lossy reconstruction regression)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_continue_on_fail_preserves_failed_step(self, tmp_path):
+        """failed_step (structured failure detail) must survive continue_on_fail.
+
+        (S2 lossy-reconstruction regression guard, docs/designs/RECURRING-BUG-CLASSES.md.)
+
+        continue_on_fail suppresses a FAIL outcome for ROUTING purposes only
+        -- it must not erase the diagnostic record of what actually failed.
+        A tool-style handler that fails with a structured failed_step
+        payload must still expose that payload after the override, both on
+        the stored Outcome and on the emitted pipeline:node_complete event.
+        """
+
+        class _RecordingHooks:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, dict]] = []
+
+            async def emit(self, event_name: str, data: dict) -> None:
+                self.events.append((event_name, data))
+
+        expected_failed_step = {
+            "command": "false",
+            "exit_code": 1,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "simulated tool failure",
+        }
+
+        class FailingStepHandler:
+            """Always returns FAIL with a structured failed_step payload."""
+
+            async def execute(self, node, context, graph, logs_root, *, engine=None):
+                return Outcome(
+                    status=StageStatus.FAIL,
+                    failure_reason="tool exited non-zero",
+                    failed_step=dict(expected_failed_step),
+                )
+
+        graph = Graph(
+            name="test",
+            nodes={
+                "start": Node(id="start", shape="Mdiamond"),
+                "fail_node": Node(
+                    id="fail_node",
+                    shape="box",
+                    prompt="work",
+                    attrs={"continue_on_fail": "true"},
+                ),
+                "exit": Node(id="exit", shape="Msquare"),
+            },
+            edges=[
+                Edge(from_node="start", to_node="fail_node"),
+                Edge(from_node="fail_node", to_node="exit"),
+            ],
+        )
+        context = PipelineContext()
+        registry = HandlerRegistry(HandlerContext())
+        registry.register("codergen", FailingStepHandler())
+        hooks = _RecordingHooks()
+        engine = PipelineEngine(
+            graph=graph,
+            context=context,
+            handler_registry=registry,
+            logs_root=str(tmp_path),
+            hooks=hooks,
+        )
+        await engine.run()
+
+        assert engine.node_outcomes["fail_node"].status == StageStatus.SUCCESS
+        assert engine.node_outcomes["fail_node"].failed_step == expected_failed_step, (
+            f"Expected failed_step to survive continue_on_fail override, "
+            f"got {engine.node_outcomes['fail_node'].failed_step!r} "
+            f"(S2 lossy reconstruction regression)"
+        )
+
+        complete_events = [
+            data for name, data in hooks.events if name == "pipeline:node_complete"
+        ]
+        fail_node_events = [e for e in complete_events if e["node_id"] == "fail_node"]
+        assert len(fail_node_events) == 1
+        assert fail_node_events[0]["failed_step"] == expected_failed_step, (
+            f"Expected pipeline:node_complete failed_step to survive "
+            f"continue_on_fail override, got "
+            f"{fail_node_events[0]['failed_step']!r} "
+            f"(S2 lossy reconstruction regression)"
+        )
+
+    @pytest.mark.asyncio
     async def test_continue_on_fail_on_tool_node(self, tmp_path):
         """continue_on_fail works on tool nodes (parallelogram shape) via DOT parsing.
 

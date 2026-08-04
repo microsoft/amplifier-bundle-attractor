@@ -249,6 +249,18 @@ class PipelineHandler:
             hooks=self._hooks,
             cancel_event=self._cancel_event,
         )
+        # support#379 (fix 3): thread a scope discriminator onto child-engine
+        # events, reusing the existing _branch_id mechanism (S4). Without
+        # this, concurrent folder subgraphs under parallel fan-out emit
+        # events that are ambiguous about which subgraph they came from.
+        # Prefix with the parent's own branch_id (if any) so nesting under a
+        # parallel branch stays disambiguated too.
+        _parent_branch = getattr(engine, "_branch_id", None) if engine else None
+        child_engine._branch_id = (
+            f"{_parent_branch}>subgraph:{node.id}"
+            if _parent_branch
+            else f"subgraph:{node.id}"
+        )
 
         # (10) Determine child goal
         child_goal = child_graph.goal or context.get("graph.goal")
@@ -300,6 +312,15 @@ class PipelineHandler:
             "total_elapsed_ms": subgraph_elapsed_ms,
             "nodes_completed": len(child_engine.completed_nodes),
             "nodes_total": len(child_graph.nodes),
+            # support#379 (fix 4, additive): a normalized, 0-based repetition
+            # counter that means the same thing here as it does in
+            # manager_loop.py's _subgraph_runs entries (see cycle_index
+            # there). This does NOT rename subgraph_{node.id} /
+            # subgraph_{node.id}__iter{N} directories (_inv, above) — only
+            # adds a consistent field for consumers that want to compare
+            # "which repetition" across both handlers without knowing each
+            # handler's own on-disk numbering convention.
+            "cycle_index": _inv,
         }
 
         # (11b2) Merge declared outputs from child context back to parent

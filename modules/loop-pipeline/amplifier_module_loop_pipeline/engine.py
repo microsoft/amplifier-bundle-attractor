@@ -616,12 +616,28 @@ class PipelineEngine:
                     "Node '%s' has auto_status=true; promoting SKIPPED to SUCCESS",
                     current_node.id,
                 )
+                # S2 field audit (Outcome has 11 fields; see outcome.py) --
+                # auto_status override:
+                #   status, notes  -> OVERRIDDEN (this IS the promotion)
+                #   context_updates, preferred_label, suggested_next_ids,
+                #   failure_reason, session_id, response_text, failed_step,
+                #   attempt_count  -> CARRIED forward; nothing upstream lost
+                #   is_explicit    -> RESET to default False: this SUCCESS
+                #     was synthesized by policy, not asserted by the node,
+                #     so it must not silently satisfy a goal_gate (which
+                #     requires is_success AND is_explicit; see
+                #     _check_goal_gates()).
                 outcome = Outcome(
                     status=StageStatus.SUCCESS,
                     notes="auto_status override (was skipped)",
                     context_updates=outcome.context_updates,
                     preferred_label=outcome.preferred_label,
                     suggested_next_ids=outcome.suggested_next_ids,
+                    failure_reason=outcome.failure_reason,
+                    session_id=outcome.session_id,
+                    response_text=outcome.response_text,
+                    failed_step=outcome.failed_step,
+                    attempt_count=outcome.attempt_count,
                 )
 
             # continue_on_fail: override FAIL to SUCCESS for routing, log the failure
@@ -649,6 +665,24 @@ class PipelineEngine:
                     current_node.id,
                     outcome.failure_reason or outcome.notes or "no reason given",
                 )
+                # S2 field audit (Outcome has 11 fields; see outcome.py) --
+                # continue_on_fail override:
+                #   status         -> OVERRIDDEN (this IS the override)
+                #   notes          -> OVERRIDDEN; failure_reason is folded
+                #     into the new notes text above, so the standalone
+                #     failure_reason field is intentionally RESET to None
+                #     below (not carried) rather than duplicated.
+                #   context_updates, preferred_label, suggested_next_ids,
+                #   session_id, response_text, failed_step, attempt_count
+                #                  -> CARRIED forward; nothing upstream lost
+                #     (failed_step in particular: continue_on_fail
+                #     suppresses the failure for ROUTING only -- it must
+                #     not erase the diagnostic record of what failed).
+                #   is_explicit    -> RESET to default False: same
+                #     reasoning as the auto_status override above -- this
+                #     SUCCESS was synthesized by policy, not asserted by
+                #     the node, so it must not silently satisfy a
+                #     goal_gate (see _check_goal_gates()).
                 outcome = Outcome(
                     status=StageStatus.SUCCESS,
                     notes=(
@@ -658,6 +692,10 @@ class PipelineEngine:
                     context_updates=outcome.context_updates,
                     preferred_label=outcome.preferred_label,
                     suggested_next_ids=outcome.suggested_next_ids,
+                    session_id=outcome.session_id,
+                    response_text=outcome.response_text,
+                    failed_step=outcome.failed_step,
+                    attempt_count=outcome.attempt_count,
                 )
 
             # Step 2.7: must_write= final backstop (EXTENSIONS.md §27).
@@ -695,6 +733,11 @@ class PipelineEngine:
                     # Populated by ToolHandler on failure; None on success or for
                     # non-tool nodes.  Consumers check for None before reading.
                     "failed_step": outcome.failed_step,
+                    # support#379: real attempt count consumed by the retry
+                    # ladder (execute_with_retry sets Outcome.attempt_count).
+                    # Falls back to 1 for outcomes that never entered the
+                    # retry ladder (e.g. the requires= backstop above).
+                    "attempt": outcome.attempt_count or 1,
                 },
             )
 
@@ -890,6 +933,7 @@ class PipelineEngine:
         start_node_id: str,
         *,
         context: PipelineContext | None = None,
+        emit_node_events: bool = True,
     ) -> Outcome:
         """Execute a subgraph starting from the given node.
 
@@ -899,10 +943,27 @@ class PipelineEngine:
         This is the subgraph runner used by ParallelHandler and
         ManagerLoopHandler to execute branches and child subgraphs.
 
+        support#379 (fix 1): this method emits pipeline:node_start /
+        pipeline:node_complete for each node it executes — previously it
+        emitted nothing at all, leaving ManagerLoopHandler's in-graph
+        subgraph path (and any other direct caller) entirely dark.
+
         Args:
             start_node_id: Node ID to begin execution from.
             context: Optional isolated context for this subgraph run.
                      If None, uses the engine's main context.
+            emit_node_events: Whether to emit pipeline:node_start /
+                pipeline:node_complete for each node executed in this
+                subgraph. Defaults to True. ParallelHandler passes False
+                when calling this from a branch engine, because it already
+                emits the equivalent events itself, tagged
+                via_parallel=True (see handlers/parallel.py's per-branch
+                event contract, documented in this repo's AGENTS.md) — a
+                second emission here would double-count every branch node
+                in the timeline. Keyword-only so existing callers (and
+                test doubles implementing a narrower
+                ``run_subgraph(start_node_id, *, context=...)`` override)
+                are unaffected by this parameter's addition.
 
         Returns:
             The final Outcome of the subgraph execution.
@@ -939,19 +1000,69 @@ class PipelineEngine:
 
             # Execute node handler (no retry policy in subgraph -- parent manages retries)
             handler = self.handler_registry.get(current_node)
+            handler_type = current_node.type or current_node.shape
 
-            # Skip start nodes (no-op)
+            # Skip start nodes (no-op) -- mirrors run()'s handling; no events
+            # emitted for the synthetic start-node no-op, consistent with the
+            # top-level run() loop which also does not emit node_start/
+            # node_complete for the pipeline's own start node.
             if current_node.is_start_node():
                 outcome = Outcome(status=StageStatus.SUCCESS)
             else:
+                # support#379 (fix 1): run_subgraph() previously emitted NO
+                # events at all -- it is the shared subgraph runner used by
+                # ManagerLoopHandler's in-graph path and ParallelHandler's
+                # branch bodies, so both execution classes were entirely
+                # dark. Mirror the top-level run() loop's node_start /
+                # node_complete emission (minus retry-ladder fields, since
+                # run_subgraph has no retry policy of its own).
+                node_start_time = time.monotonic()
+                if emit_node_events:
+                    await self._emit(
+                        PIPELINE_NODE_START,
+                        {
+                            "node_id": current_node.id,
+                            "handler_type": handler_type,
+                            "attempt": 1,
+                        },
+                    )
                 try:
                     outcome = await handler.execute(
                         current_node, ctx, self.graph, self.logs_root, engine=self
                     )
                 except Exception as exc:
-                    return Outcome(
+                    fail_outcome = Outcome(
                         status=StageStatus.FAIL,
                         failure_reason=f"Subgraph node '{current_node.id}' raised: {exc}",
+                    )
+                    if emit_node_events:
+                        await self._emit(
+                            PIPELINE_NODE_COMPLETE,
+                            {
+                                "node_id": current_node.id,
+                                "status": fail_outcome.status.value,
+                                "duration_ms": (time.monotonic() - node_start_time)
+                                * 1000,
+                                "notes": fail_outcome.notes,
+                                "failure_reason": fail_outcome.failure_reason,
+                                "session_id": None,
+                                "attempt": 1,
+                            },
+                        )
+                    return fail_outcome
+                if emit_node_events:
+                    await self._emit(
+                        PIPELINE_NODE_COMPLETE,
+                        {
+                            "node_id": current_node.id,
+                            "status": outcome.status.value,
+                            "duration_ms": (time.monotonic() - node_start_time) * 1000,
+                            "notes": outcome.notes,
+                            "failure_reason": outcome.failure_reason,
+                            "session_id": outcome.session_id,
+                            "failed_step": outcome.failed_step,
+                            "attempt": outcome.attempt_count or 1,
+                        },
                     )
 
             last_outcome = outcome

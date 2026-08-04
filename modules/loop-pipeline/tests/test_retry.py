@@ -108,6 +108,9 @@ async def test_retry_on_retry_outcome():
     )
     assert result.status == StageStatus.SUCCESS
     assert handler.call_count == 3
+    # support#379: Outcome.attempt_count must reflect the real attempt that
+    # finally succeeded (3rd try), not a hardcoded 1.
+    assert result.attempt_count == 3
 
 
 @pytest.mark.asyncio
@@ -209,6 +212,8 @@ async def test_exception_retried():
     )
     assert result.status == StageStatus.SUCCESS
     assert handler.call_count == 3
+    # support#379: real attempt count threaded through the exception-retry path too.
+    assert result.attempt_count == 3
 
 
 @pytest.mark.asyncio

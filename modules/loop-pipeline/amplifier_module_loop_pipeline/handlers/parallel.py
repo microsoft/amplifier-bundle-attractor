@@ -153,14 +153,26 @@ class ParallelHandler:
                         # Fall back to the parent engine for mock/stub engines used
                         # in unit tests that predate clone_for_branch.
                         clone_fn = getattr(engine, "clone_for_branch", None)
+                        # support#379 (fix 1): this handler already emits the
+                        # equivalent node_start/node_complete events itself
+                        # just above/below, tagged via_parallel=True (the
+                        # documented per-branch event contract in this
+                        # repo's AGENTS.md). run_subgraph() emits its own
+                        # copies by default (see engine.py), so pass
+                        # emit_node_events=False here to avoid double-
+                        # counting every branch node in the timeline.
                         if clone_fn is not None:
                             branch_engine = clone_fn(context=branch_context)
                             outcome = await branch_engine.run_subgraph(
-                                target_node_id, context=branch_context
+                                target_node_id,
+                                context=branch_context,
+                                emit_node_events=False,
                             )
                         else:
                             outcome = await engine.run_subgraph(
-                                target_node_id, context=branch_context
+                                target_node_id,
+                                context=branch_context,
+                                emit_node_events=False,
                             )
                     except Exception as e:
                         logger.warning(

@@ -10,8 +10,8 @@ from amplifier_module_loop_pipeline.context import PipelineContext
 from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
-from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
 from amplifier_module_loop_pipeline.handlers.context import HandlerContext
+from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
 
 
 class CountingHandler:
@@ -234,3 +234,100 @@ async def test_parallel_handler_uses_wired_subgraph_runner(tmp_path):
     result = json.loads(result_json)
     # Pipeline should complete -- parallel branches should have run
     assert result["status"] in ("success", "partial_success")
+
+
+class _RecordingHooks:
+    """Captures all emitted events for inspection (support#379 regression tests)."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
+
+    async def emit(self, event_name: str, data: dict) -> None:
+        self.events.append((event_name, data))
+
+    def events_of_type(self, name: str) -> list[dict]:
+        return [data for n, data in self.events if n == name]
+
+
+@pytest.mark.asyncio
+async def test_run_subgraph_emits_node_events_by_default(tmp_path):
+    """support#379 (fix 1) regression guard: run_subgraph() must emit
+
+    pipeline:node_start / pipeline:node_complete for each node it executes
+    by default. Before the fix, run_subgraph() emitted NO events at all,
+    leaving ManagerLoopHandler's in-graph subgraph path (which calls
+    run_subgraph() directly, with no other emission mechanism of its own —
+    unlike ParallelHandler) entirely dark.
+    """
+    graph = _make_subgraph()
+    counting = CountingHandler()
+    registry = HandlerRegistry(HandlerContext())
+    registry.register("codergen", counting)
+    hooks = _RecordingHooks()
+
+    engine = PipelineEngine(
+        graph=graph,
+        context=PipelineContext(),
+        handler_registry=registry,
+        logs_root=str(tmp_path),
+        hooks=hooks,
+    )
+    engine._initialize_context(goal="test")
+
+    outcome = await engine.run_subgraph("a")
+
+    assert outcome.status == StageStatus.SUCCESS
+
+    start_events = hooks.events_of_type("pipeline:node_start")
+    complete_events = hooks.events_of_type("pipeline:node_complete")
+    started_ids = {e["node_id"] for e in start_events}
+    completed_ids = {e["node_id"] for e in complete_events}
+
+    # Nodes "a" and "b" both execute per test_run_from_executes_subgraph above.
+    assert started_ids == {"a", "b"}, (
+        f"Expected pipeline:node_start for nodes a and b, got {started_ids!r} "
+        f"(support#379 regression: run_subgraph() emitted nothing)"
+    )
+    assert completed_ids == {"a", "b"}, (
+        f"Expected pipeline:node_complete for nodes a and b, got {completed_ids!r} "
+        f"(support#379 regression: run_subgraph() emitted nothing)"
+    )
+    # Exactly one of each per node -- guards the sibling double-emission
+    # regression class from the other direction (no suppression flag set
+    # here, so this is the "un-suppressed" default path).
+    for node_id in ("a", "b"):
+        assert sum(1 for e in start_events if e["node_id"] == node_id) == 1
+        assert sum(1 for e in complete_events if e["node_id"] == node_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_subgraph_suppresses_events_when_emit_node_events_false(tmp_path):
+    """support#379 (fix 1) regression guard: the public
+
+    ``emit_node_events=False`` keyword argument (passed by ParallelHandler
+    when driving a branch engine, see handlers/parallel.py) must actually
+    suppress run_subgraph()'s emission, so ParallelHandler's own
+    via_parallel=True events remain the only events for branch nodes.
+    """
+    graph = _make_subgraph()
+    counting = CountingHandler()
+    registry = HandlerRegistry(HandlerContext())
+    registry.register("codergen", counting)
+    hooks = _RecordingHooks()
+
+    engine = PipelineEngine(
+        graph=graph,
+        context=PipelineContext(),
+        handler_registry=registry,
+        logs_root=str(tmp_path),
+        hooks=hooks,
+    )
+    engine._initialize_context(goal="test")
+
+    outcome = await engine.run_subgraph("a", emit_node_events=False)
+
+    assert outcome.status == StageStatus.SUCCESS
+    assert hooks.events == [], (
+        f"Expected zero events with emit_node_events=False, "
+        f"got: {hooks.events!r}"
+    )

@@ -125,7 +125,7 @@ class TestKOfNJoinPolicy:
         }
 
         class _KOfNEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 return outcomes[node_id]
 
         handler = ParallelHandler()
@@ -234,7 +234,7 @@ class TestQuorumJoinPolicy:
         }
 
         class _QuorumEngine2:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 return outcomes[node_id]
 
         handler = ParallelHandler()
@@ -280,7 +280,7 @@ class TestFailFastErrorPolicy:
         execution_order: list[str] = []
 
         class SlowEngine2:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 execution_order.append(f"start:{node_id}")
                 if node_id == "b1":
                     # b1 fails immediately
@@ -327,7 +327,7 @@ class TestFailFastErrorPolicy:
         """fail_fast with all successes returns SUCCESS normally."""
 
         class SuccessEngine2:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 return Outcome(status=StageStatus.SUCCESS)
 
         handler = ParallelHandler()
@@ -359,7 +359,7 @@ class TestFailFastErrorPolicy:
         """fail_fast stores whatever results were collected before cancellation."""
 
         class MixedEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 if node_id == "b1":
                     return Outcome(status=StageStatus.FAIL, failure_reason="broken")
                 await asyncio.sleep(0.5)
@@ -411,7 +411,7 @@ class TestIgnoreErrorPolicy:
         }
 
         class _IgnoreEngine3:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 return outcomes[node_id]
 
         handler = ParallelHandler()
@@ -452,7 +452,7 @@ class TestIgnoreErrorPolicy:
         """ignore with all failures returns SUCCESS with empty results."""
 
         class FailEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 return Outcome(status=StageStatus.FAIL, failure_reason="all bad")
 
         handler = ParallelHandler()
@@ -485,7 +485,7 @@ class TestIgnoreErrorPolicy:
         """ignore with all successes works normally."""
 
         class _IgnoreSuccessEngine:
-            async def run_subgraph(self, node_id, *, context=None):
+            async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
                 return Outcome(status=StageStatus.SUCCESS)
 
         handler = ParallelHandler()

@@ -418,6 +418,93 @@ async def test_auto_status_preserves_explicit_fail(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_auto_status_promotion_preserves_attempt_count(tmp_path):
+    """attempt_count from the retry ladder must survive auto_status promotion.
+
+    (S2 lossy-reconstruction regression guard, docs/designs/RECURRING-BUG-CLASSES.md.)
+
+    A node with max_retries='2' (max_attempts=3) whose handler returns RETRY
+    on the first two attempts and SKIPPED on the third has attempt_count=3
+    set by execute_with_retry's SKIPPED path. When auto_status='true' then
+    promotes that SKIPPED outcome to SUCCESS, the promoted outcome -- and the
+    emitted pipeline:node_complete event -- must still report attempt=3, not
+    the attempt_count=None fallback of 1.
+    """
+
+    class _RecordingHooks:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict]] = []
+
+        async def emit(self, event_name: str, data: dict) -> None:
+            self.events.append((event_name, data))
+
+    class RetryThenSkipHandler:
+        """Returns RETRY on the first two calls, SKIPPED on the third."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def execute(self, node, context, graph, logs_root, *, engine=None):
+            self.calls += 1
+            if self.calls < 3:
+                return Outcome(status=StageStatus.RETRY)
+            return Outcome(status=StageStatus.SKIPPED)
+
+    graph = Graph(
+        name="test",
+        nodes={
+            "start": Node(id="start", shape="Mdiamond"),
+            "auto_node": Node(
+                id="auto_node",
+                shape="box",
+                prompt="work",
+                attrs={"auto_status": "true", "max_retries": "2"},
+            ),
+            "exit": Node(id="exit", shape="Msquare"),
+        },
+        edges=[
+            Edge(from_node="start", to_node="auto_node"),
+            Edge(from_node="auto_node", to_node="exit"),
+        ],
+    )
+    context = PipelineContext()
+    registry = HandlerRegistry(HandlerContext())
+    handler = RetryThenSkipHandler()
+    registry.register("codergen", handler)
+    hooks = _RecordingHooks()
+    engine = PipelineEngine(
+        graph=graph,
+        context=context,
+        handler_registry=registry,
+        logs_root=str(tmp_path),
+        hooks=hooks,
+    )
+    await engine.run()
+
+    assert handler.calls == 3, f"Expected 3 handler calls, got {handler.calls}"
+    assert engine.node_outcomes["auto_node"].status == StageStatus.SUCCESS
+    assert engine.node_outcomes["auto_node"].attempt_count == 3, (
+        f"Expected attempt_count=3 to survive auto_status promotion, "
+        f"got {engine.node_outcomes['auto_node'].attempt_count!r} "
+        f"(S2 lossy reconstruction regression)"
+    )
+
+    complete_events = [
+        data for name, data in hooks.events if name == "pipeline:node_complete"
+    ]
+    auto_node_events = [e for e in complete_events if e["node_id"] == "auto_node"]
+    assert len(auto_node_events) == 1, (
+        f"Expected exactly one pipeline:node_complete for auto_node, "
+        f"got {len(auto_node_events)}"
+    )
+    assert auto_node_events[0]["attempt"] == 3, (
+        f"Expected pipeline:node_complete attempt=3 after auto_status "
+        f"promotion, got {auto_node_events[0]['attempt']!r} "
+        f"(S2 lossy reconstruction regression)"
+    )
+
+
+@pytest.mark.asyncio
 async def test_auto_status_false_preserves_fail(tmp_path):
     """Without auto_status, FAIL outcome is preserved (L-9)."""
 

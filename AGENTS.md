@@ -21,21 +21,21 @@ Before designing changes, read [`PRINCIPLES.md`](PRINCIPLES.md) — upstream-spe
 
 ## Test commands
 
-Run these before opening a PR. The reviewer expects evidence in the PR body, not just "tests pass."
+Run these before opening a PR. The reviewer expects evidence in the PR body, not just "tests pass." CI (`.github/workflows/ci.yml`) runs all 13 modules per-directory (each has its own `uv`-managed environment — do not try to run them in one shared pytest process; that produces `--import-mode` collisions, cross-module state pollution, and bypasses each module's own `addopts`) plus a dedicated live-graph gate job (see below); this is the automated baseline, not a replacement for the manual verification below when it applies.
 
 - **Unit tests**: `pytest modules/loop-pipeline/` (full suite).
 - **Targeted unit tests**: `pytest modules/loop-pipeline/tests/test_<specific>.py -v` while iterating.
-- **Live pipeline run** (required when touching `engine.py` or any handler): construct or pick a graph that exercises the changed code path and run it through any attractor-compatible resolver. A representative pipeline from `examples/pipelines/` is acceptable when it covers the path; otherwise build a minimal graph that does. Capture the resulting `events.jsonl` and include the relevant slice in the PR.
+- **Live pipeline run** (required when touching `engine.py` or any handler): a baseline instance of this now runs automatically in CI — see `modules/loop-pipeline/tests/test_live_graph_gate.py`, which drives real DOT text through the real parser, engine, and handler dispatch and is the permanent, hermetic form of this check. It covers four specific, previously-regressed behaviors (parallel fan-out event counts, `attempt_count`/`auto_status` interaction, `attempt_count`+`failed_step`/`continue_on_fail` interaction, manager-loop child-engine event propagation). For changes that touch a code path NOT covered by that file, still construct or pick a graph that exercises the changed path and run it through any attractor-compatible resolver — a representative pipeline from `examples/pipelines/` is acceptable when it covers the path; otherwise build a minimal graph that does. Capture the resulting `events.jsonl` and include the relevant slice in the PR.
 
 ## Verification gradient
 
 | Change type | Required verification |
 |---|---|
-| `engine.py`, handler code, dispatch logic | Unit tests **and** a live pipeline run exercising the changed path. Paste the relevant `events.jsonl` slice or run output. |
+| `engine.py`, handler code, dispatch logic | Unit tests **and** the automated live-graph gate (`test_live_graph_gate.py`, runs in CI). If the changed path isn't one of the four behaviors that file covers, **also** do a manual live pipeline run exercising it and paste the relevant `events.jsonl` slice or run output — the automated gate is a floor, not a ceiling. |
 | Spec extensions in `specs/` | Unit tests **and** a live pipeline run that demonstrates the new semantics. |
 | Test fixtures, examples, docs | Unit tests sufficient. |
 
-Unit tests alone are insufficient for engine and handler changes. Past bugs have shipped with green unit tests and failed on first real-graph run, specifically at the boundary between the engine's main loop and handler dispatch. The live-run gate exists because of that pattern.
+Unit tests alone are insufficient for engine and handler changes. Past bugs have shipped with green unit tests and failed on first real-graph run, specifically at the boundary between the engine's main loop and handler dispatch. The live-run gate exists because of that pattern — it is now enforced by `test_live_graph_gate.py` running in CI on every PR, not solely by human memory.
 
 ## Common pitfalls (from session experience)
 

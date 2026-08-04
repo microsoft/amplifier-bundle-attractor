@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref (e.g. a PR pushed again before the
+# previous run finished) so we don't burn runner time on stale commits.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    # One job per (module, python-version) combination. Each module is its
+    # own uv-managed package with its own venv, dependency group, and
+    # pytest addopts (see AGENTS.md / repo root pyproject.toml — there is
+    # intentionally no root dependency-group; every module's own
+    # `dependency-groups.dev` + `[tool.uv.sources]` path overrides make
+    # `uv sync` sufficient standalone). Modules are NOT run in one shared
+    # pytest process: doing so produces `--import-mode` collisions and
+    # cross-module state pollution, and bypasses each module's own
+    # `addopts` (e.g. unified-llm-client's `-m 'not integration'` marker
+    # filter, which is what keeps API-key-requiring tests out of CI).
+    name: Unit Tests (${{ matrix.module.name }}, py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      # A red matrix cell must never mask the other cells — one module
+      # breaking should never hide a failure in the other twelve.
+      fail-fast: false
+      matrix:
+        # Floor (3.11, the repo-wide `requires-python` minimum) and
+        # ceiling (3.13, latest stable) only. 3.12 is bracketed by both
+        # and is skipped deliberately — 13 modules x 3 Python versions is
+        # not worth the extra runner time for the marginal coverage it
+        # would add; this is a considered trade-off, not an oversight.
+        python-version: ["3.11", "3.13"]
+        module:
+          - name: hooks-pipeline-observability
+            extra_args: ""
+          - name: hooks-pipeline-progress
+            extra_args: ""
+          - name: hooks-tool-truncation
+            extra_args: ""
+          - name: loop-agent
+            extra_args: ""
+          - name: loop-pipeline
+            # tests/test_remote_dot.py imports amplifier_module_remote_source,
+            # which is only wired in as the optional `remote` extra. Without
+            # it, pytest collection fails before any test runs.
+            extra_args: "--extra remote"
+          - name: pipeline-runner
+            extra_args: ""
+          - name: remote-source
+            extra_args: ""
+          - name: tool-apply-patch
+            extra_args: ""
+          - name: tool-dashboard-query
+            extra_args: ""
+          - name: tool-pipeline-run
+            extra_args: ""
+          - name: tool-pipeline-status
+            extra_args: ""
+          - name: tool-report-outcome
+            extra_args: ""
+          - name: unified-llm-client
+            extra_args: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        working-directory: modules/${{ matrix.module.name }}
+        run: uv sync ${{ matrix.module.extra_args }}
+
+      - name: Run tests
+        working-directory: modules/${{ matrix.module.name }}
+        run: uv run pytest -q
+
+  live-graph-gate:
+    # Separate, distinctly-named job so a failure here reads as "the
+    # live-graph gate broke" rather than a generic unit-test failure. See
+    # AGENTS.md's "Verification gradient" — this job is the automated
+    # baseline instance of the live pipeline run that section requires for
+    # any engine.py / handler change. It runs
+    # modules/loop-pipeline/tests/test_live_graph_gate.py specifically
+    # (in addition to that file also running as part of the loop-pipeline
+    # cell of the unit-tests matrix above — belt and suspenders, not
+    # duplication of intent).
+    name: Live-Graph Gate (loop-pipeline engine + handler dispatch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install loop-pipeline
+        working-directory: modules/loop-pipeline
+        run: uv sync
+
+      - name: Run live-graph smoke test
+        working-directory: modules/loop-pipeline
+        run: uv run pytest tests/test_live_graph_gate.py -v

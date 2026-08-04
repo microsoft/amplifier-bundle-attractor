@@ -1050,6 +1050,11 @@ async def test_reasoning_effort_passed_to_tool_loop(monkeypatch):
         coordinator=coordinator,
         profiles={},
         provider=object(),  # truthy sentinel to enable Path B
+        # Inject a non-None client so _get_or_create_unified_client() never
+        # falls through to unified_llm.Client.from_env(), which requires a
+        # real API key and would make this test non-hermetic.  unified_llm.generate
+        # is monkeypatched above, so the client's identity is never used.
+        unified_client=object(),
     )
     node = _make_node(
         attrs={
@@ -1080,6 +1085,11 @@ async def test_reasoning_effort_defaults_to_none(monkeypatch):
         coordinator=coordinator,
         profiles={},
         provider=object(),  # truthy sentinel to enable Path B
+        # Inject a non-None client so _get_or_create_unified_client() never
+        # falls through to unified_llm.Client.from_env(), which requires a
+        # real API key and would make this test non-hermetic.  unified_llm.generate
+        # is monkeypatched above, so the client's identity is never used.
+        unified_client=object(),
     )
     node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model"})
     result = await backend.run(node, "task", _make_context())

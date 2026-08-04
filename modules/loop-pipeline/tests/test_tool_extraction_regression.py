@@ -120,7 +120,18 @@ def _make_generate_result(
     )
 
 
-def _make_amplifier_backend(unified_client: Any = None) -> AmplifierBackend:
+# Default injected client for the helpers below.  All tests in this file
+# patch unified_llm.generate directly (via `patch("unified_llm.generate", ...)`),
+# so the client's identity is never used -- it only needs to be non-None so
+# _get_or_create_unified_client() never falls through to
+# unified_llm.Client.from_env(), which requires a real API key and would make
+# these tests non-hermetic.
+_DEFAULT_UNIFIED_CLIENT_STUB = object()
+
+
+def _make_amplifier_backend(
+    unified_client: Any = _DEFAULT_UNIFIED_CLIENT_STUB,
+) -> AmplifierBackend:
     """Create an AmplifierBackend with spawn disabled (falls to tool loop)."""
     return AmplifierBackend(
         coordinator=MagicMock(
@@ -134,7 +145,9 @@ def _make_amplifier_backend(unified_client: Any = None) -> AmplifierBackend:
     )
 
 
-def _make_direct_backend(unified_client: Any = None) -> DirectProviderBackend:
+def _make_direct_backend(
+    unified_client: Any = _DEFAULT_UNIFIED_CLIENT_STUB,
+) -> DirectProviderBackend:
     """Create a DirectProviderBackend wrapping the given mock client."""
     return DirectProviderBackend(
         provider=MagicMock(),

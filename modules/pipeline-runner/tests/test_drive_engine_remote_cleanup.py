@@ -39,7 +39,7 @@ async def test_drive_engine_cleanup_called_when_validate_fails_after_materialize
     class _FakeGraph:
         source_dir = str(view_dir)
 
-    async def _fake_load_graph(_graph_or_dot):
+    async def _fake_load_graph(_graph_or_dot, **_kwargs):
         return _FakeGraph(), _cleanup
 
     def _raising_validate_or_raise(_graph):

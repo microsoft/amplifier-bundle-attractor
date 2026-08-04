@@ -136,7 +136,7 @@ def seed_context(
     context.set("context.target_dir", str(cwd))
 
 
-async def _load_graph(graph_or_dot: "Graph | str"):
+async def _load_graph(graph_or_dot: "Graph | str", *, source_dir: str | None = None):
     """Return (graph, cleanup). If graph_or_dot is a git+https:// URL, materialize
     the remote tree (async, before parse) and parse the local entry; otherwise
     behave exactly as before. cleanup() removes any per-run materialized view.
@@ -147,10 +147,32 @@ async def _load_graph(graph_or_dot: "Graph | str"):
     so the two engine entry points can't diverge. Kept as a module-level
     function (rather than inlined into ``drive_engine``) so it stays
     independently monkeypatchable in tests.
+
+    ``source_dir`` is the directory a file-backed ROOT graph was read from.
+    A remote package derives its own from the materialized entry, and every
+    *child* graph already gets one (``PipelineHandler.execute`` sets
+    ``child_graph.source_dir``) -- only a local root arrived with it empty,
+    which made ``resolve_dot_path`` fall through to ``context.target_dir``
+    (the ``--cwd`` workspace) and look for sibling bricks there instead of
+    beside the pipeline.
+
+    It is applied HERE, in the runner, rather than by passing it into the
+    engine helper: the runner and the engine are separate packages resolved
+    independently (see ``compat.py`` -- a floating dependency plus a
+    symbol-presence assertion, deliberately not a pin). Adding a parameter to
+    the engine's signature would create a skew the compatibility check cannot
+    see -- the symbol still exists, so the gate passes and the call then fails
+    with a bare ``TypeError``. Setting the attribute on the returned graph
+    needs nothing new from the engine.
     """
     from amplifier_module_loop_pipeline.remote_dot import load_remote_or_local_graph
 
-    return await load_remote_or_local_graph(graph_or_dot)
+    graph, cleanup = await load_remote_or_local_graph(graph_or_dot)
+    # Never clobber: a remote package and an already-parsed Graph carry their
+    # own, and theirs is the more specific answer.
+    if source_dir and not getattr(graph, "source_dir", ""):
+        graph.source_dir = source_dir
+    return graph, cleanup
 
 
 async def drive_engine(
@@ -165,6 +187,7 @@ async def drive_engine(
     interviewer: Any = None,
     transform: bool,
     validate: bool = True,
+    source_dir: str | None = None,
 ) -> "Outcome":
     """Drive the attractor engine directly against an already-built coordinator.
 
@@ -232,7 +255,7 @@ async def drive_engine(
     from amplifier_module_loop_pipeline.transforms import apply_transforms
     from amplifier_module_loop_pipeline.validation import validate_or_raise
 
-    graph, _source_cleanup = await _load_graph(graph_or_dot)
+    graph, _source_cleanup = await _load_graph(graph_or_dot, source_dir=source_dir)
 
     try:
         resolved_cwd = Path(cwd) if cwd is not None else Path.cwd()
@@ -610,6 +633,7 @@ async def run_pipeline(
     extra_overlays: Sequence[Any] | None = None,
     child_constraint: Callable[[Any], Any] | None = None,
     spawn_timeout: float | None = None,
+    source_dir: Path | str | None = None,
 ) -> PipelineResult:
     """Run a DOT pipeline through the attractor engine, standalone.
 
@@ -704,6 +728,7 @@ async def run_pipeline(
                 interviewer=interviewer,
                 transform=transform,
                 validate=validate,
+                source_dir=str(source_dir) if source_dir else None,
             )
     finally:
         # The engine creates its manifest at run start. Stamp runner-owned

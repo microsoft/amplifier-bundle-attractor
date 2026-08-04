@@ -114,3 +114,42 @@ jobs:
       - name: Run live-graph smoke test
         working-directory: modules/loop-pipeline
         run: uv run pytest tests/test_live_graph_gate.py -v
+
+  type-check:
+    # Static type checking. This replaces a former pytest case
+    # (tests/unit/test_pyright_clean.py) that shelled out to pyright with a
+    # hardcoded absolute path to an unrelated checkout on one developer's
+    # machine, and that was gated on `skipif(shutil.which("pyright") is None)`
+    # — so on any machine without pyright installed (every CI runner) it
+    # silently skipped. It looked like coverage and was not.
+    #
+    # As a job, a missing tool is a hard failure rather than a silent skip,
+    # which is the whole point of moving it here.
+    #
+    # SCOPE — deliberately narrow, and this is a considered decision:
+    # only `unified-llm-client` is checked, because that is the only module
+    # the deleted test ever claimed to cover, and it is verified clean
+    # (0 errors, 0 warnings). Three other modules currently have pre-existing
+    # findings (loop-agent 10, loop-pipeline 9, hooks-pipeline-observability 1)
+    # and would land this job red on arrival. Widening the scope is real work
+    # tracked separately — do NOT add modules here until their findings are
+    # actually cleared, or this gate becomes a red check people learn to ignore.
+    name: Type Check (unified-llm-client)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install unified-llm-client
+        working-directory: modules/unified-llm-client
+        run: uv sync
+
+      - name: Run pyright
+        working-directory: modules/unified-llm-client
+        run: uv run --with pyright pyright unified_llm/

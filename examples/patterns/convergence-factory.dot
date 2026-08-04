@@ -15,6 +15,17 @@
 //   assess codergen sets preferred_label="converged" or preferred_label="refine"
 //   check node routes via context.preferred_label edge conditions
 //   feedback -> generate edge has loop_restart=true to reset iteration state
+//
+// Feedback contract (EXTENSIONS.md §29):
+//   generate declares feedback_from="feedback" — the engine collects the
+//   'feedback' node's output on every loop_restart and injects the accumulated
+//   critique history as $prior_critiques_generate into generate's prompt.
+//   The injection key is scoped to the target node (prior_critiques_<node_id>)
+//   to prevent leakage when multiple generators declare different critics.
+//   The engine guarantees delivery; the generator no longer needs to "remember
+//   to read .ai/feedback/".  The .ai/feedback/ file convention is preserved
+//   for backward compatibility (file-based feedback still works alongside the
+//   engine channel).
 
 digraph convergence_factory {
     graph [goal="Generate, validate, and refine an artifact until it converges"]
@@ -23,10 +34,16 @@ digraph convergence_factory {
     start [shape=Mdiamond, label="Factory Start"]
 
     // generate: produces or refines the artifact.
-    // On subsequent iterations, should read prior feedback from .ai/feedback/.
+    // feedback_from="feedback" is the engine contract (EXTENSIONS.md §29):
+    // the engine collects the 'feedback' node's output each iteration and
+    // injects the accumulated critique history as $prior_critiques_generate here.
+    // The injection key is scoped to this node: prior_critiques_<node_id>.
+    // The generator no longer needs to "remember to read .ai/feedback/" —
+    // the engine guarantees the critique reaches the next iteration.
     generate [
         label="Generate Artifact",
-        prompt="You are generating or refining an artifact.\n\nThis is attempt $iteration.\n\nArtifact goal: $artifact_goal\n\nArtifact path: $artifact_path\n\nBefore generating, check .ai/feedback/ for any prior refinement guidance from previous iterations and incorporate it.\n\nGenerate or update the artifact now, writing it to $artifact_path."
+        feedback_from="feedback",
+        prompt="You are generating or refining an artifact.\n\nThis is attempt $iteration.\n\nArtifact goal: $artifact_goal\n\nArtifact path: $artifact_path\n\nPrior critique history (engine-accumulated, most recent last — use this to descend, not re-flip):\n$prior_critiques_generate\n\nGenerate or update the artifact now, writing it to $artifact_path."
     ]
 
     // validate: runs mechanical validation (syntax check, parse check, tests).
@@ -51,11 +68,16 @@ digraph convergence_factory {
     check [shape=parallelogram, label="Converged?", tool_command="echo routing"]
 
     // feedback: reached only when assess returns 'refine'.
-    // Reads the assessment and all prior feedback, then writes targeted
-    // refinement guidance to .ai/feedback/ using the Pyramid Summary pattern.
+    // Writes targeted refinement guidance — the engine collects this output
+    // (via generate's feedback_from="feedback") and injects it as
+    // $prior_critiques_generate into the next iteration's generate prompt.
+    // Write one highest-leverage observation per iteration (Pyramid Summary
+    // pattern) — the engine's curation window (MAX_CRITIQUES=5) keeps the
+    // channel bounded; write concisely so each entry stays within
+    // MAX_CRITIQUE_CHARS=500 chars.
     feedback [
         label="Write Feedback",
-        prompt="You are writing targeted refinement guidance for the next iteration.\n\nThis is refinement iteration $iteration.\n\nArtifact goal: $artifact_goal\n\nValidation criteria: $validation_criteria\n\nRead the current assessment from .ai/assessment.md and any prior feedback files in .ai/feedback/.\nWrite a new feedback file to .ai/feedback/ using the Pyramid Summary pattern:\n  1. Key finding (1 sentence) — what is the most important issue\n  2. What to change (3-5 bullet points) — specific, actionable improvements\n  3. Why it matters (1-2 sentences) — how this moves toward the goal\n\nBe precise and constructive. Focus on the delta needed to converge."
+        prompt="You are writing targeted refinement guidance for the next iteration.\n\nThis is refinement iteration $iteration.\n\nArtifact goal: $artifact_goal\n\nValidation criteria: $validation_criteria\n\nRead the current assessment from .ai/assessment.md.\nWrite ONE highest-leverage observation using the Pyramid Summary pattern:\n  1. Key finding (1 sentence) — what is the single most important issue\n  2. What to change (2-3 bullet points) — specific, actionable improvements\n  3. Why it matters (1 sentence) — how this moves toward the goal\n\nBe precise and concise (target <400 chars). The engine will accumulate your\noutput across iterations and inject it as $prior_critiques_generate into the\ngenerator's prompt. Focus on the delta needed to converge — not a summary of\neverything seen so far."
     ]
 
     // Exit point — reached only when assess returns 'converged'
@@ -71,6 +93,8 @@ digraph convergence_factory {
     check -> done     [label="converged", condition="context.preferred_label=converged"]
     check -> feedback [label="refine",    condition="context.preferred_label=refine"]
 
-    // Loop back: loop_restart resets iteration state and re-runs from generate
+    // Loop back: loop_restart resets iteration state and re-runs from generate.
+    // The engine collects feedback's output here (Extension §29) before clearing
+    // node_outcomes, so the critique is guaranteed to reach the next iteration.
     feedback -> generate [loop_restart="true"]
 }

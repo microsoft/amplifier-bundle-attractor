@@ -27,6 +27,7 @@ from .checkpoint import (
 )
 from .context import PipelineContext
 from .edge_selection import select_edge
+from .feedback import collect_and_inject_feedback
 from .graph import Graph, Node
 from .handlers import HandlerRegistry
 from .must_write import check_must_write
@@ -844,6 +845,17 @@ class PipelineEngine:
                     self.iteration_count,
                     iteration_dir,
                     edge.to_node,
+                )
+                # Extension #29: collect feedback_from= critique output BEFORE
+                # clearing node_outcomes so the critic's output is still
+                # available.  The accumulated channel survives the restart
+                # because context_updates are intentionally left untouched.
+                collect_and_inject_feedback(
+                    graph=self.graph,
+                    node_outcomes=self.node_outcomes,
+                    context=self.context,
+                    iteration_count=self.iteration_count,
+                    logs_root=self.logs_root,
                 )
                 # Reset engine state for clean re-execution
                 self.completed_nodes.clear()

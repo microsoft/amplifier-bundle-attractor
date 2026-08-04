@@ -1,0 +1,6 @@
+attractor: running pipeline cwd=/root/t13-live-v7 logs=/tmp/attractor-run-_3vwmqmc
+attractor: status=success
+attractor: logs=/tmp/attractor-run-_3vwmqmc
+attractor: notes:
+Tool completed: python3 /root/t13v7-checker/check_criteria.py > /root/t13v7-gateout/gate_output.txt 2>&1 && echo gate_pass || echo gate_fail
+{"status": "success", "notes": "Tool completed: python3 /root/t13v7-checker/check_criteria.py > /root/t13v7-gateout/gate_output.txt 2>&1 && echo gate_pass || echo gate_fail", "logs_dir": "/tmp/attractor-run-_3vwmqmc"}

@@ -1,0 +1,26 @@
+{
+  "graph_name": "feedback_live",
+  "goal": "Produce rate_limiter.py that passes the criteria gate; the gate is the source of truth",
+  "date": "2026-08-04",
+  "what_this_proves": "The feedback_from= engine contract (specs/EXTENSIONS.md #29) on a real LLM pipeline: the engine collected the critic node's output on every loop_restart, labeled it with the iteration number, accumulated it in one bounded channel, and injected it into the generator's next-iteration prompt. The run converged after 3 critique rounds (iterations 0-3), and critiques from 3 distinct iterations are co-located in the single durable channel artifact.",
+  "run_command": "attractor run feedback-live.dot --cwd <fresh-working-dir>",
+  "run_environment": "Real LLM backend (Anthropic, bundle default model) via the attractor CLI in an isolated container. The installed CLI's loop-pipeline package was verified byte-identical (sha256) to this branch's modules/loop-pipeline source for engine.py, feedback.py, and handlers/codergen.py before the run; all __pycache__ trees were cleared first.",
+  "run_dir": "captured from /tmp/attractor-run-_3vwmqmc (the engine's run directory)",
+  "experiment_design": "Information asymmetry, declared openly: the generator's prompt states only the artifact goal (a token-bucket rate limiter). The mechanical gate checks 10 specific criteria (exact constructor argument names, monotonic clock, thread safety, docstring example, type hints, __main__ demo, DEFAULT_CAPACITY constant, remaining() method, __repr__) from a checker script held OUTSIDE the working directory, writing its report outside the working directory too. The critique channel is therefore the only path by which the criteria specifics can reach later iterations -- convergence is itself the proof that the channel delivered.",
+  "trajectory": "iteration 0: generate -> gate FAIL -> critic names naming/API/docstring gaps; iteration 1: generate (prompt now carries 'Iteration 1 critique: ...') -> gate FAIL -> critic names __main__ block, DEFAULT_CAPACITY, remaining(); iteration 2: generate (carries critiques 1-2) -> gate FAIL -> critic names remaining()-must-return-float; iteration 3: generate (carries critiques 1-3) -> gate PASS (all 10 criteria) -> done. Pipeline exit: status=success.",
+  "measured_feedback_size": "feedback/generate.md (the accumulated channel): 819 bytes holding 3 iteration-labeled critiques, each truncated at the 500-char per-entry cap; final generate prompt.md: 1133 bytes total. Documented bound: MAX_CRITIQUES x MAX_CRITIQUE_CHARS = 5 x 500 = 2500 chars per iteration.",
+  "files": {
+    "feedback-live.dot": "the graph, byte-literal as run (absolute container-local paths appear verbatim)",
+    "check_criteria.py": "the mechanical gate's checker, byte-literal as run",
+    "trace.jsonl": "the engine's per-node execution trace (iteration, node_id, status) -- shows the 3 loop_restart cycles and terminal convergence",
+    "generate-prompt-final-iteration.md": "generate/prompt.md from the run dir: the iteration-3 generator prompt, containing all three iteration-labeled critiques injected via $prior_critiques_generate",
+    "feedback/generate.md": "the durable accumulated channel artifact written by the engine (feedback/<target>.md): critiques from iterations 1, 2, and 3 co-located in one file",
+    "feedback-response-final.md": "the critic node's final-round response text",
+    "checkpoint.json": "engine checkpoint; its context carries prior_critiques_generate and feedback.channel.generate",
+    "gate-output-final.txt": "the checker's final report: CRITERIA GATE: PASS (all 10 criteria)",
+    "rate_limiter-final.py": "the converged artifact",
+    "run.log": "the attractor CLI output (status=success)",
+    "iterations/": "per-iteration status.json records (Extension #24) for generate/gate/feedback"
+  },
+  "honest_notes": "The engine retains only the LATEST prompt.md per node (plus per-iteration status.json records), so the retained generator prompt is the iteration-3 one -- which is the strongest form of the claim, as it shows all three accumulated critiques at once. Earlier-iteration prompt contents are corroborated by the channel artifact and checkpoint context, which the engine composes the prompt from. This graph is a purpose-built live-gate variant of the convergence-factory shape: it routes the converged/refine decision on a deterministic tool gate (context.tool.last_line) rather than an LLM-typed sentinel, per this repo's route-on-evidence doctrine."
+}

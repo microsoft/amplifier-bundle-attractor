@@ -1,0 +1,40 @@
+// feedback-live.dot -- live-gate variant of the convergence-factory shape.
+// Purpose: prove the feedback_from= contract (EXTENSIONS.md #29) on a real
+// LLM pipeline: generate (LLM, feedback_from="feedback") -> mechanical
+// criteria gate (tool, routes on tool.last_line per repo doctrine) ->
+// feedback critic (LLM) -> loop_restart back to generate.
+// The generator is told ONLY the artifact goal; the gate checks ten
+// specific criteria it was never told. The feedback channel is the only
+// path by which the criteria specifics can reach iteration 2.
+// Gate integrity: the checker runs from a location outside the working
+// directory and writes its report outside it too, so the generator can
+// learn the private criteria ONLY through the injected critique channel.
+digraph feedback_live {
+    graph [goal="Produce rate_limiter.py that passes the criteria gate; the gate is the source of truth"]
+
+    start [shape=Mdiamond, label="Start"]
+    done  [shape=Msquare, label="Done"]
+
+    generate [
+        label="Generate Artifact",
+        feedback_from="feedback",
+        prompt="You are generating or refining a Python module.\n\nThis is attempt $iteration.\n\nTask: write a module rate_limiter.py implementing a token-bucket rate limiter as a class named TokenBucket. Write it to rate_limiter.py in the working directory. Do not write tests or other files.\n\nPrior critique history (engine-accumulated, most recent last -- use it to descend, not re-flip):\n$prior_critiques_generate\n\nWrite or update rate_limiter.py now."
+    ]
+
+    gate [
+        shape=parallelogram,
+        label="Criteria Gate",
+        tool_command="python3 /root/t13v7-checker/check_criteria.py > /root/t13v7-gateout/gate_output.txt 2>&1 && echo gate_pass || echo gate_fail"
+    ]
+
+    feedback [
+        label="Write Feedback",
+        prompt="You are the critic for a refinement loop. Attempt $iteration of rate_limiter.py failed the mechanical criteria gate.\n\nRead /root/t13v7-gateout/gate_output.txt -- it lists exactly which criteria failed.\n\nThen your FINAL MESSAGE in this conversation must be plain text (not a file, not a tool call) beginning with the word CRITIQUE: followed by, in under 400 characters, each failed criterion and the specific change rate_limiter.py needs. Do not write or edit any files -- your final message text IS the feedback channel."
+    ]
+
+    start -> generate
+    generate -> gate
+    gate -> done     [label="criteria met",  condition="context.tool.last_line=gate_pass"]
+    gate -> feedback [label="refine",        condition="context.tool.last_line=gate_fail"]
+    feedback -> generate [loop_restart="true"]
+}

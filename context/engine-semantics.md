@@ -219,7 +219,78 @@ non-goal_gate nodes, the plain-prose SUCCESS default means plain edges still wor
 
 ---
 
-## 7. Golden Rules
+## 7. Feedback Accumulation (`feedback_from=`) — Extension #29
+
+Source: `feedback.py`; `engine.py Step 6 (loop_restart)`; `specs/EXTENSIONS.md §29`.
+
+**Attribute:** `feedback_from="<critic_node_id>"` declared on the **target (generator) node**.
+
+**What the engine does on every `loop_restart`:**
+
+1. Calls `collect_and_inject_feedback()` (in `feedback.py`) BEFORE `node_outcomes.clear()`.
+2. Reads the named critic node's output from `node_outcomes` (resolution order:
+   `context_updates["tool.output"]` → `context_updates["tool.last_line"]` →
+   `outcome.notes` → `outcome.failure_reason`).
+3. Truncates to `MAX_CRITIQUE_CHARS = 500` chars with `[…truncated]` suffix.
+4. Labels the entry: `"Iteration N critique: <text>"`.
+5. Appends to the accumulated channel stored under the **dotted** key
+   `feedback.channel.<target_node_id>` (e.g. `feedback.channel.generate` for a node named
+   `generate`; dotted = survives restart, NOT expanded in prompts; per-target scoping prevents
+   leakage between multiple generators in the same pipeline).
+6. Trims channel to `MAX_CRITIQUES = 5` entries (oldest-first drop).
+7. Writes the channel as a newline-joined string to the **plain** key
+   `prior_critiques_<target_node_id>` (e.g. `prior_critiques_generate`; plain = expands as
+   `$prior_critiques_<target_node_id>` in `prompt` attributes on the next iteration, e.g.
+   `$prior_critiques_generate`).
+8. Writes the channel to `<logs_root>/feedback/<target_node_id>.md` (overwritten each
+   restart — always reflects the current window).
+
+**Timing:** Called after critic node completes, before `node_outcomes.clear()` (line 862).
+The injected `prior_critiques_<target_node_id>` key survives the restart because
+`context_updates` are intentionally left untouched (engine.py Step 6 comment). Order in Step 6:
+`collect_and_inject_feedback()` → `completed_nodes.clear()` → `node_outcomes.clear()`.
+
+**Injection carrier:** `prior_critiques_<target_node_id>` (e.g. `prior_critiques_generate`) is a
+plain (non-dotted) key. The P7 block in `codergen.py:_expand_variables` expands plain context keys
+in `prompt` attributes. Dotted keys (including `feedback.channel.<node_id>`) do NOT expand in
+prompts — only in `tool_command`/`tool_env`/`description` (delta #3 above). The design uses dotted
+for persistence and plain for injection deliberately. Pipeline authors MAY reference
+`$prior_critiques_<target_node_id>` in their `prompt` attribute to control placement.
+**Delivery is guaranteed either way:** when the placeholder is absent, the codergen
+handler appends a labeled critique-history block carrying it before expansion
+(`feedback.py:ensure_feedback_placeholder()`, called from `codergen.py` step 1) — the
+same P7 expansion path then substitutes it. Declaring `feedback_from=` is sufficient
+on its own.
+
+**Disk layout:**
+- `<logs_root>/feedback/<target_node_id>.md` — accumulated channel (co-location artifact).
+  Holds critiques from all retained iterations in one file. Distinct from Extension #24's
+  per-iteration records (`iteration_N/<node_id>/status.json`), which scatter one critique
+  per file. The feedback/ artifact is what only accumulate-and-inject produces.
+
+**Interplay with `loop_restart`:** The feedback channel is another context write that
+`loop_restart` intentionally preserves (same mechanism as `outputs=` values). It does NOT
+reset on `loop_restart`; it accumulates. The channel window (max 5) is the only bound.
+
+**Interplay with fidelity:** `feedback_from=` and fidelity are complementary, not
+redundant. Fidelity (`full`/`compact`/`truncate`) controls what the *same* actor
+remembers of its own prior attempt via backend transcripts (inner loop). `feedback_from=`
+gives the *next, fresh* actor the distilled lesson from the prior iteration (outer loop).
+Note: `loop_restart` does NOT clear backend thread transcripts — fresh-eyes re-entry is
+expressed via edge-level fidelity (e.g., `fidelity=truncate` on the back-edge's target).
+Feedback injection is the complement: memory of the *lesson* without memory of the *failed
+attempt*. Combining `fidelity=full` + `feedback_from=` on the same node is valid but
+creates overlap (full history + injected critiques); prefer one or the other.
+
+**Backward compatibility:** Fully opt-in. Nodes without `feedback_from=` are untouched.
+The file-based `.ai/feedback/` convention used by existing pipelines continues to work.
+
+**Token cost:** At most `MAX_CRITIQUES × MAX_CRITIQUE_CHARS = 5 × 500 = 2 500` characters
+of injected critique per iteration — bounded regardless of iteration count.
+
+---
+
+## 8. Golden Rules
 
 1. **Every inference is an `llm`/`box` node.** Never call `unified_llm` directly, never
    drop to Python for model calls.

@@ -48,7 +48,7 @@ PROVENANCE
 ----------
 Adapted from the harness used to produce the live-run evidence for the
 epic#371 observability-trio PR (historical verification artifact, not
-re-derived from memory). Four claims are covered, each pinned to a specific,
+re-derived from memory). Five claims are covered, each pinned to a specific,
 previously-regressed behavior at the engine/handler-dispatch boundary:
 
   1. A ``shape=component`` parallel fan-out emits each branch node exactly
@@ -63,6 +63,12 @@ previously-regressed behavior at the engine/handler-dispatch boundary:
   4. A manager-loop child engine's events (a second, independently
      constructed ``PipelineEngine`` instance) reach the PARENT hooks event
      stream, rather than being silently dropped.
+  5. A bare, unquoted ``continue_on_fail=true`` (coerced to Python ``bool``
+     by the DOT parser, not the string ``"true"``) still overrides a FAIL
+     outcome to SUCCESS end-to-end. Regression coverage for the
+     resolve_bool_attr() consolidation (issue #389): prior to that fix,
+     the engine's strict ``== "true"`` string comparison silently never
+     matched a bare/unquoted boolean attribute.
 """
 
 from __future__ import annotations
@@ -136,32 +142,49 @@ digraph Claim2AutoStatus {
 }
 """
 
-# NOTE: continue_on_fail MUST be quoted ("true") in real DOT text.
-# engine.py compares `current_node.attrs.get("continue_on_fail") == "true"`
-# (a strict string comparison); the DOT parser's unquoted-boolean coercion
-# turns a bare `continue_on_fail=true` into Python bool True, which fails
-# that comparison and silently never overrides. (auto_status does not have
-# this trap -- it is checked via `in (True, "true")`, tolerating both
-# types.) This is pre-existing engine behavior, not something this test
-# changes; it is exactly the kind of thing a real DOT-authoring live run
-# surfaces and a hand-built Node(attrs={...}) unit test would not.
 CLAIM3_CONTINUE_ON_FAIL_DOT = """
 // Proves attempt_count AND failed_step survive continue_on_fail.
-// fail_node has continue_on_fail="true" (quoted) and max_retries=2 (3 max
-// attempts). The deterministic backend returns RETRY on attempts 1-2 and a
-// genuine FAIL with a structured failed_step payload on attempt 3.
-// continue_on_fail then overrides FAIL->SUCCESS for routing, but must NOT
-// erase the real attempt count (3) or the failed_step diagnostic.
+// fail_node has continue_on_fail=true (bare, unquoted -- the DOT parser
+// coerces this to Python bool True; see resolve_bool_attr() in graph.py,
+// issue #389) and max_retries=2 (3 max attempts). The deterministic
+// backend returns RETRY on attempts 1-2 and a genuine FAIL with a
+// structured failed_step payload on attempt 3. continue_on_fail then
+// overrides FAIL->SUCCESS for routing, but must NOT erase the real
+// attempt count (3) or the failed_step diagnostic.
 digraph Claim3ContinueOnFail {
     graph [goal="Prove attempt_count and failed_step survive continue_on_fail"]
     rankdir=TB
 
     start     [shape=Mdiamond, label="Start"]
     fail_node [shape=box, label="Fail Node", prompt="do work",
-               continue_on_fail="true", max_retries=2]
+               continue_on_fail=true, max_retries=2]
     exit      [shape=Msquare, label="Exit"]
 
     start -> fail_node -> exit
+}
+"""
+
+CLAIM5_CONTINUE_ON_FAIL_UNQUOTED_DOT = """
+// Proves a bare, unquoted continue_on_fail=true overrides FAIL->SUCCESS
+// end-to-end (issue #389 regression coverage). continue_on_fail=true
+// (unquoted) is coerced by the DOT parser to Python bool True, not the
+// string "true". Prior to the resolve_bool_attr() consolidation, the
+// engine's fail-closed comparison was `== "true"` (a strict string
+// compare), so this exact bare form silently never overrode the failure --
+// the node's FAIL would have surfaced unchanged and the pipeline would
+// have failed overall. single_attempt_node has no max_retries, so this is
+// a minimal, single-call reproduction of the reported bug (distinct from
+// Claim 3's multi-retry attempt_count/failed_step scenario above).
+digraph Claim5ContinueOnFailUnquoted {
+    graph [goal="Prove unquoted continue_on_fail=true overrides FAIL to SUCCESS"]
+    rankdir=TB
+
+    start               [shape=Mdiamond, label="Start"]
+    single_attempt_node [shape=box, label="Single Attempt Node", prompt="do work",
+                         continue_on_fail=true]
+    exit                [shape=Msquare, label="Exit"]
+
+    start -> single_attempt_node -> exit
 }
 """
 
@@ -459,3 +482,33 @@ async def test_manager_loop_child_engine_events_reach_parent_stream(tmp_path):
     ]
     assert len(manager_completes) == 1
     assert manager_completes[0]["data"].get("status") == "success"
+
+
+# ---------------------------------------------------------------------------
+# Claim 5: bare, unquoted continue_on_fail=true overrides FAIL to SUCCESS
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unquoted_continue_on_fail_overrides_fail_to_success(tmp_path):
+    class AlwaysFailBackend:
+        async def run(self, node, prompt, context, incoming_edge=None, graph=None):
+            return Outcome(status=StageStatus.FAIL, failure_reason="simulated failure")
+
+    outcome, engine, _hooks = await _run_graph(
+        CLAIM5_CONTINUE_ON_FAIL_UNQUOTED_DOT,
+        str(tmp_path / "claim5"),
+        backend=AlwaysFailBackend(),
+    )
+
+    # continue_on_fail=true (bare/unquoted, coerced to Python bool by the
+    # real parser) must override FAIL -> SUCCESS just like the quoted form
+    # in Claim 3 -- this is the exact scenario reported in issue #389.
+    assert engine.node_outcomes["single_attempt_node"].status == StageStatus.SUCCESS, (
+        f"Expected single_attempt_node outcome to be SUCCESS after unquoted "
+        f"continue_on_fail=true override, got "
+        f"{engine.node_outcomes['single_attempt_node'].status!r}"
+    )
+    assert outcome.status == StageStatus.SUCCESS, (
+        f"Expected overall pipeline SUCCESS, got {outcome.status!r}"
+    )

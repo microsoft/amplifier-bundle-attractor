@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from ..engine import PipelineEngine
 
 from ..context import PipelineContext
-from ..graph import Graph, Node
+from ..graph import Graph, Node, resolve_bool_attr
 from ..outcome import Outcome, StageStatus
 from ..substitution import substitute_context
 
@@ -183,7 +183,7 @@ class ToolHandler:
             context_updates: dict[str, Any] = {"tool.output": stdout_text}
 
             # Handle parse_json attribute
-            if node.attrs.get("parse_json", "") == "true":
+            if resolve_bool_attr(node.attrs.get("parse_json"), "parse_json"):
                 try:
                     parsed = json.loads(stdout_text)
                     if isinstance(parsed, dict):

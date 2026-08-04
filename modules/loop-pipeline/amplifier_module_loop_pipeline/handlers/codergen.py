@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 from ..context import PipelineContext
 from ..feedback import ensure_feedback_placeholder
-from ..graph import Graph, Node
+from ..graph import Graph, Node, resolve_bool_attr
 from ..outcome import Outcome, StageStatus
 from ..transforms import expand_goal_variable, expand_params
 from ..worker_observability import current_worker_sessions_dir
@@ -190,7 +190,7 @@ class CodergenHandler:
         # Non-goal_gate nodes keep the spec §4.5 unconditional-SUCCESS wrap
         # (is_explicit defaults to False — the status is defaulted, not
         # asserted; that is only load-bearing for goal_gate nodes).
-        if node.attrs.get("goal_gate") in (True, "true"):
+        if resolve_bool_attr(node.attrs.get("goal_gate"), "goal_gate"):
             # Deferred import: avoid a handlers <-> backend import cycle at
             # module load time.
             from ..backend import _parse_outcome

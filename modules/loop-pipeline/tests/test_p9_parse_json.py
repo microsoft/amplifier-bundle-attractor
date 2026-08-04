@@ -25,6 +25,7 @@ import logging
 import pytest
 
 from amplifier_module_loop_pipeline.context import PipelineContext
+from amplifier_module_loop_pipeline.dot_parser import parse_dot
 from amplifier_module_loop_pipeline.graph import Graph, Node
 from amplifier_module_loop_pipeline.handlers.tool import ToolHandler
 from amplifier_module_loop_pipeline.outcome import StageStatus
@@ -287,4 +288,58 @@ class TestParseJson:
         assert ctx.get("should_not") is None, (
             f"Expected 'should_not' NOT in context after failed command, "
             f"got {ctx.get('should_not')!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_parse_json_unquoted_true_through_dot_parser(self, tmp_path):
+        """parse_json=true (bare, unquoted) is honored via real parse_dot().
+
+        Regression test for issue #389: the DOT parser coerces an unquoted
+        `true` token to the Python bool ``True`` (not the string ``"true"``).
+        This test drives that exact bare/unquoted form through the REAL
+        `parse_dot()` parser and the REAL `ToolHandler`, proving JSON keys
+        actually get injected into context -- a hand-built
+        `Node(attrs={"parse_json": "true"})` (quoted, as used in the tests
+        above) would never have caught this bug because it bypasses the
+        parser's boolean coercion entirely.
+        """
+        payload = json.dumps({"status": "ok", "count": 7})
+        # Escape embedded double-quotes for the DOT quoted-attribute-value
+        # syntax (dot_parser.py's `\"` -> `"` unescape); the resulting
+        # tool_command attribute value contains the real, unescaped JSON.
+        escaped_payload = payload.replace('"', '\\"')
+        dot_source = f"""\
+digraph test {{
+    start [shape=Mdiamond]
+    tool_node [shape=parallelogram, tool_command="echo '{escaped_payload}'", parse_json=true]
+    exit [shape=Msquare]
+    start -> tool_node -> exit
+}}
+"""
+        graph = parse_dot(dot_source)
+
+        # Confirm the parser actually coerced the attribute to a real bool --
+        # otherwise this test would not be exercising the reported bug at all.
+        assert graph.nodes["tool_node"].attrs.get("parse_json") is True, (
+            f"Expected parse_dot() to coerce unquoted parse_json=true to "
+            f"Python bool True, got "
+            f"{graph.nodes['tool_node'].attrs.get('parse_json')!r}"
+        )
+
+        handler = ToolHandler()
+        ctx = _make_context()
+        outcome = await handler.execute(
+            graph.nodes["tool_node"], ctx, graph, str(tmp_path)
+        )
+
+        assert outcome.status == StageStatus.SUCCESS, (
+            f"Expected SUCCESS, got {outcome.status!r}"
+        )
+        assert ctx.get("status") == "ok", (
+            f"Expected context['status'] == 'ok' after unquoted parse_json=true, "
+            f"got {ctx.get('status')!r}"
+        )
+        assert ctx.get("count") == 7, (
+            f"Expected context['count'] == 7 after unquoted parse_json=true, "
+            f"got {ctx.get('count')!r}"
         )

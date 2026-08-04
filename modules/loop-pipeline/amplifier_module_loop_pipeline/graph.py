@@ -9,8 +9,62 @@ Spec coverage: DOT-001..017, NATTR-001..017, EDGE-001..006
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_bool_attr(value: Any, attr_name: str) -> bool:
+    """Interpret a DOT boolean attribute value, tolerant of parser coercion.
+
+    The DOT parser (``dot_parser.py::_parse_value``) coerces only the exact
+    *unquoted* tokens ``true``/``false`` to a real Python ``bool``; a quoted
+    ``"true"`` stays the string ``"true"``. Every call site that reads a
+    boolean-ish attribute (``continue_on_fail``, ``parse_json``, ``goal_gate``,
+    ``auto_status``, ``allow_partial``, ``loop_restart``, ...) must treat both
+    forms identically. This function is the single, shared place that does
+    that -- callers should never hand-roll ``== "true"`` or
+    ``in (True, "true")`` again.
+
+    Args:
+        value: The raw attribute value as stored on ``Node``/``Edge``/
+            ``Graph`` (typically ``bool | str | None``).
+        attr_name: Name of the attribute, used only to identify the
+            offending attribute in the warning below.
+
+    Returns:
+        ``True`` for ``True`` or a case-insensitive ``"true"`` string.
+        ``False`` for ``False``, ``None``, a case-insensitive ``"false"``
+        string, or any other value that can't be confidently interpreted.
+
+    Note:
+        An unrecognized value (e.g. ``"maybe"``, ``"1"``, ``"yes"``) is
+        treated as falsy -- but *loudly*: a warning is logged naming the
+        attribute and the offending value, so a typo'd attribute value
+        doesn't silently disable a feature the way the original bug did.
+        This is deliberately a warning, not a raised exception: the DOT
+        parser's output is valid (any string is a legal attribute value),
+        so this is a downstream interpretation concern, not a parse error.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+    logger.warning(
+        "Attribute %r has an unrecognized boolean value %r; treating as false. "
+        "Expected true/false (bare or quoted).",
+        attr_name,
+        value,
+    )
+    return False
 
 
 # Node attributes that are promoted to first-class fields (M-10).

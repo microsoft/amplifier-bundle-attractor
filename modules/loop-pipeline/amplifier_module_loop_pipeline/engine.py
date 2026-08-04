@@ -28,7 +28,7 @@ from .checkpoint import (
 from .context import PipelineContext
 from .edge_selection import select_edge
 from .feedback import collect_and_inject_feedback
-from .graph import Graph, Node
+from .graph import Graph, Node, resolve_bool_attr
 from .handlers import HandlerRegistry
 from .must_write import check_must_write
 from .node_outputs import SUBSTITUTABLE_ATTRS, build_output_table
@@ -552,7 +552,7 @@ class PipelineEngine:
                         _ap = current_node.attrs.get("allow_partial")
                         _timeout_status = (
                             StageStatus.PARTIAL_SUCCESS
-                            if _ap is True or str(_ap).lower() == "true"
+                            if resolve_bool_attr(_ap, "allow_partial")
                             else StageStatus.FAIL
                         )
                         outcome = Outcome(
@@ -609,7 +609,7 @@ class PipelineEngine:
             # Accept both bare true and the quoted string "true" (DOT parser
             # returns "true" for quoted attribute values).
             if (
-                current_node.auto_status in (True, "true")
+                resolve_bool_attr(current_node.auto_status, "auto_status")
                 and outcome.status == StageStatus.SKIPPED
             ):
                 logger.debug(
@@ -656,7 +656,9 @@ class PipelineEngine:
             #   wants to fire on the original failure should use runs_on=always
             #   instead of runs_on=failure.
             if (
-                current_node.attrs.get("continue_on_fail") == "true"
+                resolve_bool_attr(
+                    current_node.attrs.get("continue_on_fail"), "continue_on_fail"
+                )
                 and outcome.status == StageStatus.FAIL
             ):
                 logger.warning(
@@ -876,7 +878,7 @@ class PipelineEngine:
             )
 
             # Step 6: Handle loop_restart edge attribute (NLSpec Section 174)
-            if edge.loop_restart:
+            if resolve_bool_attr(edge.loop_restart, "loop_restart"):
                 self.iteration_count += 1
                 iteration_dir = os.path.join(
                     self.logs_root, f"iteration_{self.iteration_count}"
@@ -1186,7 +1188,7 @@ class PipelineEngine:
             node = self.graph.nodes.get(node_id)
             if node is None:
                 continue
-            if node.attrs.get("goal_gate") in (True, "true"):
+            if resolve_bool_attr(node.attrs.get("goal_gate"), "goal_gate"):
                 # EXTENSIONS.md §25 — fail-closed gate enforcement.
                 # A goal_gate node satisfies its gate ONLY when:
                 #   1. outcome.is_success is True (SUCCESS or PARTIAL_SUCCESS), AND

@@ -143,6 +143,7 @@ def _stdin_is_usable() -> bool:
 
 def cmd_run(args: argparse.Namespace) -> int:
     # --- Resolve DOT source: --dot-source wins, else read dot_file ---
+    source_dir: str | None = None
     if args.dot_source:
         dot_source = args.dot_source
     elif args.dot_file:
@@ -151,6 +152,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"attractor: DOT file not found: {dot_path}", file=sys.stderr)
             return 1
         dot_source = dot_path.read_text(encoding="utf-8")
+        # We know where this DOT lives, so relative `dot_file=` refs in the ROOT
+        # graph resolve against its own tree -- the same rule child graphs already
+        # get (PipelineHandler sets child_graph.source_dir) and that a remote
+        # package gets from its materialized entry. Without this the root's
+        # source_dir is empty and resolve_dot_path falls through to
+        # context.target_dir (--cwd), looking for sibling bricks in the workspace.
+        # --dot-source has no file, so it keeps the old cwd-relative behavior.
+        source_dir = str(dot_path.resolve().parent)
     else:
         print(
             "attractor: either a dot_file argument or --dot-source is required",
@@ -247,6 +256,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 logs_root=logs_root,
                 cwd=cwd,
                 interviewer=interviewer,
+                source_dir=source_dir,
             )
         )
     except Exception as e:  # noqa: BLE001 -- fail loud with the real error, no fallback

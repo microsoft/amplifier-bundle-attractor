@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from .context import PipelineContext
@@ -510,7 +511,7 @@ class PipelineOrchestrator:
         Returns a JSON string with the pipeline outcome.
         """
         # 1. Get DOT source
-        dot_source = self._resolve_dot_source()
+        dot_source, source_dir = self._resolve_dot_source()
 
         # 2. Parse the DOT graph — materialize first if it's a remote entry.
         # Shared with the direct-engine `drive_engine`/`_load_graph` hook in
@@ -519,6 +520,16 @@ class PipelineOrchestrator:
         from .remote_dot import load_remote_or_local_graph  # lazy: keeps import net-free
 
         graph, _source_cleanup = await load_remote_or_local_graph(dot_source)
+        # A file-backed root graph carries the directory it was read from, so
+        # relative dot_file= children resolve beside the pipeline rather than
+        # falling through resolve_dot_path()'s precedence chain to
+        # context.target_dir (--cwd). Mirrors the same fix already applied to
+        # the standalone CLI path (pipeline-runner cli.py/runner.py) -- see
+        # AGENTS.md's S4 partial-coverage-symmetry note; this is the second of
+        # the two remaining sites. Never clobber: a remote package or an
+        # already-parsed Graph carries its own, more specific source_dir.
+        if source_dir and not getattr(graph, "source_dir", ""):
+            graph.source_dir = source_dir
 
         try:
             # 3. Create pipeline context with goal from the prompt
@@ -710,16 +721,30 @@ class PipelineOrchestrator:
 
         return " ".join(parts)
 
-    def _resolve_dot_source(self) -> str:
-        """Resolve DOT source from config (inline or file)."""
+    def _resolve_dot_source(self) -> tuple[str, str | None]:
+        """Resolve DOT source from config (inline or file).
+
+        Returns ``(dot_source, source_dir)``. ``source_dir`` is the directory
+        the ``dot_file`` was read from, so the caller can seed a file-backed
+        root graph's ``source_dir`` for relative ``dot_file=`` child
+        resolution (see ``resolve_dot_path`` in ``handlers/pipeline.py``).
+
+        ``source_dir`` is ``None`` when:
+          - the source came from inline ``dot_source`` config -- no file, no
+            directory to claim -- OR
+          - the caller (e.g. the ``run_pipeline`` tool) already resolved a
+            ``dot_file`` to text itself and forwarded the directory
+            explicitly via the ``source_dir`` config key, in which case that
+            explicit value is returned instead of re-deriving one.
+        """
         dot_source = self.config.get("dot_source")
         if dot_source:
-            return dot_source
+            return dot_source, self.config.get("source_dir")
 
         dot_file = self.config.get("dot_file")
         if dot_file:
             with open(dot_file) as f:
-                return f.read()
+                return f.read(), str(Path(dot_file).resolve().parent)
 
         raise ValueError(
             "No DOT source configured. Set 'dot_source' or 'dot_file' in config."

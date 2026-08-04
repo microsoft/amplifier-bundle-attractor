@@ -200,6 +200,36 @@ spec's §9.4 sub-pipeline pattern with a dedicated, declarative shape.
 name, so the mechanism cannot change the behavior of any spec-conformant `.dot` file.
 (Documenting a pre-existing extension that was previously undocumented.)
 
+**`dot_file=` path resolution:** A relative `dot_file=` value is resolved by
+`resolve_dot_path()` (`handlers/pipeline.py`) against a **precedence chain**, not a search
+path -- the first non-empty candidate wins, with no existence check:
+
+1. **Absolute path** -- used as-is.
+2. **`graph.source_dir`** -- the directory of the `.dot` file that produced the *current*
+   graph (root or child).
+3. **`context.target_dir`** -- the pipeline's working directory (`--cwd` on the standalone
+   CLI; the mounted orchestrator has no equivalent and skips this tier).
+4. **`os.getcwd()`** -- the process's current working directory, as a last resort.
+
+Every **child** graph reached through a `shape=folder` node already gets its `source_dir`
+set to its own `.dot` file's directory (`PipelineHandler.execute()`, step 5), so a
+grandchild's relative `dot_file=` resolves beside the child regardless of where the root
+came from. A **root** graph gets its `source_dir` seeded from the directory of the `.dot`
+file passed to the entry point that invoked it -- the standalone CLI (`attractor run
+<file>`), the mounted `PipelineOrchestrator` (a local `dot_file` in its config), and the
+`run_pipeline` tool (a `dot_file` input, forwarded to the mounted orchestrator's spawned
+child session as an explicit `source_dir` alongside the already-resolved DOT text) all seed
+it this way. Only an **inline** DOT source (`--dot-source`, a `dot_source` config value, or
+a `dot_source` tool input) has no backing file and therefore no directory to seed --
+`source_dir` stays empty for that root.
+
+**`context.target_dir` (`--cwd`) is an independent knob and does not shadow `source_dir`.**
+It answers a different question -- where box/tool nodes write files and read relative
+inputs at *runtime* -- while `source_dir` answers where the pipeline's own `.dot` tree lives
+on disk. The precedence chain above means an explicitly-set `graph.source_dir` always wins
+over `context.target_dir` for `dot_file=` resolution: pointing `--cwd` at a separate
+workspace does not require flattening a multi-file pipeline into that workspace.
+
 ---
 
 ## 11. Sub-Pipeline and Manager-Child Execution Is a Fresh Session Boundary

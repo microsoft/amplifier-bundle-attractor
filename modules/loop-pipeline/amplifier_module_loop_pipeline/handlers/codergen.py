@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..engine import PipelineEngine
 
 from ..context import PipelineContext
+from ..feedback import ensure_feedback_placeholder
 from ..graph import Graph, Node
 from ..outcome import Outcome, StageStatus
 from ..transforms import expand_goal_variable, expand_params
@@ -78,6 +79,15 @@ class CodergenHandler:
             or (node.attrs.get("llm_prompt") if node.attrs else None)
             or node.label
         )
+        # EXTENSIONS.md §29: feedback_from= is a delivery contract, not a
+        # prompt convention. If this node declares feedback_from= and the
+        # accumulated critique channel has content but the prompt does not
+        # reference $prior_critiques_<node_id>, append a labeled block
+        # carrying the placeholder so the P7 expansion below injects the
+        # iteration-numbered history regardless. The placeholder controls
+        # WHERE the history appears, never WHETHER it appears — forgetting
+        # it cannot silently sever the feedback loop.
+        prompt = ensure_feedback_placeholder(node, prompt, context)
         prompt = _expand_variables(prompt, graph, context)
 
         # 2. Write prompt to logs

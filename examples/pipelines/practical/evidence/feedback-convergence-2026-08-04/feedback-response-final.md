@@ -1,0 +1,1 @@
+CRITIQUE: Fix rate_limiter.py criterion 9: `remaining()` must return a `float`. Currently it returns `self._tokens` which may be an `int` if the bucket was initialized with integer arguments. Change line 136 to `return float(self._tokens)` to guarantee the return type is always `float`.

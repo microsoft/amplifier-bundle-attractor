@@ -438,6 +438,105 @@ retried (route FAILs with `retry_target` or `outcome=fail` edges instead).
 multi-iteration refinement. Use `max_retries` for transient failures, use
 `loop_restart` for structured convergence loops.
 
+### Feedback Accumulation (`feedback_from=`) — Extension #29
+
+**A retry without critique of the prior attempt is a coin re-flip. A retry
+with accumulated critique is descent.** The `feedback_from=` attribute
+promotes that load-bearing behavior from a prompt-string convention to an
+engine-enforced contract.
+
+Declare `feedback_from="<critic_node_id>"` on the **generator node** (the
+node that will receive the critique). On every `loop_restart`, the engine:
+
+1. Reads the named critic node's output from the just-completed iteration.
+2. Labels it `"Iteration N critique: <text>"`.
+3. Appends it to an accumulated channel (max 5 entries; oldest dropped),
+   stored per target node to prevent leakage between multiple generators.
+4. Writes the channel as a newline-joined string to the plain context key
+   `prior_critiques_<target_node_id>` (e.g. `prior_critiques_generate` for
+   a node named `generate`), available as `$prior_critiques_<target_node_id>`
+   (e.g. `$prior_critiques_generate`) in `prompt` on the next iteration.
+   The placeholder is optional: it controls WHERE the history appears. If
+   the prompt does not reference it, the engine appends a labeled
+   critique-history block automatically — declaring `feedback_from=` is
+   sufficient on its own; forgetting the placeholder cannot silently sever
+   the feedback loop.
+5. Writes the accumulated channel to a durable artifact at
+   `<logs_root>/feedback/<target_node_id>.md`.
+
+```dot
+digraph {
+    graph [goal="Refine the artifact until it passes quality review"]
+
+    start [shape=Mdiamond]
+    done  [shape=Msquare]
+
+    // feedback_from= is the engine contract (EXTENSIONS.md #29):
+    // the engine collects 'critic' output each iteration and injects
+    // it as $prior_critiques_generate into this node's prompt on the next pass.
+    // The injection key is scoped to the target node: prior_critiques_<node_id>.
+    // The placeholder below controls placement only — if omitted, the engine
+    // appends the critique history to the prompt automatically.
+    generate [
+        feedback_from="critic",
+        prompt="Attempt $iteration: generate or refine the artifact.\n\nPrior critique (if any):\n$prior_critiques_generate"
+    ]
+    critic [prompt="Critique the artifact. State the single highest-leverage change. Return preferred_label=converged or refine."]
+
+    start -> generate -> critic
+    critic -> done     [condition="preferred_label=converged"]
+    critic -> generate [condition="preferred_label=refine", loop_restart="true"]
+}
+```
+
+**Why the attribute, not a prompt instruction:** A prompt instruction
+("check `.ai/feedback/` for prior guidance") is invisible to the engine,
+unverifiable at run time, silently lost when a prompt is edited, and
+dependent on the model choosing to comply every iteration. One bad day
+— the exact perturbation the basin exists to absorb — and the loop
+degrades into an infinite re-flip. `feedback_from=` makes whether feedback
+reaches the next iteration a property of the graph structure, not of model
+obedience.
+
+**Disk layout:** The accumulated channel is written to
+`<logs_root>/feedback/<target_node_id>.md` on every `loop_restart`. This
+file always reflects the current window (last 5 critiques). It is the
+canonical co-location artifact: unlike Extension #24's per-iteration
+records (which scatter one critique per file), this file holds critiques
+from all retained iterations together.
+
+**Interplay with `loop_restart`:** `collect_and_inject_feedback()` is
+called at `loop_restart` time, AFTER the critic node completes and BEFORE
+`node_outcomes.clear()`. The injected `prior_critiques_<target_node_id>` key
+survives the restart because `context_updates` are intentionally left
+untouched by the restart block — the same reason custom `outputs=` values
+persist across iterations.
+
+**Interplay with fidelity:** `feedback_from=` is the complement of fidelity
+modes. Fidelity controls what the *same* actor remembers of its own prior
+attempt (inner loop). `feedback_from=` gives the *next, fresh* actor the
+distilled lesson from the prior iteration (outer loop). Use `fidelity=full`
+(same thread, full transcript) for continuity of effort; use `feedback_from=`
+for accumulated critique across fresh-eyes restarts. Combining both
+— `full` fidelity on the generator plus `feedback_from=` on the same node
+— is valid but creates overlap: the generator sees both its own full history
+AND the injected critiques. Prefer one or the other depending on whether you
+want continuity (full) or fresh-eyes descent (feedback_from + compact).
+
+**Curation / token discipline:** Each critique entry is capped at 500
+characters (`[…truncated]` suffix). The channel holds at most 5 entries;
+older entries are dropped first. Token cost per iteration: at most
+`5 × 500 = 2 500` characters — bounded regardless of iteration count.
+The critique node itself is the primary curator: write its prompt to emit a
+single highest-leverage observation per iteration (the "Pyramid Summary"
+pattern). The window bound is a safety net.
+
+**Backward compatibility:** Fully opt-in. Nodes without `feedback_from=`
+are untouched. The file-based `.ai/feedback/` convention used by existing
+pipelines continues to work. Both can coexist in the same pipeline.
+
+**See also:** `specs/EXTENSIONS.md §29`; `examples/patterns/convergence-factory.dot`.
+
 ### Parallel Fan-Out / Fan-In
 
 Use `shape=component` for parallel fan-out and `shape=tripleoctagon` for fan-in.
@@ -746,6 +845,7 @@ Every node in a DOT pipeline can have these attributes:
 | `timeout` | Duration | unset | Max execution time (e.g., `900s`, `15m`). |
 | `auto_status` | Boolean | `false` | Auto-generate SUCCESS if handler writes no status. |
 | `allow_partial` | Boolean | `false` | Accept PARTIAL_SUCCESS when retries exhausted. |
+| `feedback_from` | String | `""` | Engine-enforced feedback accumulation contract (Extension #29). Declare on the generator node: `feedback_from="<critic_node_id>"`. On every `loop_restart`, the engine collects the named critic's output, labels it with the iteration number, and injects the accumulated history into the generator's prompt — in place of `$prior_critiques_<node_id>` (e.g. `$prior_critiques_generate`) when the prompt references it, appended as a labeled block otherwise (delivery is guaranteed; the placeholder controls placement only). Channel is bounded to 5 entries (oldest-first drop). See [Feedback Accumulation](#feedback-accumulation-feedback_from--extension-29). |
 
 **Shape-to-handler mapping:**
 
@@ -788,6 +888,7 @@ execution. The following built-in variables are always available:
 | `$goal` | `graph.goal` attribute | The pipeline objective |
 | `$iteration` | engine context (Extension #24) | Current iteration number (0-based; increments on each `loop_restart`) |
 | `$loop_count` | engine context (Extension #24) | Alias for `$iteration` |
+| `$prior_critiques_<node_id>` | engine context (Extension #29) | Accumulated critique history injected by `feedback_from=`. The key is scoped to the target node ID (e.g. `$prior_critiques_generate` for a node named `generate`). Contains iteration-labeled entries from the last N critic outputs. Empty string on iteration 0. Optional in prompts: when absent, the engine appends the history as a labeled block instead (placement control only). |
 | `$<param>` | `--param k=v` CLI flag or `params` dict | Custom key-value parameters |
 
 ```dot

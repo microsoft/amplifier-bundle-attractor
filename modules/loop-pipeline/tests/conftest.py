@@ -14,6 +14,15 @@ import sys
 import types
 from dataclasses import dataclass, field
 
+# Prevent Python from writing .pyc bytecode files during the test session.
+# Without this, grep-based test discovery in the DoD verify script finds
+# compiled .pyc files in __pycache__ and passes them to pytest, which cannot
+# collect them and exits with code 4 (no tests collected) — causing a false
+# failure on the second verify run.  Setting this early (before any test
+# module is imported) prevents .pyc creation for all subsequently imported
+# test files.  It does not affect test correctness.
+sys.dont_write_bytecode = True
+
 # Ensure the local source directory is resolved first.  An editable install
 # from a different checkout (e.g. modern-bundle-pipeline) would otherwise
 # shadow the changes under test.  Insert before site-packages path entries.

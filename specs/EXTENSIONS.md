@@ -1193,6 +1193,118 @@ deferral note.
 
 ---
 
+## 29. `feedback_from=` Node Attribute — Feedback Accumulation Contract
+
+> **This extension is NOT in the canonical attractor spec.** The canonical spec has no
+> feedback-accumulation vocabulary. This extension should be proposed upstream: the mathematical
+> heart of the attractor (retry-with-accumulated-critique is descent, not re-flip) is a spec-level
+> claim that deserves a spec-level mechanism. Until then, this extension documents the behavior here.
+
+**What:** A node may declare `feedback_from="<critic_node_id>"` to establish an engine-enforced
+feedback accumulation contract. On every `loop_restart` edge traversal, the engine:
+
+1. Reads the named critic node's output from the just-completed iteration's `node_outcomes` (BEFORE
+   clearing them).
+2. Prepends an iteration label: `"Iteration N critique: <text>"`.
+3. Appends the labeled entry to an accumulated channel stored in context under the internal key
+   `feedback.channel.<target_node_id>` (e.g. `feedback.channel.generate` for a node named
+   `generate`). Each target node gets its own channel key, preventing feedback leakage when multiple
+   generator nodes each declare a different critic in the same pipeline.
+4. Trims the channel to at most `MAX_CRITIQUES = 5` entries (oldest-first drop — the curation bound).
+5. Composes the channel into a newline-joined string and writes it to the **plain** context key
+   `prior_critiques_<target_node_id>` (e.g. `prior_critiques_generate`), making it immediately
+   available for `$prior_critiques_<target_node_id>` substitution (e.g. `$prior_critiques_generate`)
+   in `prompt` attributes on the next iteration. **Delivery is guaranteed:** if the target's prompt
+   does not reference the placeholder, the codergen handler appends a labeled critique-history block
+   automatically before variable expansion (`feedback.py:ensure_feedback_placeholder()`). The
+   placeholder controls WHERE the history appears, never WHETHER it appears — forgetting it cannot
+   silently sever the feedback loop.
+6. Writes the accumulated channel to a durable artifact at
+   `<logs_root>/feedback/<target_node_id>.md`, overwriting it each restart so it always reflects the
+   current window.
+
+The critic node's output is resolved in this order: `context_updates["tool.output"]` (full stdout of
+a tool node) → `context_updates["tool.last_line"]` → `outcome.notes` (codergen summary) →
+`outcome.failure_reason` (if the critic itself failed — still informative feedback).
+
+**Why:** The mathematical heart of the attractor is descent: a retry without critique of the prior
+attempt is a coin re-flip (same distribution, new sample); a retry with accumulated critique is
+descent. Before this extension, that load-bearing behavior hung on prose: the generator node's prompt
+said "check `.ai/feedback/` for prior guidance" — invisible to the engine, unverifiable at run time,
+silently lost when a prompt was edited, and dependent on the model choosing to comply every iteration.
+One bad day — the exact perturbation the basin exists to absorb — and the loop degraded into an
+infinite re-flip with a nicer name, indistinguishable from convergence until the budget died.
+
+`feedback_from=` converts every retry loop from hoping into descending. Whether feedback reaches the
+next iteration is now a property of the graph structure, not of model obedience on a given day.
+
+**Curation / token discipline:** The channel is bounded to `MAX_CRITIQUES = 5` entries; each entry
+is truncated to `MAX_CRITIQUE_CHARS = 500` characters with a `[…truncated]` suffix. Token cost per
+iteration: at most `5 × 500 = 2 500` characters of injected critique — well within typical prompt
+budgets. The critique node itself is the primary curator: pipeline authors write the critique node's
+prompt to emit a single highest-leverage observation per iteration (the "Pyramid Summary" pattern in
+`convergence-factory.dot`). The window bound is a safety net, not the primary curation mechanism.
+An unbounded append channel becomes a stagnation attractor — early wrong ideas crowd out corrections;
+accumulated critique becomes context poisoning. The bound prevents this.
+
+**Injection carrier:** `prior_critiques_<target_node_id>` (e.g. `prior_critiques_generate`) is a
+**plain** (non-dotted) context key. The substitution machinery
+(`handlers/codergen.py:_expand_variables`, P7 block) expands only plain keys from context in `prompt`
+attributes. Dotted keys (e.g. `feedback.channel.<node_id>`) work in `tool_command` but NOT in prompts
+— `context/engine-semantics.md §4`. The internal accumulation channel uses the dotted key
+`feedback.channel.<target_node_id>` precisely to avoid prompt expansion; the injected key
+`prior_critiques_<target_node_id>` is plain precisely to enable it. Pipeline authors MAY reference
+`$prior_critiques_<target_node_id>` in their `prompt` attribute — e.g. `$prior_critiques_generate`
+for a node whose `id` is `generate` — to control placement. When the placeholder is absent, the
+codergen handler appends a labeled block carrying it before expansion, so the same substitution
+path delivers the history either way (declaring `feedback_from=` is sufficient on its own).
+
+**Timing contract:** `collect_and_inject_feedback()` (`feedback.py`) is called at `loop_restart`
+time, AFTER the critic node has completed (its output is in `node_outcomes`) and BEFORE
+`node_outcomes.clear()` erases it. The injected `prior_critiques_<target_node_id>` key survives the
+restart because `context_updates` are intentionally left untouched by the loop_restart block
+(`engine.py` Step 6 comment). This is the natural carrier: feedback is another context write that the
+restart intentionally preserves.
+
+**Attribute placement:** `feedback_from=` is declared on the **target node** (the generator), not
+on the loop_restart edge. This makes the dependency explicit in the graph: the generator node
+declares which critic it listens to. Multiple target nodes can each declare different critics.
+
+**Backward compatibility:** Fully opt-in. Nodes without `feedback_from=` are completely untouched —
+zero change in behavior. The file-based `.ai/feedback/` convention used by existing pipelines
+continues to work. The engine channel is additive: pipelines can use both simultaneously.
+
+**Walk-upstream note:** The canonical spec has no feedback-accumulation vocabulary. This extension
+should be proposed upstream: "feedback must accumulate across iterations" is a spec-level claim about
+what makes iteration a descent rather than a re-flip. The `attractor lint` tool can grow a
+topological rule: "outer loop without a `feedback_from=` channel on any generator node" — a
+statically checkable warning that a loop may be re-flipping rather than descending.
+
+**Implementation locations:**
+- `amplifier_module_loop_pipeline/feedback.py` — `collect_and_inject_feedback()`, the collection
+  and injection logic, and `ensure_feedback_placeholder()`, the prompt-side delivery guarantee
+  (analogous to `must_write.py`)
+- `handlers/codergen.py: execute() step 1` — calls `ensure_feedback_placeholder()` on the raw
+  prompt before variable expansion
+- `engine.py: run() Step 6 (loop_restart)` — calls `collect_and_inject_feedback()` BEFORE
+  `node_outcomes.clear()`, then continues with the existing restart sequence
+- `modules/loop-pipeline/tests/test_feedback_mechanism.py` — unit + integration tests
+- `examples/patterns/convergence-factory.dot` — canonical exemplar declaring the contract
+
+**Constants (tunables in `feedback.py`):**
+- `MAX_CRITIQUES = 5` — maximum channel depth (oldest-first drop when exceeded)
+- `MAX_CRITIQUE_CHARS = 500` — per-entry character cap (truncated with `[…truncated]`)
+- `PRIOR_CRITIQUES_KEY_PREFIX = "prior_critiques_"` — prefix for the per-target plain injection key
+  (canonical; full key = `PRIOR_CRITIQUES_KEY_PREFIX + node_id`, e.g. `"prior_critiques_generate"`)
+- `_CHANNEL_KEY_PREFIX = "feedback.channel."` — prefix for the per-target internal dotted key
+  (canonical; full key = `_CHANNEL_KEY_PREFIX + node_id`, e.g. `"feedback.channel.generate"`)
+- `PRIOR_CRITIQUES_KEY = "prior_critiques"` — the unscoped key name from the initial design.
+  Never written by the engine; retained so tests can assert it is never written (regression
+  guard for per-target scoping)
+- `_CHANNEL_KEY = "feedback.channel"` — the unscoped channel name; same never-written guard
+
+---
+
 ## Conformance Restoration Note (T0-4)
 
 **What was retired:** An unledgered dialect where non-`shape=parallel`, non-component nodes

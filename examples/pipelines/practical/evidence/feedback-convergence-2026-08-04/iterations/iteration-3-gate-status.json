@@ -1,0 +1,18 @@
+{
+  "node_id": "gate",
+  "iteration": 3,
+  "outcome": "success",
+  "status": "success",
+  "preferred_next_label": null,
+  "suggested_next_ids": null,
+  "context_updates": {
+    "tool.output": "gate_pass\n",
+    "tool.last_line": "gate_pass"
+  },
+  "duration_ms": 17.81412772834301,
+  "notes": "Tool completed: python3 /root/t13v7-checker/check_criteria.py > /root/t13v7-gateout/gate_output.txt 2>&1 && echo gate_pass || echo gate_fail",
+  "failure_reason": null,
+  "session_id": null,
+  "is_explicit": true,
+  "failed_step": null
+}

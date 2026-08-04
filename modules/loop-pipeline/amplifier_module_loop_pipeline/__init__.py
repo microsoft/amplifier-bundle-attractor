@@ -21,10 +21,11 @@ from typing import Any
 
 from .context import PipelineContext
 from .engine import PipelineEngine
+from .graph import resolve_bool_attr
 from .handlers import HandlerRegistry
 from .handlers.context import HandlerContext
-from .outcome import Outcome, StageStatus
 from .hook_bridge import _current_node_context, set_node_context
+from .outcome import Outcome, StageStatus
 from .pipeline_events import PROVIDER_ERROR, PROVIDER_REQUEST, PROVIDER_RESPONSE
 from .transforms import apply_transforms
 from .validation import validate_or_raise
@@ -322,7 +323,7 @@ class DirectProviderBackend:
             # EXTENSIONS.md §25 scope decision: apply fail-closed only to
             # goal_gate nodes. Non-goal-gate nodes retain spec §4.5 SUCCESS
             # default. goal_gate nodes require an explicit verdict.
-            _is_goal_gate = node.attrs.get("goal_gate") in (True, "true")
+            _is_goal_gate = resolve_bool_attr(node.attrs.get("goal_gate"), "goal_gate")
             if _is_goal_gate:
                 outcome = Outcome(
                     status=StageStatus.FAIL,

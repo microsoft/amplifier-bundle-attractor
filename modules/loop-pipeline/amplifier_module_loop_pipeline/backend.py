@@ -52,9 +52,9 @@ except ImportError:
 
 from .context import PipelineContext
 from .fidelity import build_preamble, resolve_fidelity, resolve_thread_key
-from .graph import Edge, Graph, Node
-from .outcome import Outcome, StageStatus
+from .graph import Edge, Graph, Node, resolve_bool_attr
 from .hook_bridge import _current_node_context, set_node_context
+from .outcome import Outcome, StageStatus
 from .pipeline_events import (
     MODEL_RESOLVED,
     PROVIDER_ERROR,
@@ -797,7 +797,7 @@ class AmplifierBackend:
         # that observer/reporter nodes with plain out-edges are not broken.
         # goal_gate nodes require an explicit verdict; no-text is treated as
         # FAIL (same as the spawn path's empty→FAIL).
-        is_goal_gate = node.attrs.get("goal_gate") in (True, "true")
+        is_goal_gate = resolve_bool_attr(node.attrs.get("goal_gate"), "goal_gate")
         if is_goal_gate:
             logger.warning(
                 "Node %s (goal_gate=true): tool loop returned no text and no "
@@ -1394,7 +1394,7 @@ def _parse_outcome(output: str, *, node: object = None) -> Outcome:
     _is_goal_gate = (
         node is not None
         and hasattr(node, "attrs")
-        and node.attrs.get("goal_gate") in (True, "true")  # type: ignore[union-attr]
+        and resolve_bool_attr(node.attrs.get("goal_gate"), "goal_gate")  # type: ignore[union-attr]
     )
     if _is_goal_gate:
         logger.warning(

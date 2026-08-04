@@ -507,3 +507,52 @@ digraph test {
         assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS), (
             f"Expected overall pipeline SUCCESS, got {outcome.status!r}"
         )
+
+    @pytest.mark.asyncio
+    async def test_continue_on_fail_unquoted_true_through_dot_parser(self, tmp_path):
+        """continue_on_fail=true (bare, unquoted) overrides FAIL via real parse_dot().
+
+        Regression test for issue #389: the DOT parser coerces an unquoted
+        `true` token to the Python bool ``True`` (not the string ``"true"``).
+        This test drives that exact bare/unquoted form through the REAL
+        `parse_dot()` parser and the REAL `PipelineEngine`, proving the
+        override actually fires -- a hand-built `Node(attrs={"continue_on_fail":
+        "true"})` (quoted, as used in the tests above) would never have caught
+        this bug because it bypasses the parser's boolean coercion entirely.
+        """
+        dot_source = """\
+digraph test {
+    start [shape=Mdiamond]
+    fail_node [shape=box, prompt="work", continue_on_fail=true]
+    exit [shape=Msquare]
+    start -> fail_node -> exit
+}
+"""
+        graph = parse_dot(dot_source)
+
+        # Confirm the parser actually coerced the attribute to a real bool --
+        # otherwise this test would not be exercising the reported bug at all.
+        assert graph.nodes["fail_node"].attrs.get("continue_on_fail") is True, (
+            f"Expected parse_dot() to coerce unquoted continue_on_fail=true to "
+            f"Python bool True, got "
+            f"{graph.nodes['fail_node'].attrs.get('continue_on_fail')!r}"
+        )
+
+        context = PipelineContext()
+        registry = HandlerRegistry(HandlerContext(backend=FailingBackend()))
+        engine = PipelineEngine(
+            graph=graph,
+            context=context,
+            handler_registry=registry,
+            logs_root=str(tmp_path),
+        )
+        outcome = await engine.run()
+
+        assert engine.node_outcomes["fail_node"].status == StageStatus.SUCCESS, (
+            f"Expected fail_node outcome to be SUCCESS after unquoted "
+            f"continue_on_fail=true override, got "
+            f"{engine.node_outcomes['fail_node'].status!r}"
+        )
+        assert outcome.status in (StageStatus.SUCCESS, StageStatus.PARTIAL_SUCCESS), (
+            f"Expected overall pipeline SUCCESS, got {outcome.status!r}"
+        )

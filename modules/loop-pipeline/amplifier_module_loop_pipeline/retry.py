@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .context import PipelineContext
-from .graph import Graph, Node
+from .graph import Graph, Node, resolve_bool_attr
 from .must_write import check_must_write
 from .outcome import Outcome, StageStatus
 
@@ -359,7 +359,7 @@ async def execute_with_retry(
     # truthiness check here once made allow_partial="false" emit
     # "partial_success" while returning FAIL).
     _ap = node.attrs.get("allow_partial")
-    _allow_partial = _ap is True or str(_ap).lower() == "true"
+    _allow_partial = resolve_bool_attr(_ap, "allow_partial")
 
     if _allow_partial:
         final_outcome = Outcome(

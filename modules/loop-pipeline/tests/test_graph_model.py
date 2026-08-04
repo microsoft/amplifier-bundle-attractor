@@ -1,6 +1,8 @@
 """Tests for the graph data model."""
 
-from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
+import logging
+
+from amplifier_module_loop_pipeline.graph import Edge, Graph, Node, resolve_bool_attr
 
 
 def test_node_defaults():
@@ -304,3 +306,90 @@ def test_graph_source_dir_set():
     """Graph.source_dir should be settable via constructor."""
     graph = Graph(name="test", nodes={}, edges=[], source_dir="/some/path")
     assert graph.source_dir == "/some/path"
+
+
+# --- resolve_bool_attr: shared boolean-attribute accessor (issue #389) ---
+
+
+def test_resolve_bool_attr_real_bool():
+    """A real Python bool passes through unchanged."""
+    assert resolve_bool_attr(True, "goal_gate") is True
+    assert resolve_bool_attr(False, "goal_gate") is False
+
+
+def test_resolve_bool_attr_quoted_string_true_false():
+    """Quoted 'true'/'false' strings (as produced by the DOT parser for
+    quoted attribute values) are interpreted as their boolean equivalents.
+    """
+    assert resolve_bool_attr("true", "continue_on_fail") is True
+    assert resolve_bool_attr("false", "continue_on_fail") is False
+
+
+def test_resolve_bool_attr_case_insensitive():
+    """String matching is case-insensitive and tolerates surrounding whitespace."""
+    assert resolve_bool_attr("True", "auto_status") is True
+    assert resolve_bool_attr("TRUE", "auto_status") is True
+    assert resolve_bool_attr(" true ", "auto_status") is True
+    assert resolve_bool_attr("False", "auto_status") is False
+    assert resolve_bool_attr("FALSE", "auto_status") is False
+
+
+def test_resolve_bool_attr_none_is_false():
+    """A missing attribute (None) resolves to False without a warning."""
+    assert resolve_bool_attr(None, "allow_partial") is False
+
+
+def test_resolve_bool_attr_none_does_not_warn(caplog):
+    """None is a normal 'attribute not set' case -- it must not warn."""
+    with caplog.at_level(logging.WARNING):
+        resolve_bool_attr(None, "allow_partial")
+    assert len(caplog.records) == 0, (
+        f"Expected no warning for value=None, got {[r.message for r in caplog.records]!r}"
+    )
+
+
+def test_resolve_bool_attr_uninterpretable_value_warns_and_is_false(caplog):
+    """An uninterpretable value (e.g. a typo) resolves to False AND logs a
+    WARNING naming the attribute and the offending value.
+
+    This is the "make the uninterpretable case loud" requirement from
+    issue #389: an unrecognized value must not fail silently the same way
+    the original bug did.
+    """
+    with caplog.at_level(logging.WARNING):
+        result = resolve_bool_attr("maybe", "continue_on_fail")
+
+    assert result is False
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 1, (
+        f"Expected exactly one WARNING, got {[r.message for r in caplog.records]!r}"
+    )
+    message = warning_records[0].message
+    assert "continue_on_fail" in message, (
+        f"Expected the attribute name in the warning, got {message!r}"
+    )
+    assert "maybe" in message, (
+        f"Expected the offending value in the warning, got {message!r}"
+    )
+
+
+def test_resolve_bool_attr_uninterpretable_numeric_string_warns():
+    """A numeric-looking string like '1' is uninterpretable and warns."""
+    import logging as _logging
+
+    logger = _logging.getLogger("amplifier_module_loop_pipeline.graph")
+    with_records: list[logging.LogRecord] = []
+
+    class _Capture(_logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            with_records.append(record)
+
+    handler = _Capture()
+    logger.addHandler(handler)
+    try:
+        assert resolve_bool_attr("1", "parse_json") is False
+    finally:
+        logger.removeHandler(handler)
+    assert any("parse_json" in r.getMessage() for r in with_records), (
+        "Expected a WARNING naming 'parse_json' for the uninterpretable value '1'"
+    )

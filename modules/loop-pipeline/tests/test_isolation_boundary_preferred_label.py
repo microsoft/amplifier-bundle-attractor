@@ -253,7 +253,7 @@ async def test_manager_loop_child_clone_starts_without_preferred_label():
     captured: list[object] = []
 
     class CapturingEngine:
-        async def run_subgraph(self, node_id, *, context=None):
+        async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
             assert context is not None
             captured.append(context.get("preferred_label"))
             return Outcome(status=StageStatus.SUCCESS)
@@ -302,7 +302,7 @@ async def test_parallel_branch_clone_starts_without_preferred_label():
     captured: dict[str, object] = {}
 
     class CapturingEngine:
-        async def run_subgraph(self, node_id, *, context=None):
+        async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
             assert context is not None
             captured[node_id] = context.get("preferred_label")
             return Outcome(status=StageStatus.SUCCESS)

@@ -321,7 +321,12 @@ async def execute_with_retry(
         # backstop — a promoted node counts as a completed execution and the
         # contract applies to it there.
         # Do not retry a SKIPPED outcome — retrying would not produce a status.
+        # attempt_count is still set here (support#379): SKIPPED outcomes DO
+        # pass through the retry ladder (they just don't loop within it), so
+        # they are no longer an out-of-ladder case (see outcome.py's
+        # attempt_count docstring, corrected alongside this fix).
         if outcome.status == StageStatus.SKIPPED:
+            outcome.attempt_count = attempt
             return outcome
 
         # RETRY — retry if attempts remain

@@ -157,30 +157,23 @@ class ParallelHandler:
                         # equivalent node_start/node_complete events itself
                         # just above/below, tagged via_parallel=True (the
                         # documented per-branch event contract in this
-                        # repo's AGENTS.md). run_subgraph() now emits its own
-                        # copies by default (see engine.py), so suppress
-                        # them here via the internal instance flag to avoid
-                        # double-counting every branch node in the timeline.
-                        # setattr works on any object (including test
-                        # doubles), so this does not require test doubles to
-                        # declare the attribute.
+                        # repo's AGENTS.md). run_subgraph() emits its own
+                        # copies by default (see engine.py), so pass
+                        # emit_node_events=False here to avoid double-
+                        # counting every branch node in the timeline.
                         if clone_fn is not None:
                             branch_engine = clone_fn(context=branch_context)
-                            branch_engine._suppress_subgraph_node_events = True
                             outcome = await branch_engine.run_subgraph(
-                                target_node_id, context=branch_context
+                                target_node_id,
+                                context=branch_context,
+                                emit_node_events=False,
                             )
                         else:
-                            _prev_suppress = getattr(
-                                engine, "_suppress_subgraph_node_events", False
+                            outcome = await engine.run_subgraph(
+                                target_node_id,
+                                context=branch_context,
+                                emit_node_events=False,
                             )
-                            engine._suppress_subgraph_node_events = True
-                            try:
-                                outcome = await engine.run_subgraph(
-                                    target_node_id, context=branch_context
-                                )
-                            finally:
-                                engine._suppress_subgraph_node_events = _prev_suppress
                     except Exception as e:
                         logger.warning(
                             "Branch %s raised exception: %s", target_node_id, e

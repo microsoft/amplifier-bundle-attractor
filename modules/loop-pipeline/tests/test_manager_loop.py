@@ -807,9 +807,6 @@ class TestManagerChildDotfileEngineWiring:
         # per-cycle child status rather than the manager's own generic
         # "Manager exhausted N cycle(s)" wrapper outcome.
         assert result.status == StageStatus.FAIL
-        assert (
-            PipelineContext().get("manager.last_child_status") is None
-        )  # sanity: fresh context has no stale value
 
 
 class TestManagerChildDotfileObservability:

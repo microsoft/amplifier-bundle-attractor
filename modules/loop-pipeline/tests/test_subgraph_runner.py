@@ -301,12 +301,12 @@ async def test_run_subgraph_emits_node_events_by_default(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_subgraph_suppresses_events_when_flag_set(tmp_path):
-    """support#379 (fix 1) regression guard: the internal
+async def test_run_subgraph_suppresses_events_when_emit_node_events_false(tmp_path):
+    """support#379 (fix 1) regression guard: the public
 
-    ``_suppress_subgraph_node_events`` flag (set by ParallelHandler on its
-    branch engine, see handlers/parallel.py) must actually suppress
-    run_subgraph()'s emission when True, so ParallelHandler's own
+    ``emit_node_events=False`` keyword argument (passed by ParallelHandler
+    when driving a branch engine, see handlers/parallel.py) must actually
+    suppress run_subgraph()'s emission, so ParallelHandler's own
     via_parallel=True events remain the only events for branch nodes.
     """
     graph = _make_subgraph()
@@ -323,12 +323,11 @@ async def test_run_subgraph_suppresses_events_when_flag_set(tmp_path):
         hooks=hooks,
     )
     engine._initialize_context(goal="test")
-    engine._suppress_subgraph_node_events = True
 
-    outcome = await engine.run_subgraph("a")
+    outcome = await engine.run_subgraph("a", emit_node_events=False)
 
     assert outcome.status == StageStatus.SUCCESS
     assert hooks.events == [], (
-        f"Expected zero events with _suppress_subgraph_node_events=True, "
+        f"Expected zero events with emit_node_events=False, "
         f"got: {hooks.events!r}"
     )

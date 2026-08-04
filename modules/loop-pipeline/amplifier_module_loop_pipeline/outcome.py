@@ -88,9 +88,11 @@ class Outcome:
 
     #: support#379 \u2014 the real attempt count consumed by execute_with_retry
     #: (1-indexed: 1 means the initial try succeeded/finalized with no
-    #: retries). None when the outcome did not pass through the retry
-    #: ladder (e.g. skipped nodes, must_write backstop at the engine level,
-    #: subgraph/branch execution which has no retry policy). Additive field
+    #: retries, INCLUDING skipped nodes -- they pass through the retry
+    #: ladder without looping within it, so attempt_count is set for them
+    #: too). None when the outcome did not pass through the retry ladder at
+    #: all (e.g. the must_write backstop at the engine level, subgraph/
+    #: branch execution which has no retry policy). Additive field
     #: \u2014 not part of status.json's existing shape; consumers must opt in.
     attempt_count: int | None = None
 

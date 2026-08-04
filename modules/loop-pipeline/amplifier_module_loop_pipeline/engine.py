@@ -149,12 +149,6 @@ class PipelineEngine:
         self._is_branch_clone: bool = False
         self._branch_id: str | None = None
 
-        # support#379 (fix 1): internal flag letting ParallelHandler
-        # suppress run_subgraph()'s own node_start/node_complete emission
-        # (it emits equivalent via_parallel=True events itself). Not part
-        # of run_subgraph()'s public signature — see its docstring.
-        self._suppress_subgraph_node_events: bool = False
-
     def clone_for_branch(self, *, context: PipelineContext) -> "PipelineEngine":
         """Create a branch-isolated clone of this engine for parallel execution.
 
@@ -621,12 +615,28 @@ class PipelineEngine:
                     "Node '%s' has auto_status=true; promoting SKIPPED to SUCCESS",
                     current_node.id,
                 )
+                # S2 field audit (Outcome has 11 fields; see outcome.py) --
+                # auto_status override:
+                #   status, notes  -> OVERRIDDEN (this IS the promotion)
+                #   context_updates, preferred_label, suggested_next_ids,
+                #   failure_reason, session_id, response_text, failed_step,
+                #   attempt_count  -> CARRIED forward; nothing upstream lost
+                #   is_explicit    -> RESET to default False: this SUCCESS
+                #     was synthesized by policy, not asserted by the node,
+                #     so it must not silently satisfy a goal_gate (which
+                #     requires is_success AND is_explicit; see
+                #     _check_goal_gates()).
                 outcome = Outcome(
                     status=StageStatus.SUCCESS,
                     notes="auto_status override (was skipped)",
                     context_updates=outcome.context_updates,
                     preferred_label=outcome.preferred_label,
                     suggested_next_ids=outcome.suggested_next_ids,
+                    failure_reason=outcome.failure_reason,
+                    session_id=outcome.session_id,
+                    response_text=outcome.response_text,
+                    failed_step=outcome.failed_step,
+                    attempt_count=outcome.attempt_count,
                 )
 
             # continue_on_fail: override FAIL to SUCCESS for routing, log the failure
@@ -654,6 +664,24 @@ class PipelineEngine:
                     current_node.id,
                     outcome.failure_reason or outcome.notes or "no reason given",
                 )
+                # S2 field audit (Outcome has 11 fields; see outcome.py) --
+                # continue_on_fail override:
+                #   status         -> OVERRIDDEN (this IS the override)
+                #   notes          -> OVERRIDDEN; failure_reason is folded
+                #     into the new notes text above, so the standalone
+                #     failure_reason field is intentionally RESET to None
+                #     below (not carried) rather than duplicated.
+                #   context_updates, preferred_label, suggested_next_ids,
+                #   session_id, response_text, failed_step, attempt_count
+                #                  -> CARRIED forward; nothing upstream lost
+                #     (failed_step in particular: continue_on_fail
+                #     suppresses the failure for ROUTING only -- it must
+                #     not erase the diagnostic record of what failed).
+                #   is_explicit    -> RESET to default False: same
+                #     reasoning as the auto_status override above -- this
+                #     SUCCESS was synthesized by policy, not asserted by
+                #     the node, so it must not silently satisfy a
+                #     goal_gate (see _check_goal_gates()).
                 outcome = Outcome(
                     status=StageStatus.SUCCESS,
                     notes=(
@@ -663,6 +691,10 @@ class PipelineEngine:
                     context_updates=outcome.context_updates,
                     preferred_label=outcome.preferred_label,
                     suggested_next_ids=outcome.suggested_next_ids,
+                    session_id=outcome.session_id,
+                    response_text=outcome.response_text,
+                    failed_step=outcome.failed_step,
+                    attempt_count=outcome.attempt_count,
                 )
 
             # Step 2.7: must_write= final backstop (EXTENSIONS.md §27).
@@ -889,6 +921,7 @@ class PipelineEngine:
         start_node_id: str,
         *,
         context: PipelineContext | None = None,
+        emit_node_events: bool = True,
     ) -> Outcome:
         """Execute a subgraph starting from the given node.
 
@@ -898,30 +931,31 @@ class PipelineEngine:
         This is the subgraph runner used by ParallelHandler and
         ManagerLoopHandler to execute branches and child subgraphs.
 
-        support#379 (fix 1): this method now emits pipeline:node_start /
+        support#379 (fix 1): this method emits pipeline:node_start /
         pipeline:node_complete for each node it executes — previously it
         emitted nothing at all, leaving ManagerLoopHandler's in-graph
-        subgraph path (and any other direct caller) entirely dark. Emission
-        is suppressed when ``self._suppress_subgraph_node_events`` is True
-        (an internal, unset-by-default instance flag — NOT part of this
-        method's public signature, so existing test doubles implementing a
-        narrower ``run_subgraph(start_node_id, *, context=...)`` override
-        are unaffected). ParallelHandler sets this flag on the branch engine
-        it constructs before calling run_subgraph, because it already emits
-        the equivalent events itself, tagged via_parallel=True (see
-        handlers/parallel.py's per-branch event contract, documented in
-        this repo's AGENTS.md) — a second emission here would double-count
-        every branch node in the timeline.
+        subgraph path (and any other direct caller) entirely dark.
 
         Args:
             start_node_id: Node ID to begin execution from.
             context: Optional isolated context for this subgraph run.
                      If None, uses the engine's main context.
+            emit_node_events: Whether to emit pipeline:node_start /
+                pipeline:node_complete for each node executed in this
+                subgraph. Defaults to True. ParallelHandler passes False
+                when calling this from a branch engine, because it already
+                emits the equivalent events itself, tagged
+                via_parallel=True (see handlers/parallel.py's per-branch
+                event contract, documented in this repo's AGENTS.md) — a
+                second emission here would double-count every branch node
+                in the timeline. Keyword-only so existing callers (and
+                test doubles implementing a narrower
+                ``run_subgraph(start_node_id, *, context=...)`` override)
+                are unaffected by this parameter's addition.
 
         Returns:
             The final Outcome of the subgraph execution.
         """
-        emit_node_events = not getattr(self, "_suppress_subgraph_node_events", False)
         ctx = context if context is not None else self.context
 
         if start_node_id not in self.graph.nodes:

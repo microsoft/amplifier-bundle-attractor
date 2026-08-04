@@ -52,7 +52,11 @@ class FakeSubgraphRunner:
         )
 
     async def run_subgraph(
-        self, node_id: str, *, context: PipelineContext | None = None
+        self,
+        node_id: str,
+        *,
+        context: PipelineContext | None = None,
+        emit_node_events: bool = True,
     ) -> Outcome:
         if self._delay > 0:
             await asyncio.sleep(self._delay)
@@ -94,7 +98,7 @@ async def test_parallel_clones_context_per_branch():
     branch_contexts: dict[str, PipelineContext] = {}
 
     class CapturingEngine:
-        async def run_subgraph(self, node_id, *, context=None):
+        async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
             branch_contexts[node_id] = context
             if context is not None:
                 context.set(f"branch.{node_id}", "was_here")
@@ -142,7 +146,7 @@ async def test_parallel_respects_max_parallel():
     lock = asyncio.Lock()
 
     class TrackingEngine:
-        async def run_subgraph(self, node_id, *, context=None):
+        async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
             nonlocal current_concurrent
             async with lock:
                 current_concurrent += 1
@@ -335,7 +339,7 @@ async def test_parallel_exception_in_branch_becomes_fail():
     """Exception in a branch is caught and converted to FAIL outcome."""
 
     class FailingEngine:
-        async def run_subgraph(self, node_id, *, context=None):
+        async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
             if node_id == "b2":
                 raise RuntimeError("Branch crashed")
             return Outcome(status=StageStatus.SUCCESS)
@@ -387,7 +391,7 @@ async def test_parallel_handler_emits_events():
             emitted.append((event_name, data))
 
     class MockEngine:
-        async def run_subgraph(self, node_id, *, context=None):
+        async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
             return Outcome(status=StageStatus.SUCCESS, notes="ok")
 
     handler = ParallelHandler(hooks=MockHooks())

@@ -135,7 +135,7 @@ async def test_branch_node_complete_carries_correct_status() -> None:
     par_node, graph = _make_fanout_graph(["good_branch", "bad_branch"])
 
     class MixedEngine:
-        async def run_subgraph(self, node_id, *, context=None):
+        async def run_subgraph(self, node_id, *, context=None, emit_node_events: bool = True):
             if node_id == "bad_branch":
                 return Outcome(status=StageStatus.FAIL, failure_reason="bad")
             return Outcome(status=StageStatus.SUCCESS, notes="ok")

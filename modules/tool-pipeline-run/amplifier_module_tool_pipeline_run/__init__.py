@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 __all__ = ["PipelineRunTool", "mount"]
@@ -96,39 +97,18 @@ class PipelineRunTool:
     # DOT source resolution
     # -----------------------------------------------------------------
 
-    def _resolve_dot_source(
-        self,
-        dot_file: str | None,
-        dot_source: str | None,
-    ) -> str:
-        """Resolve DOT source from file path or inline string.
+    def _resolve_dot_file_path(self, dot_file: str) -> Path:
+        """Resolve a dot_file reference to an existing Path on disk.
 
-        Resolution priority:
-        1. dot_source (inline string) — used as-is if provided
-        2. dot_file (file path) — read from disk; supports @mention syntax
-
-        Args:
-            dot_file: Path to a .dot file (supports @mention syntax).
-            dot_source: Inline DOT digraph string.
-
-        Returns:
-            The DOT source string.
+        Handles @mention syntax (resolved via the coordinator's
+        mention_resolver capability) and plain filesystem paths. Single site
+        for this resolution so both the text-only and directory-aware callers
+        below can't drift apart (AGENTS.md S4 partial-coverage-symmetry).
 
         Raises:
-            FileNotFoundError: If dot_file path does not exist.
+            FileNotFoundError: If the resolved path does not exist.
             ValueError: If @mention path cannot be resolved.
         """
-        from pathlib import Path
-
-        # Priority 1: inline source
-        if dot_source:
-            return dot_source
-
-        # Priority 2: file path
-        if not dot_file:
-            raise ValueError("Either dot_file or dot_source must be provided")
-
-        # Handle @mention syntax
         if dot_file.startswith("@"):
             if self.coordinator is None:
                 raise ValueError(
@@ -151,7 +131,69 @@ class PipelineRunTool:
         if not file_path.exists():
             raise FileNotFoundError(f"DOT file not found: {file_path}")
 
-        return file_path.read_text()
+        return file_path
+
+    def _resolve_dot_source(
+        self,
+        dot_file: str | None,
+        dot_source: str | None,
+    ) -> str:
+        """Resolve DOT source from file path or inline string.
+
+        Resolution priority:
+        1. dot_source (inline string) — used as-is if provided
+        2. dot_file (file path) — read from disk; supports @mention syntax
+
+        Args:
+            dot_file: Path to a .dot file (supports @mention syntax).
+            dot_source: Inline DOT digraph string.
+
+        Returns:
+            The DOT source string.
+
+        Raises:
+            FileNotFoundError: If dot_file path does not exist.
+            ValueError: If @mention path cannot be resolved.
+        """
+        text, _source_dir = self._resolve_dot_source_with_dir(dot_file, dot_source)
+        return text
+
+    def _resolve_dot_source_with_dir(
+        self,
+        dot_file: str | None,
+        dot_source: str | None,
+    ) -> tuple[str, str | None]:
+        """Resolve DOT source text plus, when file-backed, its directory.
+
+        The spawned child session runs the mounted PipelineOrchestrator from
+        a fresh process, so the file path itself never crosses that boundary
+        -- only the resolved text does (via orchestrator_config["dot_source"]).
+        Without the directory travelling alongside it, a relative dot_file=
+        child reference in the pipeline would resolve under the child
+        session's --cwd instead of beside the pipeline that was actually
+        invoked (the same bug already fixed for the standalone CLI path and
+        the mounted orchestrator's own local dot_file path).
+
+        Returns:
+            ``(dot_source, source_dir)``. ``source_dir`` is ``None`` when the
+            source is inline ``dot_source`` -- there is no file, so there is
+            no directory to claim.
+
+        Raises:
+            FileNotFoundError: If dot_file path does not exist.
+            ValueError: If @mention path cannot be resolved, or neither
+                dot_file nor dot_source is provided.
+        """
+        # Priority 1: inline source
+        if dot_source:
+            return dot_source, None
+
+        # Priority 2: file path (supports @mention syntax)
+        if not dot_file:
+            raise ValueError("Either dot_file or dot_source must be provided")
+
+        file_path = self._resolve_dot_file_path(dot_file)
+        return file_path.read_text(), str(file_path.resolve().parent)
 
     # -----------------------------------------------------------------
     # Provider validation
@@ -318,7 +360,7 @@ class PipelineRunTool:
 
         # --- Resolve DOT source ---
         try:
-            dot_source_resolved = self._resolve_dot_source(
+            dot_source_resolved, dot_source_dir = self._resolve_dot_source_with_dir(
                 dot_file=dot_file,
                 dot_source=dot_source,
             )
@@ -390,6 +432,18 @@ class PipelineRunTool:
         orchestrator_config: dict[str, Any] = {
             "dot_source": dot_source_resolved,
         }
+
+        # Forward the directory a file-backed dot_file was read from. The
+        # spawned child session only receives resolved TEXT (dot_source
+        # above) -- the file path itself never crosses that boundary -- so
+        # without this, relative dot_file= children in the pipeline would
+        # resolve under the child session's --cwd instead of beside the
+        # pipeline actually invoked. PipelineOrchestrator reads this same
+        # "source_dir" key when dot_source is inline (see its
+        # _resolve_dot_source docstring). None for an inline dot_source
+        # input -- there is no file, so there is no directory to forward.
+        if dot_source_dir:
+            orchestrator_config["source_dir"] = dot_source_dir
 
         # Forward profiles from our config if present
         profiles = self.config.get("profiles")

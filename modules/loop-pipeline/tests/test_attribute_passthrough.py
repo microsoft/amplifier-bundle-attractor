@@ -216,6 +216,11 @@ async def test_tool_loop_passes_reasoning_effort_all_values(
         coordinator=coordinator,
         profiles={},
         provider=object(),  # truthy sentinel enables Path B
+        # Inject a non-None client so _get_or_create_unified_client() never
+        # falls through to unified_llm.Client.from_env(), which requires a
+        # real API key and would make this test non-hermetic.  unified_llm.generate
+        # is monkeypatched above, so the client's identity is never used.
+        unified_client=object(),
     )
     node = _make_node(
         attrs={
@@ -248,6 +253,11 @@ async def test_tool_loop_reasoning_effort_defaults_to_none(
         coordinator=coordinator,
         profiles={},
         provider=object(),
+        # Inject a non-None client so _get_or_create_unified_client() never
+        # falls through to unified_llm.Client.from_env(), which requires a
+        # real API key and would make this test non-hermetic.  unified_llm.generate
+        # is monkeypatched above, so the client's identity is never used.
+        unified_client=object(),
     )
     node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model"})
     result = await backend.run(node, "task", _make_context())
@@ -275,7 +285,11 @@ async def test_direct_backend_passes_reasoning_effort_all_values(
 
     monkeypatch.setattr(unified_llm, "generate", _fake_generate)
 
-    backend = DirectProviderBackend(provider=object())
+    # Inject a non-None client so _get_or_create_unified_client() never falls
+    # through to unified_llm.Client.from_env(), which requires a real API key
+    # and would make this test non-hermetic.  unified_llm.generate is
+    # monkeypatched above, so the client's identity is never used.
+    backend = DirectProviderBackend(provider=object(), unified_client=object())
     node = _make_node(
         attrs={
             "llm_provider": "test",
@@ -302,7 +316,11 @@ async def test_direct_backend_reasoning_effort_defaults_to_none(
 
     monkeypatch.setattr(unified_llm, "generate", _fake_generate)
 
-    backend = DirectProviderBackend(provider=object())
+    # Inject a non-None client so _get_or_create_unified_client() never falls
+    # through to unified_llm.Client.from_env(), which requires a real API key
+    # and would make this test non-hermetic.  unified_llm.generate is
+    # monkeypatched above, so the client's identity is never used.
+    backend = DirectProviderBackend(provider=object(), unified_client=object())
     node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model"})
     result = await backend.run(node, "task", _make_context())
 
@@ -371,6 +389,11 @@ async def test_tool_loop_passes_max_agent_turns(
         coordinator=coordinator,
         profiles={},
         provider=object(),
+        # Inject a non-None client so _get_or_create_unified_client() never
+        # falls through to unified_llm.Client.from_env(), which requires a
+        # real API key and would make this test non-hermetic.  unified_llm.generate
+        # is monkeypatched above, so the client's identity is never used.
+        unified_client=object(),
     )
     node = _make_node(
         attrs={
@@ -403,6 +426,11 @@ async def test_tool_loop_max_agent_turns_defaults_to_constant(
         coordinator=coordinator,
         profiles={},
         provider=object(),
+        # Inject a non-None client so _get_or_create_unified_client() never
+        # falls through to unified_llm.Client.from_env(), which requires a
+        # real API key and would make this test non-hermetic.  unified_llm.generate
+        # is monkeypatched above, so the client's identity is never used.
+        unified_client=object(),
     )
     node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model"})
     result = await backend.run(node, "task", _make_context())
@@ -429,7 +457,11 @@ async def test_direct_backend_passes_max_agent_turns(
 
     monkeypatch.setattr(unified_llm, "generate", _fake_generate)
 
-    backend = DirectProviderBackend(provider=object())
+    # Inject a non-None client so _get_or_create_unified_client() never falls
+    # through to unified_llm.Client.from_env(), which requires a real API key
+    # and would make this test non-hermetic.  unified_llm.generate is
+    # monkeypatched above, so the client's identity is never used.
+    backend = DirectProviderBackend(provider=object(), unified_client=object())
     node = _make_node(
         attrs={
             "llm_provider": "test",
@@ -456,7 +488,11 @@ async def test_direct_backend_max_agent_turns_defaults_to_constant(
 
     monkeypatch.setattr(unified_llm, "generate", _fake_generate)
 
-    backend = DirectProviderBackend(provider=object())
+    # Inject a non-None client so _get_or_create_unified_client() never falls
+    # through to unified_llm.Client.from_env(), which requires a real API key
+    # and would make this test non-hermetic.  unified_llm.generate is
+    # monkeypatched above, so the client's identity is never used.
+    backend = DirectProviderBackend(provider=object(), unified_client=object())
     node = _make_node(attrs={"llm_provider": "test", "llm_model": "test-model"})
     result = await backend.run(node, "task", _make_context())
 

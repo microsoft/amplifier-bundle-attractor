@@ -202,6 +202,11 @@ async def test_backend_tool_loop_prose_then_json_fail_recovered(monkeypatch):
         coordinator=coordinator,
         profiles={},
         provider=object(),  # truthy sentinel enables Path B (tool loop)
+        # Inject a non-None client so _get_or_create_unified_client() never
+        # falls through to unified_llm.Client.from_env(), which requires a
+        # real API key and would make this test non-hermetic.  unified_llm.generate
+        # is monkeypatched above, so the client's identity is never used.
+        unified_client=object(),
     )
     node = Node(
         id="verdict_node",
@@ -237,6 +242,11 @@ async def test_backend_tool_loop_clean_json_fail_correctly_parsed(monkeypatch):
         coordinator=coordinator,
         profiles={},
         provider=object(),
+        # Inject a non-None client so _get_or_create_unified_client() never
+        # falls through to unified_llm.Client.from_env(), which requires a
+        # real API key and would make this test non-hermetic.  unified_llm.generate
+        # is monkeypatched above, so the client's identity is never used.
+        unified_client=object(),
     )
     node = Node(id="judge", llm_model="test-model", attrs={"llm_provider": "test"})
     outcome = await backend.run(node, "Judge", PipelineContext())

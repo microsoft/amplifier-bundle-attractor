@@ -153,3 +153,84 @@ jobs:
       - name: Run pyright
         working-directory: modules/unified-llm-client
         run: uv run --with pyright pyright unified_llm/
+
+  ci-gate:
+    # Aggregate "all-green" summary gate. Today CI produces 28 individual
+    # check contexts (13 modules x 2 python versions for unit-tests, plus
+    # live-graph-gate, plus type-check) -- and every one of those is purely
+    # advisory: branch protection has zero required status checks, so a
+    # fully red CI does not block a merge.
+    #
+    # The fix is NOT to require all 28 contexts by name in branch
+    # protection. That list is brittle: it changes shape every time a
+    # module is added, renamed, or dropped from the unit-tests matrix, and
+    # a renamed/removed context either silently stops being enforced or
+    # hangs every future PR waiting on a check that will never report.
+    #
+    # Instead this job is the ONE stable check to require. It depends on
+    # every other job in this workflow and fails if any of them failed,
+    # was cancelled, or was skipped -- so requiring only this one context
+    # in branch protection is equivalent to requiring the full matrix,
+    # without the matrix's brittleness. Adding, renaming, or removing a
+    # module in `unit-tests.strategy.matrix.module` never requires a
+    # branch-protection change: this job's `needs:` list only ever
+    # references the three top-level job IDs (unit-tests, live-graph-gate,
+    # type-check), not individual matrix cells.
+    #
+    # `needs:` alone is not sufficient to get fail-closed semantics. By
+    # default, if a job listed in `needs:` fails, GitHub Actions SKIPS any
+    # dependent job rather than running it -- and a job that never runs
+    # reports no failing status at all (in some branch-protection
+    # configurations a skipped required check is treated as satisfied).
+    # `if: always()` makes this job run regardless of upstream
+    # success/failure/cancellation, and the step below then explicitly
+    # inspects `needs.<job>.result` for every dependency and fails loudly
+    # (a real non-zero exit, no `continue-on-error`, no `|| true`) if any
+    # of them is not exactly `"success"`. That is what makes it
+    # IMPOSSIBLE for this job to report green while any upstream job is
+    # red, cancelled, or skipped:
+    #   - unit-tests result is "failure"   -> any matrix cell failing fails
+    #     the whole job group, which flips this to failure.
+    #   - live-graph-gate or type-check result is "failure" -> same.
+    #   - any of the three is "cancelled" (workflow run cancelled
+    #     mid-flight) -> not "success" -> this job fails.
+    #   - any of the three is "skipped" (e.g. a future workflow edit adds
+    #     an `if:` condition to one of them that doesn't fire) -> not
+    #     "success" -> this job fails. A dependency that never runs can no
+    #     longer produce a silent pass here.
+    name: CI Gate (all checks passed)
+    if: always()
+    needs:
+      - unit-tests
+      - live-graph-gate
+      - type-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every upstream job to have succeeded
+        run: |
+          set -euo pipefail
+
+          declare -A results=(
+            [unit-tests]="${{ needs.unit-tests.result }}"
+            [live-graph-gate]="${{ needs.live-graph-gate.result }}"
+            [type-check]="${{ needs.type-check.result }}"
+          )
+
+          overall_ok=true
+          for job_id in "${!results[@]}"; do
+            result="${results[$job_id]}"
+            echo "${job_id}: ${result}"
+            if [ "${result}" != "success" ]; then
+              echo "::error::Upstream job '${job_id}' did not succeed (result: ${result})"
+              overall_ok=false
+            fi
+          done
+
+          if [ "${overall_ok}" != "true" ]; then
+            echo ""
+            echo "One or more upstream jobs did not succeed. Failing the aggregate CI gate."
+            exit 1
+          fi
+
+          echo ""
+          echo "All upstream jobs succeeded."

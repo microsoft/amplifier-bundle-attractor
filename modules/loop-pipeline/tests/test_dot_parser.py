@@ -8,7 +8,7 @@ and graph-level attributes.
 import pytest
 
 from amplifier_module_loop_pipeline.dot_parser import parse_dot
-
+from amplifier_module_loop_pipeline.validation import validate
 
 # --- Basic parsing ---
 
@@ -232,6 +232,42 @@ def test_integer_values():
     assert graph.nodes["A"].attrs.get("max_retries") == 3
 
 
+@pytest.mark.parametrize(
+    ("raw_value", "is_valid"),
+    [
+        ("-1", False),
+        ('"-1"', False),
+        ("true", False),
+        ("1.5", False),
+        ('"1.5"', False),
+        ("invalid", False),
+        ("0", True),
+        ("2", True),
+        ('"2"', True),
+    ],
+)
+def test_parsed_node_retry_values_are_validated(raw_value: str, is_valid: bool):
+    """Raw DOT node retry syntax reaches structural validation without coercion leaks."""
+    graph = parse_dot(
+        f"""
+        digraph RetryBudget {{
+            start [shape=Mdiamond]
+            work [shape=box, prompt="work", max_retries={raw_value}]
+            exit [shape=Msquare]
+            start -> work -> exit
+        }}
+        """
+    )
+
+    errors = [
+        diagnostic
+        for diagnostic in validate(graph)
+        if diagnostic.rule == "retry_budget_non_negative"
+        and diagnostic.node_id == "work"
+    ]
+    assert bool(errors) is not is_valid
+
+
 def test_leading_dot_float_values():
     """Leading-dot floats like .5 should be parsed as 0.5 (L-1)."""
     graph = parse_dot("""
@@ -315,6 +351,60 @@ def test_graph_level_attributes_bare():
     """)
     assert graph.goal == "Build the feature"
     assert graph.default_max_retry == 5
+
+
+@pytest.mark.parametrize(
+    ("alias", "value"),
+    [
+        ("default_max_retry", '"-1"'),
+        ("default_max_retries", "true"),
+        ("default_max_retry", "1.5"),
+        ("default_max_retries", '"invalid"'),
+    ],
+)
+def test_invalid_parsed_graph_retry_aliases_reach_validation(alias: str, value: str):
+    """The parser preserves malformed defaults so validation can diagnose them."""
+    graph = parse_dot(
+        f"""
+        digraph RetryBudget {{
+            graph [{alias}={value}]
+            start [shape=Mdiamond]
+            work [shape=box, prompt="work"]
+            exit [shape=Msquare]
+            start -> work -> exit
+        }}
+        """
+    )
+
+    diagnostics = validate(graph)
+
+    assert any(
+        diagnostic.rule == "retry_budget_non_negative"
+        and diagnostic.severity == "ERROR"
+        for diagnostic in diagnostics
+    )
+
+
+@pytest.mark.parametrize("alias", ["default_max_retry", "default_max_retries"])
+def test_quoted_integer_graph_retry_aliases_are_valid(alias: str):
+    """Quoted integer defaults remain compatible for both accepted spellings."""
+    graph = parse_dot(
+        f"""
+        digraph RetryBudget {{
+            graph [{alias}="2"]
+            start [shape=Mdiamond]
+            work [shape=box, prompt="work"]
+            exit [shape=Msquare]
+            start -> work -> exit
+        }}
+        """
+    )
+
+    diagnostics = validate(graph)
+
+    assert not any(
+        diagnostic.rule == "retry_budget_non_negative" for diagnostic in diagnostics
+    )
 
 
 def test_graph_attr_block():

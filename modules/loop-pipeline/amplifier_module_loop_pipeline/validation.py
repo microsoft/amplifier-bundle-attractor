@@ -102,6 +102,8 @@ def validate(
     _check_fidelity_valid(graph, diags)
     _check_retry_target_exists(graph, diags)
     _check_response_schema(graph, diags)
+    _check_tool_command_handler(graph, diags)
+    _check_retry_budgets(graph, diags)
 
     # L-19: Run user-supplied extra rules
     for rule in extra_rules or []:
@@ -377,6 +379,81 @@ def _check_prompt_on_llm_nodes(graph: Graph, diags: list[Diagnostic]) -> None:
 
 # All known handler types (values from SHAPE_TO_HANDLER mapping)
 _KNOWN_HANDLER_TYPES: frozenset[str] = frozenset(SHAPE_TO_HANDLER.values())
+
+
+def _effective_handler_type(node: Node) -> str | None:
+    """Mirror built-in runtime precedence without blocking custom handlers."""
+    explicit_types = (node.type, node.attrs.get("node_type"))
+    for explicit_type in explicit_types:
+        if explicit_type in _KNOWN_HANDLER_TYPES:
+            return explicit_type
+    if any(explicit_types):
+        return None
+    return SHAPE_TO_HANDLER.get(node.shape)
+
+
+def _check_tool_command_handler(graph: Graph, diags: list[Diagnostic]) -> None:
+    """Reject commands that a recognized non-tool handler would silently ignore."""
+    for node in graph.nodes.values():
+        command = node.attrs.get("tool_command")
+        if command is None or not str(command).strip():
+            continue
+
+        handler_type = _effective_handler_type(node)
+        if handler_type is not None and handler_type != "tool":
+            diags.append(
+                Diagnostic(
+                    rule="tool_command_requires_tool_handler",
+                    severity="ERROR",
+                    message=(
+                        f"Node '{node.id}' has tool_command but resolves to "
+                        f"recognized built-in non-tool handler '{handler_type}'"
+                    ),
+                    node_id=node.id,
+                    fix="Use shape=parallelogram or type=tool, or remove tool_command",
+                )
+            )
+
+
+def _check_retry_budgets(graph: Graph, diags: list[Diagnostic]) -> None:
+    """Reject retry values that cannot safely form an attempt count."""
+    for node in graph.nodes.values():
+        if node.max_retries is not None and _retry_value(node.max_retries) is None:
+            diags.append(
+                Diagnostic(
+                    rule="retry_budget_non_negative",
+                    severity="ERROR",
+                    message=(
+                        f"Node '{node.id}' has invalid max_retries="
+                        f"{node.max_retries!r}; expected a non-negative integer"
+                    ),
+                    node_id=node.id,
+                    fix="Set max_retries to zero or a positive integer",
+                )
+            )
+
+    if _retry_value(graph.default_max_retry) is None:
+        diags.append(
+            Diagnostic(
+                rule="retry_budget_non_negative",
+                severity="ERROR",
+                message=(
+                    "Graph default_max_retry/default_max_retries must be zero "
+                    f"or a positive integer, got {graph.default_max_retry!r}"
+                ),
+                fix="Set the graph retry default to zero or a positive integer",
+            )
+        )
+
+
+def _retry_value(value: object) -> int | None:
+    """Return a safe non-negative retry integer, accepting quoted integers."""
+    try:
+        from .retry import _parse_non_negative_retry_count
+
+        return _parse_non_negative_retry_count(value)
+    except ValueError:
+        return None
 
 
 def _check_condition_syntax(graph: Graph, diags: list[Diagnostic]) -> None:

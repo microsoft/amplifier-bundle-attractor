@@ -449,9 +449,10 @@ def _set_graph_attr(ctx: _ParseContext, key: str, val: Any) -> None:
     if key == "goal":
         ctx.graph_fields["goal"] = str(val)
     elif key in ("default_max_retry", "default_max_retries"):
-        ctx.graph_fields["default_max_retry"] = (
-            int(val) if not isinstance(val, int) else val
-        )
+        # Preserve the parsed value for structural validation. Coercing here
+        # truncated fractions, accepted booleans as integers, and raised before
+        # validate() could return a deterministic diagnostic for malformed text.
+        ctx.graph_fields["default_max_retry"] = val
     elif key == "model_stylesheet":
         ctx.graph_fields["model_stylesheet"] = str(val)
     elif key == "max_pipeline_duration":

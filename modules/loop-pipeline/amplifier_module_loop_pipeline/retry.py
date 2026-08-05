@@ -176,8 +176,19 @@ class RetryPolicy:
         if max_retries is None:
             max_retries = 0
 
-        max_retries = int(max_retries)
+        max_retries = _parse_non_negative_retry_count(max_retries)
         return cls(max_attempts=max_retries + 1)
+
+
+def _parse_non_negative_retry_count(value: object) -> int:
+    """Return a validated retry count compatible with structural validation."""
+    if isinstance(value, bool):
+        raise ValueError("max_retries must be a non-negative integer, not a boolean")
+    if isinstance(value, int) and value >= 0:
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[+]?\d+", value.strip()):
+        return int(value)
+    raise ValueError(f"max_retries must be a non-negative integer, got {value!r}")
 
 
 async def execute_with_retry(

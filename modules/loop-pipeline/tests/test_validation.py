@@ -8,14 +8,19 @@ import re
 
 import pytest
 
+from amplifier_module_loop_pipeline.context import PipelineContext
+from amplifier_module_loop_pipeline.dot_parser import parse_dot
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
+from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
+from amplifier_module_loop_pipeline.outcome import Outcome, StageStatus
 from amplifier_module_loop_pipeline.validation import (
     Diagnostic,
     ValidationError,
+    lint,
     validate,
     validate_or_raise,
 )
-
 
 # --- Test helpers ---
 
@@ -321,6 +326,424 @@ def test_valid_graph_no_errors():
     diags = validate(g)
     errors = [d for d in diags if d.severity == "ERROR"]
     assert len(errors) == 0
+
+
+# --- handler/tool-command and retry-budget structural errors ---
+
+
+@pytest.mark.parametrize(
+    ("node", "expected_rule"),
+    [
+        (
+            Node(
+                id="RCExhausted",
+                shape="box",
+                prompt="This is not a tool",
+                attrs={"tool_command": "exit 1"},
+            ),
+            "tool_command_requires_tool_handler",
+        ),
+        (
+            Node(
+                id="explicit_non_tool",
+                shape="parallelogram",
+                type="codergen",
+                prompt="This explicit type wins over the shape",
+                attrs={"tool_command": "exit 1"},
+            ),
+            "tool_command_requires_tool_handler",
+        ),
+    ],
+)
+def test_tool_command_on_non_tool_handler_is_error(node: Node, expected_rule: str):
+    """A command cannot silently be ignored by a non-tool handler."""
+    graph = _make_graph(
+        nodes_extra=[node],
+        edges_extra=[
+            Edge(from_node="work", to_node=node.id),
+            Edge(from_node=node.id, to_node="done"),
+        ],
+    )
+
+    diagnostics = validate(graph)
+
+    assert any(
+        diagnostic.rule == expected_rule
+        and diagnostic.severity == "ERROR"
+        and diagnostic.node_id == node.id
+        for diagnostic in diagnostics
+    )
+    with pytest.raises(ValidationError):
+        validate_or_raise(graph)
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        Node(
+            id="tool_by_shape",
+            shape="parallelogram",
+            attrs={"tool_command": "printf ok"},
+        ),
+        Node(
+            id="tool_by_explicit_type",
+            shape="box",
+            type="tool",
+            prompt="Explicit tool handler",
+            attrs={"tool_command": "printf ok"},
+        ),
+        Node(
+            id="tool_by_node_type",
+            shape="box",
+            type="unknown.custom",
+            prompt="Recognized node_type wins after unknown explicit type",
+            attrs={"node_type": "tool", "tool_command": "printf ok"},
+        ),
+        Node(
+            id="unknown_explicit_types_preserve_custom_escape",
+            shape="box",
+            type="unknown.custom",
+            prompt="Both explicit custom names remain extensible",
+            attrs={"node_type": "also.unknown", "tool_command": "custom command"},
+        ),
+    ],
+)
+def test_tool_command_handler_check_accepts_runtime_resolved_tool_nodes(node: Node):
+    """Each runtime precedence path that resolves to tool accepts a command."""
+    graph = _make_graph(
+        nodes_extra=[node],
+        edges_extra=[
+            Edge(from_node="work", to_node=node.id),
+            Edge(from_node=node.id, to_node="done"),
+        ],
+    )
+
+    diagnostics = validate(graph)
+
+    assert not any(
+        diagnostic.rule == "tool_command_requires_tool_handler"
+        and diagnostic.node_id == node.id
+        for diagnostic in diagnostics
+    )
+
+
+def test_explicit_tool_type_wins_over_codergen_node_type():
+    """Runtime and validation both honor type before the node_type alias."""
+    node = Node(
+        id="tool_over_codergen",
+        shape="box",
+        type="tool",
+        prompt="explicit tool owns execution",
+        attrs={"node_type": "codergen", "tool_command": "printf executed"},
+    )
+    graph = _make_graph(
+        nodes_extra=[node],
+        edges_extra=[
+            Edge(from_node="work", to_node=node.id),
+            Edge(from_node=node.id, to_node="done"),
+        ],
+    )
+
+    assert type(HandlerRegistry(HandlerContext()).get(node)).__name__ == "ToolHandler"
+    assert not any(
+        diagnostic.rule == "tool_command_requires_tool_handler"
+        and diagnostic.node_id == node.id
+        for diagnostic in validate(graph)
+    )
+
+
+def test_unknown_type_known_codergen_node_type_rejects_ignored_tool_command():
+    """Validation follows runtime to codergen after an unknown custom type."""
+    node = Node(
+        id="unknown_then_codergen",
+        shape="parallelogram",
+        type="unknown.custom",
+        prompt="codergen owns execution",
+        attrs={"node_type": "codergen", "tool_command": "printf ignored"},
+    )
+    graph = _make_graph(
+        nodes_extra=[node],
+        edges_extra=[
+            Edge(from_node="work", to_node=node.id),
+            Edge(from_node=node.id, to_node="done"),
+        ],
+    )
+
+    assert (
+        type(HandlerRegistry(HandlerContext()).get(node)).__name__ == "CodergenHandler"
+    )
+    diagnostics = validate(graph)
+    assert any(
+        diagnostic.rule == "tool_command_requires_tool_handler"
+        and diagnostic.severity == "ERROR"
+        and diagnostic.node_id == node.id
+        for diagnostic in diagnostics
+    )
+
+
+def test_unknown_type_known_tool_node_type_allows_tool_command():
+    """Validation follows runtime to tool after an unknown custom type."""
+    node = Node(
+        id="unknown_then_tool",
+        shape="box",
+        type="unknown.custom",
+        prompt="tool owns execution",
+        attrs={"node_type": "tool", "tool_command": "printf executed"},
+    )
+    graph = _make_graph(
+        nodes_extra=[node],
+        edges_extra=[
+            Edge(from_node="work", to_node=node.id),
+            Edge(from_node=node.id, to_node="done"),
+        ],
+    )
+
+    assert type(HandlerRegistry(HandlerContext()).get(node)).__name__ == "ToolHandler"
+    diagnostics = validate(graph)
+    assert not any(
+        diagnostic.rule == "tool_command_requires_tool_handler"
+        and diagnostic.node_id == node.id
+        for diagnostic in diagnostics
+    )
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        Node(
+            id="recognized_type_wins",
+            shape="parallelogram",
+            type="codergen",
+            prompt="Recognized explicit type wins",
+            attrs={"node_type": "tool", "tool_command": "printf ignored"},
+        ),
+        Node(
+            id="recognized_node_type_wins",
+            shape="parallelogram",
+            type="unknown.custom",
+            prompt="Recognized node_type wins",
+            attrs={"node_type": "codergen", "tool_command": "printf ignored"},
+        ),
+        Node(
+            id="known_conditional",
+            shape="parallelogram",
+            type="conditional",
+            prompt="Known conditional cannot execute a command",
+            attrs={"tool_command": "printf ignored"},
+        ),
+        Node(
+            id="unknown_type_known_conditional",
+            shape="parallelogram",
+            type="unknown.custom",
+            prompt="Known node_type follows unknown custom type",
+            attrs={"node_type": "conditional", "tool_command": "printf ignored"},
+        ),
+    ],
+)
+def test_tool_command_handler_check_matches_runtime_non_tool_precedence(node: Node):
+    """Definitive recognized built-in non-tool handlers reject commands."""
+    graph = _make_graph(
+        nodes_extra=[node],
+        edges_extra=[
+            Edge(from_node="work", to_node=node.id),
+            Edge(from_node=node.id, to_node="done"),
+        ],
+    )
+
+    diagnostics = validate(graph)
+
+    assert any(
+        diagnostic.rule == "tool_command_requires_tool_handler"
+        and diagnostic.severity == "ERROR"
+        and diagnostic.node_id == node.id
+        for diagnostic in diagnostics
+    )
+
+
+@pytest.mark.asyncio
+async def test_registered_custom_handler_with_tool_command_is_not_blocked(tmp_path):
+    """Unknown explicit types remain available to runtime-registered handlers."""
+
+    class CustomHandler:
+        async def execute(self, node, context, graph, logs_root, *, engine=None):
+            return Outcome(status=StageStatus.SUCCESS, notes="custom executed")
+
+    node = Node(
+        id="custom",
+        shape="box",
+        type="custom.handler",
+        prompt="custom work",
+        attrs={"tool_command": "custom handler owns this attribute"},
+    )
+    graph = _make_graph(
+        nodes_extra=[node],
+        edges_extra=[
+            Edge(from_node="work", to_node=node.id),
+            Edge(from_node=node.id, to_node="done"),
+        ],
+    )
+
+    diagnostics = validate(graph)
+    assert not any(
+        diagnostic.rule == "tool_command_requires_tool_handler"
+        and diagnostic.node_id == node.id
+        for diagnostic in diagnostics
+    )
+
+    registry = HandlerRegistry(HandlerContext())
+    handler = CustomHandler()
+    registry.register("custom.handler", handler)
+
+    assert registry.get(node) is handler
+    outcome = await registry.get(node).execute(
+        node,
+        PipelineContext(),
+        graph,
+        str(tmp_path),
+    )
+    assert outcome.status == StageStatus.SUCCESS
+
+
+@pytest.mark.parametrize(
+    ("node_retries", "graph_default"),
+    [
+        (-1, ""),
+        (
+            None,
+            "graph [default_max_retry=-1]",
+        ),
+        (
+            None,
+            "graph [default_max_retries=-1]",
+        ),
+    ],
+)
+def test_negative_effective_retry_budget_is_error(
+    node_retries: int | None,
+    graph_default: str,
+):
+    """Node and both parsed graph-default spellings reject negative retry budgets."""
+    graph = parse_dot(
+        f"""
+        digraph RetryBudget {{
+            {graph_default}
+            start [shape=Mdiamond]
+            work [shape=box, prompt="work"]
+            exit [shape=Msquare]
+            start -> work -> exit
+        }}
+        """
+    )
+    if node_retries is not None:
+        graph.nodes["work"].max_retries = -1
+
+    diagnostics = validate(graph)
+
+    assert any(
+        diagnostic.rule == "retry_budget_non_negative"
+        and diagnostic.severity == "ERROR"
+        for diagnostic in diagnostics
+    )
+    with pytest.raises(ValidationError):
+        validate_or_raise(graph)
+
+
+def test_zero_and_node_override_retry_budgets_are_valid():
+    """Zero is valid and a non-negative node override wins over a graph default."""
+    graph = _make_graph(graph_attrs={"default_max_retry": 3})
+    graph.nodes["work"].max_retries = 0
+
+    diagnostics = validate(graph)
+
+    assert not any(
+        diagnostic.rule == "retry_budget_non_negative" for diagnostic in diagnostics
+    )
+
+
+@pytest.mark.parametrize("value", [-1, "-1", True, 1.5, "1.5", "invalid"])
+def test_invalid_programmatic_node_retry_values_are_deterministic_errors(value):
+    """Validation rejects unsafe node retry values without raising Python errors."""
+    graph = _make_graph()
+    graph.nodes["work"].max_retries = value
+
+    diagnostics = validate(graph)
+
+    assert any(
+        diagnostic.rule == "retry_budget_non_negative"
+        and diagnostic.severity == "ERROR"
+        and diagnostic.node_id == "work"
+        for diagnostic in diagnostics
+    )
+
+
+@pytest.mark.parametrize("value", [-1, "-1", True, 1.5, "1.5", "invalid"])
+def test_invalid_programmatic_graph_retry_values_are_deterministic_errors(value):
+    """Validation rejects unsafe graph defaults without TypeError or truncation."""
+    graph = _make_graph()
+    graph.default_max_retry = value
+
+    diagnostics = validate(graph)
+
+    assert any(
+        diagnostic.rule == "retry_budget_non_negative"
+        and diagnostic.severity == "ERROR"
+        and not diagnostic.node_id
+        for diagnostic in diagnostics
+    )
+
+
+def test_quoted_integer_node_retry_is_valid():
+    """Programmatic quoted integer node retries remain accepted."""
+    graph = _make_graph()
+    graph.nodes["work"].max_retries = "2"
+
+    diagnostics = validate(graph)
+
+    assert not any(
+        diagnostic.rule == "retry_budget_non_negative" for diagnostic in diagnostics
+    )
+
+
+def test_lint_includes_tool_command_handler_structural_error():
+    """The public lint surface includes structural handler/command errors."""
+    graph = parse_dot(
+        """
+        digraph HandlerMismatch {
+            start [shape=Mdiamond]
+            RCExhausted [shape=box, prompt="not a tool", tool_command="exit 1"]
+            exit [shape=Msquare]
+            start -> RCExhausted -> exit
+        }
+        """
+    )
+
+    assert any(
+        diagnostic.rule == "tool_command_requires_tool_handler"
+        and diagnostic.severity == "ERROR"
+        and diagnostic.node_id == "RCExhausted"
+        for diagnostic in lint(graph)
+    )
+
+
+def test_lint_includes_retry_budget_structural_error():
+    """The public lint surface includes negative retry-budget errors."""
+    graph = parse_dot(
+        """
+        digraph RetryBudget {
+            start [shape=Mdiamond]
+            work [shape=box, prompt="work", max_retries=-1]
+            exit [shape=Msquare]
+            start -> work -> exit
+        }
+        """
+    )
+
+    assert any(
+        diagnostic.rule == "retry_budget_non_negative"
+        and diagnostic.severity == "ERROR"
+        and diagnostic.node_id == "work"
+        for diagnostic in lint(graph)
+    )
 
 
 # --- Diagnostic model ---

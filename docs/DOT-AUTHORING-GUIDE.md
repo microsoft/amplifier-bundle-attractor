@@ -1079,9 +1079,25 @@ change run-time validation behaviour.
 - Errors (ERROR severity) → exit 1 (pipeline will not execute correctly)
 - Warnings only → exit 0 (use `--strict` to treat warnings as errors)
 
-**Spec note:** These lint rules are lint-only — they do not change run-time
-behaviour and require no `specs/EXTENSIONS.md` entry.  They enforce the
-canonical attractor spec's routing semantics statically, at author time.
+Two structural errors are enforced by both run-time `validate()` and `attractor
+lint`:
+
+- **`tool_command_requires_tool_handler`** -- a non-empty `tool_command`
+  requires the effective built-in `tool` handler. Use `shape=parallelogram`,
+  `type=tool`, or `node_type=tool`; do not attach shell commands to a node
+  explicitly handled as `codergen` or another recognized built-in type.
+- **`retry_budget_non_negative`** -- node `max_retries` and graph defaults
+  must be non-negative integers. Both graph aliases,
+  `default_max_retry` and `default_max_retries`, are accepted. Valid forms
+  include `0`, `2`, and quoted integers such as `"2"`. Booleans, negative
+  values, fractions, and malformed strings are rejected, including `true`,
+  `-1`, `1.5`, and `"invalid"`.
+
+**Spec note:** The structural errors above are also run-time validation
+errors. The topology and command-content rules below are lint-only: they do
+not change run-time behaviour and require no `specs/EXTENSIONS.md` entry.
+They enforce the canonical attractor spec's routing semantics statically, at
+author time.
 
 ---
 

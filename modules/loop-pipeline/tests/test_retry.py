@@ -244,6 +244,16 @@ def test_retry_policy_from_node_max_retries():
     assert policy.max_attempts == 4
 
 
+@pytest.mark.parametrize("value", [-1, "-1", True, 1.5, "1.5", "invalid"])
+def test_retry_policy_rejects_the_same_invalid_values_as_validation(value):
+    """Runtime retry coercion cannot reintroduce values structural validation rejects."""
+    node = _make_node()
+    node.max_retries = value
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        RetryPolicy.from_node(node, _make_graph())
+
+
 def test_retry_policy_from_graph_default():
     """Build policy from graph default_max_retry when node has none."""
     node = _make_node(attrs={})

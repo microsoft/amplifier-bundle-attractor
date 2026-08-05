@@ -7,6 +7,7 @@
 - [ ] Live pipeline run exercising changed code path — required when touching `engine.py` or any handler; paste `events.jsonl` analysis or test-run output in the section below
 - [ ] AGENTS.md reviewed; repo-specific gates met
 - [ ] Backward-compat path unchanged (if applicable)
+- [ ] If this PR changes an **observable contract** — dispatch semantics, event contracts, admission/validation behavior, or anything else a pipeline author or downstream consumer could observe — it includes a `specs/EXTENSIONS.md` entry (new or updated), **or** this box is checked with an explicit one-line reason the change doesn't need one (e.g. "internal refactor, no observable change"). This applies identically to maintainer and external contributions.
 - [ ] PR body includes verification evidence, not just "tests pass"
 - [ ] **CI is green before merge — on every path** (auto-merge, manual/UI merge, or agentic/CLI merge). Confirm with `gh pr checks <n>` and look for `CI Gate (all checks passed)` reporting `pass`. `--admin` may bypass the code-owner review requirement only (see `AGENTS.md`) — it must never bypass a red or pending `CI Gate`.
 

@@ -1354,9 +1354,10 @@ cmd > out.log 2>&1
 If you need to see the last N lines, write to a file and read it separately
 from the routing logic.
 
-**Severity:** WARNING — consistent with the TOPO rule family.  The hazard is
-real but static analysis cannot prove the command is a meaningful gate;
-conservative analysis may miss complex cases.
+**Severity:** WARNING — consistent with the WARNING-severity TOPO rules
+(TOPO-002 through TOPO-005; note TOPO-001 is `ERROR`, not this family's
+default).  The hazard is real but static analysis cannot prove the command is
+a meaningful gate; conservative analysis may miss complex cases.
 
 **Suppression:** The lint rule is suppressed when `set -o pipefail` appears as
 an **executable shell statement** in the command (not inside a quoted string).
@@ -1415,7 +1416,8 @@ cmd && printf green || { printf red; exit 1; }
 influence either the exit code or the emitted token?  The hazard shapes
 destroy that influence.  The honest idioms preserve it.
 
-**Severity:** WARNING — consistent with CMD-001 and the TOPO rule family.
+**Severity:** WARNING — consistent with CMD-001 and the WARNING-severity TOPO
+rules (TOPO-002 through TOPO-005; TOPO-001 is `ERROR`).
 
 **What this rule does NOT catch:** sentinels inside `$(...)` substitutions,
 sentinels after non-pipe-masked commands (where `&& echo TOKEN` is the honest

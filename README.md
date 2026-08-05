@@ -387,6 +387,25 @@ design questions, DOT authoring help, or troubleshooting:
 delegate to attractor:attractor-expert
 ```
 
+## Stability & Compatibility
+
+This engine implements StrongDM's [attractor nlspec](https://github.com/strongdm/attractor).
+It ships documented extensions to that spec (see [`specs/EXTENSIONS.md`](specs/EXTENSIONS.md))
+and at least one documented divergence from it (main-loop no-matching-edge hard-fail —
+`specs/EXTENSIONS.md` §33 — where we hard-fail instead of the spec's dead-end-implies-success
+default; see `SPEC_CONFORMANCE.md` ATX-11 for the rationale).
+
+**We do not currently offer semver guarantees or a formal deprecation policy on this repo.**
+Development velocity is high and behavior can change between commits. If you depend on this
+engine, **pin a commit SHA** rather than tracking `@main`.
+
+**Known caveat:** `Outcome.suggested_next_ids` entries must be strings that exactly match a
+target node's `id`. Non-string or mismatched entries currently fail to match during edge
+selection (`edge_selection.py`), silently falling through to the next selection step rather
+than the intended target. If an outcome report seems to route unexpectedly, check the types
+and exact spelling of `suggested_next_ids` first. This is a known issue being addressed; no
+version cutover is implied by that work landing.
+
 ## Architecture
 
 <details>
@@ -500,8 +519,11 @@ Manual end-to-end tests against real LLM providers are in `tests/e2e/`. See
 
 ## Contributing
 
-> [!NOTE]
-> This project is not currently accepting external contributions, but we're actively working toward opening this up. We value community input and look forward to collaborating in the future. For now, feel free to fork and experiment!
+Contributions are welcome. Pull requests are reviewed by the repository's code owners and
+must pass the required `CI Gate (all checks passed)` check before merge (see `AGENTS.md`).
+If your change alters an observable contract — dispatch semantics, event contracts, or
+admission/validation behavior — it needs a `specs/EXTENSIONS.md` entry describing the
+change (the PR template will prompt for this).
 
 Most contributions require you to agree to a
 Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us

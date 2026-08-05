@@ -372,20 +372,44 @@ class PipelineEngine:
                     gate_result.suggested_next_ids
                     and goal_gate_retries < self._MAX_GOAL_GATE_RETRIES
                 ):
-                    retry_node_id = gate_result.suggested_next_ids[0]
-                    goal_gate_retries += 1
-                    logger.info(
-                        "Goal gate unsatisfied, retrying from '%s' (attempt %d)",
-                        retry_node_id,
-                        goal_gate_retries,
+                    # _check_goal_gates() is currently the sole producer of a
+                    # FAIL outcome carrying suggested_next_ids here, and it
+                    # only ever sets a single retry_target already verified
+                    # to be `in self.graph.nodes` (see below). Defended here
+                    # too (coerce + membership check instead of a bare `[0]`
+                    # index into a dict) so a type-mismatched or otherwise
+                    # unresolvable ID degrades to a diagnosed failure instead
+                    # of an uncaught KeyError, matching the same coercion
+                    # policy edge_selection.select_edge applies (see its
+                    # _coerce_suggested_id) rather than a second, divergent
+                    # rule for the same "suggested next ID" concept.
+                    from .edge_selection import _coerce_suggested_id
+
+                    raw_retry_id = gate_result.suggested_next_ids[0]
+                    retry_node_id = _coerce_suggested_id(raw_retry_id)
+                    if retry_node_id is not None and retry_node_id in self.graph.nodes:
+                        goal_gate_retries += 1
+                        logger.info(
+                            "Goal gate unsatisfied, retrying from '%s' (attempt %d)",
+                            retry_node_id,
+                            goal_gate_retries,
+                        )
+                        # CR-3 (R12): Reset per-run state so skip-propagation
+                        # from attempt N does not block the retried nodes in
+                        # attempt N+1.
+                        self.completed_nodes.clear()
+                        self.node_outcomes.clear()
+                        self.failed_outputs.clear()
+                        current_node = self.graph.nodes[retry_node_id]
+                        continue
+
+                    logger.warning(
+                        "Goal gate unsatisfied but the suggested retry ID %r "
+                        "did not resolve to a graph node (available: %r); "
+                        "failing instead of retrying.",
+                        raw_retry_id,
+                        list(self.graph.nodes),
                     )
-                    # CR-3 (R12): Reset per-run state so skip-propagation from
-                    # attempt N does not block the retried nodes in attempt N+1.
-                    self.completed_nodes.clear()
-                    self.node_outcomes.clear()
-                    self.failed_outputs.clear()
-                    current_node = self.graph.nodes[retry_node_id]
-                    continue
 
                 # No retry target or retries exhausted — fail
                 await self._emit_complete(gate_result, pipeline_start_time)
@@ -853,8 +877,8 @@ class PipelineEngine:
                 fail_outcome = self.terminate_pipeline(
                     node_id=current_node.id,
                     upstream_outcome=outcome,
-                    termination_reason=(
-                        f"No matching edge from node '{current_node.id}'"
+                    termination_reason=self._no_matching_edge_reason(
+                        current_node.id, outcome
                     ),
                 )
                 await self._emit(
@@ -1451,6 +1475,27 @@ class PipelineEngine:
         return best
 
     # -- Failure routing helpers ----------------------------------------------
+
+    def _no_matching_edge_reason(self, node_id: str, outcome: Outcome) -> str:
+        """Build a diagnostic 'no matching edge' message that traces back.
+
+        The bare "No matching edge from node 'X'" message (unchanged as the
+        prefix, for backward compatibility with existing substring checks)
+        gives no clue why routing failed. When the outcome carried
+        suggested_next_ids that didn't resolve to any edge -- e.g. a
+        genuinely wrong/hallucinated ID, or one edge_selection's coercion
+        policy legitimately rejected (see edge_selection._coerce_suggested_id)
+        -- name both the suggestion and the edges that actually existed, so
+        the real cause is traceable instead of a dead end.
+        """
+        reason = f"No matching edge from node '{node_id}'"
+        if outcome.suggested_next_ids:
+            available = [e.to_node for e in self.graph.outgoing_edges(node_id)]
+            reason += (
+                f" (suggested_next_ids={outcome.suggested_next_ids!r} matched "
+                f"none of the outgoing edges; available targets={available!r})"
+            )
+        return reason
 
     def _resolve_failure_retry_target(self, node: Node) -> Node | None:
         """Resolve a retry target when no edge matches after node execution.

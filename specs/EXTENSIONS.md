@@ -1859,3 +1859,103 @@ successor; the engine ran both).  With this restoration the engine's edge select
 spec letter, and the banner is true again for edge selection.  Graphs that deliberately relied
 on the retired dialect must express parallelism explicitly (`shape=component` or `shape=parallel`,
 extension #18).
+
+---
+
+## 35. Spawned-Agent Outcome Transport and `report_outcome` Ordering Barrier
+
+> **depends-on:** §25
+>
+> **upstream action:** not applicable — spawned agent outcome transport is purely implementer-level semantics within the canonical spawn()/execute(...) -> str contract. This extension adds metadata transport to an already-implemented spawn boundary without changing the documented return contract or diverging from the canonical spec. No spec change is needed.
+
+**What:** The `loop-agent` orchestrator transports a spawned child's semantic
+`report_outcome` verdict through the canonical `orchestrator:complete` event without changing the
+orchestrator's `execute(...) -> str` return contract.
+
+### Completion envelope
+
+Every `AgentOrchestrator.execute()` invocation emits exactly one `orchestrator:complete` event,
+including initialization failures and raised exceptions. Its payload has two deliberately
+separate layers:
+
+```json
+{
+  "orchestrator": "loop-agent",
+  "status": "success | incomplete | cancelled",
+  "turn_count": 2,
+  "metadata": {
+    "report_outcome": {
+      "status": "success | partial_success | retry | fail",
+      "preferred_label": "optional",
+      "suggested_next_ids": ["optional"],
+      "context_updates": {"optional": "value"},
+      "notes": "optional",
+      "failure_reason": "optional"
+    }
+  }
+}
+```
+
+Top-level `status` is **only lifecycle state**:
+
+- `success` — natural completion
+- `incomplete` — max-turn, tool-round, context, or awaiting-input limit; initialization/provider/
+  tool-loop exception (event is emitted before the original exception is re-raised)
+- `cancelled` — cooperative or task cancellation
+
+The semantic node verdict lives only in `metadata.report_outcome`; it does not redefine lifecycle
+status. `metadata` is `{}` when no successful report belongs to that invocation, and interrupted
+invocations do not promote a partial report. The mounted report tool's `last_outcome` is reset
+before each invocation so state cannot leak between calls. `turn_count` is the per-invocation
+number of attempted provider calls, computed from the cumulative provider-call counter.
+
+### Ordering barrier
+
+Ordinary assistant tool-call batches retain configured parallel execution. A batch containing
+**at least one** `report_outcome` call is the exception: every call in that batch executes
+sequentially in the provider-declared order. This barrier is required because `last_outcome` is a
+single semantic completion register. For multiple valid reports, the last successful declared
+report wins. A later report that fails argument validation or execution does not erase the prior
+valid report. After the complete declared batch finishes, any successful `report_outcome` call
+terminates the current outer `execute()` invocation without another provider call or automatic
+follow-up processing. Already-queued follow-ups remain queued; they are not cleared or consumed by
+the terminal report path and may be processed by a later explicit `execute()` invocation.
+
+### Precedence Policy
+
+A child process may emit both an explicit structured verdict (via `report_outcome`) and trailing
+prose in its response. **The precedence rule is explicit: structured `report_outcome` status
+supersedes contradicting trailing prose.** A spawned agent that returns `status: fail` in its
+report-outcome metadata but then writes "all done, mission accomplished" as closing text is
+recorded as FAIL; the documented verdict takes precedence over cheerful prose. This mirrors the
+behavior already implemented in the direct tool-loop path where tool-command `report_outcome`
+verdicts were always the canonical judgment. The spawn path now offers explicit verdict transport
+to upstream callers who elect to consume it, placing both paths on equal footing for verdict
+reliability.
+
+### Compatibility
+
+This is additive at the spawn boundary:
+
+- `execute()` still returns the original final string unchanged.
+- Consumers that ignore `orchestrator:complete.metadata` continue to see the documented lifecycle
+  envelope.
+- Spawn consumers may opt into explicit verdict transport through
+  `metadata.report_outcome`; status-only spawn results remain non-explicit.
+- Parallel execution is unchanged for batches without `report_outcome`.
+
+### Implementation locations
+
+- `modules/loop-agent/amplifier_module_loop_agent/__init__.py` —
+  per-invocation reset, exactly-one completion emission, lifecycle classification, provider-call
+  `turn_count`, and `metadata.report_outcome` transport
+- `modules/loop-agent/amplifier_module_loop_agent/agent_session.py` —
+  provider-call counting, invocation termination reason, and the `report_outcome` batch ordering
+  barrier
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py` —
+  spawn-result precedence, semantic `Outcome` reconstruction, response/session preservation, and
+  full-fidelity transcript continuity
+- `modules/loop-agent/tests/test_orchestrator_completion.py`,
+  `modules/loop-agent/tests/test_parallel_gating.py`, and
+  `modules/loop-pipeline/tests/test_backend_fidelity.py` — contract tests
+

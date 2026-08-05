@@ -8,6 +8,7 @@
 - [ ] AGENTS.md reviewed; repo-specific gates met
 - [ ] Backward-compat path unchanged (if applicable)
 - [ ] PR body includes verification evidence, not just "tests pass"
+- [ ] **CI is green before merge — on every path** (auto-merge, manual/UI merge, or agentic/CLI merge). Confirm with `gh pr checks <n>` and look for `CI Gate (all checks passed)` reporting `pass`. `--admin` may bypass the code-owner review requirement only (see `AGENTS.md`) — it must never bypass a red or pending `CI Gate`.
 
 ## Verification evidence
 <!-- Paste the relevant slice of events.jsonl, test-run output, or other proof here. For engine/handler changes, include enough of the event stream to demonstrate the changed path actually fired. -->

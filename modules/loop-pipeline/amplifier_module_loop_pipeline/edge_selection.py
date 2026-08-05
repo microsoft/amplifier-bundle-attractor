@@ -14,12 +14,15 @@ Spec coverage: ESEL-001–010, Section 3.3.
 
 from __future__ import annotations
 
+import logging
 import re
 
 from .conditions import evaluate_condition
 from .context import PipelineContext
 from .graph import Edge, Graph
 from .outcome import Outcome, StageStatus
+
+logger = logging.getLogger(__name__)
 
 
 def select_edge(
@@ -56,8 +59,20 @@ def select_edge(
 
     # Step 3: Suggested next IDs
     # Spec §3.3 Step 3: only UNCONDITIONAL edges are eligible (same rationale).
+    #
+    # Coercion policy (node IDs are strings by contract, spec DOT-001..017):
+    # a suggested ID that arrives as a bare int/float (e.g. an LLM emitting
+    # `"suggested_next_ids": [3]` instead of `["3"]` in JSON) is normalized to
+    # its canonical string form before comparison -- `_coerce_suggested_id`
+    # below. Genuinely malformed shapes (dict, list, bool, None, ...) are
+    # REJECTED loudly (a warning naming the offending value) rather than
+    # silently coerced into something plausible; they are simply skipped so
+    # one bad entry in the list doesn't prevent the others from being tried.
     if outcome.suggested_next_ids:
-        for suggested_id in outcome.suggested_next_ids:
+        for raw_id in outcome.suggested_next_ids:
+            suggested_id = _coerce_suggested_id(raw_id)
+            if suggested_id is None:
+                continue
             for e in edges:
                 if not e.condition and e.to_node == suggested_id:
                     return e
@@ -147,6 +162,52 @@ def select_all_matching_edges(
 def _best_by_weight_then_lexical(edges: list[Edge]) -> Edge:
     """Sort by weight descending, then target node ID ascending."""
     return sorted(edges, key=lambda e: (-e.weight, e.to_node))[0]
+
+
+def _coerce_suggested_id(value: object) -> str | None:
+    """Normalize one ``suggested_next_ids`` entry to a node-ID string.
+
+    Node IDs are strings by contract (spec DOT-001..017). A ``suggested_next_ids``
+    entry that reaches this far may have travelled through raw JSON (from a
+    ``report_outcome`` tool call, a pure-JSON verdict, or an embedded-verdict
+    recovery -- see ``backend.py``) where an LLM emitted a bare number instead
+    of a quoted string, e.g. ``[3]`` instead of ``["3"]``. Since ``"3" == 3``
+    is always ``False`` in Python, comparing raw values would silently defeat
+    this routing step for every such entry.
+
+    Policy:
+      - ``str`` -- returned as-is (the expected, contractual shape).
+      - ``int`` (excluding ``bool``, which is a ``int`` subclass in Python but
+        never a sane node-ID representation) -- coerced to its canonical
+        string form, e.g. ``3 -> "3"``. This is the one recoverable mismatch:
+        a plausible, unambiguous stand-in for a quoted ID.
+      - Anything else (``bool``, ``float``, ``dict``, ``list``, ``None``, ...)
+        is a genuinely malformed shape, not a type slip. It is REJECTED
+        loudly -- logged as a warning naming the offending value and its
+        type -- rather than silently coerced into something plausible (a
+        float's string form is ambiguous, e.g. ``3.0`` vs node ``"3"`` vs
+        node ``"3.0"``; nested/compound shapes have no sane string form at
+        all). Returns ``None`` so the caller skips this entry and tries the
+        next one in the list rather than aborting the whole routing decision.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        logger.warning(
+            "suggested_next_ids entry %r is a bool, not a valid node-ID "
+            "representation; skipping this entry.",
+            value,
+        )
+        return None
+    if isinstance(value, int):
+        return str(value)
+    logger.warning(
+        "suggested_next_ids entry %r (type %s) is not a string or int and "
+        "cannot be safely coerced to a node ID; skipping this entry.",
+        value,
+        type(value).__name__,
+    )
+    return None
 
 
 # Accelerator key patterns: "[Y] Label", "Y) Label", "Y - Label"

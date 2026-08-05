@@ -75,6 +75,18 @@ If you need to describe *where* to run a pipeline, say "any attractor-compatible
 "any Amplifier session with the loop-pipeline module loaded" — not the name of a specific
 downstream resolver.
 
+## Merge discipline: CI Gate is required, never bypass it
+
+Branch protection on `main` requires exactly one status check: **`CI Gate (all checks passed)`** (the aggregate job in `.github/workflows/ci.yml` — fails if the unit-test matrix, live-graph gate, or type-check is failure, cancelled, or skipped). Before running `gh pr merge` — auto, manual/UI, or `--admin` — check it:
+
+    gh pr checks <n>
+
+Confirm `CI Gate (all checks passed)` reports `pass`. If it's still pending, use `--auto` (merges once it's green); if it's red, fix it — don't merge past it.
+
+**`--admin` bypasses the code-owner review requirement only.** That's a legitimate, routine use here: branch protection requires 1 code-owner approval, and a solo/sole-code-owner author cannot approve their own PR — `--admin` is how that PR still ships. **`--admin` must never be used to bypass a red or pending `CI Gate`.** GitHub does not technically stop you from doing so today (`enforce_admins` is off) — this is a discipline rule backed by a required check, not an unbypassable technical control, so it holds regardless of whether `enforce_admins` ever gets flipped on.
+
+This rule exists because this repo previously shipped a fake type-check test (`skipif`'d away on every CI runner, so it always "passed") and ran the rest of CI as advisory-only — no required status check at all. On `CI Gate`'s first run as a required check, it caught a real red on `main` (a flaky timing assertion in `loop-agent`'s parallel-gating tests). Don't reopen either gap: don't let a check go back to advisory, and don't let `--admin` become the way around it.
+
 ## PR checklist
 
 `.github/PULL_REQUEST_TEMPLATE.md` will appear automatically when you open a PR. Honor it. The boxes are not decorative.

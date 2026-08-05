@@ -1335,6 +1335,169 @@ statically checkable warning that a loop may be re-flipping rather than descendi
 
 ---
 
+## 30. Ledger Entry for PR #120's Observability Trio: `attempt_count`, Generalized `failed_step`, `cycle_index`, `emit_node_events`, Exception-Driven `stage_retrying`, and `_branch_id` Scoping
+
+> **This is a ledger entry, not new work.** PR #120 (commit `fb9fbe5`, "epic #371 observability
+> trio") shipped the contract additions described below without a corresponding entry in this
+> file, in violation of `PRINCIPLES.md`'s requirement that "new event contracts \u2026 [require you to]
+> add or update a spec extension document in the same PR that lands the implementation.
+> Implementation without a corresponding spec note is debt." The gap was found in an independent
+> post-merge review; none of the behavior below is new, and nothing is broken \u2014 this entry pays
+> down the documentation debt for work that already shipped. Credit for the implementation
+> belongs to PR #120 (Ken Chau); this entry is written after the fact, by a reviewer, to close
+> the gap the original PR left open.
+
+### What shipped
+
+**1. `Outcome.attempt_count: int | None`** \u2014 the real, 1-indexed attempt count consumed by the
+retry ladder. `None` when the outcome never entered the ladder (e.g. the engine's `must_write=`
+final backstop, or subgraph/branch execution, which has no retry policy of its own).
+
+- `outcome.py:97` \u2014 field declaration; docstring at `outcome.py:89-96` states the `None` case
+  precisely and notes SKIPPED outcomes ARE included (they pass through the ladder without
+  looping within it).
+- `retry.py` \u2014 populated on every return path of `execute_with_retry()`: the exception-FAIL
+  paths (`retry.py:238`, `:263`), the must_write-clean success path (`:277`), the
+  must_write-exhaustion FAIL (`:307`), the plain-FAIL return (`:312`), the SKIPPED return
+  (`:329`), the manufactured PARTIAL_SUCCESS on retries-exhausted (`:369`), and the manufactured
+  FAIL on retries-exhausted (`:387`).
+- `engine.py:742` \u2014 surfaced on the `pipeline:node_complete` event as `"attempt": outcome.attempt_count or 1`
+  (falls back to `1` for outcomes that never entered the ladder, e.g. the `requires=` skip
+  backstop). This is distinct from the pre-existing `"attempt": 1` at `engine.py:510`
+  emitted on `pipeline:node_start`, which is a within-handler retry counter kept for backward
+  compatibility \u2014 the two fields are not the same signal and consumers should not conflate them.
+- `engine.py:615-700` \u2014 the two `Outcome` reconstruction sites (`auto_status` promotion and
+  `continue_on_fail` override) carry `attempt_count` (and `failed_step`) forward field-by-field
+  instead of dropping them; the reconstructed `Outcome` otherwise resets `is_explicit` to its
+  default so a masked/overridden result cannot silently satisfy a `goal_gate=true` node's gate
+  (see \u00a725).
+
+**2. `failed_step` generalized from `ToolHandler`-only to `CodergenHandler`.** Previously the
+structured `failed_step` payload (\u00a725's backward-compat inventory footnote; originally "Issue 10
+/ analog of WS-4 Sub-fix C") was populated only by `handlers/tool.py`. `handlers/codergen.py` now
+populates it too, on both its failure paths, with an LLM-appropriate shape:
+
+```
+{"prompt": <first 500 chars>, "response_tail": <last 2000 chars, "" not None>, "error": <str>}
+```
+
+capped at 8192 total bytes (`_TOTAL_CAP_BYTES`, `codergen.py:268`); when the encoded payload
+exceeds the cap, `response_tail` is dropped first and replaced with
+`"verification_gap": {"log_filtered": True}` (`codergen.py:299-302`), mirroring `ToolHandler`'s
+truncation-marker convention. `response_tail` is always a string, never `None`, matching
+`ToolHandler`'s `stdout_tail`/`stderr_tail` convention (`outcome.py:82-83`).
+
+- `handlers/codergen.py:163-172` \u2014 exception path: `_build_failed_step(prompt=prompt,
+  response_text=None, error=str(e))`.
+- `handlers/codergen.py:206-215` \u2014 goal-gate verdict-recovery path: when `_parse_outcome`
+  returns FAIL and no `failed_step` is already set, attaches the same shape with the actual
+  `response_text` captured.
+- `handlers/codergen.py:271-304` \u2014 `_build_failed_step()`, the shared builder and truncation
+  logic for both call sites.
+
+**3. `cycle_index` (0-based)** on manager-loop and pipeline subgraph-completion records, giving
+both handlers a common field name for "which repetition" without requiring a consumer to know
+each handler's own on-disk numbering convention:
+
+- `handlers/manager_loop.py:417-427` \u2014 `_subgraph_runs` entries gain `"cycle_index": cycle - 1`
+  (the handler's own `cycle` counter is 1-based; the on-disk `{manager_node_id}_cycle_{cycle}`
+  naming is unchanged).
+- `handlers/pipeline.py:315-323` \u2014 the analogous subgraph-completion record gains
+  `"cycle_index": _inv`, already 0-based on that path; on-disk `subgraph_{node.id}` /
+  `subgraph_{node.id}__iter{N}` naming is unchanged.
+
+**4. `run_subgraph(..., emit_node_events: bool = True)`** \u2014 a new public keyword-only parameter
+on `PipelineEngine.run_subgraph()` (`engine.py:933-938`). Previously `run_subgraph()` emitted no
+`pipeline:node_start` / `pipeline:node_complete` events at all, leaving `ManagerLoopHandler`'s
+in-graph subgraph path (and any other direct caller) entirely dark. `run_subgraph()` now emits
+both events for every node it executes, by default. `ParallelHandler` passes
+`emit_node_events=False` for its branch engines (`handlers/parallel.py:169,175`) because it
+already emits the equivalent events itself, tagged `via_parallel=True`; without the opt-out,
+branch nodes would double-count in the timeline.
+
+This parameter replaces a private `_suppress_subgraph_node_events` setattr flag from an earlier
+iteration of the same change \u2014 the setattr approach required external code to mutate engine
+state and save/restore it around a shared instance. The keyword-only parameter is the one
+behavior-affecting piece of this ledger entry: **the default changed from "emits nothing" to
+"emits by default,"** which is new signal for any consumer already listening to
+`pipeline:node_start`/`pipeline:node_complete` on an engine whose graph contains subgraph or
+manager-loop nodes. Existing callers passing only `(start_node_id, context=...)` are unaffected
+by the parameter's addition, and the wire shape of the emitted events matches the top-level
+`run()` loop's node events (retry-ladder-only fields such as `attempt` fall back to `1`, since
+`run_subgraph()` has no retry policy of its own).
+
+**5. `pipeline:stage_retrying` on exception-driven retries.** Before this change, `retry.py` only
+emitted `PIPELINE_STAGE_RETRYING` for a RETRY-status outcome or a `must_write=` violation
+(`retry.py:290-297`, `:342-349`); an exception raised by the handler itself retried silently.
+`retry.py:246-256` adds the same emission on the exception path, with `"reason":
+f"exception:{type(e).__name__}"` so a consumer can distinguish an exception-driven retry from a
+status-driven one. The event only fires when `attempt < policy.max_attempts` (i.e. another
+attempt will actually happen) \u2014 an exhausted exception path returns FAIL directly, as before.
+
+**6. `_branch_id` scoping conventions** for child-engine event disambiguation, used consistently
+by both nested-execution handlers:
+
+- `handlers/manager_loop.py:379-382` \u2014 `cycle:{manager_node_id}:{cycle}`, prefixed with the
+  parent's own `_branch_id` (if any) via `>` so nesting under a parallel branch stays
+  disambiguated.
+- `handlers/pipeline.py:258-262` \u2014 `subgraph:{node.id}`, same parent-prefixing convention.
+
+Both sites set `child_engine._branch_id` directly (an attribute read by `_emit`, not a new public
+API) rather than threading a new constructor parameter through; this is consistent with how the
+existing `ParallelHandler` branch tagging already worked and does not change any wire shape by
+itself \u2014 it only prevents concurrent child-engine events (folder subgraphs under parallel
+fan-out, nested manager-loop cycles) from being ambiguous about their source.
+
+### Compatibility
+
+**Additive on the wire.** No existing `status.json` / `pipeline:*` event field was removed or
+renamed. `Outcome.attempt_count` is a new dataclass field with a `None` default; existing
+`Outcome(...)` call sites that do not pass it are unaffected. `"attempt"` on
+`pipeline:node_complete`, `"cycle_index"` on the two subgraph-completion records, and the
+generalized `failed_step` on `CodergenHandler` failures are all new keys in existing dict
+payloads \u2014 a consumer that does not read them sees no change. `pipeline:stage_retrying` on
+exception-driven retries is a new *occasion* to emit an existing event with its existing shape,
+not a new field.
+
+**One behavior-affecting change: `run_subgraph()`'s default.** Everything else in this entry is
+purely additive (new fields on outcomes/events a consumer must opt into reading). The
+`emit_node_events` default is different in kind: it changes what a *silent* method now does by
+default \u2014 emitting `pipeline:node_start`/`pipeline:node_complete` for every subgraph node where
+it previously emitted nothing. A consumer that hooks pipeline events on an engine driving a graph
+with subgraph or manager-loop nodes will now see node events for that nested execution that it
+did not see before. Any direct caller of `run_subgraph()` that needs the old silent behavior
+should pass `emit_node_events=False` explicitly, as `ParallelHandler` does for its branch
+engines.
+
+### Implementation locations
+
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/outcome.py` \u2014 `attempt_count` field
+  (line 97).
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/retry.py` \u2014 `attempt_count` set on every
+  return path; exception-driven `pipeline:stage_retrying` emission.
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` \u2014 `"attempt"` on
+  `pipeline:node_complete` (main loop and `run_subgraph()`); `attempt_count`/`failed_step`
+  carried through the `auto_status` and `continue_on_fail` `Outcome` reconstructions;
+  `run_subgraph(..., emit_node_events: bool = True)` and its node-event emission.
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/codergen.py` \u2014 generalized
+  `failed_step` (`_build_failed_step()` and its two call sites).
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/manager_loop.py` \u2014
+  `hooks=`/`cancel_event=` wiring onto the child `PipelineEngine`; `cycle_index` on
+  `_subgraph_runs` entries; `_branch_id` scoping (`cycle:{manager_node_id}:{cycle}`).
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/pipeline.py` \u2014 `cycle_index` on
+  the subgraph-completion record; `_branch_id` scoping (`subgraph:{node.id}`).
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py` \u2014
+  `emit_node_events=False` on branch-engine `run_subgraph()` calls (avoids double-counting
+  branch node events already emitted with `via_parallel=True`).
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/pipeline_events.py` \u2014
+  `PIPELINE_STAGE_RETRYING` (pre-existing constant; new emission occasion only).
+- Tests exercising this surface (added/extended in PR #120, unchanged by this entry):
+  `modules/loop-pipeline/tests/test_retry.py`, `test_subgraph_runner.py`,
+  `test_manager_loop.py`, `test_parallel_branch_observability.py`,
+  `test_p8_continue_on_fail.py`.
+
+---
+
 ## Conformance Restoration Note (T0-4)
 
 **What was retired:** An unledgered dialect where non-`shape=parallel`, non-component nodes

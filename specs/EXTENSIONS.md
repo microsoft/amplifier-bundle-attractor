@@ -12,6 +12,36 @@ before assuming it is a bug.
 
 ---
 
+## Entry Format
+
+Every entry below carries (or, for older entries, has been backfilled with) two mandatory
+fields declared in the entry's banner blockquote (or immediately under the heading, for an
+entry with no banner):
+
+- **`depends-on: §NN`** (or `depends-on: none`) — the section number of any other entry in
+  this file that the current one builds on. This file is a flat chronological list with no
+  built-in dependency tracking; `depends-on` makes a stacked extension traceable to its base
+  so a reader (or a future author) can see at a glance that entry N assumes entry M's
+  behavior. An extension that depends on another entry which is itself an undecided or
+  deferred divergence must say so here — don't let a later extension quietly stack on top of
+  an open question for months without anyone noticing.
+- **`upstream action:`** — **required whenever the entry's banner states the behavior
+  DIVERGES from canonical spec** (not required for pure additions to spec-silent areas).
+  The value must be one of:
+  - a real link to the upstream PR or issue proposing the change at
+    `strongdm/attractor` (e.g. `https://github.com/strongdm/attractor/pull/NN` or
+    `.../issues/NN`), or
+  - `deferred, reason: <one-line reason>, review-by: <YYYY-MM-DD>` — a concrete calendar
+    date the deferral will be revisited, not a placeholder.
+
+  **A non-date value for `review-by` ("eventually", "TBD", "soon", "when we get to it") is
+  not a permitted value.** Prose promising an upstream proposal with no date and no link is
+  how a divergence sits unreviewed for months; a date makes it someone's job on a specific
+  day. When a `review-by` date passes without the proposal being filed, the entry must be
+  revisited: either file it, or replace the date with a fresh one and a fresh reason.
+
+---
+
 ## 1. BareValue Grammar Production
 
 **What:** The value grammar accepts unquoted bare identifiers in addition to quoted strings.
@@ -590,6 +620,14 @@ this extension documents the behavior here.
 > `CodergenHandler`) returns `Outcome(status=SUCCESS, notes="Stage completed: …")` unconditionally
 > for any non-empty string response. This extension changes that behavior for `goal_gate=true`
 > nodes. See walk-upstream note in `PRINCIPLES.md`.
+>
+> **depends-on:** none
+>
+> **upstream action:** deferred, reason: the recommended upstream change (a `goal_gate` check
+> in §4.5's `CodergenHandler` before the unconditional SUCCESS fallback) is straightforward to
+> state, but we want the backward-compat inventory below to stay settled across at least one
+> more consuming release before asking upstream to adopt a fail-closed default that every
+> nlspec implementation would then inherit, review-by: 2026-09-05
 
 ### Incident motivation
 
@@ -1229,6 +1267,14 @@ deferral note.
 > feedback-accumulation vocabulary. This extension should be proposed upstream: the mathematical
 > heart of the attractor (retry-with-accumulated-critique is descent, not re-flip) is a spec-level
 > claim that deserves a spec-level mechanism. Until then, this extension documents the behavior here.
+>
+> **depends-on:** none
+>
+> **upstream action:** deferred, reason: this is additive to a spec-silent area rather than a
+> divergence, but it is exactly the kind of shipped-ahead-of-upstream mechanism this repo commits
+> to proposing back; we want at least one more consuming pipeline generation beyond
+> `convergence-factory.dot` before writing spec language, so the proposal reflects a proven shape
+> rather than a speculative one, review-by: 2026-09-05
 
 **What:** A node may declare `feedback_from="<critic_node_id>"` to establish an engine-enforced
 feedback accumulation contract. On every `loop_restart` edge traversal, the engine:
@@ -1495,6 +1541,215 @@ engines.
   `modules/loop-pipeline/tests/test_retry.py`, `test_subgraph_runner.py`,
   `test_manager_loop.py`, `test_parallel_branch_observability.py`,
   `test_p8_continue_on_fail.py`.
+
+---
+
+## 31. Ledger Entry for PR #134: Retry-Budget Validation (Conformance Restoration) and
+Tool-Command/Handler-Mismatch Rejection (Stricter-Than-Spec Admission)
+
+> **This entry is a ledger entry for already-merged work, not new work.** PR #134
+> (commit `d792807`, "fix: validate DOT retry budgets", @robotdad) shipped two `validate()`-time
+> structural checks without a corresponding entry in this file. Credit for the implementation
+> belongs to the PR's author; this entry is written after the fact to close the ledger gap and
+> to classify each half of the change honestly — they are not the same kind of change.
+>
+> **depends-on:** §2, §3 (this entry validates the exact attributes those extensions define:
+> `default_max_retries`/`default_max_retry` and node-level `max_retries` inheritance)
+>
+> **upstream action:** not applicable to the retry-parsing half (conformance restoration, see
+> below — canonical spec already requires this). Not applicable to the handler-mismatch half
+> either: it is a strictly local admission-time narrowing that refuses a subset of graphs the
+> spec would silently admit; it does not ask the spec to change, so there is nothing to propose
+> upstream.
+
+**What shipped:**
+
+1. **`retry_budget_non_negative` — a conformance restoration.** The canonical spec declares
+   both the graph-level default and the node-level override as typed `Integer` attributes:
+   `default_max_retries` (`attractor-spec.md:139`, also `:1993`) and `max_retries`
+   (`attractor-spec.md:152`, also `:2010`). Before this PR, the DOT parser silently coerced
+   malformed values (`int(val)` truncated fractions like `1.5`→`1`, accepted `True` as `1` since
+   Python's `int(True) == 1`, and raised an unhandled `ValueError`/`TypeError` on non-numeric
+   strings instead of producing a diagnostic). `_parse_non_negative_retry_count()`
+   (`retry.py`) and the new `_check_retry_budgets()` validation rule (`validation.py`) now reject
+   negative values, booleans, fractions, and unparseable strings at `validate()` time with a
+   named `ERROR` diagnostic, for both the node attribute and both graph-level aliases
+   (`default_max_retry` / `default_max_retries`). **This is a restoration, not an extension:**
+   the spec already declares these attributes as `Integer`; the implementation previously
+   accepted values the spec's own type never permitted, and silently mis-executed rather than
+   diagnosing them. No spec change is needed and no `upstream action` applies.
+
+2. **`tool_command_requires_tool_handler` — a stricter-than-spec admission rule.** Canonical
+   spec §4.5 (`CodergenHandler`, `attractor-spec.md:656-705`) never reads or references the
+   `tool_command` attribute at all; the spec is silent on it for a codergen-resolved node, which
+   means a spec-conformant `CodergenHandler` simply ignores a `tool_command` attribute sitting on
+   a node it handles — the spec permits (by omission) a graph where `tool_command` is present but
+   inert. This PR's `_check_tool_command_handler()` (`validation.py`) makes that shape a
+   validation `ERROR`: a non-empty `tool_command` on a node whose *effective* handler resolves to
+   a recognized non-tool built-in (codergen, conditional, start, exit, …) is now rejected outright,
+   not silently ignored. **This is a real narrowing, plainly stated:** we now refuse to execute a
+   graph the canonical spec would admit and run (just with the attribute quietly doing nothing).
+   Unrecognized/custom `type=`/`node_type=` values are deliberately exempted (`_effective_handler_type()`
+   returns `None` for any unknown explicit type), preserving the custom-handler extension point —
+   the rule only fires when the *resolved* handler is a recognized non-tool built-in, never for an
+   unregistered extension type the runtime hasn't seen yet.
+
+**Why this framing matters:** conflating the two would either overstate the retry-parsing fix
+as a behavior change requiring upstream sign-off (it doesn't — the spec's own `Integer` type
+already prohibited the values now rejected) or understate the handler-mismatch rule as "just
+tightening validation" without naming that it refuses spec-legal graphs. Recording both
+correctly is the point of this entry.
+
+**Compatibility:** The retry-parsing restoration is backward-compatible for every graph that
+was already supplying spec-conformant integer retry values; only malformed values that were
+previously mis-executed (truncated, coerced, or silently defaulted via an uncaught exception
+path) now produce a clear diagnostic instead. The handler-mismatch rule is a **breaking**
+narrowing for the specific, narrow case of a `tool_command` attribute present on a node
+resolving to a recognized non-tool handler — such a graph now fails `validate()` where it
+previously ran with the attribute silently inert.
+
+**Implementation locations:**
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/dot_parser.py: _set_graph_attr()` —
+  preserves the raw parsed graph-level retry default instead of coercing it at parse time
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/retry.py: _parse_non_negative_retry_count()` —
+  the shared non-negative-integer parser (used by both the runtime `RetryPolicy` and validation)
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py: _check_retry_budgets()`,
+  `_check_tool_command_handler()`, `_effective_handler_type()`
+- `docs/DOT-AUTHORING-GUIDE.md` — documents both structural errors under "Static Lint Rules"
+- Tests: `modules/loop-pipeline/tests/test_dot_parser.py`, `test_retry.py`, `test_validation.py`
+
+---
+
+## 32. Ledger Entry for PR #106: `attractor lint` as a Separate Entry Point (§7.4)
+
+> **This entry is a ledger entry for already-merged work, not new work.** PR #106 ("attractor
+> lint — five topological basin-lint rules + CLI") shipped claiming no `specs/EXTENSIONS.md`
+> entry was needed. An independent post-merge audit judged that call "arguable, and I'd add
+> one" — the discriminator for whether an entry is owed is the **entry point** a change lands
+> on (advisory `lint()` vs. admission-gating `validate()`/`validate_or_raise()`), not the
+> severity of the findings it produces, and a separate advisory entry point is itself a fact
+> about the implementation worth recording even though it widens nothing. This entry pays that
+> down. Credit for the implementation belongs to PR #106; this entry is written after the fact.
+>
+> **depends-on:** none
+>
+> **upstream action:** not applicable — canonical spec §7.4 explicitly permits custom/additional
+> lint rules as an extension point (`extra_rules` parameter on `validate()`; see §7.3-7.4 of the
+> canonical spec), and `lint()` composes exactly that permitted mechanism. `validate_or_raise()`
+> (the admission-gating entry point) is untouched by this change. Nothing here diverges from or
+> narrows the spec, so there is no upstream ask.
+
+**What shipped:** A new `lint()` public entry point (`validation.py`) distinct from
+`validate()`/`validate_or_raise()`, plus a CLI subcommand (`attractor lint <file.dot>`) that runs
+it. `lint()` runs everything `validate()` runs (LINT-001–018, the structural rules, including the
+two admission-gating rules from §31 above) **plus** five additional topological ("basin-lint")
+rules that reason about cycle structure and handler semantics rather than per-attribute syntax:
+
+- **TOPO-001** (`ERROR`) — dead conditional edge out of a `diamond` (`ConditionalHandler`) node:
+  `outcome!=success` / `outcome=fail` conditions on an edge out of a diamond can never fire,
+  because `ConditionalHandler` always returns `SUCCESS` unconditionally and `FAIL` is fail-fast
+  (never reaches a diamond via a plain edge). This was the root cause of 8 shipped examples
+  carrying dead corrective edges for months before this rule existed.
+- **TOPO-002** (`WARNING`) — ambiguous multi-match on a tool node (stale `tool.last_line` +
+  `outcome=fail` both matching on a retry visit).
+- **TOPO-003** (`WARNING`) — acyclic graph (no corrective cycle at all); flags a candidate for
+  "this should have been a recipe, not an attractor," while explicitly allowing deliberate
+  one-pass pipelines.
+- **TOPO-004** (`WARNING`) — a cycle (SCC) with no explicitly-gated exit edge.
+- **TOPO-005** (`WARNING`) — a cycle whose continuation/exit rests solely on LLM say-so, with no
+  deterministic (tool or human-gate) evidence gate on the cycle.
+
+**Why a separate entry point, not folded into `validate()`:** the five TOPO rules are
+judgment calls about pipeline *design quality* (is this graph shaped like a converging
+attractor?), not about whether the graph is *executable*. `validate_or_raise()` — the
+admission-gating entry point that decides whether a pipeline runs at all — is untouched;
+every one of the five rules is reachable only through `lint()`, and only TOPO-001 defaults to
+`ERROR` severity within `lint()`'s own exit-code contract (errors → exit 1, warnings → exit 0
+unless `--strict`). This is exactly the kind of extension canonical §7.4 anticipates: additional
+rules layered on top of, not instead of, the spec's own validation surface.
+
+**Compatibility:** Fully additive. No existing `validate()` or `validate_or_raise()` caller is
+affected; `lint()` is a new, separately-invoked surface. A pipeline that was runnable before
+this PR remains equally runnable after it — `attractor lint` is an author-time advisory tool,
+never consulted by the engine at run time.
+
+**Implementation locations:**
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py` — `lint()` entry point;
+  `_check_dead_conditional_edge()` (TOPO-001) and the four sibling TOPO-002–005 checks
+- `modules/pipeline-runner/amplifier_module_pipeline_runner/cli.py` — `attractor lint` subcommand
+- `docs/DOT-AUTHORING-GUIDE.md` — "Static Lint Rules (`attractor lint`)" section documents all
+  five rules with fix examples
+- Tests: `modules/loop-pipeline/tests/test_topological_lint.py`,
+  `modules/loop-pipeline/tests/test_examples_lint_clean.py`
+
+---
+
+## 33. Main-Loop No-Matching-Edge Hard-Fail
+
+> **This extension DIVERGES from canonical spec §3.2.** Canonical spec §3.2 step 6
+> (`attractor-spec.md:388-393`) specifies: when no next edge is selected, return the last
+> outcome unchanged if it is `FAIL`; otherwise return `Outcome(status=SUCCESS, notes="Pipeline
+> completed")` — a dead end is treated as a normal, successful pipeline completion regardless of
+> whether the graph's author intended that node to be a true exit. Our engine instead hard-fails
+> in every case: a dead end always terminates the pipeline with `status=FAIL` and a
+> `PIPELINE_ERROR` event carrying `error_type=no_matching_edge`, whether or not the last outcome
+> was `FAIL`. See `SPEC_CONFORMANCE.md` ATX-11 for the ledger entry and `PRINCIPLES.md` for the
+> walk-upstream note.
+>
+> **depends-on:** none
+>
+> **upstream action:** deferred, reason: this repo's upstream-contribution effort is currently
+> concentrated elsewhere; proposing a change to canonical §3.2's dead-end semantics is a
+> considered spec-language edit we want to bring with worked examples (including the
+> `run_subgraph` counter-case noted below) rather than a quick issue, review-by: 2026-09-05
+
+### The decision
+
+This was an unledgered divergence: the engine has hard-failed on no-matching-edge since its
+initial commit (verified against `git log` — the behavior predates and is unrelated to PR #66,
+which only removed a duplicate resume-path check). A session audit found the gap and initially
+recorded it with a pending `DECIDE` disposition (ALIGN vs. DIVERGE); that disposition was never
+committed to `SPEC_CONFORMANCE.md`, so the decision has been open, undocumented, and — because
+`examples/pipelines/practical/bug-fix.dot`'s `escalated` node relies on exactly this hard-fail
+behavior to report failure after writing its handoff artifacts (§8 backward-compat note in the
+T0-4 restoration above notwithstanding) — **load-bearing** for a shipped exemplar.
+
+**The decision: keep the hard-fail. Never a silent fallback; always a traceable failure
+reason.** Rationale: a silent `SUCCESS` on an unrouted, dead-ended graph is the exact incident
+class this engine exists to prevent. A real 2.4-hour pipeline run once exited `status=success`
+with zero work product because a downstream signal was silently treated as acceptable
+completion (see §25's incident motivation for the sibling case at the goal-gate layer). Applying
+the spec's dead-end→SUCCESS rule at the main-loop level would reintroduce that same failure
+mode one layer up: any graph with a genuinely unreachable or missing edge — an authoring
+mistake, not a designed exit — would silently report success instead of surfacing the gap. A
+loud, traceable failure (`PIPELINE_ERROR error_type=no_matching_edge`, plus
+`terminate_pipeline()`'s `failure_reason`) costs an author a debugging session; a silent false
+success costs an operator hours before anyone notices nothing happened.
+
+**No behavior change in this entry.** The engine already behaves this way and has since its
+first commit; this entry and the corresponding `SPEC_CONFORMANCE.md` update record the decision
+that was made, not a code change.
+
+**Compatibility note — `run_subgraph` is intentionally NOT changed by this decision.**
+`run_subgraph()` (`engine.py:917-925` at time of writing) returns the last outcome unchanged on
+a dead end, matching the spec's permissive shape — this is deliberate: subgraph dead-ends are
+the *compositional* path (a folder/sub-pipeline node's internal routing choices are its own
+business), while the top-level main loop is where an unrouted graph is a run-ending authoring
+defect. Any future change to `run_subgraph`'s dead-end behavior is a separate decision, not
+implied by this entry.
+
+**Implementation locations:**
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` — main loop's no-matching-edge
+  hard-fail (`terminate_pipeline()` call + `PIPELINE_ERROR` emission with
+  `error_type=no_matching_edge`, around the retry-target fallback check)
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py: terminate_pipeline()` — the
+  sole construction path for a routing-termination outcome (see `AGENTS.md` common-pitfalls: never
+  construct a fresh `Outcome(FAIL, ...)` inline at this boundary — it drops `failure_reason`)
+- `context/engine-semantics.md` §3 — documents both halves (main-loop hard-fail vs.
+  `run_subgraph`'s permissive dead-end) and is guarded against drift by
+  `modules/loop-pipeline/tests/test_engine_semantics_doc_guard.py` (D-200a/b/c)
+- `examples/pipelines/practical/bug-fix.dot` (`escalated` node) — the shipped exemplar that
+  depends on this hard-fail to report failure after writing handoff artifacts
 
 ---
 

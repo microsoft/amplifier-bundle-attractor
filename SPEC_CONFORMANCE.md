@@ -104,6 +104,7 @@ keys. Do not mark "live" until exercised against real providers (e.g. in a DTU w
 | ATX-6 | Retry on FAIL | spec self-contradicts: `§3.5 :519` (no) vs DoD `:1833` (yes) | retries RETRY only (`retry.py:238`) | OPEN | ALIGN-spec-first (reconcile the spec) |
 | ATX-7 | `stack.child_workdir`; condition literal unquoting (`§10.5`) | `:1743` | not handled | OPEN | ALIGN (minor) |
 | ATX-10 | Multi-match fan-out: non-component nodes with ≥2 simultaneously-matching conditional edges routed to ALL targets in parallel (unledgered dialect; never in spec §3.3) | `§3.3 :421-458` (`best_by_weight_then_lexical`) | `engine.py` (retired `select_all_matching_edges` gate; now routes through `select_edge()` only) | **DONE** | ALIGN — conformance restored (T0-4) |
+| ATX-11 | Main-loop no-matching-edge hard-fail: a dead end with no matching outgoing edge always terminates the pipeline with `status=FAIL` + `PIPELINE_ERROR error_type=no_matching_edge`, regardless of the last outcome's status | `§3.2 step 6 :388-393` (dead end + non-FAIL outcome ⇒ `Outcome(status=SUCCESS)`) | `engine.py:853-867` (`terminate_pipeline()` + `PIPELINE_ERROR` emission); shipped since the engine's initial commit | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §33) |
 
 **Shipped extensions (IMPROVE — fold into `specs/EXTENSIONS.md`):** fail-fast edge routing with
 `runs_on`/`continue_on_fail`; skip-propagation contracts (`requires=`/`outputs=`/`failed_outputs`,

@@ -9,7 +9,6 @@ Verifies that:
 """
 
 import asyncio
-import time
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -79,6 +78,54 @@ def _make_slow_tool(name: str, delay: float = 0.1, output: str = "ok"):
         return ToolResult(success=True, output=output)
 
     tool.execute = AsyncMock(side_effect=slow_execute)
+    return tool
+
+
+class _ConcurrencyTracker:
+    """Records the high-water mark of simultaneously in-flight calls.
+
+    Deterministic substitute for wall-clock timing assertions: a serial
+    implementation can never observe more than 1 call in flight at once;
+    a concurrent (gather-based) implementation of N overlapping calls must
+    observe N in flight at some point. Immune to machine speed/contention.
+    """
+
+    def __init__(self):
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self._lock = asyncio.Lock()
+
+    async def enter(self):
+        async with self._lock:
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+
+    async def exit(self):
+        async with self._lock:
+            self.in_flight -= 1
+
+
+def _make_tracked_tool(name: str, tracker: "_ConcurrencyTracker", delay: float = 0.05):
+    """Tool that records its in-flight window on a shared concurrency tracker.
+
+    A brief `delay` widens the window in which overlapping calls would be
+    observed together, but no assertion ever depends on its magnitude or on
+    wall-clock elapsed time -- only on whether calls actually overlapped.
+    """
+    tool = MagicMock()
+    tool.name = name
+    tool.description = f"Mock {name}"
+    tool.input_schema = {"type": "object", "properties": {}}
+
+    async def tracked_execute(args):
+        await tracker.enter()
+        try:
+            await asyncio.sleep(delay)
+            return ToolResult(success=True, output="ok")
+        finally:
+            await tracker.exit()
+
+    tool.execute = AsyncMock(side_effect=tracked_execute)
     return tool
 
 
@@ -177,10 +224,16 @@ async def test_sequential_preserves_order():
 
 @pytest.mark.asyncio
 async def test_sequential_timing():
-    """Sequential execution takes longer than parallel (proves no gather)."""
-    delay = 0.05  # 50ms per tool
-    tool_a = _make_slow_tool("tool_a", delay=delay)
-    tool_b = _make_slow_tool("tool_b", delay=delay)
+    """Sequential execution never overlaps calls (proves no gather).
+
+    Deterministic (no wall-clock): with supports_parallel_tool_calls=False,
+    a shared concurrency tracker's high-water mark must stay at 1 -- each
+    tool call must fully complete (enter -> sleep -> exit) before the next
+    one starts. Immune to slow/contended CI runners, unlike a timing bound.
+    """
+    tracker = _ConcurrencyTracker()
+    tool_a = _make_tracked_tool("tool_a", tracker)
+    tool_b = _make_tracked_tool("tool_b", tracker)
 
     provider = AsyncMock()
     provider.complete = AsyncMock(
@@ -201,14 +254,11 @@ async def test_sequential_timing():
         hooks=hooks,
     )
 
-    start = time.monotonic()
     await session.process_input("do both")
-    elapsed = time.monotonic() - start
 
-    # Sequential: should take at least 2x the delay (100ms)
-    # With parallel it would take ~50ms
-    assert elapsed >= delay * 1.5, (
-        f"Expected sequential timing (>={delay * 1.5:.3f}s), got {elapsed:.3f}s"
+    assert tracker.max_in_flight == 1, (
+        f"Expected sequential execution to never overlap (max 1 in flight), "
+        f"but observed {tracker.max_in_flight} simultaneously in flight"
     )
 
 
@@ -217,10 +267,18 @@ async def test_sequential_timing():
 
 @pytest.mark.asyncio
 async def test_parallel_when_enabled_and_multiple():
-    """With supports_parallel_tool_calls=True and multiple calls, runs in parallel."""
-    delay = 0.1
-    tool_a = _make_slow_tool("tool_a", delay=delay)
-    tool_b = _make_slow_tool("tool_b", delay=delay)
+    """With supports_parallel_tool_calls=True and multiple calls, they run concurrently.
+
+    Deterministic (no wall-clock): a shared concurrency tracker records the
+    high-water mark of simultaneously in-flight tool executions. A serial
+    implementation can never exceed 1 in flight; a concurrent (gather-based)
+    implementation of two overlapping calls must reach 2. This proves actual
+    concurrency regardless of machine speed or scheduler contention -- unlike
+    a wall-clock ratio, which a busy shared CI runner can fail spuriously.
+    """
+    tracker = _ConcurrencyTracker()
+    tool_a = _make_tracked_tool("tool_a", tracker)
+    tool_b = _make_tracked_tool("tool_b", tracker)
 
     provider = AsyncMock()
     provider.complete = AsyncMock(
@@ -241,14 +299,11 @@ async def test_parallel_when_enabled_and_multiple():
         hooks=hooks,
     )
 
-    start = time.monotonic()
     await session.process_input("do both")
-    elapsed = time.monotonic() - start
 
-    # Parallel: should complete in roughly delay time, not 2x
-    # Use generous bound to avoid flaky CI
-    assert elapsed < delay * 1.8, (
-        f"Expected parallel timing (<{delay * 1.8:.3f}s), got {elapsed:.3f}s"
+    assert tracker.max_in_flight >= 2, (
+        f"Expected both tool calls to be in flight simultaneously (concurrent "
+        f"execution), but max observed concurrency was {tracker.max_in_flight}"
     )
 
 

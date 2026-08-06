@@ -1,9 +1,15 @@
 """Tests for report_outcome tool."""
 
+import hashlib
+import os
+import subprocess
+import sys
+
 import pytest
-
+from amplifier_module_tool_report_outcome import (
+    _STATUSES_SORTED as _MODULE_STATUSES_SORTED,
+)
 from amplifier_module_tool_report_outcome import ReportOutcomeTool
-
 
 VALID_STATUSES = ["success", "fail", "partial_success", "retry"]
 
@@ -221,3 +227,79 @@ async def test_suggested_next_ids_type_validation():
     )
     assert not result.success
     assert "message" in result.error
+
+
+# -- Schema determinism (prompt-cache stability) ----------------------------
+#
+# Regression guard for the S4 structural pattern (two independent `enum`
+# call sites that must never drift apart). Full story:
+# docs/designs/RECURRING-BUG-CLASSES.md (S4). See
+# test_schema_serialization_is_deterministic_across_processes below for the
+# actual cross-process proof.
+
+
+def test_schema_enum_matches_canonical_order():
+    """The enum must be exactly the module's canonical sorted order."""
+    tool = ReportOutcomeTool(config={})
+    assert tool.input_schema["properties"]["status"]["enum"] == list(
+        _MODULE_STATUSES_SORTED
+    )
+
+
+def test_schema_enum_contains_expected_members():
+    """Regression guard: sorting must never silently drop or add a value."""
+    tool = ReportOutcomeTool(config={})
+    enum = tool.input_schema["properties"]["status"]["enum"]
+    assert set(enum) == {"success", "fail", "partial_success", "retry"}
+    assert len(enum) == 4
+
+
+_SCHEMA_PROBE = (
+    "import json\n"
+    "from amplifier_module_tool_report_outcome import ReportOutcomeTool\n"
+    "tool = ReportOutcomeTool(config={})\n"
+    "print(json.dumps(tool.input_schema, sort_keys=False, separators=(',', ':')))\n"
+)
+
+
+def test_schema_serialization_is_deterministic_across_processes():
+    """The REAL eval: the serialized input_schema must be byte-identical across
+    independent interpreter starts.
+
+    A same-process test cannot catch this bug class because PYTHONHASHSEED is
+    fixed for the lifetime of one interpreter -- frozenset iteration order
+    only varies *between* process starts. This spawns N independent
+    subprocesses (matching how the real production incident manifested: a
+    fresh schema hash at every process restart) and asserts they all produce
+    the identical serialized schema.
+    """
+    n_procs = 8
+    env = dict(os.environ)
+    env.pop("PYTHONHASHSEED", None)  # let each subprocess pick its own random seed
+
+    canon_outputs: list[str] = []
+    for _ in range(n_procs):
+        result = subprocess.run(
+            [sys.executable, "-c", _SCHEMA_PROBE],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=env,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            f"Probe subprocess failed (rc={result.returncode}): "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        canon_outputs.append(result.stdout.strip())
+
+    hashes = {hashlib.sha256(c.encode()).hexdigest()[:16] for c in canon_outputs}
+    distinct_orders = sorted(set(canon_outputs))
+    assert len(hashes) == 1, (
+        f"Expected 1 distinct input_schema serialization across {n_procs} "
+        f"independent processes, got {len(hashes)}. The schema's byte "
+        "representation is not stable across interpreter restarts (a "
+        "PYTHONHASHSEED-dependent frozenset iteration order), which "
+        "invalidates the ENTIRE Anthropic prompt cache on every process "
+        f"restart.\nDistinct serializations observed:\n" + "\n".join(distinct_orders)
+    )

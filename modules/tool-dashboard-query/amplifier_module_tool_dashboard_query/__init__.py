@@ -38,6 +38,17 @@ VALID_OPERATIONS = frozenset(
     }
 )
 
+# Canonical, stable ordering of VALID_OPERATIONS, read by BOTH the schema
+# `enum` and the error-message join below so they can never drift apart
+# (S4 -- partial-coverage symmetry; not a live bug here, since `sorted()`
+# over a frozenset is already deterministic -- this closes the structural
+# recurrence, not a live cache-invalidation bug). A tuple, not a list, so
+# the shared source of truth can't be mutated through a consumer. Do NOT
+# reorder and do NOT inline `sorted(VALID_OPERATIONS)` at either consumer
+# again. Full story: docs/designs/RECURRING-BUG-CLASSES.md (S4).
+# Regression guard: test_schema_serialization_is_deterministic_across_processes.
+_OPERATIONS_SORTED: tuple[str, ...] = tuple(sorted(VALID_OPERATIONS))
+
 
 class DashboardQueryTool:
     """Query and manage Attractor pipelines via the dashboard HTTP API.
@@ -87,7 +98,7 @@ class DashboardQueryTool:
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": sorted(VALID_OPERATIONS),
+                    "enum": list(_OPERATIONS_SORTED),
                     "description": "Operation to perform",
                 },
                 "pipeline_id": {
@@ -158,7 +169,7 @@ class DashboardQueryTool:
         if operation not in VALID_OPERATIONS:
             error_msg = (
                 f"Invalid operation: {operation!r}. "
-                f"Must be one of: {', '.join(sorted(VALID_OPERATIONS))}"
+                f"Must be one of: {', '.join(_OPERATIONS_SORTED)}"
             )
             return ToolResult(
                 success=False, output=error_msg, error={"message": error_msg}

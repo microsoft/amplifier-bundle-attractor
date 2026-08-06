@@ -17,6 +17,16 @@ logger = logging.getLogger(__name__)
 
 VALID_FILTERS = frozenset({"full", "metrics", "current"})
 
+# Canonical, stable ordering of VALID_FILTERS, read by BOTH the schema
+# `enum` and the error-message join below so they can never drift apart
+# (S4 -- partial-coverage symmetry). A tuple, not a list, so the shared
+# source of truth can't be mutated through a consumer. Do NOT reorder and
+# do NOT inline `sorted(VALID_FILTERS)` at either consumer again -- that
+# reopens the prompt-cache bug. Full story:
+# docs/designs/RECURRING-BUG-CLASSES.md (S4). Regression guard:
+# test_schema_serialization_is_deterministic_across_processes.
+_FILTERS_SORTED: tuple[str, ...] = tuple(sorted(VALID_FILTERS))
+
 # Keys returned for the "metrics" filter
 _METRICS_KEYS = frozenset(
     {
@@ -75,7 +85,7 @@ class PipelineStatusTool:
             "properties": {
                 "filter": {
                     "type": "string",
-                    "enum": list(VALID_FILTERS),
+                    "enum": list(_FILTERS_SORTED),
                     "description": (
                         "Detail level: 'full' (default) returns everything, "
                         "'metrics' returns only aggregate metrics, "
@@ -102,7 +112,7 @@ class PipelineStatusTool:
         if filter_mode not in VALID_FILTERS:
             error_msg = (
                 f"Invalid filter: {filter_mode!r}. "
-                f"Must be one of: {', '.join(sorted(VALID_FILTERS))}"
+                f"Must be one of: {', '.join(_FILTERS_SORTED)}"
             )
             return ToolResult(
                 success=False,

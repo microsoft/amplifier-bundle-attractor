@@ -17,6 +17,16 @@ logger = logging.getLogger(__name__)
 
 VALID_STATUSES = frozenset({"success", "fail", "partial_success", "retry"})
 
+# Canonical, stable ordering of VALID_STATUSES, read by BOTH the schema
+# `enum` and the error-message join below so they can never drift apart
+# (S4 -- partial-coverage symmetry). A tuple, not a list, so the shared
+# source of truth can't be mutated through a consumer. Do NOT reorder and
+# do NOT inline `sorted(VALID_STATUSES)` at either consumer again -- that
+# reopens the prompt-cache bug. Full story:
+# docs/designs/RECURRING-BUG-CLASSES.md (S4). Regression guard:
+# test_schema_serialization_is_deterministic_across_processes.
+_STATUSES_SORTED: tuple[str, ...] = tuple(sorted(VALID_STATUSES))
+
 
 class ReportOutcomeTool:
     """Report structured outcome data for pipeline routing.
@@ -52,7 +62,7 @@ class ReportOutcomeTool:
             "properties": {
                 "status": {
                     "type": "string",
-                    "enum": list(VALID_STATUSES),
+                    "enum": list(_STATUSES_SORTED),
                     "description": (
                         "Outcome status: 'success', 'fail', "
                         "'partial_success', or 'retry'"
@@ -110,7 +120,7 @@ class ReportOutcomeTool:
         if status not in VALID_STATUSES:
             error_msg = (
                 f"Invalid status: {status!r}. "
-                f"Must be one of: {', '.join(sorted(VALID_STATUSES))}"
+                f"Must be one of: {', '.join(_STATUSES_SORTED)}"
             )
             return ToolResult(
                 success=False,

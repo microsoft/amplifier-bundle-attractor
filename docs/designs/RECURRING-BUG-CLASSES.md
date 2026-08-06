@@ -142,6 +142,33 @@ ecosystem over the past year, and 100% of fix commits in
   S4. Will be partially closed by **T3.1 HostPath/DTUPath** (Wave 3 —
   typed paths force translation at the host/DTU boundary, with a
   runtime check in `to_host()` per refinement C3).
+- **Third incident (tool JSON-schema `enum` ordering)**: three Amplifier
+  tool modules (`tool-report-outcome`, `tool-pipeline-status`,
+  `tool-dashboard-query`) each expose a JSON-schema `enum` array and a
+  parallel error-message listing, both derived from the same validation
+  `frozenset`. `tool-report-outcome` and `tool-pipeline-status` built the
+  `enum` with `list(<frozenset>)` directly — `frozenset` iteration order
+  for strings depends on `PYTHONHASHSEED`, which is randomized per
+  interpreter start, so the serialized schema differed on every process
+  restart. Anthropic's prompt cache is hierarchical (`tools` → `system` →
+  `messages`); ANY byte change to the serialized `tools` block
+  invalidates the entire cache, so this silently nuked the whole prompt
+  cache on every restart — the failure surfaced as a cost/latency
+  regression, nowhere near the two lines that caused it (S4's usual
+  displaced-symptom signature). `tool-dashboard-query`'s two sites both
+  called `sorted(<frozenset>)` independently, which happens to be
+  deterministic already (`sorted()` imposes a total order regardless of
+  input iteration order) — not a live bug, but the same *structural*
+  S4 shape: two independent call sites deriving the same thing, one
+  edit away from drifting. All three were closed identically: one
+  module-level canonical tuple (`_STATUSES_SORTED` / `_FILTERS_SORTED` /
+  `_OPERATIONS_SORTED` — a tuple, not a list, so the shared source of
+  truth can't be mutated through a consumer) that both the schema
+  `enum` and the error-message join read from. Proven with a regression
+  test that spawns N independent subprocesses (`PYTHONHASHSEED` only
+  varies *between* interpreter starts, so a same-process test cannot
+  catch this) and asserts byte-identical serialized schemas; see each
+  module's `test_schema_serialization_is_deterministic_across_processes`.
 - **Noun-fix**: centralize normalization at the single entry point.
   Once data enters the system, it is already normalized in every
   branch of the symmetry.

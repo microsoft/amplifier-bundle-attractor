@@ -164,3 +164,140 @@ def test_checker_passes_a_contiguous_sequence():
     gaps, duplicates = _find_ledger_gaps_and_duplicates(doc)
     assert gaps == []
     assert duplicates == []
+
+
+# ---------------------------------------------------------------------------
+# `upstream action:` value-format guard.
+#
+# Discovered in practice alongside the heading-sequence damage above: a
+# ledger entry can carry a well-formed, contiguous heading and still commit
+# to something dishonest in its *value* -- e.g. `deferred, ...,
+# review-by: <date>` written against an upstream repo already known to be
+# dormant, with issues disabled, where filing would not land. The Entry
+# Format section (above, in this same file) defines exactly which values are
+# legal; this check is the mechanical half of that promise: every
+# `upstream action:` value in the live ledger must start with one of them.
+#
+# This does NOT validate that a `deferred` reason or `declining` reason is
+# *true* -- that is a judgment call no regex can make. It only catches the
+# cheap, structural mistake of a value that isn't in one of the legal forms
+# at all (e.g. a bare vague promise with no link, no date, and no
+# `declining` framing), which is the shape the incident behind this task
+# took: a `review-by` date can be well-formed as a *string* while still
+# encoding a plan that the evidence already rules out -- that half is a
+# human judgment this test cannot make, and does not try to.
+# ---------------------------------------------------------------------------
+
+# The first line of an `upstream action:` value establishes which of the
+# three legal forms (link / deferred-with-date / declining-with-reason) —
+# plus the pre-existing `not applicable` disposition — the entry is using.
+# Longer reasons wrap onto further blockquote lines, which this check does
+# not need to read: the category is fixed by how the value opens.
+_UPSTREAM_ACTION_VALUE_RE = re.compile(
+    r"^>\s*\*\*upstream action:\*\*\s*(.+)$", re.MULTILINE
+)
+
+_LEGAL_UPSTREAM_ACTION_PREFIXES = (
+    "https://github.com/",  # a real upstream PR/issue link
+    "deferred, reason:",  # deferred, with a review-by date (checked below)
+    "declining, reason:",  # honest non-filing, no date required
+    "not applicable",  # no upstream action applies (spec-silent / additive)
+)
+
+_REVIEW_BY_DATE_RE = re.compile(r"review-by:\s*\d{4}-\d{2}-\d{2}\b")
+
+
+def _upstream_action_first_lines(text: str) -> list[str]:
+    """Extract the first line of every `upstream action:` value, in document
+    order (multi-line reasons continue past this point but the legal-form
+    prefix always appears on this first line)."""
+    return [m.strip() for m in _UPSTREAM_ACTION_VALUE_RE.findall(text)]
+
+
+def _illegal_upstream_action_values(first_lines: list[str]) -> list[str]:
+    """Return the subset of `upstream action:` first-lines that do not open
+    with one of the legal forms."""
+    return [
+        line
+        for line in first_lines
+        if not line.startswith(_LEGAL_UPSTREAM_ACTION_PREFIXES)
+    ]
+
+
+def test_extensions_ledger_upstream_action_values_are_legal_forms():
+    """Every `upstream action:` value in the live ledger must open with one
+    of the forms the Entry Format section declares legal: a real upstream
+    link, `deferred, reason: ..., review-by: <date>`, `declining, reason:
+    ...`, or `not applicable ...`.
+
+    This is a structural check only -- it cannot judge whether a `deferred`
+    or `declining` reason is factually true (that takes verifying the
+    upstream repo's actual state, as this task did for §25/§29/§33). It
+    exists to catch the cheaper mistake: a value that isn't shaped like any
+    of the legal forms at all.
+    """
+    text = LEDGER_PATH.read_text()
+    first_lines = _upstream_action_first_lines(text)
+    assert first_lines, (
+        "expected at least one `upstream action:` entry in the live ledger"
+    )
+
+    illegal = _illegal_upstream_action_values(first_lines)
+    assert not illegal, (
+        f"specs/EXTENSIONS.md has `upstream action:` value(s) not shaped like any "
+        f"legal form (a real link, `deferred, reason: ..., review-by: <date>`, "
+        f"`declining, reason: ...`, or `not applicable ...`): {illegal!r}. See the "
+        "Entry Format section at the top of specs/EXTENSIONS.md."
+    )
+
+
+def test_extensions_ledger_deferred_upstream_actions_carry_a_review_by_date():
+    """Every `deferred, reason: ...` value must carry a `review-by:
+    YYYY-MM-DD` date somewhere in its (possibly multi-line) reason -- a
+    non-date placeholder ("eventually", "TBD", "soon") is exactly the
+    failure mode the Entry Format section forbids.
+
+    Checked against the full multi-line banner block per entry (not just
+    the first line), since the date may trail the reason across a wrapped
+    blockquote line -- unlike the legal-form check above, which only needs
+    the opening word.
+    """
+    text = LEDGER_PATH.read_text()
+    # Each blockquote banner is a contiguous run of `>`-prefixed lines; grab
+    # every such run and inspect the ones that open an `upstream action:`
+    # value with `deferred, reason:`.
+    banners = re.findall(r"(?:^>.*\n)+", text, re.MULTILINE)
+    deferred_banners = [
+        b for b in banners if "**upstream action:** deferred, reason:" in b
+    ]
+    for banner in deferred_banners:
+        assert _REVIEW_BY_DATE_RE.search(banner), (
+            f"a `deferred` upstream action is missing a `review-by: YYYY-MM-DD` date: "
+            f"{banner!r}"
+        )
+
+
+def test_checker_flags_an_illegal_upstream_action_value():
+    """Regression proof (RED case): a vague, undated promise with no link
+    and no `declining` framing must be flagged -- this is the shape the
+    §25/§29/§33 incident would have taken if written as free prose instead
+    of one of the ledger's legal forms."""
+    doc = "> **upstream action:** we should probably raise this with upstream at some point\n"
+    first_lines = _upstream_action_first_lines(doc)
+    assert first_lines == ["we should probably raise this with upstream at some point"]
+    illegal = _illegal_upstream_action_values(first_lines)
+    assert illegal == first_lines
+
+
+def test_checker_accepts_all_four_legal_upstream_action_forms():
+    """Regression proof (GREEN case): one example of each legal form must
+    pass, including the `declining` form this task added."""
+    doc = (
+        "> **upstream action:** https://github.com/strongdm/attractor/pull/42\n"
+        "> **upstream action:** deferred, reason: needs one more release, review-by: 2026-12-01\n"
+        "> **upstream action:** declining, reason: upstream repo is dormant\n"
+        "> **upstream action:** not applicable -- spec-silent area\n"
+    )
+    first_lines = _upstream_action_first_lines(doc)
+    assert len(first_lines) == 4
+    assert _illegal_upstream_action_values(first_lines) == []

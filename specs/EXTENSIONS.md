@@ -32,13 +32,22 @@ entry with no banner):
     `strongdm/attractor` (e.g. `https://github.com/strongdm/attractor/pull/NN` or
     `.../issues/NN`), or
   - `deferred, reason: <one-line reason>, review-by: <YYYY-MM-DD>` — a concrete calendar
-    date the deferral will be revisited, not a placeholder.
+    date the deferral will be revisited, not a placeholder, or
+  - `declining, reason: <one-line reason>` — an honest statement that no upstream filing
+    is planned, because the evidence says one would not land (e.g. the upstream repo is
+    dormant, has issues disabled, or its own open community PRs of this kind sit unmerged).
+    Declining does not mean the divergence goes unrecorded: it stays exactly here, in this
+    ledger, which is what actually informs consumers of this engine. Unlike `deferred`,
+    `declining` carries no `review-by` date because there is no pending action to revisit
+    on a calendar — only new upstream conditions (the repo becoming active again, issues
+    reopening, a maintained fork appearing) would warrant reopening the entry.
 
   **A non-date value for `review-by` ("eventually", "TBD", "soon", "when we get to it") is
   not a permitted value.** Prose promising an upstream proposal with no date and no link is
   how a divergence sits unreviewed for months; a date makes it someone's job on a specific
   day. When a `review-by` date passes without the proposal being filed, the entry must be
-  revisited: either file it, or replace the date with a fresh one and a fresh reason.
+  revisited: either file it, replace the date with a fresh one and a fresh reason, or — if
+  the honest conclusion is that filing was never going to land — switch to `declining`.
 
 ---
 
@@ -623,11 +632,10 @@ this extension documents the behavior here.
 >
 > **depends-on:** none
 >
-> **upstream action:** deferred, reason: the recommended upstream change (a `goal_gate` check
-> in §4.5's `CodergenHandler` before the unconditional SUCCESS fallback) is straightforward to
-> state, but we want the backward-compat inventory below to stay settled across at least one
-> more consuming release before asking upstream to adopt a fail-closed default that every
-> nlspec implementation would then inherit, review-by: 2026-09-05
+> **upstream action:** declining, reason: `strongdm/attractor` has had no commits since
+> 2026-03-17, has issues disabled, and its own open community spec-correction PRs (#9, #10)
+> have sat unmerged for 4+ months — filing there would not land. The divergence is tracked
+> here instead.
 
 ### Incident motivation
 
@@ -1270,11 +1278,10 @@ deferral note.
 >
 > **depends-on:** none
 >
-> **upstream action:** deferred, reason: this is additive to a spec-silent area rather than a
-> divergence, but it is exactly the kind of shipped-ahead-of-upstream mechanism this repo commits
-> to proposing back; we want at least one more consuming pipeline generation beyond
-> `convergence-factory.dot` before writing spec language, so the proposal reflects a proven shape
-> rather than a speculative one, review-by: 2026-09-05
+> **upstream action:** declining, reason: `strongdm/attractor` has had no commits since
+> 2026-03-17, has issues disabled, and its own open community spec-correction PRs (#9, #10)
+> have sat unmerged for 4+ months — filing there would not land. The divergence is tracked
+> here instead.
 
 **What:** A node may declare `feedback_from="<critic_node_id>"` to establish an engine-enforced
 feedback accumulation contract. On every `loop_restart` edge traversal, the engine:
@@ -1698,10 +1705,10 @@ never consulted by the engine at run time.
 >
 > **depends-on:** none
 >
-> **upstream action:** deferred, reason: this repo's upstream-contribution effort is currently
-> concentrated elsewhere; proposing a change to canonical §3.2's dead-end semantics is a
-> considered spec-language edit we want to bring with worked examples (including the
-> `run_subgraph` counter-case noted below) rather than a quick issue, review-by: 2026-09-05
+> **upstream action:** declining, reason: `strongdm/attractor` has had no commits since
+> 2026-03-17, has issues disabled, and its own open community spec-correction PRs (#9, #10)
+> have sat unmerged for 4+ months — filing there would not land. The divergence is tracked
+> here instead.
 
 ### The decision
 

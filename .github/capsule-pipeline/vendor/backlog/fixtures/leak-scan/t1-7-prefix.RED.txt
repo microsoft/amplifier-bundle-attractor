@@ -1,0 +1,7 @@
+Reconstructed PRE-FIX text of the T1-7 EXTENSIONS §28 provenance entry —
+structural-leak instance #2 (caught at the T1-7 close by the membership-test
+scan; the shipped text was rewritten). Kept here as the RED fixture for
+backlog/check-upstream-leaks.sh --self-test: the scanner MUST exit 1 on this.
+
+> Any cross-run comparison tooling — and the evals loop that consumes these
+> run directories — needs per-run code provenance to be meaningful.

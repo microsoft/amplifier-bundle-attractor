@@ -1,0 +1,1 @@
+DISCRIMINATION: skipped -- no later_commit param supplied. The three-point discrimination check (RED at an unrelated later commit, which catches an over-broad gate that passes on anything) did not run for this capsule.

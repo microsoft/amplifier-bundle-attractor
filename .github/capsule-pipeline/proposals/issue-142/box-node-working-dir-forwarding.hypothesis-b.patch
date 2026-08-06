@@ -1,0 +1,81 @@
+# SINGLE-SHAPE: Only one honest fix shape exists for this defect given the gate's observable.
+
+# The gate (DEFINITION.verify.sh) checks exactly one structural property:
+#
+#   spawn_kwargs["orchestrator_config"].get("working_dir") == "/intended/target/dir"
+#
+# where `spawn_kwargs` is the dict passed to the `session.spawn` callable by
+# AmplifierBackend._run_with_spawn() in:
+#
+#   modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py
+#
+# There is only one code path that builds this dict, and only one function
+# that populates `orchestrator_config` for the spawn call.  Every honest
+# second shape reduces to the same structural operation: add the key
+# "working_dir" to the dict that `_run_with_spawn` passes as
+# `orchestrator_config`.  Here is why no second shape is honestly possible:
+#
+# ── Why modifying agent_session.py does NOT green the gate ──────────────────
+#
+# The natural "pull" fix (the one KNOWN_ISSUES.md alludes to) would modify
+# `modules/loop-agent/amplifier_module_loop_agent/agent_session.py:596`:
+#
+#   working_dir = self._config.working_dir or os.getcwd()
+#
+# to fall back to something other than os.getcwd().  But the gate never
+# instantiates AgentSession or runs loop-agent at all.  The gate's Python
+# check creates a _RecordingCoordinator whose _spawn_fn returns immediately
+# with {"output": "done", "session_id": "child-1"} — no child session runs.
+# Modifying agent_session.py produces zero change in the gate's observable.
+#
+# ── Why modifying PipelineContext does NOT green the gate ───────────────────
+#
+# PipelineContext.get("context.target_dir") already returns the correct
+# sentinel value ("/intended/target/dir") in the gate's test.  The defect
+# is not that the context fails to hold the value — it is that backend.py
+# never reads that value and puts it into orchestrator_config.  Changing
+# PipelineContext's storage, retrieval, or type-coercion behavior cannot
+# insert "working_dir" into the spawn kwargs dict.
+#
+# ── Why a post-hoc dict assignment is the SAME shape as hypothesis.patch ───
+#
+# One might consider adding, after the spawn_kwargs dict is built, a
+# separate statement:
+#
+#   if context is not None:
+#       _wd = context.get("context.target_dir")
+#       if _wd:
+#           spawn_kwargs["orchestrator_config"]["working_dir"] = _wd
+#
+# This is the same file (backend.py), same function (_run_with_spawn), same
+# polarity (adding a key), and same data source (context.get("context.target_dir")).
+# The only difference is syntactic: dict comprehension input vs. post-hoc
+# assignment.  The task requires "genuinely DIFFERENT mechanism" — a cosmetic
+# relocation of the same add-a-key operation in the same function is not a
+# different mechanism.
+#
+# ── Why the gate is legitimately narrow ─────────────────────────────────────
+#
+# The gate is checking a transport-layer contract: "does the spawn call
+# carry working_dir in orchestrator_config?"  This is the correct and
+# minimal observable for the defect as described.  The defect has exactly
+# one transport seam (the orchestrator_config dict in _run_with_spawn), and
+# the fix has exactly one shape (add working_dir to that dict).  The gate
+# being single-shape is evidence that the defect is precisely located and
+# the gate is well-targeted — not evidence that the gate is over-fitted.
+#
+# The alternative fix site (agent_session.py) addresses a DIFFERENT defect:
+# "what happens when working_dir is absent from orchestrator_config for any
+# reason" — a defensive fallback.  That fix would not satisfy this gate
+# because this gate is testing the producer, not the consumer.
+#
+# ── Conclusion ───────────────────────────────────────────────────────────────
+#
+# hypothesis.patch is the unique honest fix shape for this gate.  A second
+# patch that also greens this gate would either be:
+#   (a) a cosmetic variant of hypothesis.patch (same file, same function,
+#       same polarity, different syntax), or
+#   (b) a modification to the gate's test harness itself (the
+#       _RecordingCoordinator), which is not production code.
+#
+# Neither (a) nor (b) constitutes a "genuinely DIFFERENT mechanism."

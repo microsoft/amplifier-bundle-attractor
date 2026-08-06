@@ -56,18 +56,6 @@ on:
       issue_number:
         description: "Issue number to run the specify stage against"
         required: true
-  # TEMPORARY, FOR PRE-MERGE PROOF ONLY -- see PR #141. `workflow_dispatch`
-  # also turned out to require the workflow file to exist on the default
-  # branch (confirmed: `gh workflow run` 404s against a branch-only file),
-  # so this repo's own established technique (used by actions-key-smoke.yml
-  # and attractor-self-test.yml) is the only way left to exercise this
-  # exact job in real GitHub Actions before merge: `pull_request` DOES run
-  # using the PR branch's own copy of the workflow file. Removed again
-  # before this PR is left for review -- do not merge with this present.
-  pull_request:
-    paths:
-      - ".github/workflows/capsule-specify.yml"
-      - ".github/capsule-pipeline/**"
 
 permissions:
   contents: write
@@ -82,16 +70,11 @@ concurrency:
 
 jobs:
   specify:
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready:spec'
-    name: "Run capsule.dot on issue #${{ github.event.issue.number || inputs.issue_number || '142' }}"
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready:spec'
+    name: "Run capsule.dot on issue #${{ github.event.issue.number || inputs.issue_number }}"
     runs-on: ubuntu-latest
     env:
-      # TEMPORARY '142' fallback for the pull_request pre-merge proof path
-      # only (see the pull_request trigger comment above) -- issue #142 is
-      # the real issue this PR's own workflow run is proving the pipeline
-      # against. Remove this fallback along with the pull_request trigger
-      # before leaving this PR for review.
-      ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number || '142' }}
+      ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
     # Measured capsule.dot runs take ~20-40 minutes; the graph's own
     # max_pipeline_duration=3600s (1h) is the engine's internal wall (it
     # writes a postmortem before dying), so the job wall must clear that
@@ -181,8 +164,24 @@ jobs:
       - name: Open capsule PR
         id: pr
         if: always() && steps.classify.outputs.kind == 'capsule'
+        # KNOWN LIMITATION, confirmed empirically (workflow run 31099116800,
+        # PR #141's own pre-merge proof): `gh pr create` fails with
+        # "GraphQL: GitHub Actions is not permitted to create or approve
+        # pull requests" when the org/enterprise has that Actions setting
+        # disabled -- and it IS disabled here (`gh api --method PUT
+        # repos/.../actions/permissions/workflow -F
+        # can_approve_pull_request_reviews=true` returned 409 "Write
+        # permissions for workflows are disabled by the enterprise";
+        # confirmed this is an enterprise-level lock, not something this
+        # workflow's own `permissions:` block or a repo-level setting change
+        # can override). The standard fix is a fine-grained PAT (repo-scoped,
+        # contents:write + pull-requests:write only) stored as a repo secret
+        # named CAPSULE_PR_TOKEN -- a repo owner must provision that PAT
+        # (not something a workflow file can create for itself). Falls back
+        # to github.token so this degrades to the same clear failure message
+        # until that secret exists, rather than silently no-op'ing.
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN || github.token }}
         run: |
           set -euo pipefail
           OUT="$RUNNER_TEMP/capsule-run/out"

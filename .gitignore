@@ -9,3 +9,10 @@ uv.lock
 .ruff_cache/
 .pytest_cache/
 /.amplifier/settings.local.yaml
+
+# Attractor pipeline scratch state (task-runner.dot / capsule.dot convention:
+# untracked working state under .ai/, never committed). Needed so
+# capsule.dot's own preflight `git status --porcelain` dirty-tree check
+# doesn't misfire on its own scratch writes (.ai/budget etc.) when this repo
+# is used as a pipeline's target_dir -- see .github/capsule-pipeline/.
+.ai/

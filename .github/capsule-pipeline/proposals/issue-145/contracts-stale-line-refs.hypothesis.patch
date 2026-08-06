@@ -1,0 +1,35 @@
+diff --git a/docs/CONTRACTS.md b/docs/CONTRACTS.md
+index aa6a77f..fed2939 100644
+--- a/docs/CONTRACTS.md
++++ b/docs/CONTRACTS.md
+@@ -62,7 +62,7 @@ depend on missing inputs don't silently receive nothing — they don't run at al
+ authors must explicitly opt in to any failure-routing behavior they want.
+ 
+ **Reference:** `modules/loop-pipeline/amplifier_module_loop_pipeline/edge_selection.py`
+-(lines 65–101; outcome-status guard at line 79).
++(lines 65–101; outcome-status guard at line 94).
+ 
+ ### Explicit fail-forward opt-ins
+ 
+@@ -83,8 +83,8 @@ a `continue_on_fail` predecessor. See engine.py lines 582–596 for the canonica
+ explanation.
+ 
+ **Reference:** `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py`
+-(lines 597–600 for the `continue_on_fail` check; lines 1332–1357 for `_get_runs_on` and
+-1383–1481 for the skip-gate `_check_node_skip`). Also: `edge_selection.py` lines 65–78
++(lines 682–686 for the `continue_on_fail` check; lines 1563–1613 for `_get_runs_on` and
++1614–1700 for the skip-gate `_check_node_skip`). Also: `edge_selection.py` lines 65–78
+ for the edge-level routing comment.
+ 
+ ---
+@@ -161,8 +161,8 @@ event stream is a documented extension (EXTENSIONS.md §26).
+ |---|---|---|
+ | M5 substitution | `modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py` | Module docstring |
+ | Fail-fast / edge selection | `modules/loop-pipeline/amplifier_module_loop_pipeline/edge_selection.py` | Lines 65–101 (`select_edge`) |
+-| `continue_on_fail` override | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 593–596 and comment block at 578–592 |
+-| `runs_on` logic | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 1299–1323 (`_get_runs_on`) and 1350–1447 (`_check_node_skip`) |
++| `continue_on_fail` override | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 682–686 and comment block at 667–681 |
++| `runs_on` logic | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 1563–1613 (`_get_runs_on`) and 1614–1700 (`_check_node_skip`) |
+ | Structural concurrency (component) | `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py` | Lines 91–94 (`max_parallel` + semaphore) |
+ | Worker observability seam | `modules/loop-pipeline/amplifier_module_loop_pipeline/worker_observability.py` | Module docstring (`current_worker_sessions_dir`) |
+ | Session-event persistence | `modules/hooks-pipeline-observability/amplifier_module_hooks_pipeline_observability/session_events.py` | `SessionEventPersister` |

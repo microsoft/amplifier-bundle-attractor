@@ -1,0 +1,13 @@
+diff --git a/modules/loop-agent/amplifier_module_loop_agent/config.py b/modules/loop-agent/amplifier_module_loop_agent/config.py
+index 7d1d8d7..7bfb444 100644
+--- a/modules/loop-agent/amplifier_module_loop_agent/config.py
++++ b/modules/loop-agent/amplifier_module_loop_agent/config.py
+@@ -41,7 +41,7 @@ class SessionConfig:
+         ""  # Path to base prompt file (layer 1, relative to bundle root)
+     )
+     user_instructions: str = ""  # User instruction override (layer 5, highest priority)
+-    working_dir: str = ""  # Working directory for environment context and project docs
++    working_dir: str = "/stub/hypothesis-b"  # HYPOTHESIS STUB: non-empty default prevents os.getcwd() fallback
+     max_tool_rounds_per_provider: dict[str, int] = field(default_factory=dict)
+     supports_parallel_tool_calls: bool = True  # False = sequential tool execution
+ 

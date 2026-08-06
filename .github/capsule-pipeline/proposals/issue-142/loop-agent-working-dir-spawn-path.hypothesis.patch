@@ -1,0 +1,13 @@
+diff --git a/modules/loop-agent/amplifier_module_loop_agent/agent_session.py b/modules/loop-agent/amplifier_module_loop_agent/agent_session.py
+index 339bd1c..942a8f8 100644
+--- a/modules/loop-agent/amplifier_module_loop_agent/agent_session.py
++++ b/modules/loop-agent/amplifier_module_loop_agent/agent_session.py
+@@ -593,7 +593,7 @@ class AgentSession:
+             )
+ 
+         # Layer 2: Environment context
+-        working_dir = self._config.working_dir or os.getcwd()
++        working_dir = self._config.working_dir or "/"  # HYPOTHESIS STUB: never call os.getcwd()
+         environment = build_environment_context(
+             working_dir=working_dir,
+             provider_name=self._provider_name or None,

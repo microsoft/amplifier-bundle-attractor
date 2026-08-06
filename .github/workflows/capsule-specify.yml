@@ -1,0 +1,328 @@
+# Capsule Specify -- the "specify" stage of an issue -> attractor -> PR
+# system. See .github/capsule-pipeline/README.md for what this is and why
+# the vendored files under that directory exist.
+#
+# Trigger: a human applies the `ready:spec` label to an issue -- a
+# deliberate gate. This stage is the expensive one (measured ~20-40 minutes,
+# real model calls against ANTHROPIC_API_KEY) and must never auto-fire on
+# every issue open/edit; only an explicit label add starts it.
+#
+# What it does, at minimum:
+#   1. Check out the repo and record the base SHA it is specifying against.
+#   2. Materialize the issue's title+body as a file (`issue_file`).
+#   3. Run .github/capsule-pipeline/capsule.dot end-to-end.
+#   4. Classify the result (a real work capsule / a finding / a failure) and
+#      act accordingly: open a "capsule PR" with the produced artifacts, or
+#      post the finding, or post the failure diagnosis -- always commenting
+#      back on the issue, including when the pipeline fails. A silent
+#      failure on an expensive stage is the worst outcome.
+#
+# Why this does NOT use microsoft/amplifier-app-actions's `attractor_source:`
+# input: that composite Action drives the pipeline through loop-pipeline's
+# MOUNTED orchestrator (`session.execute()`), which has no seam to pass flat
+# `--param key=value` values into `tool_command=`/`must_write=` resolution --
+# only a nested `params` dict reaches LLM-prompt `$key` expansion, and
+# nothing sets that dict today. `capsule.dot` requires seven params
+# (issue_file, target_dir, base_sha, uplift_dir, capsule_out,
+# max_iterations, optionally later_commit) to reach BOTH its LLM prompts and
+# its tool_command= gates. modules/pipeline-runner's own `attractor` CLI
+# (amplifier_module_pipeline_runner.runner.drive_engine / seed_context) is
+# the officially-documented direct-engine path built specifically so a
+# `--param` reaches a tool node -- and it is exactly how capsule.dot's own
+# header comment says to invoke it. This workflow installs and runs that
+# CLI directly (already exercised in this repo's own CI -- see ci.yml's
+# `pipeline-runner` unit-tests matrix cell) rather than modifying a
+# different repository's Action to add a params seam it does not have.
+#
+# Job cannot join "CI Gate (all checks passed)" (.github/workflows/ci.yml):
+# that aggregate's `needs:` list only ever names job IDs defined inside
+# ci.yml itself, so a job in this separate workflow file cannot be added to
+# it by accident (same isolation already relied on by
+# actions-key-smoke.yml). A failed specify run is real, useful information
+# and is allowed to leave this job (and only this job) red.
+name: Capsule Specify
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+# One in-flight run per issue; cancelling a 30-minute pipeline run to
+# service a second label event is worse than queuing behind it.
+concurrency:
+  group: capsule-specify-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  specify:
+    if: github.event.label.name == 'ready:spec'
+    name: "Run capsule.dot on issue #${{ github.event.issue.number }}"
+    runs-on: ubuntu-latest
+    # Measured capsule.dot runs take ~20-40 minutes; the graph's own
+    # max_pipeline_duration=3600s (1h) is the engine's internal wall (it
+    # writes a postmortem before dying), so the job wall must clear that
+    # plus setup/PR-creation time, while staying comfortably under GitHub
+    # Actions' 6h hard cap for hosted runners.
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Record base SHA and issue metadata
+        id: base
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "run_id=$(date -u +%Y%m%dT%H%M%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Materialize the issue as issue_file
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/capsule-run"
+          issue_file="$RUNNER_TEMP/capsule-run/issue.md"
+          gh issue view "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --json title,body,url,number \
+            -q '"# " + .title + "\n\nIssue: " + .url + " (#" + (.number|tostring) + ")\n\n" + .body' \
+            > "$issue_file"
+          echo "file=$issue_file" >> "$GITHUB_OUTPUT"
+          echo "--- issue_file contents ---"
+          cat "$issue_file"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Run capsule.dot (specify stage)
+        id: run
+        # continue-on-error: this workflow classifies the result in a later
+        # step regardless of exit code -- an "abandon" (real non-convergence)
+        # is honest, useful information, not something to hide behind a
+        # green step. The job itself is failed explicitly, later, only when
+        # warranted (see "Fail the job on genuine non-convergence" below).
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/capsule-run/out" "$RUNNER_TEMP/capsule-run/logs"
+          uv run --project modules/pipeline-runner attractor run \
+            .github/capsule-pipeline/capsule.dot \
+            --cwd "$GITHUB_WORKSPACE" \
+            --logs-root "$RUNNER_TEMP/capsule-run/logs" \
+            --param issue_file="${{ steps.issue.outputs.file }}" \
+            --param target_dir="$GITHUB_WORKSPACE" \
+            --param base_sha="${{ steps.base.outputs.sha }}" \
+            --param uplift_dir="$GITHUB_WORKSPACE/.github/capsule-pipeline/vendor" \
+            --param capsule_out="$RUNNER_TEMP/capsule-run/out" \
+            --param max_iterations=6
+          echo "attractor_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Classify the result
+        id: classify
+        if: always()
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/capsule-run/out"
+          kind="failure"
+          id=""
+          if ls "$OUT"/*.verify.sh >/dev/null 2>&1; then
+            kind="capsule"
+            id="$(basename "$(ls "$OUT"/*.verify.sh | head -1)" .verify.sh)"
+          elif [ -f "$GITHUB_WORKSPACE/.ai/findings/green-on-main.md" ]; then
+            kind="green_on_main"
+          elif [ -f "$GITHUB_WORKSPACE/.ai/findings/cant-write-gate.md" ]; then
+            kind="cant_gate"
+          fi
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "Classified as: kind=$kind id=$id"
+
+      - name: Open capsule PR
+        id: pr
+        if: always() && steps.classify.outputs.kind == 'capsule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/capsule-run/out"
+          ID="${{ steps.classify.outputs.id }}"
+          ISSUE="${{ github.event.issue.number }}"
+          BRANCH="capsule/issue-${ISSUE}-${{ steps.base.outputs.run_id }}"
+          DEST=".github/capsule-pipeline/proposals/issue-${ISSUE}"
+
+          cd "$GITHUB_WORKSPACE"
+          # Defensive: capsule.dot proves its own hard-reset, but a second
+          # independent check here costs nothing and this branch must start
+          # from a genuinely clean, pinned tree.
+          if [ -n "$(git status --porcelain)" ] || [ "$(git rev-parse HEAD)" != "${{ steps.base.outputs.sha }}" ]; then
+            echo "::error::Workspace is not clean at the pinned base SHA after the pipeline run -- refusing to build a capsule PR from an unproven tree." >&2
+            git status --porcelain >&2 || true
+            exit 1
+          fi
+
+          git checkout -b "$BRANCH"
+          mkdir -p "$DEST"
+          cp "$OUT"/"$ID".md "$OUT"/"$ID".verify.sh "$DEST"/
+          chmod +x "$DEST/$ID.verify.sh"
+          for extra in base-sha hypothesis.patch hypothesis-b.patch discrimination.md single-shape.md; do
+            f="$OUT/$ID.$extra"
+            [ -f "$f" ] && cp "$f" "$DEST/"
+          done
+
+          COMMIT_MSG_FILE="$RUNNER_TEMP/capsule-run/commit-msg.txt"
+          {
+            echo "specify: work capsule for issue #${ISSUE} (${ID})"
+            echo
+            echo "Produced by the capsule.dot specify-stage pipeline from issue #${ISSUE},"
+            echo "pinned to base SHA ${{ steps.base.outputs.sha }}. Contains a proposed"
+            echo "definition of done (${ID}.md) and its executable gate (${ID}.verify.sh),"
+            echo "proven red-for-the-right-reason at the pinned base SHA and proven"
+            echo "non-vacuous via two independently-shaped hypothesis patches (see the"
+            echo "accompanying .patch files). This PR is the specify-stage artifact for"
+            echo "human review -- it contains no implementation; merging it is the signal"
+            echo "to proceed to the implement stage."
+            echo
+            echo "🤖 Generated with [Amplifier](https://github.com/microsoft/amplifier)"
+            echo
+            echo "Co-Authored-By: Amplifier <240397093+microsoft-amplifier@users.noreply.github.com>"
+          } > "$COMMIT_MSG_FILE"
+
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              add "$DEST"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -F "$COMMIT_MSG_FILE"
+          git push origin "$BRANCH"
+
+          BODY_FILE="$RUNNER_TEMP/capsule-run/pr-body.md"
+          {
+            echo "## Specify-stage work capsule for #${ISSUE}"
+            echo
+            echo "Refs #${ISSUE}. Produced by \`capsule.dot\` (see \`.github/capsule-pipeline/\`),"
+            echo "pinned to base SHA \`${{ steps.base.outputs.sha }}\`."
+            echo
+            echo "This PR proposes a **definition of done** for the linked issue: \`${ID}.md\`"
+            echo "plus its executable gate \`${ID}.verify.sh\`, which this run proved:"
+            echo "1. RED (exit 1) at the pinned base SHA, for the stated reason (a declared"
+            echo "   \`red_signal\` substring was found in the gate's own failure output)."
+            echo "2. Non-vacuous, via TWO independently-shaped crude hypothesis patches"
+            echo "   (\`${ID}.hypothesis.patch\` and, if present, \`${ID}.hypothesis-b.patch\`) --"
+            echo "   each was applied, proven to turn the gate GREEN, then the tree was"
+            echo "   hard-reset and the reset itself was proven (\`git diff --quiet\` +"
+            echo "   \`HEAD\` back at the pinned SHA)."
+            echo
+            echo "**Review focus (per the design): read the hypothesis patch(es).** They are"
+            echo "deliberately crude, non-real fixes -- if either one looks like an acceptable"
+            echo "pass on its own merits, the gate in \`${ID}.verify.sh\` is too weak and needs"
+            echo "tightening before this capsule is approved."
+            echo
+            echo "This PR contains **no implementation** -- merging it approves the definition"
+            echo "of done; implementing a real fix is a separate, later stage."
+            echo
+            echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > "$BODY_FILE"
+
+          url=$(gh pr create --repo "${{ github.repository }}" \
+            --title "specify: work capsule for issue #${ISSUE}" \
+            --body-file "$BODY_FILE" \
+            --base main --head "$BRANCH")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Comment on the issue with the outcome
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          COMMENT="$RUNNER_TEMP/capsule-run/comment.md"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          KIND="${{ steps.classify.outputs.kind }}"
+
+          case "$KIND" in
+            capsule)
+              {
+                echo "**Specify stage: work capsule opened.**"
+                echo
+                echo "${{ steps.pr.outputs.url }}"
+                echo
+                echo "Please review the proposed definition of done and its hypothesis"
+                echo "patch(es) before merging (merging approves the capsule; it does not"
+                echo "implement anything)."
+                echo
+                echo "Workflow run: $RUN_URL"
+              } > "$COMMENT"
+              ;;
+            green_on_main)
+              {
+                echo "**Specify stage: no capsule opened -- the gate is already green at the pinned base SHA.**"
+                echo
+                cat "$GITHUB_WORKSPACE/.ai/findings/green-on-main.md" 2>/dev/null || echo "(finding file missing)"
+                echo
+                echo "Workflow run: $RUN_URL"
+              } > "$COMMENT"
+              ;;
+            cant_gate)
+              {
+                echo "**Specify stage: no capsule opened -- could not prove the gate non-vacuous within budget.**"
+                echo
+                cat "$GITHUB_WORKSPACE/.ai/findings/cant-write-gate.md" 2>/dev/null || echo "(finding file missing)"
+                echo
+                echo "Workflow run: $RUN_URL"
+              } > "$COMMENT"
+              ;;
+            *)
+              {
+                echo "**Specify stage FAILED -- no capsule opened.**"
+                echo
+                echo "The pipeline did not converge on a proven work capsule within its"
+                echo "iteration budget. Postmortem (if written):"
+                echo
+                echo '```'
+                cat "$GITHUB_WORKSPACE/.ai/postmortem/report.md" 2>/dev/null || echo "(no postmortem report was written)"
+                echo '```'
+                echo
+                echo "This is a real failure, not a transient CI hiccup -- see the workflow"
+                echo "run for full logs and uploaded artifacts before re-labeling."
+                echo
+                echo "Workflow run: $RUN_URL"
+              } > "$COMMENT"
+              ;;
+          esac
+
+          gh issue comment "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --body-file "$COMMENT"
+
+      - name: Upload run evidence (logs, .ai state, capsule_out)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capsule-specify-issue-${{ github.event.issue.number }}-${{ steps.base.outputs.run_id }}
+          path: |
+            ${{ runner.temp }}/capsule-run/logs
+            ${{ runner.temp }}/capsule-run/out
+            ${{ github.workspace }}/.ai
+          if-no-files-found: warn
+
+      - name: Fail the job on genuine non-convergence
+        if: always()
+        run: |
+          set -euo pipefail
+          KIND="${{ steps.classify.outputs.kind }}"
+          if [ "$KIND" = "failure" ]; then
+            echo "::error::capsule.dot did not converge (no capsule, no recorded finding) -- see the postmortem comment posted on the issue and the uploaded run evidence."
+            exit 1
+          fi
+          echo "Specify stage concluded with kind=$KIND -- not a failure."

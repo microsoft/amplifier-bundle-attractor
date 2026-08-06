@@ -1,0 +1,10 @@
+Reconstruction of the T2-7 close's SECOND missed leak shape (adjudicated TRUE
+at close; the tripwire's maiden run scanned it CLEAN because no seed covered
+the internal doctrine-primer vocabulary). Verbatim from the pre-fix
+upstream-bound tree (task/T2-7 @ 75dafb4):
+
+examples/gates/README.md:56
+deterministic pick. This is the stale-label discipline (primer §6.11).
+
+examples/gates/delta-assertion-gate.dot:41
+//   subsequent FAIL visit (stale-label discipline, primer §6.11).

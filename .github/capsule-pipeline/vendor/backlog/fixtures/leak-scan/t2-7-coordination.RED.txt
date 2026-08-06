@@ -1,0 +1,8 @@
+Reconstruction of the T2-7 close's FIRST missed leak shape (adjudicated TRUE
+at close; the tripwire's maiden run scanned it CLEAN because no seed covered
+internal task-ID vocabulary). Verbatim from the pre-fix upstream-bound tree
+(task/T2-7 @ 75dafb4, examples/gates/base-sha-anchor.dot:37-38; the same
+comment shipped in delta-assertion-gate.dot and preflight-evidence-file.dot):
+
+// T2-3 COORDINATION: This primitive belongs in the gate-primitive library
+//   (T2-3). When T2-3 lands, this file joins examples/gates/ -- already there.

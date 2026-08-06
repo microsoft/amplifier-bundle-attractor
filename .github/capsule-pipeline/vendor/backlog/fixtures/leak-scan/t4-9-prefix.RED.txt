@@ -1,0 +1,10 @@
+Reconstructed PRE-FIX text of the T4-9 EXTENSIONS §27 retirement inventory —
+structural-leak instance #1 (caught at the T4-9 close by the membership-test
+scan; the shipped text was rewritten). Kept here as the RED fixture for
+backlog/check-upstream-leaks.sh --self-test: the scanner MUST exit 1 on this.
+
+> ### Guard retirement inventory
+>
+> What this contract retires in the runner: the noverdict classification,
+> clean_b glue, and verify's pre-round wipe are all superseded once the
+> freshness floor lands — the uplift task-runner rig can drop them.

@@ -1,0 +1,286 @@
+# Capsule PR Probe -- a one-question credential probe, not a pipeline stage.
+#
+# Question: does the fine-grained PAT stored as the `CAPSULE_PR_TOKEN` repo
+# secret let GitHub Actions create pull requests here, where the default
+# `GITHUB_TOKEN` cannot (the enterprise has "Allow GitHub Actions to create
+# and approve pull requests" locked off, confirmed via `gh pr create` failing
+# with "GraphQL: GitHub Actions is not permitted to create or approve pull
+# requests (createPullRequest)", and via `gh api --method PUT .../actions/
+# permissions/workflow` returning 409 "Write permissions for workflows are
+# disabled by the enterprise" -- see capsule-specify.yml's "Open capsule PR"
+# step for the fuller history)?
+#
+# This workflow answers that question directly: it uses ONLY
+# `secrets.CAPSULE_PR_TOKEN` (no `|| github.token` fallback -- a fallback
+# here would blur exactly the distinction we're trying to draw) to open (or
+# confirm the existence of) a real PR for an already-pushed capsule branch.
+#
+# Trigger: `pull_request`, scoped to this file's own path, so the probe runs
+# automatically inside the PR that introduces it -- same-repo branches DO
+# receive secrets, and this repo's established pattern (see capsule-specify's
+# history) is to prove a new workflow in real Actions execution before it
+# needs to land on `main`, since `workflow_dispatch` only ever evaluates from
+# the default branch. `workflow_dispatch` is also wired up, for later manual
+# reuse against any already-pushed capsule branch (e.g. a future
+# `capsule/issue-<n>-<ts>` branch that never got its PR opened).
+#
+# Isolation: this is its own workflow file. `.github/workflows/ci.yml`'s
+# "CI Gate (all checks passed)" aggregate only ever names job IDs defined
+# inside ci.yml in its own `needs:` list, so a job in this separate file
+# cannot join that required check by accident (same reasoning already
+# documented in capsule-specify.yml and actions-key-smoke.yml).
+name: Capsule PR Probe
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/capsule-pr-probe.yml"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Head branch to open/confirm a PR for (default: probe both pending capsule branches, issue #145 and #146)"
+        required: false
+      issue_number:
+        description: "Issue number the branch's capsule refers to (required if 'branch' is given)"
+        required: false
+
+# Read-only GITHUB_TOKEN throughout: checkout only needs to read. The PR
+# create/list calls below deliberately use CAPSULE_PR_TOKEN instead, since
+# that token -- not the default GITHUB_TOKEN -- is the thing under test.
+permissions:
+  contents: read
+
+concurrency:
+  group: capsule-pr-probe-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Compute target branch(es)
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Decide which branch(es) to probe
+        id: plan
+        env:
+          IN_BRANCH: ${{ github.event.inputs.branch }}
+          IN_ISSUE: ${{ github.event.inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          if [ -n "${IN_BRANCH:-}" ]; then
+            if [ -z "${IN_ISSUE:-}" ]; then
+              echo "::error::workflow_dispatch input 'branch' was given without 'issue_number' -- both are required together."
+              exit 1
+            fi
+            matrix=$(jq -nc --arg b "$IN_BRANCH" --arg i "$IN_ISSUE" '{include: [{branch: $b, issue: $i}]}')
+          else
+            matrix='{"include":[{"branch":"capsule/issue-145-20260806T130611Z","issue":"145"},{"branch":"capsule/issue-146-20260806T130618Z","issue":"146"}]}'
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Probing: $matrix"
+
+  probe:
+    name: "Probe: PR for ${{ matrix.branch }}"
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard -- secret must be present
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.CAPSULE_PR_TOKEN }}" ]; then
+            echo "::error::CAPSULE_PR_TOKEN secret is missing or empty in this repo/context. This probe cannot test PAT-based PR creation without it -- stopping here rather than silently falling back to GITHUB_TOKEN."
+            exit 1
+          fi
+          echo "CAPSULE_PR_TOKEN secret is present (non-empty)."
+
+      - name: Guard -- target branch must exist on origin
+        env:
+          BRANCH: ${{ matrix.branch }}
+        run: |
+          set -euo pipefail
+          if ! git fetch origin "refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"; then
+            echo "::error::Target branch 'origin/${BRANCH}' does not exist -- nothing to open a PR for. Check the branch name."
+            exit 1
+          fi
+          echo "Confirmed origin/${BRANCH} exists at $(git rev-parse "origin/${BRANCH}")."
+
+      - name: Token sanity check (auth only, not PR permissions)
+        id: whoami
+        env:
+          GH_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
+        run: |
+          set +e
+          login=$(gh api user -q '.login' 2>whoami_err.txt)
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            err=$(cat whoami_err.txt)
+            echo "$err"
+            if echo "$err" | grep -qiE '401|Bad credentials'; then
+              echo "::error::CAPSULE_PR_TOKEN REJECTED by GitHub (401/Bad credentials) on a basic /user call -- the PAT is invalid, expired, or revoked. Verbatim: ${err}"
+            elif echo "$err" | grep -qiE '403'; then
+              echo "::error::CAPSULE_PR_TOKEN authenticated but was FORBIDDEN (403) on a basic /user call -- unexpected this early; verbatim: ${err}"
+            else
+              echo "::error::Could not authenticate to the GitHub API with CAPSULE_PR_TOKEN, for an unclassified reason. Verbatim: ${err}"
+            fi
+            exit 1
+          fi
+          echo "Authenticated to the GitHub API as: ${login}"
+
+      - name: Check whether a PR already exists for this head branch
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
+          BRANCH: ${{ matrix.branch }}
+          REPO: ${{ github.repository }}
+        run: |
+          set +e
+          existing=$(gh pr list --repo "$REPO" --head "$BRANCH" --state all --json url -q '.[0].url' 2>existing_err.txt)
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            err=$(cat existing_err.txt)
+            echo "$err"
+            if echo "$err" | grep -qiE '403'; then
+              echo "::error::CAPSULE_PR_TOKEN lacks 'pull requests: read' (403) when listing PRs for ${BRANCH} -- cannot even check for an existing PR. Verbatim: ${err}"
+            else
+              echo "::error::Listing existing PRs for ${BRANCH} failed unexpectedly. Verbatim: ${err}"
+            fi
+            exit 1
+          fi
+          if [ -n "$existing" ]; then
+            echo "A PR already exists for ${BRANCH}: ${existing}"
+            echo "outcome=already_exists" >> "$GITHUB_OUTPUT"
+            echo "url=${existing}" >> "$GITHUB_OUTPUT"
+          else
+            echo "No existing PR found for ${BRANCH}."
+            echo "outcome=none" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build title/body from the branch's own capsule artifacts
+        id: content
+        if: steps.existing.outputs.outcome == 'none'
+        env:
+          BRANCH: ${{ matrix.branch }}
+          ISSUE: ${{ matrix.issue }}
+        run: |
+          set -euo pipefail
+          PROPOSAL_DIR=".github/capsule-pipeline/proposals/issue-${ISSUE}"
+          dod_file=$(git ls-tree -r --name-only "origin/${BRANCH}" -- "$PROPOSAL_DIR" | grep -E '\.md$' | grep -v 'discrimination\.md' | head -1)
+          if [ -z "$dod_file" ]; then
+            echo "::error::Could not find a definition-of-done .md under ${PROPOSAL_DIR} on origin/${BRANCH} -- refusing to open a PR with a guessed/empty body."
+            exit 1
+          fi
+          capsule_id=$(basename "$dod_file" .md)
+          git show "origin/${BRANCH}:${dod_file}" > "$RUNNER_TEMP/dod.md"
+
+          base_sha_file=$(git ls-tree -r --name-only "origin/${BRANCH}" -- "$PROPOSAL_DIR" | grep -E '\.base-sha$' | head -1)
+          base_sha="unknown"
+          if [ -n "$base_sha_file" ]; then
+            base_sha=$(git show "origin/${BRANCH}:${base_sha_file}" | tr -d '[:space:]')
+          fi
+
+          capsule_title=$(grep -m1 '^title:' "$RUNNER_TEMP/dod.md" | sed -E 's/^title: *"?//; s/"? *$//')
+          goal_summary=$(awk '/^## Goal/{flag=1;next}/^## /{flag=0}flag' "$RUNNER_TEMP/dod.md" | sed '/^[[:space:]]*$/d' | head -8)
+
+          {
+            echo "id=${capsule_id}"
+            echo "base_sha=${base_sha}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Specify-stage work capsule for #${ISSUE}"
+            echo
+            echo "Refs #${ISSUE}. Produced by \`capsule.dot\` (see \`.github/capsule-pipeline/\`), pinned to base SHA \`${base_sha}\`."
+            echo
+            echo "**Proposed title:** ${capsule_title}"
+            echo
+            echo "**Goal (from \`${capsule_id}.md\`):**"
+            echo
+            echo "$goal_summary"
+            echo
+            echo "This PR proposes a **definition of done** (\`${capsule_id}.md\`) and its"
+            echo "executable gate (\`${capsule_id}.verify.sh\`), plus hypothesis patches that"
+            echo "proved the gate red-for-the-right-reason and non-vacuous. It contains **no"
+            echo "implementation** -- merging it approves the definition of done; a real fix"
+            echo "is a separate, later stage."
+            echo
+            echo "**Not independently verified.** This capsule was produced by an automated"
+            echo "pipeline run and has not yet been re-checked by a human or a second"
+            echo "process. Read the hypothesis patch(es) and the gate script before trusting"
+            echo "the DoD -- see \`${capsule_id}.discrimination.md\` if present for how the"
+            echo "two hypothesis shapes were told apart."
+            echo
+            echo "---"
+            echo "_Opened by the \"Capsule PR Probe\" workflow, which exists to answer one"
+            echo "question: can \`CAPSULE_PR_TOKEN\` create PRs from Actions here (the default"
+            echo "\`GITHUB_TOKEN\` cannot, per this org's enterprise policy)? Workflow run:"
+            echo "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}_"
+          } > "$RUNNER_TEMP/pr-body.md"
+
+      - name: Create the PR with CAPSULE_PR_TOKEN
+        id: create
+        if: steps.existing.outputs.outcome == 'none'
+        env:
+          GH_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
+          BRANCH: ${{ matrix.branch }}
+          ISSUE: ${{ matrix.issue }}
+          CAPSULE_ID: ${{ steps.content.outputs.id }}
+          REPO: ${{ github.repository }}
+        run: |
+          set +e
+          url=$(gh pr create --repo "$REPO" \
+            --title "specify: work capsule for issue #${ISSUE} (${CAPSULE_ID})" \
+            --body-file "$RUNNER_TEMP/pr-body.md" \
+            --base main --head "$BRANCH" 2>create_err.txt)
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            err=$(cat create_err.txt)
+            echo "$err"
+            if echo "$err" | grep -qiE 'not permitted to create or approve pull requests'; then
+              echo "::error::ENTERPRISE POLICY STILL BLOCKS PR CREATION even with CAPSULE_PR_TOKEN -- the fine-grained PAT does NOT bypass the org-level 'Actions may not create/approve PRs' lock. Verbatim: ${err}"
+            elif echo "$err" | grep -qiE '401|Bad credentials'; then
+              echo "::error::CAPSULE_PR_TOKEN REJECTED (401/Bad credentials) at PR-create time. Verbatim: ${err}"
+            elif echo "$err" | grep -qiE '403'; then
+              echo "::error::CAPSULE_PR_TOKEN lacks a permission needed to create this PR (403 -- likely missing 'Pull requests: write' or 'Contents: write' in the PAT's fine-grained scope). Verbatim: ${err}"
+            elif echo "$err" | grep -qiE 'already exists'; then
+              echo "PR create reported 'already exists' (race with the earlier existence check) -- treating as a non-failing outcome, not an error."
+              echo "outcome=already_exists" >> "$GITHUB_OUTPUT"
+              exit 0
+            else
+              echo "::error::gh pr create failed for an unclassified reason. Verbatim: ${err}"
+            fi
+            exit 1
+          fi
+          echo "PR created: ${url}"
+          echo "outcome=created" >> "$GITHUB_OUTPUT"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        env:
+          BRANCH: ${{ matrix.branch }}
+          ISSUE: ${{ matrix.issue }}
+        run: |
+          {
+            echo "### Capsule PR Probe -- issue #${ISSUE} (${BRANCH})"
+            echo
+            if [ "${{ steps.existing.outputs.outcome }}" = "already_exists" ]; then
+              echo "- Outcome: **already exists** -- ${{ steps.existing.outputs.url }}"
+            elif [ "${{ steps.create.outputs.outcome }}" = "created" ]; then
+              echo "- Outcome: **created** -- ${{ steps.create.outputs.url }}"
+            elif [ "${{ steps.create.outputs.outcome }}" = "already_exists" ]; then
+              echo "- Outcome: **already exists (race)** -- see job log"
+            else
+              echo "- Outcome: **failed** -- see \`::error::\` annotations above for the exact classification"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,24 @@
+# Crude hypothesis patch — makes DEFINITION.verify.sh exit 0 by adding
+# "working_dir" to the orchestrator_config dict passed to spawn.
+#
+# This is intentionally NOT a complete or production-quality fix.
+# It is the minimal stub that satisfies the gate:
+#   - The gate checks that orchestrator_config["working_dir"] == INTENDED_DIR
+#   - The patch adds "working_dir": context.get("context.target_dir") to the
+#     dict comprehension; the existing `if v is not None` filter already guards
+#     against injecting None when context.target_dir is unset.
+#
+# A real fix would also update tests and documentation; this patch does neither.
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py
+index 1111111..2222222 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py
+@@ -438,6 +438,8 @@ class AmplifierBackend:
+             "orchestrator_config": {
+                 k: v
+                 for k, v in {
++                    # Forward the pipeline's working directory into the child agent
++                    "working_dir": context.get("context.target_dir") if context is not None else None,
+                     "reasoning_effort": reasoning_effort,
+                     "max_turns": max_agent_turns,
+                     # user_instructions (Layer-5): per-node or per-run override

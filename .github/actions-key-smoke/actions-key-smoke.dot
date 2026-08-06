@@ -1,0 +1,50 @@
+// actions-key-smoke.dot -- Credential smoke test for the ANTHROPIC_API_KEY
+// GitHub Actions secret on THIS repo.
+//
+// PURPOSE: isolate "the key is bad" from "the wiring is bad" before building a
+// real pipeline in GitHub Actions on top of this. The wiring itself --
+// tool_command=, must_write=, $GITHUB_WORKSPACE cwd threading, FAIL-pipeline
+// exit-code mapping, logs_dir output -- is already proven end-to-end in real
+// GitHub Actions by microsoft/amplifier-app-actions's own self-test (run
+// 31094591278), using pure tool_command= graphs with NO LLM node and NO API
+// key. That foundation is not re-proven here.
+//
+// This fixture adds the ONE thing that was never exercised in Actions: a real
+// LLM (box/codergen) node that must call the Anthropic provider and produce
+// genuine model output.
+//
+// DESIGN: the node is asked to do simple arithmetic on a nonce that appears
+// NOWHERE else in this repo, in any cached response, or in any prior run. The
+// correct answer can therefore only be produced by an actual model completion
+// -- a missing/invalid key, a silently-skipped node, or a stubbed/replayed
+// response would not produce it. The node must write the answer via
+// must_write= (engine-enforced: the artifact must exist, be non-trivial, and
+// have an mtime strictly AFTER the node started -- see must_write.py's
+// freshness floor, EXTENSIONS.md #27), and the workflow step that runs this
+// pipeline asserts the file's exact content.
+//
+// SCOPE: this is a probe, not a pipeline -- one node, one turn, no tool use
+// expected beyond a single file write, no retry/critique loop. Modeled on
+// examples/pipelines/01-simple-linear.dot's "hello world" shape.
+
+digraph ActionsKeySmoke {
+    graph [
+        goal="Prove the ANTHROPIC_API_KEY GitHub Actions secret works for a real Anthropic model call",
+        label="Actions ANTHROPIC_API_KEY Smoke Test"
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+
+    // A single codergen (LLM) node -- shape=box is the default. No
+    // tool_command= here: this MUST go through the model, not a shell.
+    probe [
+        label="Probe Anthropic call",
+        prompt="This is an automated, non-interactive CI credential/wiring smoke test. There is nothing to investigate and no code to write -- do not explore the repository or run any commands. Your entire task: compute the sum 760296 + 70, then use your file-write capability to create a file named credential-smoke-result.txt in the current working directory whose ENTIRE contents is just the resulting integer -- no words, no punctuation, no explanation, no surrounding whitespace beyond a single trailing newline if your tool requires one. Then stop; there is nothing else to do.",
+        must_write="credential-smoke-result.txt"
+    ]
+
+    done [shape=Msquare, label="Done"]
+
+    start -> probe -> done
+}

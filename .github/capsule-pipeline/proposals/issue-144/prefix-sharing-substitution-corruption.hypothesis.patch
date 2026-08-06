@@ -1,0 +1,57 @@
+# HYPOTHESIS PATCH — crude stub to turn DEFINITION.verify.sh green
+#
+# This is NOT a correct fix. It is a minimal, boundary-aware replacement of
+# the bare str.replace() calls in substitute_context() (Phase 2) and
+# expand_params() with re.sub() calls that use a negative lookahead
+# (?![A-Za-z0-9_.]) to prevent $name from matching inside $name_suffix.
+#
+# Why this approach (and not a simpler early-return / hardcoded stub):
+#   The verify script also runs test_unified_substitution.py, which exercises
+#   the existing "longest key wins" behaviour and dotted-key resolution.
+#   A pure early-return or hardcoded-result stub would break those tests
+#   (exit 2 from the verify script, not exit 0).  The regex lookahead is the
+#   minimal change that satisfies all five assertions in DEFINITION.verify.sh
+#   without breaking the 12 existing substitution unit tests.
+#
+# Verified: git apply from repo root applies cleanly; DEFINITION.verify.sh
+# exits 0 with the patch applied; git checkout -- restores the red state.
+#
+# Apply from repo root with: git apply .ai/hypothesis.patch
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py
+index 7a345f3..dfc321f 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py
+@@ -100,7 +100,10 @@ def substitute_context(text: str, snapshot: Mapping[str, object]) -> str:
+     for key in sorted(snapshot.keys(), key=len, reverse=True):
+         val = snapshot.get(key)
+         if val is not None and f"${key}" in text:
+-            text = text.replace(f"${key}", str(val))
++            # Use a boundary-aware replacement: do not substitute $key when it
++            # is immediately followed by a word character or dot (which would
++            # mean it is a prefix of a longer, undefined token).
++            text = re.sub(re.escape(f"${key}") + r"(?![A-Za-z0-9_.])", str(val), text)
+ 
+     # Phase 3: $$ escape → literal $.
+     text = text.replace("$$", "$")
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/transforms.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/transforms.py
+index 3a0dbb6..9cc983c 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/transforms.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/transforms.py
+@@ -19,6 +19,7 @@ from __future__ import annotations
+ 
+ import json
+ import os
++import re
+ from typing import Any, Protocol, runtime_checkable
+ 
+ from .context import PipelineContext
+@@ -45,7 +46,8 @@ def expand_params(text: str, params: dict[str, str]) -> str:
+         Text with known ``$param`` tokens replaced.
+     """
+     for key, value in params.items():
+-        text = text.replace(f"${key}", str(value))
++        # Boundary-aware: do not replace $key when followed by word chars/dot.
++        text = re.sub(re.escape(f"${key}") + r"(?![A-Za-z0-9_.])", str(value), text)
+     return text
+ 
+ 

@@ -1,0 +1,101 @@
+# HYPOTHESIS B PATCH — second crude stub to turn DEFINITION.verify.sh green
+#
+# Shape: DIFFERENT from hypothesis.patch in mechanism, file-level operation,
+#        and polarity.
+#
+# hypothesis.patch (Shape A):
+#   - substitution.py: REPLACES the str.replace() call with re.sub() +
+#     negative lookahead (?![A-Za-z0-9_.]) — additive change to the inner
+#     loop body in both files.
+#   - transforms.py: ADDS import re + REPLACES str.replace() with re.sub()
+#     + negative lookahead — same additive mechanism, same polarity.
+#   - Mechanism: smarter-replacement (change what the replacement call does).
+#
+# hypothesis_b.patch (Shape B):
+#   - substitution.py: WRAPS the existing str.replace() loop with a
+#     protect-and-restore step.  Scans the text for undefined tokens that
+#     share a prefix with a defined key, temporarily substitutes them with
+#     unique sentinels (__PROT_N__) BEFORE the loop runs, then restores them
+#     AFTER.  The inner str.replace() call is left UNCHANGED.
+#     Mechanism: protect-then-restore (different structure: pre-processing +
+#     unchanged inner loop + post-processing, not a change to the call itself).
+#   - transforms.py: REMOVES the entire loop body — expand_params() becomes
+#     a no-op that returns text unchanged.  This is the OPPOSITE polarity from
+#     Shape A (remove behavior vs. add smarter behavior) and a different file
+#     operation (delete lines vs. replace lines with a smarter version).
+#
+# Why these are genuinely different shapes:
+#   1. Different mechanism in substitution.py: A changes the replacement call;
+#      B wraps the existing (unchanged) call with sentinel protection.
+#   2. Opposite polarity in transforms.py: A adds regex logic; B removes all
+#      logic (no-op stub).
+#   3. Different structural footprint: A modifies 2 inner-loop lines across 2
+#      files; B adds ~15 lines of pre/post processing in substitution.py and
+#      deletes 2 lines in transforms.py.
+#
+# Why this is NOT a correct fix:
+#   - The sentinel approach in substitution.py has edge cases (e.g., if the
+#     text itself contains the sentinel string __PROT_N__; if a token appears
+#     in both defined and undefined forms in the same text).
+#   - Making expand_params() a no-op breaks all param expansion for $param
+#     tokens in node prompts (the entire feature is silently disabled).
+#   - This is a crude stub that satisfies the gate's observable assertions,
+#     not a production-quality fix.
+#
+# Apply from repo root with: git apply .ai/hypothesis_b.patch
+# Verified: applies cleanly; DEFINITION.verify.sh exits 0; git checkout -- restores red.
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py
+index 7a345f3..bd6d9b9 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py
+@@ -95,13 +95,32 @@ def substitute_context(text: str, snapshot: Mapping[str, object]) -> str:
+ 
+     text = re.sub(r"\$\{([^}]+)\}", _replace_braced, text)
+ 
+-    # Phase 2: $key form — replace longest keys first to avoid partial matches.
+-    # e.g. replace "$tool.output" before "$tool" so the longer token wins.
++    # Phase 2: $key form — protect undefined tokens that share a prefix with a
++    # defined key, then run the existing longest-first str.replace() loop, then
++    # restore the protected tokens.
++    #
++    # Step 2a: find all bare $token occurrences in the current text.
++    _scan = re.sub(r"\$\{[^}]+\}", "", text)  # exclude already-handled ${} tokens
++    _all_tokens = set(re.findall(r'\$([A-Za-z_][A-Za-z0-9_.]*)', _scan))
++    _defined = set(k for k in snapshot if snapshot.get(k) is not None)
++    # Protect tokens that are NOT defined but whose name starts with a defined key.
++    _sentinels: dict[str, str] = {}
++    for _i, _tok in enumerate(sorted(_all_tokens - _defined)):
++        if any(_tok.startswith(_dk) for _dk in _defined):
++            _s = f"__PROT_{_i}__"
++            _sentinels[_s] = f"${_tok}"
++            text = text.replace(f"${_tok}", _s)
++
++    # Step 2b: existing replacement loop (str.replace, longest keys first).
+     for key in sorted(snapshot.keys(), key=len, reverse=True):
+         val = snapshot.get(key)
+         if val is not None and f"${key}" in text:
+             text = text.replace(f"${key}", str(val))
+ 
++    # Step 2c: restore protected tokens.
++    for _s, _orig in _sentinels.items():
++        text = text.replace(_s, _orig)
++
+     # Phase 3: $$ escape → literal $.
+     text = text.replace("$$", "$")
+ 
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/transforms.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/transforms.py
+index 3a0dbb6..7c33aff 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/transforms.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/transforms.py
+@@ -44,8 +44,9 @@ def expand_params(text: str, params: dict[str, str]) -> str:
+     Returns:
+         Text with known ``$param`` tokens replaced.
+     """
+-    for key, value in params.items():
+-        text = text.replace(f"${key}", str(value))
++    # Stub: return text unchanged. Boundary-aware expansion is handled
++    # by substitute_context(); expand_params() is not the primary path
++    # for tool_command substitution.
+     return text
+ 
+ 

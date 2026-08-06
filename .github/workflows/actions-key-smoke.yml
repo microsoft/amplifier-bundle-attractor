@@ -1,0 +1,125 @@
+# Actions ANTHROPIC_API_KEY credential smoke test.
+#
+# PURPOSE: this workflow answers exactly one question -- does the
+# ANTHROPIC_API_KEY repo secret actually work for a real attractor pipeline
+# run in GitHub Actions? -- before any real (20-30 minute) pipeline is built
+# on top of this repo's Actions wiring.
+#
+# It deliberately does NOT re-prove the pipeline-in-Actions wiring itself
+# (workspace cwd threading for tool_command=/must_write=, FAIL-pipeline exit
+# codes, logs_dir output). That is already proven end-to-end by
+# microsoft/amplifier-app-actions's own self-test (run 31094591278) using
+# pure tool_command= graphs with no LLM node and no API key. This workflow
+# adds the one thing that was never exercised: a real LLM (box/codergen)
+# node that must call the Anthropic provider -- see
+# .github/actions-key-smoke/actions-key-smoke.dot for the fixture and why its
+# assertion can't be satisfied without a genuine model completion.
+#
+# Runs on pull_request (scoped to its own paths) so it executes automatically
+# in the PR that introduces it -- workflow_dispatch alone can't be invoked
+# until the workflow file is on the default branch, and we want the answer
+# before merging. Same-repo PR branches (not forks) get secrets, so this
+# works here. workflow_dispatch is also wired for later manual re-runs.
+#
+# Deliberately NOT part of "CI Gate (all checks passed)" (.github/workflows/
+# ci.yml): this is a separate workflow file with its own job, and that
+# aggregate gate's `needs:` list only ever references job IDs within ci.yml
+# itself -- a job in a different workflow file cannot be added to it by
+# accident. A red result here is real, useful information and is
+# deliberately allowed to leave this job (and only this job) red -- see "no
+# masking" below.
+#
+# No continue-on-error/retry-until-green anywhere: if the credential or the
+# pipeline is broken, this job reports failure, honestly, every time.
+
+name: Actions ANTHROPIC_API_KEY Smoke Test
+
+on:
+  pull_request:
+    paths:
+      - ".github/actions-key-smoke/**"
+      - ".github/workflows/actions-key-smoke.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actions-key-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  credential-smoke:
+    name: "ANTHROPIC_API_KEY probe (real Anthropic call via attractor_source)"
+    runs-on: ubuntu-latest
+    # A credential probe should be fast. If this is still running at 10
+    # minutes something is wrong beyond "the key doesn't work" (that fails
+    # in seconds) -- most likely a hang in bundle install or the model call.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run credential smoke pipeline
+        id: run
+        # Pinned to a specific commit (main @ time of writing) rather than a
+        # floating @main, so a future change to amplifier-app-actions can't
+        # silently alter what this probe is proving. Bump deliberately.
+        uses: microsoft/amplifier-app-actions@ca20a93f773ad0bf5a2c055b312b8e42b403b03e
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          attractor_source: .github/actions-key-smoke/actions-key-smoke.dot
+
+      - name: "Assert: a real model completion landed in the workspace"
+        # Runs even if the step above failed -- a red pipeline is exactly the
+        # case where this diagnostic message matters most (see module
+        # docstring: "no masking").
+        if: always()
+        run: |
+          set -uo pipefail
+
+          artifact="$GITHUB_WORKSPACE/credential-smoke-result.txt"
+          expected="760366"   # 760296 + 70, per actions-key-smoke.dot's prompt
+          run_outcome="${{ steps.run.outcome }}"
+          run_conclusion="${{ steps.run.conclusion }}"
+          overall_ok=true
+
+          echo "run step outcome=${run_outcome} conclusion=${run_conclusion}"
+
+          if [ "$run_outcome" != "success" ]; then
+            echo "::error title=ANTHROPIC_API_KEY smoke test FAILED::The attractor pipeline step did not succeed (outcome=${run_outcome}). This means one of: (1) ANTHROPIC_API_KEY is absent from this run's environment -- the wrapper/backend raised before any HTTP call; (2) the provider REJECTED the key (401/403 -- an invalid or revoked key); (3) the provider RATE-LIMITED the request (429); or (4) the pipeline WIRING itself failed for an unrelated reason. Scroll up to the 'Run credential smoke pipeline' step's own log (it prints the real exception text) to tell these apart -- grep for: 'missing API key' or 'ANTHROPIC_API_KEY' (absent), '401'/'403'/'authentication'/'invalid x-api-key' (rejected), '429'/'rate_limit'/'overloaded' (throttled/rate-limited). Anything else not matching those patterns is a wiring failure, not a credential failure."
+            overall_ok=false
+          fi
+
+          if [ -f "$artifact" ]; then
+            actual="$(cat "$artifact")"
+            actual_trimmed="$(printf '%s' "$actual" | tr -d '[:space:]')"
+            echo "Artifact found at $artifact"
+            echo "Artifact content (raw): '$actual'"
+            if [ "$actual_trimmed" != "$expected" ]; then
+              echo "::error title=Unexpected artifact content::Expected the nonce-derived answer '$expected' but got '$actual' -- the file exists but its content doesn't match. This is not the 'key is absent' case (a real write happened) -- it suggests either a stale/pre-existing file (should be impossible: must_write='s freshness floor requires the file's mtime to strictly post-date this node's start) or the model produced a wrong/garbled answer. Treat as a wiring anomaly, not a clean credential failure."
+              overall_ok=false
+            else
+              echo "PASS: artifact content matches the nonce-derived answer exactly."
+            fi
+          else
+            echo "::error title=No artifact written::Expected artifact not found at $artifact -- the LLM node never wrote it. Combined with the run outcome above, this is consistent with the pipeline failing before or during the model call (see the diagnosis in the error above)."
+            overall_ok=false
+          fi
+
+          if [ "$overall_ok" != "true" ]; then
+            echo ""
+            echo "VERDICT: ANTHROPIC_API_KEY smoke test FAILED. See errors above."
+            exit 1
+          fi
+
+          echo ""
+          echo "VERDICT: ANTHROPIC_API_KEY works -- a real Anthropic model completion was verified in this GitHub Actions run."
+
+      - name: Upload run logs (always, for post-mortem)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: actions-key-smoke-logs
+          path: ${{ steps.run.outputs.logs_dir }}
+          if-no-files-found: warn

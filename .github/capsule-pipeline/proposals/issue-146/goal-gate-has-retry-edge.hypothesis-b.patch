@@ -1,0 +1,14 @@
+diff --git a/examples/pipelines/00-convergence-loop.dot b/examples/pipelines/00-convergence-loop.dot
+index b2d7582..a3c1d9e 100644
+--- a/examples/pipelines/00-convergence-loop.dot
++++ b/examples/pipelines/00-convergence-loop.dot
+@@ -58,7 +58,8 @@
+         shape=parallelogram,
+         label="pytest",
+         tool_command="pytest -q test_word_counter.py > test_output.txt 2>&1 && echo gate_pass || echo gate_fail",
+-        goal_gate=true
++        goal_gate=true,
++        retry_target="implement"
+     ]
+ 
+     // --- Exit ---

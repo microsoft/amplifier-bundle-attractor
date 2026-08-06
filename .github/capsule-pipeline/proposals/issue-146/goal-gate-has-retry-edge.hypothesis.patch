@@ -1,0 +1,12 @@
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+index c585e1d..d5c477c 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+@@ -336,6 +336,7 @@ def _check_goal_gate_has_retry(graph: Graph, diags: list[Diagnostic]) -> None:
+                 node.attrs.get("retry_target")
+                 or node.attrs.get("fallback_retry_target")
+                 or graph.graph_attrs.get("retry_target")
++                or any(e.loop_restart for e in graph.outgoing_edges(node.id))
+             )
+             if not has_retry:
+                 diags.append(

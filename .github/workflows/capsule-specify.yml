@@ -56,6 +56,18 @@ on:
       issue_number:
         description: "Issue number to run the specify stage against"
         required: true
+  # TEMPORARY, FOR PRE-MERGE PROOF ONLY -- see PR #141. `workflow_dispatch`
+  # also turned out to require the workflow file to exist on the default
+  # branch (confirmed: `gh workflow run` 404s against a branch-only file),
+  # so this repo's own established technique (used by actions-key-smoke.yml
+  # and attractor-self-test.yml) is the only way left to exercise this
+  # exact job in real GitHub Actions before merge: `pull_request` DOES run
+  # using the PR branch's own copy of the workflow file. Removed again
+  # before this PR is left for review -- do not merge with this present.
+  pull_request:
+    paths:
+      - ".github/workflows/capsule-specify.yml"
+      - ".github/capsule-pipeline/**"
 
 permissions:
   contents: write
@@ -70,11 +82,16 @@ concurrency:
 
 jobs:
   specify:
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready:spec'
-    name: "Run capsule.dot on issue #${{ github.event.issue.number || inputs.issue_number }}"
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready:spec'
+    name: "Run capsule.dot on issue #${{ github.event.issue.number || inputs.issue_number || '142' }}"
     runs-on: ubuntu-latest
     env:
-      ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+      # TEMPORARY '142' fallback for the pull_request pre-merge proof path
+      # only (see the pull_request trigger comment above) -- issue #142 is
+      # the real issue this PR's own workflow run is proving the pipeline
+      # against. Remove this fallback along with the pull_request trigger
+      # before leaving this PR for review.
+      ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number || '142' }}
     # Measured capsule.dot runs take ~20-40 minutes; the graph's own
     # max_pipeline_duration=3600s (1h) is the engine's internal wall (it
     # writes a postmortem before dying), so the job wall must clear that

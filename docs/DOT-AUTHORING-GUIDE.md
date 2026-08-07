@@ -774,6 +774,21 @@ digraph {
    are merged back into the parent context. Keys not listed in `outputs` are
    discarded.
 
+   **A dead end inside the child silently reports as success.** `run_subgraph`
+   (the shared executor for a folder node's child pipeline) has no top-level
+   hard-fail: when edge selection finds no matching outgoing edge, it returns
+   the last node's own `Outcome` rather than failing loudly, and if the child
+   never executed a node it falls back to a bare `Outcome(SUCCESS)`. This is
+   the opposite of the top-level engine, which hard-fails on a no-matching-edge
+   dead end. A child graph whose corrective loop runs off the rim -- a
+   conditional edge nobody drew for some outcome -- reports SUCCESS to the
+   parent instead of surfacing the dead end. **The practical rule: give every
+   child graph its own fail-route.** Every node in a composed sub-pipeline
+   should have an outgoing edge for every outcome it can produce (including an
+   explicit `condition="outcome=fail"` edge to a terminal or recovery node),
+   the same discipline §3 of `docs/PIPELINE_DESIGN_PRINCIPLES.md` already asks
+   for at the top level -- composition does not relax it.
+
 3. **Isolation (undeclared changes don't affect parent):** Any context
    modifications made inside the child pipeline that are not declared in
    `outputs` do not affect the parent pipeline's context. This isolation

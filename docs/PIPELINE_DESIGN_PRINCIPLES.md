@@ -219,6 +219,16 @@ occurred in a live run before a stall counter was added to the outer quality loo
 stall detection to escalation, not to infinite retry; anchor critique to the DoD plus prior
 acceptances so the quality bar ratchets rather than resets.
 
+**Individually-bounded legs do not compose.** Budgeting each cycle on its own is necessary
+but not sufficient: a persistent failure can bounce between two separately-bounded legs
+forever, because neither leg's own counter ever sees the other leg's attempts. A live
+instance: `critique(FAIL) -> verify(PASS) -> critique`, with `critique` and `verify` each
+individually well-behaved -- the pair together has no shared wall and can cycle
+indefinitely. A budget only bounds the loop(s) it can see; when corrective work spans more
+than one gate, at least one counter has to span the whole path (a single ledger both gates
+read and write, or an outer node that counts total round-trips) rather than each gate
+counting only its own visits.
+
 **Verify running-code identity before entering a loop.** An orient/setup node should check
 that the environment is in the expected state before the corrective loop starts -- 14 red
 iterations were burned re-flipping a coin on a stale-`.pyc` defect that no code change

@@ -4,7 +4,7 @@ Validates both structure and execution of the reusable convergence-factory.dot
 pattern and its demo parent pipeline without requiring real API keys.
 
 Test coverage:
-- Structural parse tests for convergence-factory.dot (7 nodes, correct shapes, edges)
+- Structural parse tests for convergence-factory.dot (8 nodes, correct shapes, edges)
 - Structural parse tests for demo-convergence-factory.dot (folder node, context attrs)
 - Structural: edge conditions correct (converged vs refine routing)
 - Structural: loop_restart edge from feedback -> generate exists
@@ -49,7 +49,11 @@ class MockToolHandler:
     """Returns SUCCESS for parallelogram/tool nodes (bypasses real shell execution).
 
     Registered as the 'tool' handler in the HandlerRegistry so that the
-    validate node's ToolHandler is replaced during tests.
+    validate, check, and budget_check nodes' real ToolHandler is replaced
+    during tests -- no test in this file is exercising budget exhaustion
+    (all mock backends converge within one or two iterations, well under
+    budget_check's default 6-iteration budget), so budget_check is always
+    mocked as "under budget, continue" via context.tool.last_line.
     """
 
     async def execute(
@@ -61,6 +65,12 @@ class MockToolHandler:
         *,
         engine=None,
     ) -> Outcome:
+        if node.id == "budget_check":
+            return Outcome(
+                status=StageStatus.SUCCESS,
+                notes="Mock budget check: under budget",
+                context_updates={"tool.last_line": "continue"},
+            )
         return Outcome(status=StageStatus.SUCCESS, notes="Mock validation passed")
 
 
@@ -162,16 +172,20 @@ class TestConvergenceFactoryParse:
         """Pattern file exists at examples/patterns/convergence-factory.dot."""
         assert _FACTORY_DOT.exists(), f"Pattern file not found: {_FACTORY_DOT}"
 
-    def test_parses_with_seven_nodes(self):
-        """convergence-factory.dot parses into exactly 7 nodes."""
+    def test_parses_with_eight_nodes(self):
+        """convergence-factory.dot parses into exactly 8 nodes.
+
+        Was 7 before the loop got a budget wall (docs/PIPELINE_DESIGN_PRINCIPLES.md
+        §3): 'budget_check' bounds the refine cycle so it cannot loop forever.
+        """
         source = _FACTORY_DOT.read_text()
         g = parse_dot(source)
-        assert len(g.nodes) == 7, (
-            f"Expected 7 nodes, got {len(g.nodes)}: {list(g.nodes.keys())}"
+        assert len(g.nodes) == 8, (
+            f"Expected 8 nodes, got {len(g.nodes)}: {list(g.nodes.keys())}"
         )
 
     def test_node_ids_include_core_names(self):
-        """Pattern includes nodes: start, generate, validate, assess, check, feedback, done."""
+        """Pattern includes nodes: start, generate, validate, assess, check, budget_check, feedback, done."""
         source = _FACTORY_DOT.read_text()
         g = parse_dot(source)
         expected = {
@@ -180,6 +194,7 @@ class TestConvergenceFactoryParse:
             "validate",
             "assess",
             "check",
+            "budget_check",
             "feedback",
             "done",
         }
@@ -210,17 +225,20 @@ class TestConvergenceFactoryParse:
                 f"Expected {node_id} shape=box or default, got {shape!r}"
             )
 
-    def test_has_seven_edges(self):
-        """Pattern has exactly 7 edges."""
+    def test_has_ten_edges(self):
+        """Pattern has exactly 10 edges (was 7 before the budget wall was added:
+        validate gained a fail-route to budget_check, check's 'refine' edge now
+        targets budget_check instead of feedback directly, and budget_check
+        itself adds two outgoing edges)."""
         source = _FACTORY_DOT.read_text()
         g = parse_dot(source)
-        assert len(g.edges) == 7, (
-            f"Expected 7 edges, got {len(g.edges)}: "
+        assert len(g.edges) == 10, (
+            f"Expected 10 edges, got {len(g.edges)}: "
             f"{[(e.from_node, e.to_node, e.label) for e in g.edges]}"
         )
 
     def test_check_has_converged_and_refine_edges(self):
-        """check node has two conditional edges: 'converged' -> done, 'refine' -> feedback."""
+        """check node has two conditional edges: 'converged' -> done, 'refine' -> budget_check."""
         source = _FACTORY_DOT.read_text()
         g = parse_dot(source)
         check_edges = [e for e in g.edges if e.from_node == "check"]
@@ -254,17 +272,56 @@ class TestConvergenceFactoryParse:
             f"Expected 'converged' edge to go to 'done', got {converged_edges[0].to_node!r}"
         )
 
-    def test_refine_edge_goes_to_feedback(self):
-        """The 'refine' conditional edge from check routes to feedback."""
+    def test_refine_edge_goes_to_budget_check(self):
+        """The 'refine' conditional edge from check routes to budget_check (the
+        budget wall), not directly to feedback -- budget_check decides whether
+        the refine cycle is still under budget before feedback ever runs."""
         source = _FACTORY_DOT.read_text()
         g = parse_dot(source)
         refine_edges = [
             e for e in g.edges if e.from_node == "check" and e.label == "refine"
         ]
         assert len(refine_edges) == 1, "Expected exactly one 'refine' edge from check"
-        assert refine_edges[0].to_node == "feedback", (
-            f"Expected 'refine' edge to go to 'feedback', got {refine_edges[0].to_node!r}"
+        assert refine_edges[0].to_node == "budget_check", (
+            f"Expected 'refine' edge to go to 'budget_check', got {refine_edges[0].to_node!r}"
         )
+
+    def test_budget_check_routes_continue_to_feedback_and_fail_to_done(self):
+        """budget_check has two outgoing edges: under-budget continues to
+        feedback (SUCCESS), budget-exhausted exits at done with outcome=fail
+        (docs/PIPELINE_DESIGN_PRINCIPLES.md §3: every loop needs a budget)."""
+        source = _FACTORY_DOT.read_text()
+        g = parse_dot(source)
+        budget_edges = [e for e in g.edges if e.from_node == "budget_check"]
+        assert len(budget_edges) == 2, (
+            f"Expected 2 edges from 'budget_check', got {len(budget_edges)}"
+        )
+        by_target = {e.to_node: e for e in budget_edges}
+        assert set(by_target) == {"feedback", "done"}, (
+            f"Expected budget_check to route to {{'feedback', 'done'}}, got {set(by_target)}"
+        )
+        assert "outcome=success" in (by_target["feedback"].condition or ""), (
+            "Expected budget_check->feedback to require outcome=success "
+            "(stale-label discipline)"
+        )
+        assert by_target["done"].condition == "outcome=fail", (
+            f"Expected budget_check->done to condition on outcome=fail, "
+            f"got {by_target['done'].condition!r}"
+        )
+
+    def test_validate_has_success_and_fail_routes(self):
+        """validate routes on mechanical outcome: success -> assess, fail ->
+        budget_check (a broken artifact still spends the loop's budget instead
+        of dead-ending -- docs/PIPELINE_DESIGN_PRINCIPLES.md §3)."""
+        source = _FACTORY_DOT.read_text()
+        g = parse_dot(source)
+        validate_edges = [e for e in g.edges if e.from_node == "validate"]
+        assert len(validate_edges) == 2, (
+            f"Expected 2 edges from 'validate', got {len(validate_edges)}"
+        )
+        by_target = {e.to_node: e for e in validate_edges}
+        assert by_target["assess"].condition == "outcome=success"
+        assert by_target["budget_check"].condition == "outcome=fail"
 
     def test_feedback_to_generate_has_loop_restart(self):
         """The feedback -> generate edge has loop_restart=true."""
@@ -349,10 +406,20 @@ class TestConvergenceFactoryParse:
         )
 
     def test_linear_flow_start_to_check(self):
-        """Verify the linear chain: start->generate->validate->assess->check."""
+        """Verify the happy-path chain: start->generate->validate->assess->check.
+
+        validate->assess now carries condition="outcome=success" (the mechanical
+        pass route -- see test_validate_has_success_and_fail_routes), so this
+        walks the SUCCESS-path edge for validate rather than filtering to only
+        unconditioned edges.
+        """
         source = _FACTORY_DOT.read_text()
         g = parse_dot(source)
-        edge_map = {e.from_node: e.to_node for e in g.edges if not e.condition}
+        edge_map = {
+            e.from_node: e.to_node
+            for e in g.edges
+            if not e.condition or e.condition == "outcome=success"
+        }
         expected_chain = ["start", "generate", "validate", "assess", "check"]
         current = "start"
         visited = [current]

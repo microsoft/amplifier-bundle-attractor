@@ -11,9 +11,22 @@
 //   $validation_criteria  — Semantic quality criteria for the assess node
 //   $validation_command   — Shell command to mechanically validate the artifact
 //
+// Optional context variables:
+//   $max_iterations       — Budget: total refine cycles before the factory
+//                           gives up and exits via 'abandoned' instead of
+//                           looping forever (default 6; see budget_check).
+//
 // Routing logic:
 //   assess codergen sets preferred_label="converged" or preferred_label="refine"
 //   check node routes via context.preferred_label edge conditions
+//   validate's FAIL outcome (mechanical validation failed) routes directly
+//   to budget_check as well, so a broken artifact still spends budget
+//   instead of dead-ending (docs/PIPELINE_DESIGN_PRINCIPLES.md §3: every
+//   loop needs a budget or ratchet on both the corrective and quality-gate
+//   cycle).
+//   budget_check compares the engine-native $iteration counter (bumped by
+//   loop_restart -- see EXTENSIONS.md §24) against $max_iterations: under
+//   budget, continue to feedback; at or over budget, exit via 'abandoned'.
 //   feedback -> generate edge has loop_restart=true to reset iteration state
 //
 // Feedback contract (EXTENSIONS.md §29):
@@ -47,12 +60,16 @@ digraph convergence_factory {
     ]
 
     // validate: runs mechanical validation (syntax check, parse check, tests).
-    // tool_command is set from $validation_command injected by the parent.
-    // On failure the pipeline halts; on success proceeds to assess.
+    // tool_command is set from $validation_command injected by the parent,
+    // with its output captured to .ai/validation_output.txt so a failure is
+    // legible downstream (feedback reads this file when validation itself
+    // failed, before assess ever ran). On success proceeds to assess; on
+    // failure routes to budget_check (see the outcome=fail edge below) so a
+    // broken artifact still spends the loop's budget instead of dead-ending.
     validate [
         shape=parallelogram,
         label="Validate Artifact",
-        tool_command="$validation_command"
+        tool_command="mkdir -p .ai; $validation_command > .ai/validation_output.txt 2>&1"
     ]
 
     // assess: semantically evaluates the artifact against $validation_criteria.
@@ -64,10 +81,33 @@ digraph convergence_factory {
     ]
 
     // check: routing node (edge conditions handle routing per nlspec Section 3.3).
-    // Routes to 'done' when assess says converged, to 'feedback' when refine.
+    // Routes to 'done' when assess says converged, to 'budget_check' when refine.
     check [shape=parallelogram, label="Converged?", tool_command="echo routing"]
 
-    // feedback: reached only when assess returns 'refine'.
+    // budget_check: bounds the refine cycle (docs/PIPELINE_DESIGN_PRINCIPLES.md
+    // §3 -- every loop needs a budget). Reached both when assess says 'refine'
+    // and when validate's mechanical check fails outright, so a broken
+    // artifact spends the same budget as a semantically-incomplete one.
+    // Compares the engine-native $iteration counter (bumped by loop_restart;
+    // EXTENSIONS.md §24) against $max_iterations (shell-default 6 per the
+    // three-layer default pattern in substitution.py). Under budget: continue
+    // to feedback (exit 0, tool.last_line=continue).
+    //
+    // At or over budget: this pipeline has exactly one exit node (lint's
+    // terminal_node rule), so exhaustion cannot route to a *different*
+    // Msquare. Instead it exits nonzero -- a genuine FAIL outcome, not a
+    // masked SUCCESS -- so a parent composing over this factory (see
+    // docs/DOT-AUTHORING-GUIDE.md Sub-Pipeline Composition) can tell
+    // "converged" (outcome=success at done) apart from "gave up"
+    // (outcome=fail at done) exactly as that guide's own outcome=success /
+    // outcome!=success routing example expects.
+    budget_check [
+        shape=parallelogram,
+        label="Budget Check",
+        tool_command="B=${max_iterations:-6}; N=$iteration; if [ \"$N\" -ge \"$B\" ]; then printf 'budget exhausted after %s iterations' \"$N\"; exit 1; else printf continue; fi"
+    ]
+
+    // feedback: reached when the refine cycle is still under budget.
     // Writes targeted refinement guidance — the engine collects this output
     // (via generate's feedback_from="feedback") and injects it as
     // $prior_critiques_generate into the next iteration's generate prompt.
@@ -77,21 +117,42 @@ digraph convergence_factory {
     // MAX_CRITIQUE_CHARS=500 chars.
     feedback [
         label="Write Feedback",
-        prompt="You are writing targeted refinement guidance for the next iteration.\n\nThis is refinement iteration $iteration.\n\nArtifact goal: $artifact_goal\n\nValidation criteria: $validation_criteria\n\nRead the current assessment from .ai/assessment.md.\nWrite ONE highest-leverage observation using the Pyramid Summary pattern:\n  1. Key finding (1 sentence) — what is the single most important issue\n  2. What to change (2-3 bullet points) — specific, actionable improvements\n  3. Why it matters (1 sentence) — how this moves toward the goal\n\nBe precise and concise (target <400 chars). The engine will accumulate your\noutput across iterations and inject it as $prior_critiques_generate into the\ngenerator's prompt. Focus on the delta needed to converge — not a summary of\neverything seen so far."
+        prompt="You are writing targeted refinement guidance for the next iteration.\n\nThis is refinement iteration $iteration.\n\nArtifact goal: $artifact_goal\n\nValidation criteria: $validation_criteria\n\nRead the current assessment from .ai/assessment.md if it exists. If it does not exist, mechanical validation itself failed before assess ran -- read .ai/validation_output.txt instead.\nWrite ONE highest-leverage observation using the Pyramid Summary pattern:\n  1. Key finding (1 sentence) — what is the single most important issue\n  2. What to change (2-3 bullet points) — specific, actionable improvements\n  3. Why it matters (1 sentence) — how this moves toward the goal\n\nBe precise and concise (target <400 chars). The engine will accumulate your\noutput across iterations and inject it as $prior_critiques_generate into the\ngenerator's prompt. Focus on the delta needed to converge — not a summary of\neverything seen so far."
     ]
 
-    // Exit point — reached only when assess returns 'converged'
+    // Exit point — the pipeline's single exit node (lint's terminal_node rule
+    // requires exactly one). Reached either when assess returns 'converged'
+    // (outcome=success) or when budget_check exhausts the refine budget
+    // (outcome=fail -- see budget_check's comment above).
     done [shape=Msquare, label="Factory Done"]
 
     // Flow
     start -> generate
     generate -> validate
-    validate -> assess
+
+    // On mechanical success proceed to the semantic assess step; on failure
+    // the artifact is broken outright, so route straight to budget_check
+    // (it still needs to spend an iteration and receive feedback).
+    validate -> assess       [label="mechanical pass", condition="outcome=success"]
+    validate -> budget_check [label="mechanical fail",  condition="outcome=fail"]
+
     assess -> check
 
     // Route based on assess's preferred_label (stored in context.preferred_label)
-    check -> done     [label="converged", condition="context.preferred_label=converged"]
-    check -> feedback [label="refine",    condition="context.preferred_label=refine"]
+    check -> done         [label="converged", condition="context.preferred_label=converged"]
+    check -> budget_check [label="refine",    condition="context.preferred_label=refine"]
+
+    // budget_check's own routing: continue refining under budget (SUCCESS,
+    // tool.last_line=continue), or exit at 'done' with a genuine FAIL outcome
+    // when the budget is exhausted.
+    // `&& outcome=success` on the continue edge: STALE-LABEL discipline (see
+    // DOT-AUTHORING-GUIDE.md CMD-001/002 and 04-retry-with-fallback.dot). On
+    // the visit immediately after an exhausted (FAIL) entry, tool.last_line
+    // would otherwise still hold the stale "continue" from a prior success,
+    // making both this edge and the outcome=fail edge match at once. The
+    // conjunction pins this edge to fresh, successful continuations only.
+    budget_check -> feedback [label="under budget", condition="context.tool.last_line=continue && outcome=success"]
+    budget_check -> done     [label="budget exhausted -- abandon", condition="outcome=fail"]
 
     // Loop back: loop_restart resets iteration state and re-runs from generate.
     // The engine collects feedback's output here (Extension §29) before clearing

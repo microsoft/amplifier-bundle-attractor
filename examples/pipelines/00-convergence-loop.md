@@ -11,10 +11,15 @@ same nodes and the same per-step probability, and reliability rises to roughly
 **0.94**. The loop is not a style choice — it is the mechanism that turns a
 flowchart into an attractor.
 
-The three-question test: does your pipeline have (1) a worker that produces
+The shape check: does your pipeline have (1) a worker that produces
 something, (2) a gate that checks it with a machine-readable signal, and (3) a
 back-edge that routes the worker back when the gate fails? If yes, it is a
 convergence graph. If no, it is a script with extra syntax.
+
+(This is a structural check on the graph itself -- distinct from the
+[three-question test](../../docs/PIPELINE_DESIGN_PRINCIPLES.md#the-three-question-test)
+in `docs/PIPELINE_DESIGN_PRINCIPLES.md` §0, which diagnoses whether work
+warrants an attractor *at all*.)
 
 ## The shape
 

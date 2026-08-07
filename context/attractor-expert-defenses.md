@@ -245,5 +245,15 @@ primary retry cannot address the failure. Teach it alongside `retry_target`
 in convergence pipelines, with the understanding that it applies to goal-gate
 exit, not to ordinary per-node failure.
 
+**Individually-bounded legs do not compose.** Growing the number of legs (the
+patterns above) increases exposure to this defect if no rule bounds the
+whole path: two separately-budgeted gates can bounce a persistent failure
+between each other forever, because neither gate's own counter sees the
+other's attempts (a live instance: `critique(FAIL) -> verify(PASS) ->
+critique`, each node individually well-behaved). When corrective work spans
+more than one gate, at least one counter must span the whole path — see
+`docs/PIPELINE_DESIGN_PRINCIPLES.md` §3, "Individually-bounded legs do not
+compose."
+
 **Cross-reference:** DOT-AUTHORING-GUIDE.md §"Retry with Fallback" and the
 Causal Retry Patterns section; examples/pipelines/04-retry-with-fallback.dot.

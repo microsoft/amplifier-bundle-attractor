@@ -89,29 +89,32 @@
 name: Capsule Implement
 
 on:
+  # NOTE: a single `pull_request:` key -- YAML mappings cannot repeat a key,
+  # so the TEMPORARY pre-merge-proof arm (types [opened, synchronize] +
+  # wider paths) is merged into the SAME stanza as the real trigger (types
+  # [closed] + proposals/** paths) rather than added as a second key.
+  # TEMPORARY, FOR PRE-MERGE PROOF ONLY -- see PR #153 and this repo's own
+  # precedent (capsule-specify.yml commits e2b4206/71e6c4c): `workflow_dispatch`
+  # and `issues` are only evaluated by GitHub Actions against the workflow
+  # file on the DEFAULT branch, so this is the only way left to exercise
+  # this exact job in real GitHub Actions before merge: `pull_request` DOES
+  # run using the PR branch's own copy of the workflow file. The
+  # `opened`/`synchronize` types and the two extra paths below are
+  # TEMPORARY and will be reverted (back to just `types: [closed]` +
+  # `.github/capsule-pipeline/proposals/**`) in a follow-up commit once
+  # the run's evidence is captured -- do not merge with them present.
   pull_request:
-    types: [closed]
+    types: [closed, opened, synchronize]
     branches: [main]
     paths:
       - ".github/capsule-pipeline/proposals/**"
+      - ".github/workflows/capsule-implement.yml"
+      - ".github/capsule-pipeline/**"
   workflow_dispatch:
     inputs:
       capsule_path:
         description: "Repo-relative path to a capsule .md file to implement (e.g. .github/capsule-pipeline/proposals/issue-144/prefix-sharing-substitution-corruption.md)"
         required: true
-  # TEMPORARY, FOR PRE-MERGE PROOF ONLY -- see PR #153 and this repo's own
-  # precedent (capsule-specify.yml commits e2b4206/71e6c4c). `workflow_dispatch`
-  # and `issues` are only evaluated by GitHub Actions against the workflow
-  # file on the DEFAULT branch, so this is the only way left to exercise
-  # this exact job in real GitHub Actions before merge: `pull_request` DOES
-  # run using the PR branch's own copy of the workflow file. Removed again
-  # in a follow-up commit before this PR is left for review -- do not merge
-  # with this present.
-  pull_request:
-    types: [opened, synchronize]
-    paths:
-      - ".github/workflows/capsule-implement.yml"
-      - ".github/capsule-pipeline/**"
 
 permissions:
   contents: write

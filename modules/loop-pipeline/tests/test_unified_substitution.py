@@ -98,6 +98,15 @@ def test_substitute_context_longest_key_wins():
     assert "base" in result
 
 
+def test_substitute_context_preserves_undefined_prefixed_key():
+    """A defined key must not replace the prefix of an absent key token."""
+    result = substitute_context(
+        "echo NAME=$name SUFFIXED=$name_suffix ID=$id ID2=$id2",
+        {"name": "Alice", "id": "42"},
+    )
+    assert result == "echo NAME=Alice SUFFIXED=$name_suffix ID=42 ID2=$id2"
+
+
 def test_substitute_context_multiple_occurrences():
     """All occurrences of a token are replaced."""
     result = substitute_context("${x} and ${x} again", {"x": "hello"})
@@ -108,6 +117,19 @@ def test_substitute_context_none_value_treated_as_absent():
     """None-valued keys are treated as absent (token left literal)."""
     result = substitute_context("${k}", {"k": None})
     assert result == "${k}"
+
+
+def test_substitute_context_backslash_value_literal():
+    """Context values containing backslashes are inserted verbatim (no re.sub escape interpretation)."""
+    # Windows path: backslash followed by 'U' would raise re.error if not handled correctly
+    result = substitute_context("path=$path", {"path": r"C:\Users\Alice"})
+    assert result == r"path=C:\Users\Alice"
+
+
+def test_substitute_context_backslash_newline_value_literal():
+    """Context values with \\n are inserted as the two-char literal, not as a newline."""
+    result = substitute_context("val=$val", {"val": r"line1\nline2"})
+    assert result == r"val=line1\nline2"
 
 
 # ---------------------------------------------------------------------------

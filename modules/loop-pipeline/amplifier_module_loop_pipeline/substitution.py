@@ -97,10 +97,18 @@ def substitute_context(text: str, snapshot: Mapping[str, object]) -> str:
 
     # Phase 2: $key form — replace longest keys first to avoid partial matches.
     # e.g. replace "$tool.output" before "$tool" so the longer token wins.
+    # The negative lookahead (?![A-Za-z0-9_.]) ensures token-boundary awareness:
+    # "$name" only matches when the next character is not a valid key-name character,
+    # so "$name_suffix" is never corrupted when only "name" is in the snapshot.
     for key in sorted(snapshot.keys(), key=len, reverse=True):
         val = snapshot.get(key)
         if val is not None and f"${key}" in text:
-            text = text.replace(f"${key}", str(val))
+            _val = str(val)
+            text = re.sub(
+                r"\$" + re.escape(key) + r"(?![A-Za-z0-9_.])",
+                lambda m: _val,
+                text,
+            )
 
     # Phase 3: $$ escape → literal $.
     text = text.replace("$$", "$")

@@ -27,44 +27,48 @@
 //      capsule's `.md` path as `--param task_file=` satisfies this graph's
 //      naming convention on the FIRST branch, with zero fallback needed.
 //
-//   2. DUAL-FAMILY CRITIQUE (critique_b, llm_provider="openai") -- GENUINE
-//      GAP. Attempted first at the WORKFLOW level (not here), per this
-//      graph's own header claim: "ATTRACTOR_PIPELINE_BUNDLE is REQUIRED for
-//      the dual-family critique... the CLI's default base bundle mounts
-//      provider-anthropic only, so critique_b would SILENTLY run on
-//      Anthropic" if the dual bundle isn't supplied. **That claim was
-//      empirically FALSE for the engine version actually served in this
-//      repo's CI**: the first live implement-stage run against this
-//      repo (issue #144 capsule, workflow run 31149575800) showed
-//      critique_b hard-erroring on EVERY one of its 5 attempts with
-//      `resolve_latest_for: no adapter found for provider 'openai'.
-//      Providers available: ['anthropic']` -- not a silent fallback, a
-//      hard node failure. Each failure took the transient-recovery edge
-//      (critique_b -> verify) and burned an iteration, so the run
-//      exhausted its ENTIRE max_iterations=6 budget purely on this crash
-//      loop and escalated -- DESPITE the underlying fix being complete
-//      and gate-GREEN from iteration 1 (verify: 6/6 pass=true) and critic
-//      A (Anthropic) independently returning a clean SHIP verdict.
+//   2. DUAL-FAMILY CRITIQUE (critique_b, llm_provider="openai") -- WAS a
+//      genuine gap, NOW REVERTED to the pristine vendored shape (issue
+//      #155). Timeline, for the record:
 //
-//      Since this repo has a proven ANTHROPIC_API_KEY secret but NO
-//      OPENAI_API_KEY secret, and the workflow-level lever
-//      (ATTRACTOR_PIPELINE_BUNDLE) cannot fix a hardcoded node attribute,
-//      this is a genuine ENGINE-level gap, not a workflow one --
-//      "isolate it, say so loudly, keep the vendored copy's provenance
-//      honest" (this file's own deployment doctrine). DEVIATION FROM THE
-//      PRISTINE SOURCE, clearly marked at the critique_b node below: the
-//      `llm_provider="openai", llm_model="gpt-[5-9]*"` attributes are
-//      REMOVED so critique_b uses the same (Anthropic) provider as
-//      critique -- an honestly-labeled single-family degradation (BOTH
-//      critics same family; the PR body/issue comment this run produces
-//      says so explicitly), never a silent claim of cross-provider
-//      review. REVERT CONDITION: once a real OPENAI_API_KEY secret and
-//      the vendored attractor-pipeline-dual.yaml are both wired via
-//      ATTRACTOR_PIPELINE_BUNDLE, re-sync this file clean from source
-//      (restoring the two removed attributes) -- the workflow-level gate
-//      in capsule-implement.yml already only sets that env var when the
-//      key exists, so the two mechanisms are not in tension once a real
-//      key is provisioned.
+//      - Attempt 1 (workflow-level gate): only set ATTRACTOR_PIPELINE_BUNDLE
+//        when `secrets.OPENAI_API_KEY` existed. At the time this repo had no
+//        such secret, so the gate correctly kept the dual bundle unmounted --
+//        but see Attempt 2 below for why "just mount the dual bundle" alone
+//        would not have been enough anyway.
+//      - Attempt 2 (this file, now reverted): with no OpenAI key, and no way
+//        for a workflow-level env var to fix a hardcoded node attribute, the
+//        `llm_provider="openai", llm_model="gpt-[5-9]*"` attributes were
+//        REMOVED from critique_b so it fell through to the same (Anthropic)
+//        provider as `critique`. This was diagnosed from the first live
+//        implement-stage run against this repo (issue #144 capsule, workflow
+//        run 31149575800): critique_b hard-errored on EVERY one of its 5
+//        attempts with `resolve_latest_for: no adapter found for provider
+//        'openai'. Providers available: ['anthropic']`, taking the
+//        transient-recovery edge (critique_b -> verify) each time and
+//        burning the ENTIRE max_iterations=6 budget on the crash loop --
+//        despite the underlying fix being complete and gate-GREEN from
+//        iteration 1 (verify: 6/6 pass=true) and critic A independently
+//        returning a clean SHIP verdict. The removal was an honestly-labeled
+//        single-family degradation (both critics same family; the PR body /
+//        issue comment said so explicitly), never a silent claim of
+//        cross-provider review -- but issue #155 named it, correctly, as a
+//        degradation that defeats the mechanism it routes around:
+//        disagreement-as-signal only exists when the two critics are
+//        actually independent.
+//      - REVERTED (this pass): a real `OPENAI_API_KEY` secret now exists in
+//        this repo (added after PR #153's initial run). Both degradations
+//        named in issue #155 are removed in the same pass: this node's
+//        `llm_provider="openai", llm_model="gpt-[5-9]*"` attributes are
+//        RESTORED below (byte-identical to upstream source commit
+//        f5322c24ed6fd8deaeddb519de7bfdfa861094d9 for this node), and the
+//        invoking workflow (.github/workflows/capsule-implement.yml) now
+//        unconditionally points ATTRACTOR_PIPELINE_BUNDLE at the vendored
+//        attractor-pipeline-dual.yaml, with a loud preflight check that
+//        fails the job before the run starts if OPENAI_API_KEY is absent --
+//        no more silent single-provider fallback at either layer. This file
+//        is once again a clean, unmodified copy of the pristine source for
+//        the critique_b node.
 //
 // KNOWN, NAMED GAP CARRIED FORWARD (not fixed here, per the design doc's
 // own honesty norm, DESIGN-issue-to-attractor-pipeline.md section 6,
@@ -355,22 +359,22 @@ digraph BacklogTaskRunner {
     // header — without it this node silently runs on Anthropic). llm_model
     // uses the repo's documented generation-range glob (resolved live to
     // the newest served model).
-    // DEVIATION FROM VENDORED SOURCE (see this file's own header,
-    // "INVOCATION RECONCILIATION" item 2, for the full empirical finding
-    // and revert condition): `llm_provider="openai", llm_model="gpt-[5-9]*"`
-    // are REMOVED here. Upstream source (private repo, commit
-    // f5322c24ed6fd8deaeddb519de7bfdfa861094d9) has:
-    //   critique_b [shape=box, class="gate", llm_provider="openai", llm_model="gpt-[5-9]*", must_write=".ai/critique-b.md", ...]
-    // Without ATTRACTOR_PIPELINE_BUNDLE mounting a real provider-openai
-    // (which requires a real OPENAI_API_KEY this repo does not have),
-    // that attribute hard-crashes this node every round ("no adapter
-    // found for provider 'openai'"), burning the entire iteration budget
-    // on the transient-recovery loop without ever reaching `verdict`.
-    // Removing it lets critique_b fall through to the default (Anthropic)
-    // provider -- same family as `critique`, an honestly-labeled
-    // degradation (the PR body/issue comment says so explicitly), not a
-    // silent one.
-    critique_b [shape=box, class="gate", must_write=".ai/critique-b.md",
+    // REVERTED (issue #155): this node is byte-identical to upstream source
+    // commit f5322c24ed6fd8deaeddb519de7bfdfa861094d9 again. A prior pass
+    // (see this file's header, INVOCATION RECONCILIATION item 2) removed
+    // `llm_provider="openai", llm_model="gpt-[5-9]*"` from this node because
+    // this repo had no OPENAI_API_KEY secret and the attribute hard-crashed
+    // the node every round ("no adapter found for provider 'openai'"). A
+    // real OPENAI_API_KEY secret now exists, the invoking workflow
+    // unconditionally mounts attractor-pipeline-dual.yaml (which mounts
+    // provider-openai AND pins llm_provider=openai in the
+    // attractor-agent-openai agent's own orchestrator config -- see that
+    // file's header for why both are required), and the workflow's preflight
+    // check fails the job loudly before this node could ever be reached if
+    // that key were somehow missing. The two attributes are restored so
+    // critique_b is once again served by a genuinely independent,
+    // different-family model from `critique` (Anthropic).
+    critique_b [shape=box, class="gate", llm_provider="openai", llm_model="gpt-[5-9]*", must_write=".ai/critique-b.md",
         prompt="You are a second, independent reviewer from a DIFFERENT model family than the first reviewer. Do NOT read .ai/critique.md and do NOT assume any other reviewer's conclusions — your value is independent judgment. The mechanical DoD script passed. Judge the work against the task's FULL definition of done — especially the judgment criteria the script cannot check. Read the task file at $task_file, the brief at .ai/brief.md, and review the ACTUAL changes in $target_dir (git diff, new and changed files; .ai/verify.log for what was verified). Apply the doctrine: evidence over claims — verify that claimed evidence is real; no test-gaming or DoD-script-gaming; docs and paired guides updated; repo conventions honored; non-goals respected; exemplar quality where the task demands it. HARD EVIDENCE RULE: a blocking finding MUST include its reproduction re-run against the CURRENT tree in THIS iteration — quote the exact command and its output. A finding carried over from a previous iteration without fresh re-run evidence is not a finding: re-run it first; if it no longer reproduces, say so explicitly and drop it. Your own prior critique is a hypothesis to re-verify, never evidence. Write .ai/critique-b.md: specific findings with file references, then a final line reading exactly 'VERDICT: SHIP' or 'VERDICT: ITERATE'. Be strict — a wrong-but-plausible result that ships is worse than another iteration."]
 
     // STALL DETECTION (lesson from live run t11-attempt-3): the iteration

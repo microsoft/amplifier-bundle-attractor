@@ -89,11 +89,29 @@
 name: Capsule Implement
 
 on:
+  # NOTE: a single `pull_request:` key -- YAML mappings cannot repeat a key,
+  # so the TEMPORARY pre-merge-proof arm (types [opened, synchronize] +
+  # wider paths) is merged into the SAME stanza as the real trigger (types
+  # [closed] + proposals/** paths) rather than added as a second key.
+  # TEMPORARY, FOR PRE-MERGE PROOF ONLY -- see PR #153 (this exact pattern
+  # was already used once on this branch; see commits 09da2f3/517f5b6/
+  # 297905a/7222fc6) and this repo's own precedent (capsule-specify.yml
+  # commits e2b4206/71e6c4c): `workflow_dispatch` and `issues` are only
+  # evaluated by GitHub Actions against the workflow file on the DEFAULT
+  # branch, so this is the only way left to exercise this exact job (now
+  # carrying the issue #155 reverts) in real GitHub Actions before merge:
+  # `pull_request` DOES run using the PR branch's own copy of the workflow
+  # file. The `opened`/`synchronize` types and the two extra paths below are
+  # TEMPORARY and will be reverted (back to just `types: [closed]` +
+  # `.github/capsule-pipeline/proposals/**`) in a follow-up commit once the
+  # run's evidence is captured -- do not merge with them present.
   pull_request:
-    types: [closed]
+    types: [closed, opened, synchronize]
     branches: [main]
     paths:
       - ".github/capsule-pipeline/proposals/**"
+      - ".github/workflows/capsule-implement.yml"
+      - ".github/capsule-pipeline/**"
   workflow_dispatch:
     inputs:
       capsule_path:
@@ -117,7 +135,10 @@ concurrency:
 
 jobs:
   implement:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    # TEMPORARY 'pull_request' arm, FOR PRE-MERGE PROOF ONLY -- see the
+    # pull_request trigger comment above. Removed along with it in a
+    # follow-up commit.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' && (github.event.pull_request.merged == true || github.event.action == 'opened' || github.event.action == 'synchronize')
     name: "Run task-runner.dot (implement stage)"
     runs-on: ubuntu-latest
     # task-runner.dot's own max_pipeline_duration=14400s (4h) is the
@@ -131,7 +152,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: main
+          # TEMPORARY conditional, FOR PRE-MERGE PROOF ONLY -- see the
+          # pull_request trigger comment above. Steady state always wants
+          # 'main' (the real trigger only fires once a capsule PR is
+          # merged, so main already has it; workflow_dispatch always runs
+          # against the default branch). The ONLY reason this needs to be
+          # conditional right now is that the temporary pull_request
+          # (opened/synchronize, unmerged) test path must check out THIS
+          # PR's own branch -- main does not yet have the vendored
+          # task-runner.dot or this workflow file at all. Reverted back to
+          # a bare `ref: main` in the same follow-up commit that removes
+          # the temporary trigger arm.
+          ref: ${{ (github.event_name == 'pull_request' && github.event.pull_request.merged != true) && github.event.pull_request.head.sha || 'main' }}
 
       - name: Locate and validate the capsule
         id: locate
@@ -141,6 +173,18 @@ jobs:
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             CAPSULE_MD="${{ inputs.capsule_path }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.pull_request.merged }}" != "true" ]; then
+            # TEMPORARY, FOR PRE-MERGE PROOF ONLY -- see the pull_request
+            # trigger comment at the top of this file. This PR (the one
+            # introducing this workflow) does not itself touch proposals/**,
+            # so there is no merged-capsule-PR file list to read here; point
+            # directly at the real, already-merged issue-144 capsule (its
+            # prior implement branch was deleted -- see PR #153's final
+            # report -- so this is a genuine fresh run, not an idempotency
+            # skip) so this exact job runs for real, once, against real
+            # production code, without merging anything. Removed in a
+            # follow-up commit once the run's evidence is captured.
+            CAPSULE_MD=".github/capsule-pipeline/proposals/issue-144/prefix-sharing-substitution-corruption.md"
           else
             PR_NUMBER="${{ github.event.pull_request.number }}"
             CAPSULE_MD="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \

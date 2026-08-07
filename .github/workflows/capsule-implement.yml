@@ -150,7 +150,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: main
+          # TEMPORARY conditional, FOR PRE-MERGE PROOF ONLY -- see the
+          # pull_request trigger comment above. Steady state always wants
+          # 'main' (the real trigger only fires once a capsule PR is
+          # merged, so main already has it; workflow_dispatch always runs
+          # against the default branch). The ONLY reason this needs to be
+          # conditional right now is that the temporary pull_request
+          # (opened/synchronize, unmerged) test path must check out THIS
+          # PR's own branch -- main does not yet have the vendored
+          # task-runner.dot or this workflow file at all. Reverted back to
+          # a bare `ref: main` in the same follow-up commit that removes
+          # the temporary trigger arm.
+          ref: ${{ (github.event_name == 'pull_request' && github.event.pull_request.merged != true) && github.event.pull_request.head.sha || 'main' }}
 
       - name: Locate and validate the capsule
         id: locate

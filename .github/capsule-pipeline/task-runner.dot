@@ -1,0 +1,578 @@
+// ============================================================================
+// VENDORED COPY -- see .github/capsule-pipeline/README.md for provenance,
+// scope, and re-sync instructions. Source: a private working repository
+// (not publicly reachable), pinned at its commit f5322c24ed6fd8deaeddb519de7bfdfa861094d9
+// (runner/task-runner.dot, 2026-08-03). This copy is otherwise byte-identical
+// to the source file below this header -- do not hand-edit the body; re-sync
+// from source and re-apply this header instead.
+//
+// WHY THIS FILE IS VENDORED HERE: this is the "implement" stage of the
+// issue->attractor->PR system (see DESIGN-issue-to-attractor-pipeline.md
+// in the source repo, section 2: "human merges the capsule PR" is the
+// trigger; this engine is what actually does the work). Like capsule.dot
+// (the specify stage), GitHub Actions runners cannot reach the private
+// source repository, so the engine is copied here verbatim.
+//
+// INVOCATION RECONCILIATION (read before changing the invoking workflow,
+// NOT this file): this graph was authored for a different invocation shape
+// than what the specify stage produces. Two things were checked and one
+// genuinely needed a workflow-level (not engine-level) adaptation:
+//
+//   1. task_file / sibling verify.sh naming -- COMPATIBLE, no change needed.
+//      setup's first candidate is `${task_file%.md}.verify.sh` (a same-stem
+//      sibling). The specify stage's `package` node writes exactly
+//      `$id.md` + `$id.verify.sh` side by side (capsule.dot's own package
+//      node, and capsule-specify.yml's copy into
+//      .github/capsule-pipeline/proposals/issue-<N>/), so passing a
+//      capsule's `.md` path as `--param task_file=` satisfies this graph's
+//      naming convention on the FIRST branch, with zero fallback needed.
+//
+//   2. DUAL-FAMILY CRITIQUE (critique_b, llm_provider="openai") -- GENUINE
+//      GAP, closed at the WORKFLOW level, not here. This graph's own header
+//      states plainly: "ATTRACTOR_PIPELINE_BUNDLE is REQUIRED for the
+//      dual-family critique... the CLI's default base bundle mounts
+//      provider-anthropic only, so critique_b would SILENTLY run on
+//      Anthropic" if the dual bundle isn't supplied. At the time this was
+//      wired, this repo has a proven ANTHROPIC_API_KEY secret but NO
+//      OPENAI_API_KEY secret -- setting ATTRACTOR_PIPELINE_BUNDLE without a
+//      real OpenAI key would not crash (the graph's own docs confirm the
+//      degraded path answers from Anthropic, it does not error), but
+//      claiming cross-family review while secretly running single-family
+//      would be dishonest. The invoking workflow
+//      (.github/workflows/capsule-implement.yml) therefore only sets
+//      ATTRACTOR_PIPELINE_BUNDLE (pointed at the vendored
+//      attractor-pipeline-dual.yaml below) when `secrets.OPENAI_API_KEY` is
+//      actually present; otherwise it omits the env var entirely and SAYS
+//      SO in the run's own evidence/comment, rather than silently degrading
+//      review independence without naming it. This is a workflow
+//      invocation decision -- task-runner.dot itself is unmodified.
+//
+// KNOWN, NAMED GAP CARRIED FORWARD (not fixed here, per the design doc's
+// own honesty norm, DESIGN-issue-to-attractor-pipeline.md section 6,
+// "Stale gate between specify and implement"): this graph's first
+// deterministic check after `attempt` is `verify` -- it does not re-run the
+// gate BEFORE the maker's first attempt to check whether main has already
+// moved past the defect (e.g. an unrelated fix already landed). A run
+// against an already-green gate will have `attempt` do a no-op-ish pass and
+// `verify` will simply pass immediately -- not a corruption, but not the
+// `resolved-elsewhere` terminal state the design doc names either. Flagged
+// here rather than silently patched into the vendored engine.
+// ============================================================================
+// ============================================================================
+// Backlog Task Runner — an exemplar attractor
+// ============================================================================
+// Takes ONE backlog task (goal + rationale + executable DoD) and converges on
+// its completion. One run per task. Grounded in the StrongDM methodology:
+// the exit is structurally unreachable until evidence says the work is done.
+//
+// Invocation (per KNOWN_ISSUES: process cwd MUST equal --cwd for box nodes).
+// ATTRACTOR_PIPELINE_BUNDLE is REQUIRED for the dual-family critique: the
+// CLI's default base bundle mounts provider-anthropic only, so critique_b
+// would SILENTLY run on Anthropic (see the DUAL-FAMILY CRITIQUE block).
+//   cd <target_repo> && \
+//   ATTRACTOR_PIPELINE_BUNDLE=<runner_dir>/attractor-pipeline-dual.yaml \
+//   attractor run <runner_dir>/task-runner.dot \
+//       --param task_file=/abs/path/to/backlog/tasks/<ID>-<slug>.md \
+//       --param target_dir=$PWD \
+//       --param max_iterations=6 \
+//       --cwd $PWD
+//
+// The task's DoD script is a sibling of the task file: either
+// <task-basename>.verify.sh or <id>.verify.sh (id = first two hyphen-joined
+// tokens, e.g. T0-1 from T0-1-revive-dead-edges.md). The runner accepts both.
+//
+// SHAPE (the doctrine, made visible):
+//   - INNER loop:  attempt -> verify -(red)-> triage -(novel)-> attempt
+//     Tight mechanical fix cycle. Session continuity (thread_id=work).
+//   - OUTER loop:  verify -(green)-> critique -> stamp_a -> critique_b
+//     -> verdict -(iterate)-> feedback -(loop_restart)-> attempt
+//     Quality convergence: fresh eyes each iteration + accumulated critique
+//     in .ai/feedback/ = descent, not a coin re-flip. The expensive gate is
+//     TWO independent reviewers from different model families (see DUAL-
+//     FAMILY CRITIQUE below); verdict ships only on consensus.
+//   - ROOT-CAUSE wall: same failure signature twice -> diagnose (stop
+//     patching; an attractor absorbs model drift, not deterministic bugs).
+//   - BUDGET as a decision point: verify itself walls the budget (green
+//     and red paths BOTH spend iterations) -> postmortem -> human gate,
+//     never a bare FAIL.
+//   - Gates are deterministic (parallelogram + exit codes + tool.last_line).
+//     No diamond+outcome= routing (dead-edge trap). Cheap gate (DoD script)
+//     before expensive gate (LLM critique). goal_gate on both gates makes
+//     the exit unearnable without evidence.
+//
+// VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON (expert-probed):
+//   - STALE-LABEL RULE (weakened upstream by T0-4/#110): a failing tool
+//     node does NOT refresh tool.last_line (ToolHandler returns early on
+//     nonzero exit), so on the SECOND+ visit to a gate a stale label can
+//     match a `context.tool.last_line=X` edge alongside an `outcome=fail`
+//     edge. The engine no longer fans out on multi-match — it picks ONE
+//     edge (weight, then lexical; spec §3.3) — but that pick can be the
+//     wrong edge, so the `&& outcome=success` conjunctions on gate edges
+//     here stay as defensive explicitness (runtime sibling of the diamond
+//     trap; lint TOPO-002 warns on the ambiguity).
+//   - PARAM NAMESPACE: engine substitution rewrites $name/${name} for any
+//     context/param key, and leaves unknown refs untouched. Shell variables
+//     here (VF, n, rc, sig, B, N, prev, ok, a, b, la, lb, sc, f, hs, last) are safe ONLY
+//     because no param shares their name. Never add a param named like a shell var.
+//   - context.target_dir (tool-node cwd) is seeded from --cwd, NOT from
+//     --param target_dir. The $target_dir param is prompt text for box
+//     nodes only. The invocation above keeps them identical on purpose.
+//   - loop_restart clears engine state but NOT backend thread transcripts;
+//     fresh-eyes re-entry is expressed via edge-level fidelity (highest
+//     precedence) on the feedback->attempt edge.
+//   - .ai/iter counts TOTAL verify attempts (inner fixes + outer
+//     iterations); the budget deliberately bounds total verification spend.
+//     LEDGER-DERIVED (EX-11/EX-12 live evidence: worker shell writes bumped
+//     .ai/iter mid-run — 1→2 stray, 2→4 jump — stealing budget rounds and
+//     corrupting ledger numbering): verify DERIVES the iteration as
+//     (count of prior "gate": "verify" records in .ai/convergence.jsonl)+1
+//     — its own append-only ledger, which workers don't touch — and only
+//     then writes the derived n to .ai/iter as a MIRROR for downstream
+//     readers (triage's exhausted check, verdict's record numbering,
+//     feedback's N-next.md naming). The mutable counter file is never the
+//     source of truth for the budget decision.
+//     Feedback file numbers may skip — they order chronologically.
+//   - MUST_WRITE ARTIFACT CONTRACT (engine EXTENSIONS §27, adopted T1-7
+//     council): critique/critique_b/postmortem declare must_write= on their
+//     output artifacts. The engine enforces existence + a FRESHNESS FLOOR
+//     (artifact mtime STRICTLY > that visit's node_start_wall — per-visit,
+//     rig-proven: a first-visit artifact is stale for visit 2) + non-trivial
+//     content. A violating completion consumes retry attempts IN PLACE
+//     (~1+max_retries backend calls), then FAILs loudly through the node's
+//     normal fail edges. Relative must_write paths resolve against
+//     context.target_dir (seeded from --cwd; the invocation above keeps
+//     --cwd and --param target_dir identical on purpose — §27 path rule).
+//   - On a human-gate timeout/auto-approve, the FIRST edge is chosen:
+//     Abandon is listed first so unattended runs fail safe (honest FAIL +
+//     postmortem) instead of looping on budget bumps.
+//   - SHIP-PATH TRANSIENT RECOVERY + BUDGET WALL AT VERIFY: critique/
+//     critique_b/feedback/package carry outcome=fail edges back to verify
+//     (see the edge block below). verify derives the iteration from the
+//     convergence ledger FIRST (writing the mirror to .ai/iter) and
+//     checks the budget BEFORE running the DoD script, so every re-entry
+//     spends an iteration and a PERSISTENT provider outage drains the
+//     budget through verify and escalates via postmortem->human
+//     (verify->postmortem on last_line=exhausted). The wall must live in
+//     verify: triage runs only on verify FAIL, so a red-path-only budget
+//     check lets critique(FAIL)->verify(PASS)->critique cycle forever
+//     until the engine step cap kills the run with a bare FAIL, bypassing
+//     the postmortem path (cross-provider review catch). orient stays
+//     fail-fast (fails early, cheap to relaunch); diagnose stays
+//     fail-fast (already inside failure handling — a failure there
+//     should surface, not loop). postmortem is NO LONGER fail-fast (T1-7
+//     council, S2): its FAIL routes through the pm_gate synthesizer so
+//     escalate always has an artifact — it still surfaces to the human,
+//     never loops. Triage keeps its own exhausted check as a
+//     harmless second wall.
+//   - CONVERGENCE RECORD: exactly TWO gates append to .ai/convergence.jsonl
+//     (not every gate). verify appends {"iteration", "gate": "verify",
+//     "pass"} per DoD run, plus {"iteration", "gate": "verify", "budget":
+//     "exhausted"} when the budget wall fires; verdict appends
+//     {"iteration", "gate": "critique", "ship", "a", "b"} per critique
+//     round (consensus plus each reviewer's individual classification as
+//     a STRING: "ship" / "iterate" / "noverdict" — an unwritten verdict
+//     is recorded "noverdict", never false). The
+//     descent curve is kept in files because the engine does not yet do
+//     this for us (see backlog task T1-1).
+//
+// DUAL-FAMILY CRITIQUE (strict consensus): a cross-provider review of this
+// runner caught a real blocker (the budget-blind recovery loop above) that
+// same-family review had missed — disagreement across model families is
+// signal (the bundle's own multi-lens doctrine). The expensive gate is two
+// INDEPENDENT reviewers from different model families run in SEQUENCE
+// (critique -> critique_b, with the stamp_a forge-guard glue between
+// them); critique_b must not read critique's output —
+// independence is what makes agreement meaningful. verdict ships only on
+// consensus (both SHIP); any WRITTEN refusal follows the existing
+// stall-count path, while an unwritten/malformed verdict is noverdict —
+// the round re-runs through verify under the budget wall (see the
+// WRITTEN-VERDICT CONTRACT at the verdict node). Sequential, not
+// parallel, deliberately: parallel component
+// branches route through run_subgraph's permissive fail path
+// (engine-semantics.md).
+// MODEL RESOLUTION REALITY (probed empirically in the eval DTU): node
+// llm_provider selects only the child AGENT profile; the provider that
+// actually serves the child is the FIRST provider mounted in the base
+// bundle, because the engine's per-node llm_provider override is lost on
+// the spawn path (foundation merges it into a top-level 'orchestrator'
+// mount-plan key while the real orchestrator lives under
+// session.orchestrator). With the CLI's default base bundle
+// (provider-anthropic only) an "openai" node answered CLAUDE-ANTHROPIC to
+// an identity probe. Two things were needed to get a real OpenAI critic:
+// (1) a base bundle that MOUNTS provider-openai, and (2) llm_provider
+// pinned in the attractor-agent-openai agent's own orchestrator config
+// (which travels the normal mount path). Both live in
+// attractor-pipeline-dual.yaml next to this file; with them the identity
+// probe answers GPT-OPENAI. The node's llm_model glob is delivered via
+// provider preferences (promotes the mounted provider, sets its
+// default_model to the live-resolved id).
+//
+// MODEL DOCTRINE: the expensive model belongs in the gates (critique,
+// diagnose) — gate quality determines basin depth; maker quality only
+// affects iteration count. Map via model_stylesheet in your deployment, e.g.:
+//   model_stylesheet=".gate { llm_model: <strong-reasoning-model> } .maker { llm_model: <standard-coding-model> }"
+// ============================================================================
+
+digraph BacklogTaskRunner {
+    graph [
+        goal="Complete the backlog task described by the task_file parameter to its full definition of done: the task's DoD script passes, and the work survives a strict doctrine critique against the task's judgment criteria.",
+        params="task_file, target_dir, max_iterations",
+        default_max_retries=2,
+        default_fidelity="compact",
+        max_pipeline_duration="14400s",
+        retry_target="attempt"
+    ]
+
+    start [shape=Mdiamond]
+    done  [shape=Msquare]
+
+    // ---------- setup: deterministic preflight ----------
+    setup [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="rm -rf .ai && mkdir -p .ai/feedback .ai/postmortem && B=$max_iterations; echo ${B:-6} > .ai/budget && VF=\"$task_file\"; VF=\"${VF%.md}.verify.sh\"; [ -f \"$VF\" ] || VF=\"$(dirname \"$task_file\")/$(basename \"$task_file\" .md | cut -d- -f1-2).verify.sh\"; [ -f \"$task_file\" ] && [ -f \"$VF\" ] && printf ok || printf missing"]
+
+    bad_input [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="echo 'FATAL: task_file or its sibling .verify.sh not found' >&2; exit 1"]
+
+    // ---------- orient: understand before acting ----------
+    orient [shape=box, class="maker",
+        prompt="You are starting a backlog task. Read the task file at $task_file IN FULL, and the doctrine primer it references (follow the task's own source references). Then survey the current state of the target repository at $target_dir: git status, the files and areas the task names. Write .ai/brief.md containing: (1) the goal in your own words, as an end-state of the world; (2) the definition of done — both the mechanical DoD script and the judgment criteria; (3) the quality dimensions that matter and the risks you foresee; (4) the repo's current state, including any partial or dirty work this run must be robust to. Capture understanding, not a step-by-step plan."]
+
+    // ---------- attempt: the maker (inner-loop session continuity) ----------
+    attempt [shape=box, class="maker", thread_id="work", fidelity="full",
+        prompt="Advance the task's goal. Sources of truth: the task file at $task_file, your brief at .ai/brief.md, and ALL files in .ai/feedback/ — accumulated critique from prior iterations; read them FIRST and address them. If .ai/verify.log exists it holds the DoD script's latest output — if it was failing, fix exactly what it reports. If .ai/postmortem/diagnosis.md exists, honor its change of course. Work in the target repository at $target_dir with your file and shell tools; make real changes; honor the repo's own conventions (AGENTS.md, PR templates, design docs) and the task's stated non-goals. Never fabricate evidence or game the DoD script — your work is verified by code, then critiqued against the task's judgment criteria."]
+
+    // ---------- verify: CHEAP deterministic gate (the task's own DoD) ----------
+    // GREEN pre-round critique wipe RETIRED (T1-7 council; scheduled in
+    // backlog/decisions/clean-b-retirement-SCHEDULED.md): the stale-prior-
+    // round class (phantom-SHIP: a stale file read as the current round's
+    // verdict — EX-11 council) is retired by the engine's must_write=
+    // freshness floor. critique/critique_b declare must_write=, and the
+    // floor is PER-VISIT (mtime must be strictly after THAT visit's
+    // node_start_wall — rig engine-fixture R1/R2/R3), so a leftover
+    // prior-round file cannot satisfy the current round's contract.
+    verify [shape=parallelogram, class="gate", max_retries=0,
+        goal_gate=true, retry_target="attempt",
+        tool_command="n=$(grep -c '\"gate\": \"verify\"' .ai/convergence.jsonl 2>/dev/null); n=$((${n:-0}+1)); echo $n > .ai/iter; B=$(cat .ai/budget 2>/dev/null); B=${B:-6}; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"verify\", \"budget\": \"exhausted\"}\\n' \"$n\" >> .ai/convergence.jsonl; printf exhausted; else VF=\"$task_file\"; VF=\"${VF%.md}.verify.sh\"; [ -f \"$VF\" ] || VF=\"$(dirname \"$task_file\")/$(basename \"$task_file\" .md | cut -d- -f1-2).verify.sh\"; timeout 1800 bash \"$VF\" > .ai/verify.log 2>&1; rc=$?; [ $rc -eq 124 ] && echo 'VERIFY TIMEOUT after 1800s' >> .ai/verify.log; printf '{\"iteration\": %s, \"gate\": \"verify\", \"pass\": %s}\\n' \"$n\" \"$([ $rc -eq 0 ] && echo true || echo false)\" >> .ai/convergence.jsonl; [ $rc -eq 0 ] && printf green || { printf red; exit 1; }; fi"]
+
+    // ---------- triage: root-cause wall + budget check (deterministic) ----------
+    // Signature normalization: volatile tokens (temp run-dir paths, float
+    // timings) are stripped before hashing — live run t11-attempt-1 burned
+    // its whole budget on same-class failures that hashed "novel" every
+    // time because the fixture's random /tmp/attractor-run-* path was in
+    // the hash, so the root-cause wall never fired.
+    triage [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="B=$(cat .ai/budget 2>/dev/null); B=${B:-6}; n=$(cat .ai/iter 2>/dev/null || echo 0); sig=$(tail -20 .ai/verify.log 2>/dev/null | sed -E 's|/tmp/[A-Za-z0-9._-]+|TMPPATH|g; s/[0-9]+\\.[0-9]+s?//g' | md5sum | cut -d' ' -f1); prev=$(cat .ai/last-fail-sig 2>/dev/null || echo none); echo $sig > .ai/last-fail-sig; if [ \"$n\" -ge \"$B\" ]; then printf exhausted; elif [ \"$sig\" = \"$prev\" ]; then printf repeat; else printf novel; fi"]
+
+    diagnose [shape=box, class="gate",
+        prompt="Verification failed twice with the SAME failure signature. Stop patching — find the root cause. Read .ai/verify.log, the task file at $task_file, and the relevant code and docs in $target_dir. Determine what is actually wrong: (a) the current approach, (b) the environment or tooling, (c) the DoD script itself, or (d) the task's assumptions. Write .ai/postmortem/diagnosis.md with the root cause, the evidence, and the single change of course for the next attempt. An attractor absorbs model drift, not deterministic bugs — do not recommend another blind retry. If the blocker cannot be resolved from inside this run (missing access, a genuinely broken DoD script, a contradictory task), include the word BLOCKED on its own line and explain."]
+
+    // Clears the failure signature so the post-diagnosis attempt gets one
+    // clean shot before the root-cause wall can re-fire. BLOCKED grep is
+    // line-start anchored: prose like "not BLOCKED" must not misroute.
+    diagnose_gate [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="rm -f .ai/last-fail-sig; grep -qE '^BLOCKED' .ai/postmortem/diagnosis.md && printf blocked || printf continue"]
+
+    // ---------- critique: EXPENSIVE judgment gate (only on green work) ----------
+    // The verdict match below is anchored (the file's LAST NON-EMPTY line
+    // must read exactly 'VERDICT: SHIP' / 'VERDICT: ITERATE', trailing
+    // whitespace only): a critique that merely QUOTES the phrase mid-prose
+    // cannot false-ship, and a malformed verdict line reads as noverdict.
+    // MUST_WRITE ADOPTED / WRITE-FIRST PROSE DELETED (T1-7 council — this
+    // REVERSES the T1-4 checkpoint's 5-1 write-first decision for the
+    // critics, and the T1-4 5-1 postmortem-pair decision below, in the
+    // same change). Why the reversal: the write-first skeleton converts an
+    // engine-RECOVERABLE zero-file failure into an engine-INVISIBLE
+    // 'VERDICT: PENDING' artifact — a fresh skeleton passes every
+    // must_write= axis (fresh, non-trivial), forfeiting the engine's
+    // in-place retry, and then burns a full graph iteration via noverdict.
+    // With must_write= declared, a no-writer is retried by the ENGINE
+    // (~1+max_retries backend calls, same round) — strictly better than a
+    // skeleton. Live noverdict rates that ended prompt-level discipline:
+    // 0/6 → 1/8 → 7/16 critic-rounds (EX-12, T1-4, T1-7) — the prompt
+    // ceiling is measured, not assumed. Relative path resolves against
+    // context.target_dir per §27 (see header MUST_WRITE bullet).
+    critique [shape=box, class="gate", must_write=".ai/critique.md",
+        prompt="The mechanical DoD script passed. Now judge the work against the task's FULL definition of done — especially the judgment criteria the script cannot check. Read the task file at $task_file, the brief at .ai/brief.md, and review the ACTUAL changes in $target_dir (git diff, new and changed files; .ai/verify.log for what was verified). Apply the doctrine: evidence over claims — verify that claimed evidence is real; no test-gaming or DoD-script-gaming; docs and paired guides updated; repo conventions honored; non-goals respected; exemplar quality where the task demands it. HARD EVIDENCE RULE: a blocking finding MUST include its reproduction re-run against the CURRENT tree in THIS iteration — quote the exact command and its output. A finding carried over from a previous iteration without fresh re-run evidence is not a finding: re-run it first; if it no longer reproduces, say so explicitly and drop it. Your own prior critique is a hypothesis to re-verify, never evidence. Write .ai/critique.md: specific findings with file references, then a final line reading exactly 'VERDICT: SHIP' or 'VERDICT: ITERATE'. Be strict — a wrong-but-plausible result that ships is worse than another iteration."]
+
+    // FORGE-STAMP GUARD (T2-7 council, forge-seam close): snapshot
+    // sha256(.ai/critique.md) to a runner-owned stamp file at the seam
+    // clean_b vacated, BEFORE critic B runs. verdict re-derives the hash
+    // and a mismatch is a LOUD FAIL (see forge_fail below) — closing the
+    // SAME-ROUND OVERWRITE direction: critique's must_write floor passes
+    // on A's file, then critic B (or any later actor) rewrites
+    // .ai/critique.md ending 'VERDICT: SHIP' and the verdict would read
+    // the forgery as A's verdict — dual-family consensus forged by ONE
+    // actor, no accomplice needed (the B-plants-A inverse of the
+    // A-plants-B direction the engine floor closes).
+    // HASH, not mtime (mtime is what the floor already spends; a same-
+    // round overwrite is fresh by construction). The stamp REFRESHES on
+    // every visit — stamp_a sits inside the round loop, so a noverdict
+    // re-entry round re-stamps its own fresh critique.md and cannot
+    // false-positive against a prior round's stamp.
+    // HONEST SCOPE (amended TB-1, backlog-wave final council): .ai/ is
+    // worker-writable, so this guard is anti-ACCIDENT and
+    // anti-single-LLM-actor (an actor that merely overwrites the file —
+    // or deletes/truncates the stamp: the verdict now fails CLOSED on
+    // absent/truncated/mismatched stamps, so deleting the stamp no
+    // longer disarms the guard). The ONE remaining open direction is
+    // RE-STAMP: an actor that re-runs this stamp command after planting
+    // a forgery. RETIREMENT CONDITION (recorded at
+    // birth): this guard retires when engine session attribution (the
+    // EXTENSIONS §27 named residual closer — attributing artifact writes
+    // to the writing node's session) lands; that mechanism closes the
+    // whole worker-writable-verdict-channel class, this guard included.
+    // No pipe (CMD-001/CMD-002 discipline): a failed sha256sum must FAIL
+    // the node (dead-end = loud since #66), never silently write an empty
+    // stamp that would disable the verdict's guard clause.
+    stamp_a [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="hs=$(sha256sum .ai/critique.md 2>/dev/null) && printf '%s' \"${hs%% *}\" > .ai/critique.hash && printf stamped || { printf nostamp; exit 1; }"]
+
+    // Second, INDEPENDENT reviewer from a different model family. Runs
+    // sequentially after critique (not in parallel — see header). Must not
+    // read .ai/critique.md: independence is what makes agreement
+    // meaningful. llm_provider routes via the CLI profiles map to the
+    // openai child agent; the OpenAI-family model is actually delivered by
+    // attractor-pipeline-dual.yaml (see MODEL RESOLUTION REALITY in the
+    // header — without it this node silently runs on Anthropic). llm_model
+    // uses the repo's documented generation-range glob (resolved live to
+    // the newest served model).
+    critique_b [shape=box, class="gate", llm_provider="openai", llm_model="gpt-[5-9]*", must_write=".ai/critique-b.md",
+        prompt="You are a second, independent reviewer from a DIFFERENT model family than the first reviewer. Do NOT read .ai/critique.md and do NOT assume any other reviewer's conclusions — your value is independent judgment. The mechanical DoD script passed. Judge the work against the task's FULL definition of done — especially the judgment criteria the script cannot check. Read the task file at $task_file, the brief at .ai/brief.md, and review the ACTUAL changes in $target_dir (git diff, new and changed files; .ai/verify.log for what was verified). Apply the doctrine: evidence over claims — verify that claimed evidence is real; no test-gaming or DoD-script-gaming; docs and paired guides updated; repo conventions honored; non-goals respected; exemplar quality where the task demands it. HARD EVIDENCE RULE: a blocking finding MUST include its reproduction re-run against the CURRENT tree in THIS iteration — quote the exact command and its output. A finding carried over from a previous iteration without fresh re-run evidence is not a finding: re-run it first; if it no longer reproduces, say so explicitly and drop it. Your own prior critique is a hypothesis to re-verify, never evidence. Write .ai/critique-b.md: specific findings with file references, then a final line reading exactly 'VERDICT: SHIP' or 'VERDICT: ITERATE'. Be strict — a wrong-but-plausible result that ships is worse than another iteration."]
+
+    // STALL DETECTION (lesson from live run t11-attempt-3): the iteration
+    // budget only gates the RED path (triage runs on verify failure), so a
+    // mechanically-green run whose critique keeps refusing loops UNBOUNDED
+    // until the wall-clock fuse — 6 consecutive refusals observed live, with
+    // a fresh maximally-strict critic finding something new each cycle.
+    // After 3 total WRITTEN refusals the verdict routes to postmortem->
+    // human: budget-as-decision-point applied to the OUTER loop.
+    // RATIO OBSERVATION (EX-12 council, breaker lens): mixed-round stalls
+    // terminate at stall-count 3 REGARDLESS of remaining budget — a run
+    // can stall with most of its iteration budget unspent. That profile
+    // is a recorded accepted residual (see the LEARNINGS-EX-12 F-6
+    // entry), not a defect to patch here.
+    // WRITTEN-VERDICT CONTRACT (EX-11 council): a verdict is a written
+    // artifact. Each side classifies three ways from its file's last
+    // non-empty line — anchored 'VERDICT: SHIP' / 'VERDICT: ITERATE'
+    // (trailing whitespace tolerated, nothing else); ANYTHING else
+    // (missing file, empty/whitespace-only file, verdict-less prose, a
+    // malformed verdict line) is noverdict. Ship requires BOTH sides
+    // ship. Absence is noverdict -> retry through verify under the
+    // budget wall; only written verdicts feed consensus and the stall
+    // counter. (EX-11 live cost: an UNWRITTEN .ai/critique.md was
+    // counted as a refusal and the stall counter killed a SHIP-quality
+    // run.) The convergence record writes each side's classification as
+    // a string — an unwritten verdict is recorded \"noverdict\", never
+    // false.
+    // FORGE-GUARD ASSERT (first clause below; T2-7 council): before reading
+    // A's file as a verdict, re-derive sha256(.ai/critique.md) and compare
+    // to the stamp_a snapshot. A mismatch means the file changed AFTER
+    // critique's must_write floor passed on it (same-round overwrite — the
+    // B-plants-A forge, or an accidental clobber): route token
+    // 'forge_mismatch' (exit 0, so tool.last_line refreshes — STALE-LABEL
+    // RULE) to the forge_fail LOUD FAIL. Never noverdict, never a refusal:
+    // no convergence record is appended and the stall counter is untouched.
+    // FAIL-CLOSED ON THE STAMP (TB-1, backlog-wave final council): the
+    // compare is UNCONDITIONAL — an absent or truncated stamp can never
+    // equal a real sha256, so delete-the-stamp / truncate-the-stamp
+    // auto-mismatch onto the SAME forge route (no new nodes/edges; an
+    // empty $hs gets the distinct 'FORGE-GUARD: stamp absent/invalid'
+    // diagnostic, a non-empty mismatch keeps the MISMATCH message).
+    // stamp_a writes-or-exits-1, so stamp absence at verdict time is
+    // NEVER benign. Benign shape preserved: BOTH files absent (no stamp,
+    // no critique.md) compares empty==empty, falls through, and
+    // classifies a=noverdict under the budget wall. The REMAINING open
+    // direction is RE-STAMP (an actor re-runs the stamp command after
+    // planting) — closed only by engine session attribution, this
+    // guard's retirement condition (see stamp_a comment).
+    verdict [shape=parallelogram, class="gate", max_retries=0,
+        goal_gate=true, retry_target="attempt",
+        tool_command="hs=$(cat .ai/critique.hash 2>/dev/null); if [ \"$hs\" != \"$(sha256sum .ai/critique.md 2>/dev/null | cut -d' ' -f1)\" ]; then if [ -n \"$hs\" ]; then echo 'FORGE-GUARD MISMATCH: .ai/critique.md no longer matches its post-critique stamp (.ai/critique.hash) - the file was rewritten after critic A finished; refusing to read it as a verdict' >&2; else echo 'FORGE-GUARD: stamp absent/invalid - .ai/critique.hash is missing or empty while .ai/critique.md exists; stamp_a writes-or-fails, so an absent stamp at verdict time is never benign; refusing to read the file as a verdict' >&2; fi; printf forge_mismatch; exit 0; fi; n=$(cat .ai/iter 2>/dev/null || echo 0); a=noverdict; la=$(grep -v '^[[:space:]]*$' .ai/critique.md 2>/dev/null | tail -1); printf '%s\\n' \"$la\" | grep -qE '^VERDICT: SHIP[[:space:]]*$' && a=ship; printf '%s\\n' \"$la\" | grep -qE '^VERDICT: ITERATE[[:space:]]*$' && a=iterate; b=noverdict; lb=$(grep -v '^[[:space:]]*$' .ai/critique-b.md 2>/dev/null | tail -1); printf '%s\\n' \"$lb\" | grep -qE '^VERDICT: SHIP[[:space:]]*$' && b=ship; printf '%s\\n' \"$lb\" | grep -qE '^VERDICT: ITERATE[[:space:]]*$' && b=iterate; ok=1; [ \"$a\" = ship ] && [ \"$b\" = ship ] && ok=0; printf '{\"iteration\": %s, \"gate\": \"critique\", \"ship\": %s, \"a\": \"%s\", \"b\": \"%s\"}\\n' \"$n\" \"$([ $ok -eq 0 ] && echo true || echo false)\" \"$a\" \"$b\" >> .ai/convergence.jsonl; if [ $ok -eq 0 ]; then printf ship; elif [ \"$a\" = noverdict ] || [ \"$b\" = noverdict ]; then printf noverdict; else sc=$(($(cat .ai/stall-count 2>/dev/null || echo 0)+1)); echo $sc > .ai/stall-count; if [ \"$sc\" -ge 3 ]; then printf stall; else printf iterate; exit 1; fi; fi"]
+
+    // ---------- feedback: accumulate critique -> descent, not re-flip ----------
+    feedback [shape=box, class="maker",
+        prompt="Read BOTH critique files — .ai/critique.md and .ai/critique-b.md — and .ai/verify.log if relevant. The two reviewers are from different model families: where they DISAGREE, name the disagreement explicitly and address the STRICTER view — disagreement is signal, not noise. Distill the highest-leverage change for the next iteration into a new file in .ai/feedback/ — read .ai/iter for the current iteration number N and name the file N-next.md. Format: Key finding / What to change / Why it matters / Reviewer disagreements (if any). Then curate the channel: consolidate or delete earlier feedback files that are now stale or addressed. Accumulated critique must descend toward the goal, not pile up into sludge."]
+
+    // ---------- package: ship on a branch with real evidence ----------
+    package [shape=box, class="maker",
+        prompt="Both gates passed. Prepare the work for handoff in $target_dir: ensure runner artifacts (.ai/) are excluded from version control via .git/info/exclude (do NOT commit them); create or reuse a branch named task/<task id> (the id is in the task file's frontmatter at $task_file); commit all task changes with a clear conventional commit message stating WHAT changed and WHY (draw on .ai/brief.md and .ai/critique.md; include the standard Amplifier co-authored-by attribution); and write .ai/SHIPPED.md summarizing the goal, what shipped, where the evidence lives (.ai/verify.log, .ai/convergence.jsonl, run events), and anything a reviewer should know."]
+
+    // TRACKED-.ai LEAK CHANNEL (T1-7 council): the porcelain grep excludes
+    // only UNTRACKED .ai entries (^?? .ai); a worker that git-adds/commits
+    // .ai/ mid-run evades that filter and ships runner artifacts. First
+    // assertion: `git ls-files .ai/` must be EMPTY, else dirty -> escalate.
+    ship_check [shape=parallelogram, class="gate", max_retries=0,
+        tool_command="[ -z \"$(git ls-files .ai/)\" ] && [ -z \"$(git status --porcelain | grep -v -E '^\\?\\? \\.ai')\" ] && git log --oneline -1 | grep -q . && printf shipped || printf dirty"]
+
+    // ---------- budget exhaustion: a decision point, not a fuse ----------
+    // MUST_WRITE + S2 END-STATE (T1-7 council, 4-1; sam's S3 dissent
+    // recorded in the council log): the engine contract owns the presence
+    // half — a no-write postmortem is retried IN PLACE by the engine
+    // (~1+max_retries backend calls), then FAILs loudly and routes to the
+    // pm_gate synthesizer (FAIL edge below), so escalate never references
+    // a missing report. This REVERSES the T1-4 checkpoint's 5-1
+    // postmortem write-first pair (and deletes the write-first prose):
+    // the write-first skeleton converted an engine-recoverable ZERO-FILE
+    // failure into an engine-INVISIBLE 'STATUS: PENDING' artifact — a
+    // fresh skeleton passes every must_write= axis, forfeiting the
+    // engine's in-place retry. The T1-4 live loss this node's write-first
+    // pair was built for (attempt-2's diagnosis reached in-run and never
+    // written) is the exact class must_write= retries at engine level.
+    // The anchored 'STATUS: PENDING' contract was PINNED at both ends
+    // (prompt skeleton + pm_gate grep); both ends are removed in this
+    // same change.
+    postmortem [shape=box, class="gate", must_write=".ai/postmortem/report.md",
+        prompt="The run has hit a decision point without convergence: either the iteration budget is exhausted (repeated verification failures) or the quality loop has stalled (repeated critique refusals on mechanically-green work). Read .ai/convergence.jsonl (the descent record), .ai/critique.md, .ai/critique-b.md, .ai/verify.log, and .ai/feedback/. Write .ai/postmortem/report.md: what each iteration attempted, whether the loop was DESCENDING, OSCILLATING, or WANDERING (cite the convergence record), your best hypothesis for why it has not converged, and the options (continue with more budget / change approach / split the task / abandon). Be honest — this report is the value salvaged from a non-converging run."]
+
+    // FAIL-PATH STUB SYNTHESIZER (S2 end-state, T1-7 council 4-1): pm_gate
+    // no longer guards the SUCCESS path — the retirement's scheduled
+    // premise ("pm_gate subsumed by must_write=") was FALSE on inspection:
+    // subsumption covers only the PRESENCE half (a postmortem that
+    // completes has engine-verified a fresh, non-trivial report). The
+    // OTHER half of the old guard — guaranteeing escalate an artifact when
+    // the postmortem node itself FAILS (must_write retries exhausted, or
+    // any node error) — is what survives here, moved to the FAIL edge.
+    // History: live run t11-attempt-1's postmortem returned SUCCESS
+    // without writing its report; that class is now the engine's
+    // (in-place retries, then a loud FAIL that routes HERE).
+    // EXIT-0 GUARANTEED (mkdir -p first; every branch ends in printf): a
+    // failure inside failure handling must still hand escalate an
+    // artifact. Labels: SALVAGED-PARTIAL (a partial report.md existed —
+    // content preserved beneath the label) vs SYNTHESIZED-STUB (nothing
+    // existed — assembled from convergence.jsonl + verify.log tails).
+    // The anchored STATUS: PENDING grep is RETIRED together with the
+    // postmortem prompt's write-first skeleton instruction (the ANCHOR
+    // CONTRACT was pinned at both ends; both ends removed in this change).
+    pm_gate [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="mkdir -p .ai/postmortem; f=.ai/postmortem/report.md; if [ -s $f ]; then { echo 'SALVAGED-PARTIAL: the postmortem node FAILED (must_write contract or node error, after engine retries), but a partial report existed; its content is preserved below.'; echo; cat $f; } > $f.tmp; mv $f.tmp $f; else { echo 'SYNTHESIZED-STUB: the postmortem node FAILED after engine retries and no report was written. Assembled from the run evidence — salvage from .ai/convergence.jsonl, .ai/verify.log, .ai/feedback/.'; echo; echo '--- .ai/convergence.jsonl (tail) ---'; tail -20 .ai/convergence.jsonl 2>/dev/null; echo; echo '--- .ai/verify.log (tail) ---'; tail -40 .ai/verify.log 2>/dev/null; } > $f; fi; printf synthesized"]
+
+    // FORGE-GUARD LOUD FAIL (T2-7 council): terminal, fail-fast, distinct
+    // message — the bad_input/abandon idiom (exit 1, no outgoing edges,
+    // dead-ends are loud since #66). Reached ONLY via verdict's
+    // forge_mismatch token; deliberately NOT noverdict (no round retry),
+    // NOT a refusal (no stall increment), NOT postmortem (this is not
+    // non-convergence — it is a corrupted verdict channel that a human
+    // must inspect before trusting anything downstream of it).
+    forge_fail [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="echo 'FORGE-GUARD FAIL: .ai/critique.md failed the stamp check at the verdict read - either the file was rewritten after its post-critique stamp (single-actor consensus forge, or an accidental clobber), or the stamp itself (.ai/critique.hash) was absent/truncated at verdict time (stamp_a writes-or-fails, so that is never benign). Inspect .ai/critique.md against .ai/critique.hash and the run events before trusting this round.' >&2; exit 1"]
+
+    escalate [shape=hexagon,
+        prompt="The runner could not converge within budget, or could not package cleanly. Review .ai/postmortem/ and .ai/convergence.jsonl before choosing."]
+
+    // Budget bumps are capped so the engine step cap can never become the
+    // real terminator (which would bypass the postmortem path with a bare FAIL).
+    bump_budget [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="B=$(cat .ai/budget 2>/dev/null); B=${B:-6}; N=$((B+3)); [ $N -gt 15 ] && N=15; echo $N > .ai/budget; rm -f .ai/last-fail-sig; printf continue"]
+
+    abandon [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="echo 'ABANDONED: see .ai/postmortem/report.md and .ai/convergence.jsonl' >&2; exit 1"]
+
+    // ================= edges =================
+    start -> setup
+    setup -> orient    [condition="context.tool.last_line=ok"]
+    setup -> bad_input [condition="context.tool.last_line=missing"]
+
+    orient  -> attempt
+    attempt -> verify
+
+    // Cheap gate: green advances, red enters the corrective basin.
+    // NOTE `&& outcome=success`: a failing verify does NOT refresh
+    // tool.last_line; the conjunction keeps a stale 'green' + FAIL from
+    // even being a candidate edge (defensive post-T0-4 — pre-T0-4 engines
+    // fanned out here; see STALE-LABEL RULE above).
+    verify -> critique [condition="context.tool.last_line=green && outcome=success"]
+    verify -> triage   [condition="outcome=fail"]
+    // Budget wall (cross-provider review catch): verify spends the budget
+    // on EVERY entry — green path and transient re-entries included — and
+    // routes exhaustion to the decision point. `&& outcome=success` is the
+    // defensive STALE-LABEL conjunction (verify carries an outcome=fail
+    // edge; a stale 'exhausted' + FAIL must not compete — see rule above).
+    verify -> postmortem [condition="context.tool.last_line=exhausted && outcome=success", label="budget exhausted"]
+
+    // Inner loop + root-cause wall + budget wall.
+    triage -> attempt    [condition="context.tool.last_line=novel", label="fix"]
+    triage -> diagnose   [condition="context.tool.last_line=repeat", label="same failure twice"]
+    triage -> postmortem [condition="context.tool.last_line=exhausted", label="budget spent"]
+
+    diagnose -> diagnose_gate
+    diagnose_gate -> attempt  [condition="context.tool.last_line=continue", label="change course"]
+    diagnose_gate -> escalate [condition="context.tool.last_line=blocked"]
+
+    // Expensive gate: two independent family-diverse reviewers in
+    // sequence, then a deterministic consensus verdict.
+    // clean_b RETIRED (T1-7 council; scheduled in backlog/decisions/
+    // clean-b-retirement-SCHEDULED.md). The verdict-channel plant class
+    // has TWO directions; name both, and the mechanism that covers each:
+    //   - PRE-PLANT (A plants .ai/critique-b.md BEFORE B starts): covered
+    //     by the engine's must_write= PER-VISIT freshness floor — a file
+    //     whose mtime does not strictly post-date THAT visit's
+    //     node_start_wall cannot satisfy B's contract (rig engine-fixture
+    //     R1/R3). The floor covers ONLY this direction.
+    //   - SAME-ROUND OVERWRITE (B — or any later actor — rewrites
+    //     .ai/critique.md AFTER A's floor already passed on it; the
+    //     forgery is fresh by construction, so no mtime floor can see
+    //     it): covered by the stamp_a hash snapshot + verdict's
+    //     forge-guard assert -> forge_fail LOUD FAIL (T2-7 council).
+    //   - CLASS CLOSER: engine session attribution (§27's named residual
+    //     mechanism — attribute each artifact write to the writing
+    //     node's session). When it lands it closes BOTH directions plus
+    //     the delayed-replant window, and RETIRES the stamp guard.
+    critique -> stamp_a
+    stamp_a -> critique_b
+    critique_b -> verdict
+    // Forge-guard mismatch: LOUD FAIL, distinct token — never noverdict,
+    // never a refusal (no ledger record, stall counter untouched).
+    verdict  -> forge_fail [condition="context.tool.last_line=forge_mismatch && outcome=success", label="critique.md rewritten after stamp — consensus forge"]
+    verdict  -> package  [condition="context.tool.last_line=ship && outcome=success"]
+    verdict  -> feedback [condition="outcome=fail", label="iterate"]
+    verdict  -> postmortem [condition="context.tool.last_line=stall && outcome=success", label="quality loop stalled — decision point"]
+    // NOVERDICT (EX-11 council): an unwritten/malformed verdict is not a
+    // refusal. Re-run the round through the cheap gate: verify's budget
+    // wall bounds the retries (every re-entry spends an iteration), and
+    // the next round cannot reuse this round's files — critique/
+    // critique_b's PER-VISIT must_write= freshness floors reject any
+    // artifact not written by that visit (the pre-round wipe this comment
+    // once credited is DELETED; the floor owns the class now).
+    // The stall counter is UNTOUCHED. `&& outcome=success` is the
+    // defensive STALE-LABEL conjunction (verdict carries an outcome=fail
+    // edge; a stale 'noverdict' + FAIL must not compete — see rule above).
+    verdict  -> verify   [condition="context.tool.last_line=noverdict && outcome=success", label="no verdict written — re-run round via cheap gate"]
+    // Edge-level fidelity (highest precedence) forces the fresh-eyes reset:
+    // loop_restart alone does NOT clear the thread_id=work transcript.
+    feedback -> attempt  [loop_restart="true", fidelity="compact", label="fresh iteration, kept learning"]
+
+    // TRANSIENT-RECOVERY routes (lesson from live run f3): a provider error
+    // (e.g. Anthropic overloaded_error) at a ship-path box node used to
+    // fail-fast the whole run AFTER the work was already done. Route such
+    // FAILs back through the cheap gate: verify re-greens in seconds and the
+    // outer loop re-converges. Each re-entry consumes an iteration, and
+    // verify's own budget wall (checked BEFORE the DoD script runs) means a
+    // PERSISTENT outage drains the budget and escalates honestly via
+    // postmortem->human instead of looping forever.
+    critique   -> verify [condition="outcome=fail", label="transient — re-enter via cheap gate"]
+    critique_b -> verify [condition="outcome=fail", label="transient — re-enter via cheap gate"]
+    feedback   -> verify [condition="outcome=fail", label="transient — re-enter via cheap gate"]
+    package    -> verify [condition="outcome=fail", label="transient — re-enter via cheap gate"]
+
+    // Ship path: evidence of a clean handoff, or a human decides.
+    package    -> ship_check
+    ship_check -> done     [condition="context.tool.last_line=shipped"]
+    ship_check -> escalate [condition="context.tool.last_line=dirty"]
+
+    // Human gate: budget is a decision point. Abandon is FIRST so that
+    // timeout/auto-approve interviewers fail safe instead of looping.
+    // S2 WIRING (T1-7 council, 4-1): the SUCCESS path routes PAST pm_gate
+    // — a postmortem that completes has ENGINE-verified (must_write=) a
+    // fresh, non-trivial report, so the old unconditional guard hop is
+    // retired. The FAIL path (engine in-place retries exhausted, or any
+    // node error) routes THROUGH the synthesizer so escalate always has a
+    // labeled artifact. Same unconditional+outcome=fail edge idiom as the
+    // critique nodes (box node — no tool.last_line, so the stale-label
+    // defensive conjunction does not apply here).
+    postmortem -> escalate
+    postmortem -> pm_gate  [condition="outcome=fail", label="no report after engine retries — synthesize"]
+    pm_gate -> escalate
+    escalate -> abandon     [label="[A] Abandon — keep the postmortem"]
+    escalate -> bump_budget [label="[C] Continue — raise the budget"]
+    bump_budget -> attempt
+}

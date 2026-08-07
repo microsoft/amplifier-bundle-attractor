@@ -1,0 +1,149 @@
+# ============================================================================
+# VENDORED COPY -- see .github/capsule-pipeline/README.md for provenance,
+# scope, and re-sync instructions. Source: a private working repository
+# (not publicly reachable), pinned at its commit d859909cd1990c67944acce7fb9341c2c2a98d60
+# (runner/attractor-pipeline-dual.yaml, 2026-07-29). This copy is otherwise
+# byte-identical to the source file below this header -- do not hand-edit
+# the body; re-sync from source and re-apply this header instead.
+#
+# NOT CURRENTLY WIRED IN. Vendored alongside task-runner.dot so that the day
+# an OPENAI_API_KEY secret is provisioned in this repo, enabling true
+# dual-family critique (task-runner.dot's critique_b node) is a one-line
+# ATTRACTOR_PIPELINE_BUNDLE env var addition to
+# .github/workflows/capsule-implement.yml, not a new vendoring effort. See
+# that workflow and the provenance header atop the vendored task-runner.dot
+# for the honest account of why this is not yet active: only
+# ANTHROPIC_API_KEY exists as a proven secret today, and setting this bundle
+# without a real second-family key would silently under-deliver on its own
+# promise (cross-provider independence) rather than fail loudly.
+# ============================================================================
+# Dual-provider base bundle for the task-runner's dual-family critique.
+#
+# WHY THIS FILE EXISTS: the attractor CLI's default base bundle
+# (amplifier-bundle-attractor bundles/attractor-pipeline.yaml) mounts ONLY
+# provider-anthropic. A node with llm_provider="openai" still routes to the
+# attractor-agent-openai child agent, but the child session composes with the
+# base bundle's providers — and a provider preference (the channel that
+# delivers the node's llm_model) can only PROMOTE a provider that is already
+# mounted. With the default bundle the openai preference logs
+#   "No preferred providers found in mount plan ... Available: ['provider-anthropic']"
+# and the node SILENTLY runs on Anthropic (verified empirically in the eval
+# DTU with an identity probe: the "openai" node answered CLAUDE-ANTHROPIC).
+#
+# Fix: point the CLI at this bundle, which mounts BOTH families:
+#   ATTRACTOR_PIPELINE_BUNDLE=$PWD/runner/attractor-pipeline-dual.yaml \
+#     attractor run runner/task-runner.dot ...
+#
+# Provider order matters: provider-anthropic stays FIRST so nodes without an
+# explicit model keep the Anthropic default; critique_b's llm_model
+# preference promotes provider-openai (priority=0 + default_model set to the
+# live-resolved model) for that node's child session only.
+#
+# This file is self-contained (no `attractor:` namespace includes) so it
+# loads from any path. It mirrors bundles/attractor-pipeline.yaml plus
+# attractor-core's tools/hooks, minus the attractor-expert agent (not needed
+# by the runner).
+
+bundle:
+  name: attractor-pipeline-dual
+  version: 0.1.0
+  description: >
+    Multi-provider Attractor pipeline base bundle (anthropic + openai) for
+    the backlog task-runner's dual-family critique gate.
+
+# --- Pipeline orchestrator providers ----------------------------------------
+providers:
+  - module: provider-anthropic
+    source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
+    config:
+      default_model: claude-sonnet-4-6
+  - module: provider-openai
+    source: git+https://github.com/microsoft/amplifier-module-provider-openai@main
+    config:
+      timeout: 600
+
+# --- Pipeline orchestrator session ------------------------------------------
+session:
+  orchestrator:
+    module: loop-pipeline
+    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline
+    config:
+      profiles:
+        anthropic: attractor-agent-anthropic
+        openai: attractor-agent-openai
+        gemini: attractor-agent-gemini
+  context:
+    module: context-simple
+    source: git+https://github.com/microsoft/amplifier-module-context-simple@main
+
+# --- Orchestrator tools -------------------------------------------------------
+tools:
+  - module: tool-filesystem
+    source: git+https://github.com/microsoft/amplifier-module-tool-filesystem@main
+  - module: tool-bash
+    source: git+https://github.com/microsoft/amplifier-module-tool-bash@main
+    config:
+      timeout: 120
+  - module: tool-search
+    source: git+https://github.com/microsoft/amplifier-module-tool-search@main
+  # From attractor-core (inlined; no namespace include so this file is
+  # loadable from any path):
+  - module: tool-report-outcome
+    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/tool-report-outcome
+
+hooks:
+  - module: hooks-tool-truncation
+    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/hooks-tool-truncation
+  - module: hooks-pipeline-progress
+    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/hooks-pipeline-progress
+  - module: hooks-pipeline-observability
+    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/hooks-pipeline-observability
+
+# --- Child agents (one per provider, spawned by the pipeline engine) ---------
+# IMPORTANT: inline session.orchestrator is REQUIRED (loop-pipeline recursion
+# guard). Mirrors bundles/attractor-pipeline.yaml.
+agents:
+  attractor-agent-anthropic:
+    description: >
+      Anthropic coding agent (Claude Code aligned).
+      Uses edit_file with old_string/new_string, 120s shell timeout.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 120000
+  attractor-agent-openai:
+    description: >
+      OpenAI coding agent (codex-rs aligned).
+      Uses native apply_patch (Responses API built-in), restricted filesystem, 10s shell timeout.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 10000
+          # PIN the provider in the AGENT's own orchestrator config. The
+          # engine does pass the node's llm_provider via spawn
+          # orchestrator_config, but on the current CLI stack that kwarg is
+          # merged into a top-level 'orchestrator' mount-plan key while the
+          # real orchestrator lives under session.orchestrator — so it never
+          # reaches loop-agent, which then falls back to the FIRST mounted
+          # provider (anthropic). Verified empirically: without this pin an
+          # llm_provider="openai" node answers CLAUDE-ANTHROPIC to an
+          # identity probe. This inline config travels the normal bundle
+          # mount path and does arrive.
+          llm_provider: openai
+  attractor-agent-gemini:
+    description: >
+      Gemini coding agent (gemini-cli aligned).
+      Uses edit_file, includes web tools for grounding.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 10000

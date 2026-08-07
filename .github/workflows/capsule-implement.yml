@@ -1,0 +1,374 @@
+# Capsule Implement -- the "implement" stage of an issue -> attractor -> PR
+# system. See .github/capsule-pipeline/README.md for what this is and why
+# the vendored files under that directory exist.
+#
+# TRIGGER DESIGN (per DESIGN-issue-to-attractor-pipeline.md section 2/5:
+# "labels are an index, the capsule PR is the transaction"):
+#
+#   Real trigger = a human MERGES a capsule PR (pull_request: closed,
+#   merged == true, scoped to the proposals/ path). This is the design's
+#   second human gate. Options considered and rejected:
+#     - A `ready:build` LABEL: rejected for the same reason v0.1's label-
+#       as-state-store was rejected in the design doc section 5 -- "a
+#       label is a claim by construction... no provenance, no run ID; you
+#       cannot distinguish 'never ran' from 'ran and failed' from 'someone
+#       removed it.'" Adding a second label just to re-derive a signal the
+#       merge event for the SAME PR already carries atomically is pure
+#       overhead with none of the merge event's benefits (attribution,
+#       diff, revertability).
+#     - workflow_dispatch ONLY: loses the automatic hand-off entirely --
+#       a human would have to remember to go run something after merging,
+#       defeating the point of "merge IS the yes-build-this signal."
+#   workflow_dispatch is KEPT as the manual re-run / pre-merge-testing
+#   path (same rationale as capsule-specify.yml's own workflow_dispatch
+#   input) -- it takes a capsule_path directly, since a manual invocation
+#   has no merged PR to read files from.
+#
+#   PRE-MERGE PROOF NOTE: `issues`/`workflow_dispatch` triggers are only
+#   ever evaluated by GitHub Actions against the workflow file on the
+#   DEFAULT branch (confirmed empirically by this repo's own
+#   capsule-specify.yml history -- see commits e2b4206/71e6c4c on the
+#   branch that introduced it). `pull_request` is the one trigger GitHub
+#   evaluates using the PR branch's OWN copy of a workflow file, so this
+#   repo's established pattern for proving a brand-new workflow before
+#   merge is a TEMPORARY `pull_request: [opened, synchronize]` trigger,
+#   exercised for real once, then reverted in a follow-up commit before
+#   the PR is left for review. If this file's git history shows such a
+#   temporary trigger, it means the current run being pointed to as proof
+#   used that equivalent path, NOT the real merged-PR event (which cannot
+#   fire until a capsule PR is actually merged) -- see the PR body / final
+#   report for which path was actually exercised for the proof run.
+#
+# IDEMPOTENCY: a capsule is uniquely identified by (issue number, capsule
+# id) -- both derived from the proposal directory naming convention
+# `.github/capsule-pipeline/proposals/issue-<N>/<id>.md` that
+# capsule-specify.yml itself established. This workflow computes a
+# deterministic branch name `implement/issue-<N>-<id>` and refuses to
+# re-run task-runner.dot (an expensive, multi-hour operation) if that
+# branch already exists on the remote -- covering "merge event fires
+# twice", "someone re-dispatches manually after a prior success", and
+# "someone re-dispatches while a prior run is still in flight" (the last
+# one is also covered by `concurrency:` below). A maintainer who genuinely
+# wants to force a rebuild deletes the branch (or dispatches a differently
+# -named capsule) -- there is no separate force-rebuild input, on purpose:
+# a silent "just re-run it" button for a multi-hour, real-money LLM job is
+# not something to make one flag away.
+#
+# HUMAN ABORT: `concurrency: cancel-in-progress: false` means a NEW
+# trigger for a DIFFERENT capsule queues behind an in-flight run rather
+# than cancelling it (killing a multi-hour convergence run to service an
+# unrelated event would waste all its progress) -- but this does NOT
+# remove the ability to abort. GitHub's own workflow cancellation (Actions
+# tab "Cancel workflow", or `gh run cancel <run-id>`) always works
+# regardless of `concurrency:` settings, and is the abort mechanism for a
+# run that is visibly going wrong. A finer-grained "check a `halt` label
+# between iterations" mechanism is named as future work in the design doc
+# (section 8, item 9) but is NOT implemented here: task-runner.dot itself
+# has no such check today, and adding one would be an engine change, which
+# this workflow deliberately avoids (see the vendored task-runner.dot's
+# own provenance header for the one invocation gap that WAS worth a
+# workflow-level fix, and why this one isn't handled the same way).
+#
+# KNOWN, NAMED GAP (not fixed here): task-runner.dot's first deterministic
+# check after the maker's first `attempt` is `verify` -- there is no
+# pre-attempt re-check of whether the gate is ALREADY green at the current
+# HEAD (the "stale gate" scenario named in the design doc section 6: main
+# moved and the defect got fixed by something unrelated between specify
+# and implement). A run against an already-green gate will simply have
+# `attempt` do a near-no-op and `verify` pass immediately -- not corrupted,
+# but also not the `resolved-elsewhere` terminal state the design
+# document names. Flagged here rather than silently patched into the
+# vendored engine.
+#
+# Job cannot join "CI Gate (all checks passed)" (.github/workflows/ci.yml):
+# that aggregate's `needs:` list only ever names job IDs defined inside
+# ci.yml itself, so a job in this separate workflow file cannot be added to
+# it by accident (same isolation capsule-specify.yml already relies on). A
+# failed implement run is real, useful information and is allowed to leave
+# this job (and only this job) red.
+name: Capsule Implement
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+    paths:
+      - ".github/capsule-pipeline/proposals/**"
+  workflow_dispatch:
+    inputs:
+      capsule_path:
+        description: "Repo-relative path to a capsule .md file to implement (e.g. .github/capsule-pipeline/proposals/issue-144/prefix-sharing-substitution-corruption.md)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+# Keyed to the capsule being implemented (merged-PR number, or the
+# dispatched capsule path), not to the whole workflow -- two DIFFERENT
+# capsules can implement concurrently; the SAME capsule cannot pile up
+# concurrent runs. cancel-in-progress: false per the design doc section 5
+# ("cancelling a 4h run to service a label event is catastrophic") -- see
+# the HUMAN ABORT note above for how a human actually stops a bad run.
+concurrency:
+  group: capsule-implement-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.capsule_path }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    name: "Run task-runner.dot (implement stage)"
+    runs-on: ubuntu-latest
+    # task-runner.dot's own max_pipeline_duration=14400s (4h) is the
+    # engine's internal wall (it writes a postmortem before dying); the
+    # job wall must clear that plus setup/critique/PR-creation overhead,
+    # while staying comfortably under GitHub Actions' 6h hard cap for
+    # hosted runners -- same ratio-of-buffer reasoning as
+    # capsule-specify.yml's 90min-over-a-60min-engine-wall.
+    timeout-minutes: 330
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Locate and validate the capsule
+        id: locate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CAPSULE_MD="${{ inputs.capsule_path }}"
+          else
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            CAPSULE_MD="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+              --json files -q '.files[].path' \
+              | grep -E '^\.github/capsule-pipeline/proposals/issue-[0-9]+/[^/]+\.md$' \
+              | head -1 || true)"
+            if [ -z "$CAPSULE_MD" ]; then
+              echo "::error::Merged PR #$PR_NUMBER touched .github/capsule-pipeline/proposals/** but no <id>.md capsule file was found among its changed files -- refusing to guess." >&2
+              exit 1
+            fi
+          fi
+
+          if [ ! -f "$CAPSULE_MD" ]; then
+            echo "::error::Capsule file not found at '$CAPSULE_MD' (checked out at main HEAD)." >&2
+            exit 1
+          fi
+
+          ISSUE_NUMBER="$(printf '%s' "$CAPSULE_MD" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' | head -1 || true)"
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "::error::Could not derive an issue number from capsule path '$CAPSULE_MD' (expected .../proposals/issue-<N>/...)." >&2
+            exit 1
+          fi
+
+          CAPSULE_ID="$(basename "$CAPSULE_MD" .md)"
+          VERIFY_SH="$(dirname "$CAPSULE_MD")/$CAPSULE_ID.verify.sh"
+          if [ ! -f "$VERIFY_SH" ]; then
+            echo "::error::Expected sibling gate script not found: $VERIFY_SH" >&2
+            exit 1
+          fi
+
+          IMPLEMENT_BRANCH="implement/issue-${ISSUE_NUMBER}-${CAPSULE_ID}"
+
+          SKIP=false
+          if git ls-remote --exit-code --heads origin "$IMPLEMENT_BRANCH" >/dev/null 2>&1; then
+            SKIP=true
+            echo "Branch $IMPLEMENT_BRANCH already exists on origin -- this capsule has already been (or is already being) implemented. Skipping the run (idempotency)."
+          fi
+
+          {
+            echo "capsule_md=$CAPSULE_MD"
+            echo "capsule_id=$CAPSULE_ID"
+            echo "verify_sh=$VERIFY_SH"
+            echo "issue_number=$ISSUE_NUMBER"
+            echo "implement_branch=$IMPLEMENT_BRANCH"
+            echo "skip=$SKIP"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        if: steps.locate.outputs.skip != 'true'
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        if: steps.locate.outputs.skip != 'true'
+        uses: astral-sh/setup-uv@v4
+
+      - name: Configure commit identity for the run
+        if: steps.locate.outputs.skip != 'true'
+        # task-runner.dot's `package` node commits the fix itself (an LLM
+        # box node, not workflow glue) -- it is instructed to add the
+        # standard Amplifier co-authored-by trailer, but does not pin an
+        # author identity. Setting it globally here means that commit
+        # inherits it, same as any other commit made in this job.
+        run: |
+          git config --global user.name "Brian Krabach"
+          git config --global user.email "brkrabac@microsoft.com"
+
+      - name: Run task-runner.dot (implement stage)
+        id: run
+        if: steps.locate.outputs.skip != 'true'
+        # continue-on-error: this workflow classifies and reports the
+        # result in later steps regardless of exit code -- a genuine
+        # non-convergence is honest, useful information, not something to
+        # hide behind a green step. The job itself is failed explicitly,
+        # later, only when warranted.
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # DUAL-FAMILY CRITIQUE, HONESTLY GATED: task-runner.dot's
+          # critique_b node wants a second model family (see the vendored
+          # task-runner.dot's own header + attractor-pipeline-dual.yaml's
+          # provenance header). Only set ATTRACTOR_PIPELINE_BUNDLE (and
+          # pass the key) when a real OpenAI key exists as a secret --
+          # otherwise both critics genuinely run on the same family
+          # (documented degradation, not a crash) and the PR body / issue
+          # comment says so explicitly rather than silently claiming
+          # cross-family review that didn't happen.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ATTRACTOR_PIPELINE_BUNDLE: ${{ secrets.OPENAI_API_KEY != '' && format('{0}/.github/capsule-pipeline/attractor-pipeline-dual.yaml', github.workspace) || '' }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/capsule-implement/logs"
+          uv run --project modules/pipeline-runner attractor run \
+            .github/capsule-pipeline/task-runner.dot \
+            --cwd "$GITHUB_WORKSPACE" \
+            --logs-root "$RUNNER_TEMP/capsule-implement/logs" \
+            --param task_file="$GITHUB_WORKSPACE/${{ steps.locate.outputs.capsule_md }}" \
+            --param target_dir="$GITHUB_WORKSPACE" \
+            --param max_iterations=6
+          echo "attractor_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Push fix branch and open PR
+        id: pr
+        if: always() && steps.locate.outputs.skip != 'true' && steps.run.outputs.attractor_exit == '0'
+        # See capsule-specify.yml's "Open capsule PR" step for the
+        # confirmed platform limitation this token falls back around:
+        # `gh pr create` fails with "GitHub Actions is not permitted to
+        # create or approve pull requests" under github.token alone on
+        # this org/enterprise. CAPSULE_PR_TOKEN is the proven fine-grained
+        # PAT that unblocks it.
+        env:
+          GH_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          BRANCH="${{ steps.locate.outputs.implement_branch }}"
+          ISSUE="${{ steps.locate.outputs.issue_number }}"
+          CAPSULE_ID="${{ steps.locate.outputs.capsule_id }}"
+
+          # Defensive: task-runner.dot's own ship_check gate already
+          # asserts a clean tree (no tracked .ai/ leakage, no stray
+          # porcelain) before reaching `done` -- a second, independent
+          # check here costs nothing and this push must start from a
+          # genuinely proven tree.
+          if [ -n "$(git status --porcelain | grep -v -E '^\?\? \.ai')" ]; then
+            echo "::error::Workspace has unexpected changes outside .ai/ after a 'done' run -- refusing to push an unproven tree." >&2
+            git status --porcelain >&2 || true
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
+            echo "::error::task-runner.dot reported success but HEAD matches origin/main -- no fix was actually committed. Refusing to open an empty PR." >&2
+            exit 1
+          fi
+
+          git push origin "HEAD:refs/heads/$BRANCH"
+
+          DUAL_NOTE="Both reviewers ran as independent, cross-provider critics (Anthropic + OpenAI)."
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
+            DUAL_NOTE="**Single-family review only**: no OPENAI_API_KEY secret exists in this repo yet, so task-runner.dot's dual-family critique gate ran with BOTH critics served by the same (Anthropic) provider -- see the vendored task-runner.dot's provenance header. This is a documented degradation, not a crash; cross-provider independence was not exercised on this run."
+          fi
+
+          BODY_FILE="$RUNNER_TEMP/capsule-implement/pr-body.md"
+          {
+            echo "## Implement-stage fix for #${ISSUE}"
+            echo
+            echo "Refs #${ISSUE}. Produced by \`task-runner.dot\` (see \`.github/capsule-pipeline/\`)"
+            echo "converging against the capsule's own definition of done and gate:"
+            echo "\`.github/capsule-pipeline/proposals/issue-${ISSUE}/${CAPSULE_ID}.md\` /"
+            echo "\`${CAPSULE_ID}.verify.sh\`."
+            echo
+            echo "The gate script (the capsule's own DoD, unmodified) passed, and this"
+            echo "change was additionally critiqued by an LLM reviewer against the"
+            echo "capsule's judgment criteria before shipping. $DUAL_NOTE"
+            echo
+            echo "This PR is opened non-draft and is NOT auto-merged -- a human reviews"
+            echo "the diff and the run evidence before merging."
+            echo
+            echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > "$BODY_FILE"
+
+          url=$(gh pr create --repo "${{ github.repository }}" \
+            --title "implement: fix for #${ISSUE} (${CAPSULE_ID})" \
+            --body-file "$BODY_FILE" \
+            --base main --head "$BRANCH")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Comment on the issue with the outcome
+        if: always() && steps.locate.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          COMMENT="$RUNNER_TEMP/capsule-implement/comment.md"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXIT="${{ steps.run.outputs.attractor_exit }}"
+
+          if [ "$EXIT" = "0" ] && [ -n "${{ steps.pr.outputs.url }}" ]; then
+            {
+              echo "**Implement stage: fix PR opened.**"
+              echo
+              echo "${{ steps.pr.outputs.url }}"
+              echo
+              echo "Workflow run: $RUN_URL"
+            } > "$COMMENT"
+          else
+            {
+              echo "**Implement stage FAILED -- no fix PR opened.**"
+              echo
+              echo "task-runner.dot did not converge on a shipped fix within its"
+              echo "iteration budget (or an error occurred opening the PR). Postmortem"
+              echo "(if written):"
+              echo
+              echo '```'
+              cat "$GITHUB_WORKSPACE/.ai/postmortem/report.md" 2>/dev/null || echo "(no postmortem report was written)"
+              echo '```'
+              echo
+              echo "This is a real failure, not a transient CI hiccup -- see the workflow"
+              echo "run for full logs and uploaded artifacts."
+              echo
+              echo "Workflow run: $RUN_URL"
+            } > "$COMMENT"
+          fi
+
+          gh issue comment "${{ steps.locate.outputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body-file "$COMMENT"
+
+      - name: Upload run evidence (logs, .ai state)
+        if: always() && steps.locate.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: capsule-implement-issue-${{ steps.locate.outputs.issue_number }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/capsule-implement
+            ${{ github.workspace }}/.ai
+          if-no-files-found: warn
+
+      - name: Fail the job on genuine non-convergence
+        if: always() && steps.locate.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          EXIT="${{ steps.run.outputs.attractor_exit }}"
+          if [ "$EXIT" != "0" ]; then
+            echo "::error::task-runner.dot did not converge (exit=$EXIT) -- see the postmortem comment posted on the issue and the uploaded run evidence." >&2
+            exit 1
+          fi
+          if [ -z "${{ steps.pr.outputs.url }}" ]; then
+            echo "::error::task-runner.dot reported success but no fix PR was opened -- see the 'Push fix branch and open PR' step's log." >&2
+            exit 1
+          fi
+          echo "Implement stage concluded successfully: ${{ steps.pr.outputs.url }}"

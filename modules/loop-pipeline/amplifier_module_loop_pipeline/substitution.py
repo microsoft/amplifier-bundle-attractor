@@ -100,7 +100,17 @@ def substitute_context(text: str, snapshot: Mapping[str, object]) -> str:
     for key in sorted(snapshot.keys(), key=len, reverse=True):
         val = snapshot.get(key)
         if val is not None and f"${key}" in text:
-            text = text.replace(f"${key}", str(val))
+            # Use a boundary-aware replacement: do not substitute $key when it
+            # is immediately followed by a word character or dot (which would
+            # mean it is a prefix of a longer, undefined token).
+            # Lambda replacement prevents re.sub from misinterpreting
+            # backslash-digit sequences in the value as backreferences.
+            _val = str(val)
+            text = re.sub(
+                re.escape(f"${key}") + r"(?![A-Za-z0-9_.])",
+                lambda _: _val,
+                text,
+            )
 
     # Phase 3: $$ escape → literal $.
     text = text.replace("$$", "$")

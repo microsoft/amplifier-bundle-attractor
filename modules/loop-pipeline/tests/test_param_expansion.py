@@ -49,6 +49,15 @@ def test_unknown_param_left_alone():
     assert result == "Build $unknown with Python"
 
 
+def test_expand_params_preserves_undefined_prefixed_param():
+    """A defined param must not replace the prefix of an absent param token."""
+    result = expand_params(
+        "echo NAME=$name SUFFIXED=$name_suffix ID=$id ID2=$id2",
+        {"name": "Alice", "id": "42"},
+    )
+    assert result == "echo NAME=Alice SUFFIXED=$name_suffix ID=42 ID2=$id2"
+
+
 def test_expand_in_graph_goal():
     """Params expand in graph-level goal attribute context too."""
     context = PipelineContext()
@@ -102,3 +111,16 @@ def test_expand_params_coexists_with_goal():
         {"language": "Python"},
     )
     assert result == "Do $goal in Python"
+
+
+def test_expand_params_backslash_value_literal():
+    """Param values containing backslashes are inserted verbatim (no re.sub escape interpretation)."""
+    # Windows path: backslash followed by 'U' would raise re.error if not handled correctly
+    result = expand_params("output=$path", {"path": r"C:\Users\Alice"})
+    assert result == r"output=C:\Users\Alice"
+
+
+def test_expand_params_backslash_newline_value_literal():
+    """Param values with \\n are inserted as the two-char literal, not as a newline."""
+    result = expand_params("msg=$text", {"text": r"hello\nworld"})
+    assert result == r"msg=hello\nworld"

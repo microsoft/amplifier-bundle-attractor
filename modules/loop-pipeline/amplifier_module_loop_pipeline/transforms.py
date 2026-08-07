@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Protocol, runtime_checkable
 
 from .context import PipelineContext
@@ -45,7 +46,16 @@ def expand_params(text: str, params: dict[str, str]) -> str:
         Text with known ``$param`` tokens replaced.
     """
     for key, value in params.items():
-        text = text.replace(f"${key}", str(value))
+        # Negative lookahead (?![A-Za-z0-9_.]) ensures token-boundary awareness:
+        # "$name" only matches when the next character is not a valid key-name
+        # character, so "$name_suffix" is never corrupted when only "name" is
+        # in params.
+        _value = str(value)
+        text = re.sub(
+            r"\$" + re.escape(key) + r"(?![A-Za-z0-9_.])",
+            lambda m: _value,
+            text,
+        )
     return text
 
 

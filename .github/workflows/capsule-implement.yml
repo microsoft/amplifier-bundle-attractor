@@ -208,6 +208,32 @@ jobs:
           git config --global user.name "Brian Krabach"
           git config --global user.email "brkrabac@microsoft.com"
 
+      - name: "Preflight: dual-family critique is unserviceable without an OpenAI key"
+        id: preflight
+        if: steps.locate.outputs.skip != 'true'
+        # Issue #155: an unserviceable provider on a node used to drain the
+        # ENTIRE iteration budget in a crash loop (`resolve_latest_for: no
+        # adapter found for provider 'openai'`) before failing -- burning
+        # 20+ minutes to say what could be said in one line at startup. The
+        # vendored task-runner.dot's critique_b node HARD-DECLARES
+        # llm_provider="openai" (restored to the pristine upstream shape;
+        # see that file's own header) and this job now unconditionally
+        # mounts attractor-pipeline-dual.yaml to serve it -- there is no
+        # more silent single-provider fallback at either layer. So: check
+        # the one precondition that makes that mount meaningful BEFORE
+        # spending any of the run's 30-90+ minute budget, and fail loudly,
+        # naming exactly what's missing and what capability is lost, if it
+        # isn't met.
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::capsule-implement: OPENAI_API_KEY secret is missing. task-runner.dot's critique_b node requires llm_provider=\"openai\" (dual-family critique -- an independent, different-model-family reviewer is the point; see issue #155) and this job unconditionally mounts attractor-pipeline-dual.yaml to serve it. Without OPENAI_API_KEY that mount cannot serve a real OpenAI model, and running anyway would either crash the node every round (draining the whole iteration budget on a crash loop) or silently degrade to single-family review depending on engine version -- both are exactly the failure this preflight exists to prevent. Refusing to start. Provision OPENAI_API_KEY as a repo secret, then re-run." >&2
+            exit 1
+          fi
+          echo "OPENAI_API_KEY is present -- dual-family critique (Anthropic + OpenAI) can be honored. Proceeding."
+
       - name: Run task-runner.dot (implement stage)
         id: run
         if: steps.locate.outputs.skip != 'true'
@@ -219,17 +245,16 @@ jobs:
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # DUAL-FAMILY CRITIQUE, HONESTLY GATED: task-runner.dot's
-          # critique_b node wants a second model family (see the vendored
-          # task-runner.dot's own header + attractor-pipeline-dual.yaml's
-          # provenance header). Only set ATTRACTOR_PIPELINE_BUNDLE (and
-          # pass the key) when a real OpenAI key exists as a secret --
-          # otherwise both critics genuinely run on the same family
-          # (documented degradation, not a crash) and the PR body / issue
-          # comment says so explicitly rather than silently claiming
-          # cross-family review that didn't happen.
+          # DUAL-FAMILY CRITIQUE, UNCONDITIONALLY WIRED (issue #155): the
+          # vendored task-runner.dot's critique_b node declares
+          # llm_provider="openai" -- a design requirement, not optional --
+          # so this bundle is ALWAYS mounted; there is no single-provider
+          # fallback path any more. If OPENAI_API_KEY is unset, the
+          # "Preflight: dual-family critique is unserviceable without an
+          # OpenAI key" step below fails the job LOUDLY before this step
+          # (and the 30-90+ minute run it would otherwise start) ever runs.
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ATTRACTOR_PIPELINE_BUNDLE: ${{ secrets.OPENAI_API_KEY != '' && format('{0}/.github/capsule-pipeline/attractor-pipeline-dual.yaml', github.workspace) || '' }}
+          ATTRACTOR_PIPELINE_BUNDLE: ${{ format('{0}/.github/capsule-pipeline/attractor-pipeline-dual.yaml', github.workspace) }}
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-implement/logs"
@@ -277,10 +302,12 @@ jobs:
 
           git push origin "HEAD:refs/heads/$BRANCH"
 
-          DUAL_NOTE="Both reviewers ran as independent, cross-provider critics (Anthropic + OpenAI)."
-          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
-            DUAL_NOTE="**Single-family review only**: no OPENAI_API_KEY secret exists in this repo yet, so task-runner.dot's dual-family critique gate ran with BOTH critics served by the same (Anthropic) provider -- see the vendored task-runner.dot's provenance header. This is a documented degradation, not a crash; cross-provider independence was not exercised on this run."
-          fi
+          # Dual-family critique is unconditional as of issue #155's fix --
+          # the preflight step earlier in this job already refused to start
+          # the run at all if OPENAI_API_KEY were missing, so reaching this
+          # point means both critics genuinely ran cross-provider. No
+          # degraded-single-family fallback message exists any more.
+          DUAL_NOTE="Both reviewers ran as independent, cross-provider critics (Anthropic + OpenAI) -- enforced by this workflow's preflight check, not merely hoped for."
 
           BODY_FILE="$RUNNER_TEMP/capsule-implement/pr-body.md"
           {

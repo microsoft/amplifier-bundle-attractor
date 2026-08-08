@@ -8,7 +8,6 @@ from amplifier_module_loop_pipeline.context import PipelineContext
 from amplifier_module_loop_pipeline.dot_parser import parse_dot
 from amplifier_module_loop_pipeline.transforms import expand_params, expand_variables
 
-
 # --- Unit tests for expand_params ---
 
 
@@ -56,6 +55,30 @@ def test_expand_params_preserves_undefined_prefixed_param():
         {"name": "Alice", "id": "42"},
     )
     assert result == "echo NAME=Alice SUFFIXED=$name_suffix ID=42 ID2=$id2"
+
+
+def test_expand_params_dot_after_key_with_no_dotted_sibling_substitutes():
+    """A literal '.' after $key must not block substitution when no longer
+    dotted key sharing that prefix exists in params (regression: this
+    previously required '$name.txt' to stay literal)."""
+    result = expand_params("cat $name.txt", {"name": "report"})
+    assert result == "cat report.txt"
+
+
+def test_expand_params_trailing_period_substitutes():
+    """A sentence-ending period after $key must not block substitution."""
+    result = expand_params("Run $tool. Then go.", {"tool": "X"})
+    assert result == "Run X. Then go."
+
+
+def test_expand_params_dot_still_blocks_when_dotted_sibling_exists():
+    """When a longer dotted key sharing the prefix IS present in params, the
+    '.' must still block the shorter key's substitution."""
+    result = expand_params(
+        "$tool.last_line",
+        {"tool": "X", "tool.last_line": "Y"},
+    )
+    assert result == "Y"
 
 
 def test_expand_in_graph_goal():

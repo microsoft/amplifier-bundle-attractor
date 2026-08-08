@@ -20,10 +20,10 @@ from amplifier_module_loop_pipeline.context import PipelineContext
 from amplifier_module_loop_pipeline.dot_parser import parse_dot
 from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 from amplifier_module_loop_pipeline.outcome import StageStatus
 from amplifier_module_loop_pipeline.substitution import substitute_context
 from amplifier_module_loop_pipeline.validation import validate_or_raise
-from amplifier_module_loop_pipeline.handlers.context import HandlerContext
 
 
 class EventCapture:
@@ -105,6 +105,44 @@ def test_substitute_context_preserves_undefined_prefixed_key():
         {"name": "Alice", "id": "42"},
     )
     assert result == "echo NAME=Alice SUFFIXED=$name_suffix ID=42 ID2=$id2"
+
+
+def test_substitute_context_dot_after_key_with_no_dotted_sibling_substitutes():
+    """A literal '.' after $key must not block substitution when no longer
+    dotted key sharing that prefix exists in the snapshot (regression: this
+    previously required '$name.txt' to stay literal, corrupting a filename
+    extension or sentence-ending period into an unresolved token)."""
+    result = substitute_context("cat $name.txt", {"name": "report"})
+    assert result == "cat report.txt"
+
+
+def test_substitute_context_trailing_period_substitutes():
+    """A sentence-ending period after $key must not block substitution."""
+    result = substitute_context("Run $tool. Then go.", {"tool": "X"})
+    assert result == "Run X. Then go."
+
+
+def test_substitute_context_dot_still_blocks_when_dotted_sibling_exists():
+    """When a longer dotted key sharing the prefix IS present in the snapshot,
+    the '.' must still block the shorter key's substitution -- even if the
+    longer key's own value is None and therefore never gets substituted
+    itself. Otherwise "$tool.last_line" would be partially corrupted into
+    "X.last_line" instead of staying literal."""
+    result = substitute_context(
+        "$tool.last_line",
+        {"tool": "X", "tool.last_line": None},
+    )
+    assert result == "$tool.last_line"
+
+
+def test_substitute_context_longest_key_wins_still_works_with_dot_fix():
+    """Longest-key-wins for genuinely dotted keys must be unaffected by the
+    narrower dot exclusion (both tool and tool.last_line defined)."""
+    result = substitute_context(
+        "$tool.last_line and $tool",
+        {"tool": "X", "tool.last_line": "Y"},
+    )
+    assert result == "Y and X"
 
 
 def test_substitute_context_multiple_occurrences():

@@ -31,7 +31,7 @@ This directory wires two stages of an issue -> attractor -> PR system:
 | `vendor/backlog/fixtures/leak-scan/*` | Self-test fixtures for the scanner above (RED/GREEN controls). |
 | `vendor/runner/check-degenerate-hack.py` | `degenerate_gate`'s checker: suspects a hypothesis patch (A **and** B, checked per-patch since the A/B symmetry fix) that greens the gate by deleting/stubbing behavior rather than implementing a real alternate fix (THE INVERSION RULE). |
 | `vendor/runner/check-existing-tests.py` | `existing_test_gate`'s checker: derives a capsule's subject from the symbols/paths its own `DEFINITION.verify.sh` names, and blocks if the repo already ships an on-topic test the gate doesn't run (FOLD IN THE EXISTING TESTS). **Also a load-bearing import for `check-witness-gate.py`** (see below) — it is no longer only `existing_test_gate`'s dependency. |
-| `vendor/runner/check-witness-gate.py` | `witness_gate`'s checker: catches "vacuous by no-occasion" — a proven-greening hypothesis patch that dodges the reported defect by deleting the *occasion* to observe it (e.g. deleting a single `goal_gate=true` token) rather than fixing it. Imports `resolve_subject_symbols`/`walk_repo`/`STOPWORDS` from `check-existing-tests.py` and diff-hunk parsing from `check-degenerate-hack.py` **at runtime via `importlib`**, resolved relative to its own file location (`Path(__file__).resolve().parent`) — both sibling files must be vendored in the *same directory*, not merely somewhere under `uplift_dir`. |
+| `vendor/runner/check-witness-gate.py` | Checker shared by **two gates**, `witness_gate` and `void_gate`: catches "vacuous by no-occasion" — a proven-greening (or, for `void_gate`, actively-constructed) hypothesis patch that dodges the reported defect by deleting the *occasion* to observe it (e.g. deleting a single `goal_gate=true` token) rather than fixing it. Imports `resolve_subject_symbols`/`walk_repo`/`STOPWORDS` from `check-existing-tests.py` and diff-hunk parsing from `check-degenerate-hack.py` **at runtime via `importlib`**, resolved relative to its own file location (`Path(__file__).resolve().parent`) — both sibling files must be vendored in the *same directory*, not merely somewhere under `uplift_dir`. Content is unchanged as of the void-probe sync (2026-08-07, this pass), but it gained a **second, independent graph-level caller** (`void_gate`'s own `tool_command=` shells out to it directly, exactly like `witness_gate`'s does) — see the Re-sync log entry for that sync for why an unchanged file can still need re-proving. |
 
 ## Provenance — these are VENDORED copies
 
@@ -79,6 +79,21 @@ that no static check on `capsule.dot` itself will ever surface. See
 "Re-syncing" step 2 below -- this is precisely the class of miss that caused
 this file's own previous re-sync to ship gates whose checker scripts weren't
 vendored.
+
+**A distinct-but-related trap, closed in the void-probe sync (2026-08-07, this
+pass):** a *new node* can add a **second, independent, directly-visible**
+`$uplift_dir/...` shell-out to a file that is **already vendored and whose
+content does not change** -- `void_gate` shells out to
+`$uplift_dir/runner/check-witness-gate.py` exactly like `witness_gate`
+already did, with a different (single-`--patch`) argument shape and from a
+different point in the pipeline (after `void_gate`'s own hard-reset, not
+after `mutate_gate`/`mutate_gate_b`'s). Unlike the importlib case above,
+this one *is* grep-visible via step 2's `uplift_dir` search -- but "the file
+is already vendored and its self-test still passes" is not the same claim as
+"this new call site's own invocation, with its own arguments and its own
+place in the control flow, actually resolves and behaves correctly." See
+step 5's amended wording below (the "prove **each** call site" sentence) --
+this is the reason it was added.
 
 `task-runner.dot` is likewise **not modified** beyond its header. It was
 authored for a slightly different invocation shape (a backlog task file with
@@ -151,6 +166,20 @@ scanner correctly) before this was wired up.
    `check-witness-gate.py` too. Run `grep -n "^import\|^from\|_load(\|importlib"
    vendor/runner/*.py` and confirm every named sibling file is present in the
    same `vendor/` subdirectory.
+2b. **Count the graph-level call sites of every checker named by step 2's
+   grep, not just whether the checker is present** -- an already-vendored,
+   content-unchanged file can gain a **second (or third) independent
+   `tool_command=` caller** elsewhere in the same diff (e.g. the void-probe
+   sync: `void_gate` shells out to `$uplift_dir/runner/check-witness-gate.py`
+   with its own argument shape, a single `--patch`, from a different point in
+   the control flow than `witness_gate`'s multi-`--patch` call). Step 2's
+   grep already surfaces that a second reference exists (it is not the
+   invisible import case step 2a covers) -- the trap here is stopping at
+   "the file is already vendored, and it already has a passing self-test"
+   without re-proving *that specific new call site's own invocation*. A
+   checker resolving in isolation does not prove every caller's arguments,
+   working assumptions, and place in the control flow also resolve. Note
+   every distinct node name that shells out to the same checker path.
 3. Copy the files here verbatim (`cp`, not a manual retype), preserving the
    executable bit on any `.sh`/`.py` checker.
 4. Re-apply (or update) the provenance header comment at the top of each file
@@ -165,8 +194,13 @@ scanner correctly) before this was wired up.
    invoke the importing checker (not just `python3 -c "import ..."` in
    isolation) from a scratch repo with `uplift_dir` pointed at the vendored
    location, and run a negative control (wrong `uplift_dir`, or one sibling
-   file deliberately absent) so a pass isn't accidental. Note any new
-   deviations here.
+   file deliberately absent) so a pass isn't accidental. **It must also
+   separately exercise EACH graph-level call site named by step 2b** --
+   extract that node's own `tool_command=` text verbatim from the re-synced
+   `.dot` and run it (or the checker invocation inside it) with its own exact
+   arguments, not only the checker's generic `--self-test` -- a self-test
+   proves the file loads; it does not prove a *different* caller's specific
+   arguments and calling context also work. Note any new deviations here.
 
 ## Re-sync log
 
@@ -240,3 +274,87 @@ scanner correctly) before this was wired up.
   **byte-identical** at its own pinned commit (`f5322c24ed6fd8deaeddb519de7bfdfa861094d9`)
   -- no re-sync needed; see the PR that performed this sync for the full
   proof.
+
+- **2026-08-07 (later still)** -- `capsule.dot` re-synced
+  `3a53cf13cbf426bcdea7e4382fae9feb9efe977d` ->
+  `34fff9618e9c0cba3feee8ac8b82c94798720cec`. Picked up one addition, THE
+  VOID PROBE (motivating live case: GitHub issue #146's own capsule PR #161,
+  `goal-gate-loop-restart-lint.verify.sh`, base `44428ab67a530f23aa5579104f4ff68e4e809c37`
+  -- both its hypothesis patches are legitimate, so `witness_gate` correctly
+  reported `witness_clean` on its own patches; the capsule was *still*
+  dodgeable by hand, because `witness_gate` is passive -- it only inspects
+  patches written for a different purpose, so a dodge nobody happened to
+  write into slot A or B goes undetected):
+  - `void` (new node, `class="maker"`) -- writes `.ai/hypothesis_v.patch`
+    under an INVERTED objective from `mutate`/`mutate_b`: actively search
+    for the cheapest patch that greens the gate *without* fixing the
+    reported defect, or write a `# NO-VOID:` explanation if none is
+    honestly constructible.
+  - `void_gate` (new node) -- applies that patch, proves GREEN, hard-resets,
+    proves the reset, then **re-invokes `check-witness-gate.py` a SECOND
+    time** (same four-condition analysis, reused verbatim) against only
+    `.ai/hypothesis_v.patch` as the guard: a greening patch is only treated
+    as a CONFIRMED dodge if that analysis also says so; otherwise it is
+    PASS-with-a-finding (`.ai/findings/void-inconclusive.md`), biased to
+    PASS like `witness_gate`/`existing_test_gate`.
+  - `witness_gate`'s own success edges were rewired to feed `void` (not
+    `discrimination_check`) first; `void_gate`'s three success tokens (no
+    dodge possible, dodge resisted, inconclusive) all proceed to
+    `discrimination_check`; an unproven reset is a loud halt (shared with
+    `mutate_gate`/`mutate_gate_b`); a confirmed dodge or an infra failure
+    routes to `triage` through the same root-cause wall every other gate
+    defect in this file uses.
+  **No new file to vendor**: `void_gate` reuses `check-witness-gate.py`
+  verbatim, exactly as `witness_gate` already does -- but this is precisely
+  the "recurring trap" this checklist exists to name: `check-witness-gate.py`
+  is unchanged (byte-identical diff, confirmed against the source range) yet
+  became newly load-bearing for a **second, independent graph-level caller**
+  with its own argument shape (`void_gate` passes a single `--patch`; unlike
+  `witness_gate` it also calls the checker from AFTER its own git-apply /
+  hard-reset cycle, not before one). `check-existing-tests.py` and
+  `check-degenerate-hack.py` were diffed against this same source range and
+  found byte-identical to the copies already vendored -- no re-copy needed
+  for either. `task-runner.dot` was checked against the same source range
+  and found **byte-identical** at its own separately-pinned commit
+  (`f5322c24ed6fd8deaeddb519de7bfdfa861094d9`, unchanged since the first
+  sync) -- no re-sync needed.
+
+  Runtime proof performed (see the PR that performed this sync for full
+  transcripts): (1) `check-witness-gate.py --self-test` and a direct
+  invocation with `void_gate`'s own single-`--patch` argument shape, from a
+  scratch repo with `uplift_dir` set to this repo's own
+  `.github/capsule-pipeline/vendor` (the same path `capsule-specify.yml`
+  computes); (2) a negative control vendoring `check-witness-gate.py` ALONE
+  (its two sibling files absent) reproduced the exact
+  `FileNotFoundError: check-existing-tests.py` the import trap predicts,
+  proving the positive result is not accidental; (3) a second discriminating
+  negative control -- the SAME checker invocation given a legitimate patch
+  (issue #146's own `hypothesis.patch`) instead of a dodge -- returned
+  `VERDICT: witness_clean` (rc=0), proving the mechanism discriminates
+  rather than always firing; (4) THE LIVE CASE: `void_gate`'s own
+  `tool_command=` text was extracted verbatim from the re-synced `.dot` and
+  executed against a `git worktree` of this repo pinned at base
+  `44428ab67a530f23aa5579104f4ff68e4e809c37`, seeded with issue #146's real
+  `DEFINITION.md`/`DEFINITION.verify.sh` and a reconstruction of PR #161's
+  actual dodge (`sed -i '/^ *goal_gate=true *$/d' examples/pipelines/00-convergence-loop.dot`,
+  `git diff --numstat` confirming `0	1` as the historical record states) as
+  `.ai/hypothesis_v.patch` -- the full node body ran end-to-end (git apply,
+  the real gate script via a synced `modules/loop-pipeline` venv, hard
+  reset, reset proof, and the guard) through the **vendored** checker path
+  and produced exit code 1, `.ai/gate.log` containing
+  `VOID-DODGE CONFIRMED: ...`, and `.ai/convergence.jsonl` recording
+  `{"gate": "void", "greened": true, "reset_proven": true}` followed by
+  `{"gate": "void", "verdict": "dodge_confirmed"}` -- the exact shape
+  `void_gate -> triage [condition="outcome=fail", ...]` routes on.
+
+  **Checklist hardening in this pass**: neither step 2 nor step 2a, as
+  worded before this sync, made explicit that an already-vendored,
+  content-unchanged checker can gain a **second independent graph-level
+  call site** whose own argument shape and calling context still need
+  runtime proof -- step 2's grep *does* surface the new reference here (it
+  is not the invisible-`importlib` case step 2a covers), but "the file is
+  present and its self-test passes" is not the same claim as "this specific
+  new caller's own invocation resolves." Step 2b was added to name this
+  explicitly (count call sites, not just presence), and step 5 was amended
+  to require exercising each named call site's own extracted
+  `tool_command=` text, not only the checker's generic `--self-test`.

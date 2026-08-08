@@ -1,8 +1,8 @@
 // ============================================================================
 // VENDORED COPY -- see .github/capsule-pipeline/README.md for provenance,
 // scope, and re-sync instructions. Source: a private working repository
-// (not publicly reachable), pinned at its commit 67a53e531a133f44fa7bfc1afed3b6849a5a5610
-// (runner/capsule.dot, 2026-08-06). This copy is otherwise byte-identical to
+// (not publicly reachable), pinned at its commit d93d1e60066abdc61f082e48619569eef0816a09
+// (runner/capsule.dot, 2026-08-07). This copy is otherwise byte-identical to
 // the source file below this header -- do not hand-edit the body; re-sync
 // from source and re-apply this header instead.
 // ============================================================================
@@ -54,6 +54,65 @@
 //      routes to reset_fail -- a LOUD, non-retryable halt (task-runner.dot's
 //      forge_fail idiom: a corrupted-state class must stop the run, not
 //      loop on it).
+//
+//      THE INVERSION RULE (degenerate_gate, adversarial review of a real
+//      produced capsule, PR #152): hack B greening the gate is only
+//      discrimination proof if hack B still does something. A degenerate
+//      hack B -- a stubbed return, a deleted function, a removed guard --
+//      can green an under-specified gate (PR #152's own DEFINITION.verify.sh
+//      asserted a corrupted string was ABSENT for expand_params() but never
+//      that real substitution was PRESENT; hypothesis-b.patch stubbed
+//      expand_params() to `return text` -- the parameter, unchanged -- and
+//      the gate went fully GREEN, EXIT=0, 12 passed; the patch's OWN comments
+//      said "the entire feature is silently disabled"). That is a FAILURE
+//      signal (the gate is too weak), not proof of strength -- degenerate_gate
+//      runs check-degenerate-hack.py against hypothesis_b.patch AFTER
+//      mutate_gate_b confirms roundtrip_b_ok, and a hit routes to triage (the
+//      SAME root-cause wall every other gate defect uses) rather than either
+//      a silent pass or a hard terminal halt -- this checker can only ever
+//      SUSPECT from diff text alone (see its own docstring for the
+//      irreducible ambiguity: "the correct fix is now an identity return"
+//      and "the feature was silently deleted" can be textually identical),
+//      so the honest move is a human-reachable decision point, never an
+//      automatic verdict either way.
+//
+//      FOLD IN THE EXISTING TESTS (existing_test_gate, BLOCKING as of this
+//      revision -- promoted from capsule_gate's non-blocking observation
+//      after the habit proved systemic across FOUR reviewed capsules). A
+//      gate that already runs the EXISTING tests touching the code it's
+//      about is free coverage and would have closed the PR #152 hole
+//      outright -- tests/test_param_expansion.py shipped in that same repo
+//      and failed the expand_params() stub immediately, but the authored
+//      gate only ran tests/test_unified_substitution.py. #143 never invoked
+//      pytest at all; #149 ignored both a unit test of the exact rule and a
+//      sweep over every example; #148's target was a docs file, genuinely
+//      n/a. ALL FOUR relegated running the existing tests to a "Human
+//      reviewer criteria (not automated)" section -- for a human who does
+//      not exist under the autonomous-implementer model these capsules
+//      feed. That is the whole argument for promotion: the criterion was
+//      not merely unenforced, it was addressed to nobody.
+//
+//      WHY THIS ISN'T THE MISTAKE THE RETIRED PROSE LEVER MADE. The
+//      RETIRED "## Fix-shape independence" written-section requirement
+//      (below) proved that a written SELF-ATTESTATION changes nothing
+//      measurable while burning budget on false blocks, and the earlier,
+//      deliberately non-blocking version of this check reasoned from that
+//      finding: asking the author to "prove you searched for existing
+//      tests" would repeat the same error. That reasoning was right about
+//      ATTESTATIONS and it left a third option unexplored. n=4 says the
+//      prose alone doesn't bind (primer foot-gun #13: prose rules are
+//      advisory; executed gates change behavior), so take the third
+//      option: DON'T ASK THE AUTHOR TO ATTEST ANYTHING -- MECHANICALLY
+//      INSPECT THE ARTIFACT. existing_test_gate runs
+//      check-existing-tests.py, which derives the capsule's subject from
+//      the symbols and source paths DEFINITION.verify.sh ITSELF names,
+//      finds test files in target_dir referencing those symbols, and asks
+//      whether the gate script invokes any of them. Both halves are
+//      properties of files on disk, not a self-report, so there is nothing
+//      to game by writing a better paragraph -- the attestation trap is
+//      dodged rather than re-entered. See the node's own comment for the
+//      "none exist" determination, the false-negative bias, and the
+//      measured NO answer on whether this would have caught #156.
 //
 //      WHY TWO SHAPES (TWO-HYPOTHESIS DISCRIMINATION, see the commit report
 //      for the measured evidence this replaces): a ground-truth eval of the
@@ -137,8 +196,9 @@
 //                  convergence, per doctrine #5.
 //
 // AUTHOR-NODE-ONLY CORRECTIVE EDGES: triage and diagnose_gate route back
-// to `author` only. No deterministic gate (capsule_gate/leak_gate/redgate/
-// mutate_gate/discrimination_check) is ever the TARGET of a corrective
+// to `author` only. No deterministic gate (capsule_gate/leak_gate/
+// existing_test_gate/redgate/mutate_gate/discrimination_check) is ever the
+// TARGET of a corrective
 // back-edge -- they are re-ENTERED (fresh classification of whatever author
 // produced next), never "fixed in place."
 //
@@ -223,11 +283,11 @@
 //     write, then mirrors n back to .ai/iter for downstream readers
 //     (redgate/mutate_gate/discrimination_check's own ledger records,
 //     triage's signature comparison).
-//   - CONVERGENCE RECORD: capsule_gate, leak_gate, redgate, mutate_gate,
-//     and discrimination_check each append one line per visit to
-//     .ai/convergence.jsonl (gate keys "round"/"leak"/"redgate"/
-//     "mutate_gate"/"discrimination") -- the descent record postmortem
-//     reads on non-convergence.
+//   - CONVERGENCE RECORD: capsule_gate, leak_gate, existing_test_gate,
+//     redgate, mutate_gate, and discrimination_check each append one line
+//     per visit to .ai/convergence.jsonl (gate keys "round"/"leak"/
+//     "existing_test"/"redgate"/"mutate_gate"/"discrimination") -- the
+//     descent record postmortem reads on non-convergence.
 //   - PARAM NAMESPACE: `${k:-default}` is NOT engine-expanded (unknown
 //     braced key passes through); optional params (later_commit,
 //     max_iterations) are read into a shell var first (`LC=$later_commit`)
@@ -235,8 +295,9 @@
 //     `$name` text for the shell to expand as its OWN (unset, empty)
 //     variable -- functionally identical to the engine substituting an
 //     empty string, so no special-casing is needed either way.
-//   - goal_gate=true + retry_target="author" on the four proof gates
-//     (capsule_gate/redgate/mutate_gate/discrimination_check) mirrors
+//   - goal_gate=true + retry_target="author" on the proof gates
+//     (capsule_gate/existing_test_gate/redgate/mutate_gate/
+//     discrimination_check) mirrors
 //     task-runner.dot's verify/verdict: belt (their own tool exit code is
 //     already `is_explicit`) and suspenders (an unclassified in-node crash
 //     still has somewhere honest to go).
@@ -315,7 +376,7 @@ digraph CapsulePipeline {
     // exists here for those to attach to).
     author [shape=box, class="maker", thread_id="work", fidelity="full",
         must_write=".ai/capsule/DEFINITION.verify.sh",
-        prompt="Write the work capsule: two files, .ai/capsule/DEFINITION.md and .ai/capsule/DEFINITION.verify.sh. Sources of truth: .ai/brief.md, the report at $issue_file, and the ACTUAL code in $target_dir (pinned at $base_sha -- see .ai/base-sha). If .ai/gate.log exists, it holds the most recent gate's exact diagnostic; read it FIRST and fix precisely what it reports -- do not re-guess. If .ai/postmortem/diagnosis.md exists, honor its change of course.\n\nDEFINITION.verify.sh: a bash script. Its FIRST line must be exactly `set -euo pipefail`. It will be invoked as `bash .ai/capsule/DEFINITION.verify.sh` with the target repo root as its cwd (no arguments, no cd). Guard every prerequisite explicitly (missing binary, missing fixture, a cd that could fail) and exit >=2 on infrastructure problems -- ONLY an assertion failure (the reported defect genuinely reproducing) may exit exactly 1. Exit 0 means the defect is NOT present (already fixed, or this gate does not capture it -- both are valid, useful outcomes, not something to hide). On the rc=1 path, print a line containing the EXACT literal substring you will declare as red_signal below -- this is what proves the red is red for the stated reason, not an unrelated crash. The script must be idempotent: it will be re-run, unmodified, against multiple commits and after a hypothesis patch is applied and reverted. Never write an unconditional `exit 1` or any other assertion that cannot fail -- a gate that cannot fail is not a gate (checks 2 and 3 downstream exist specifically to catch this). Keep the GREEN half honest while you write it: you are guessing at how the defect will actually be fixed, and this gate can only ever exercise the fix that lands, not the one you pictured -- if the real fix took a completely different approach than the one you have in mind (a different function, a different internal name, a different code path, a fix that removes something instead of adding it), would this script still go green? Bind GREEN to the END-STATE BEHAVIOR your Goal describes -- what a user or a test can observe happening or not happening -- never to your guess about which function, argument shape, internal identifier, or code path the fix will touch: those are implementation details you cannot know in advance and do not need to know. You do not need to write this reasoning down anywhere -- a later stage (mutate_b/diff_shape_gate/mutate_gate_b) PROVES it mechanically by requiring a second, differently-shaped crude patch to ALSO turn this same script green, so there is no written self-attestation to satisfy here.\n\nDEFINITION.md: YAML frontmatter between --- lines with fields `id` (short, filename-safe), `title`, `red_signal` (the literal substring above, written PLAIN with no surrounding quotes -- it is checked with `grep -qF`), `base_sha` (copy $base_sha), `later_commit` (copy $later_commit if non-empty, else omit the field), `target_repo`, `verify: DEFINITION.verify.sh`. Body: Goal (the end state, not steps), Why this matters, Definition of done (what the script checks, plus any judgment criteria a human reviewer should still apply), Non-goals.\n\nUPSTREAM-LEGAL VOCABULARY (this file will be published into the target project): ground every claim in files, behavior, and terminology that exist in the target repo's own shipped tree. Do not use this pipeline's own internal program name, its internal documentation names, or any internal task-numbering scheme anywhere in DEFINITION.md -- write as if a contributor to the target project who has never heard of this pipeline will read it. leak_gate will scan this file and route you back here with a diagnostic if it finds vocabulary that does not belong in a published artifact."]
+        prompt="Write the work capsule: two files, .ai/capsule/DEFINITION.md and .ai/capsule/DEFINITION.verify.sh. Sources of truth: .ai/brief.md, the report at $issue_file, and the ACTUAL code in $target_dir (pinned at $base_sha -- see .ai/base-sha). If .ai/gate.log exists, it holds the most recent gate's exact diagnostic; read it FIRST and fix precisely what it reports -- do not re-guess. If .ai/postmortem/diagnosis.md exists, honor its change of course.\n\nDEFINITION.verify.sh: a bash script. Its FIRST line must be exactly `set -euo pipefail`. It will be invoked as `bash .ai/capsule/DEFINITION.verify.sh` with the target repo root as its cwd (no arguments, no cd). Guard every prerequisite explicitly (missing binary, missing fixture, a cd that could fail) and exit >=2 on infrastructure problems -- ONLY an assertion failure (the reported defect genuinely reproducing) may exit exactly 1. Exit 0 means the defect is NOT present (already fixed, or this gate does not capture it -- both are valid, useful outcomes, not something to hide). On the rc=1 path, print a line containing the EXACT literal substring you will declare as red_signal below -- this is what proves the red is red for the stated reason, not an unrelated crash. The script must be idempotent: it will be re-run, unmodified, against multiple commits and after a hypothesis patch is applied and reverted. Never write an unconditional `exit 1` or any other assertion that cannot fail -- a gate that cannot fail is not a gate (checks 2 and 3 downstream exist specifically to catch this). Keep the GREEN half honest while you write it: you are guessing at how the defect will actually be fixed, and this gate can only ever exercise the fix that lands, not the one you pictured -- if the real fix took a completely different approach than the one you have in mind (a different function, a different internal name, a different code path, a fix that removes something instead of adding it), would this script still go green? Bind GREEN to the END-STATE BEHAVIOR your Goal describes -- what a user or a test can observe happening or not happening -- never to your guess about which function, argument shape, internal identifier, or code path the fix will touch: those are implementation details you cannot know in advance and do not need to know. You do not need to write this reasoning down anywhere -- a later stage (mutate_b/diff_shape_gate/mutate_gate_b) PROVES it mechanically by requiring a second, differently-shaped crude patch to ALSO turn this same script green, so there is no written self-attestation to satisfy here. Before you write DEFINITION.verify.sh, search target_dir's own test tree (tests/, test/, spec/ -- whatever this repo uses) for existing tests that ALREADY exercise the function(s) or module(s) the report concerns. If one exists, FOLD IT IN: have DEFINITION.verify.sh actually run that existing test (or the specific case(s) within it), not just a new bespoke assertion you invented -- an existing test is free coverage and it already encodes real expectations about the code, which is exactly the kind of positive, end-state-behavior assertion this gate needs. This is the same defect class as PR #152's capsule: it shipped with an existing tests/test_param_expansion.py in the same repo that would have caught a later degenerate hack outright, but the authored gate only ran tests/test_unified_substitution.py and never discovered or ran the other one. THIS IS NOW MECHANICALLY CHECKED, so know exactly what is checked and you will never be surprised by it: existing_test_gate reads DEFINITION.verify.sh, collects the identifiers in it that resolve to a function/class definition in the target repo's own non-test source (that is the subject YOUR script declares -- you are not asked to state it anywhere), finds test files that reference those identifiers, and requires your script to invoke at least one such file per identifier. Invoking the whole suite satisfies it. It never asks you to claim you searched; it reads what you shipped. If the checker searches and finds nothing on-topic, that passes and is written up as a finding -- so a target with genuinely no tests (a docs file, a new module) is never blocked. If it does block you, .ai/gate.log names the exact symbol and the exact file to run.\n\nDEFINITION.md: YAML frontmatter between --- lines with fields `id` (short, filename-safe), `title`, `red_signal` (the literal substring above, written PLAIN with no surrounding quotes -- it is checked with `grep -qF`), `base_sha` (copy $base_sha), `later_commit` (copy $later_commit if non-empty, else omit the field), `target_repo`, `verify: DEFINITION.verify.sh`. Body: Goal (the end state, not steps), Why this matters, Definition of done (what the script checks; you may also list judgment criteria for a human reviewer, but understand who reads this capsule -- an AUTONOMOUS IMPLEMENTER optimizing against DEFINITION.verify.sh, with no human in that loop. Anything a machine CAN check belongs in the script, never in a 'human reviewer criteria (not automated)' section: four reviewed capsules put 'run the existing tests' there, and nobody ever ran them), Non-goals.\n\nUPSTREAM-LEGAL VOCABULARY (this file will be published into the target project): ground every claim in files, behavior, and terminology that exist in the target repo's own shipped tree. Do not use this pipeline's own internal program name, its internal documentation names, or any internal task-numbering scheme anywhere in DEFINITION.md -- write as if a contributor to the target project who has never heard of this pipeline will read it. leak_gate will scan this file and route you back here with a diagnostic if it finds vocabulary that does not belong in a published artifact."]
 
     // ---------- capsule_gate: CHEAP deterministic gate (shape + budget wall) ----------
     // Ledger-derived budget (task-runner.dot idiom, verbatim, key "round"):
@@ -335,6 +396,86 @@ digraph CapsulePipeline {
     // root-cause wall as any other repeated gate failure).
     leak_gate [shape=parallelogram, class="gate", max_retries=0,
         tool_command="n=$(cat .ai/iter 2>/dev/null || echo 0); sh \"$uplift_dir/backlog/check-upstream-leaks.sh\" .ai/capsule/DEFINITION.md > .ai/leak.log 2>&1; rc=$?; printf '{\"iteration\": %s, \"gate\": \"leak\", \"clean\": %s}\\n' \"$n\" \"$([ $rc -eq 0 ] && echo true || echo false)\" >> .ai/convergence.jsonl; if [ $rc -eq 0 ]; then printf leak_clean; else cp .ai/leak.log .ai/gate.log; echo round > .ai/last-stage-fail; exit 1; fi"]
+
+    // ---------- existing_test_gate: does the gate script RUN the tests that already exist? ----------
+    // THE DEFECT CLASS (n=4 reviewed capsules, all four the same habit):
+    // DEFINITION.verify.sh does not run the tests ALREADY SHIPPING in the
+    // target repo that already exercise the code the capsule concerns --
+    // #152 ran only tests/test_unified_substitution.py while
+    // tests/test_param_expansion.py sat beside it (and later failed the
+    // degenerate expand_params() stub outright, 6 failed); #143 never
+    // invoked pytest at all though test_backend.py and
+    // test_attribute_passthrough.py already exercise the exact idiom its
+    // gate uses; #149 ignored both test_validation.py (which unit-tests
+    // the exact rule) and test_examples_lint_clean.py (which sweeps every
+    // example). All four relegated running them to a "Human reviewer
+    // criteria (not automated)" section -- for a human who DOES NOT EXIST
+    // under the autonomous-implementer model these capsules feed. Two of
+    // the four were additionally gameable by a zero-effort deletion.
+    //
+    // WHY THIS IS A GATE AND NOT MORE PROSE: author's prompt ALREADY says
+    // to search the test tree and "If one exists, FOLD IT IN," and it
+    // already cites #152 as the cautionary case. The prose is good. n=4
+    // says it does not bind. Primer foot-gun #13: prose rules are
+    // advisory; executed gates change behavior.
+    //
+    // WHY THIS IS NOT THE ATTESTATION TRAP (the third option the prior
+    // non-blocking decision left unexplored): the RETIRED "## Fix-shape
+    // independence" written-section requirement measured that demanding a
+    // written SELF-ATTESTATION changes nothing (identical 2/6) while
+    // burning budget on false blocks -- so "prove you searched for
+    // existing tests" would repeat that error exactly. This gate demands
+    // NO attestation. It MECHANICALLY INSPECTS THE SHIPPED ARTIFACT:
+    // check-existing-tests.py derives the subject from the symbols and
+    // source paths DEFINITION.verify.sh ITSELF names, finds test files in
+    // target_dir that reference those symbols, and asks whether the gate
+    // script invokes any of them. Both halves are properties of files on
+    // disk -- there is nothing to game by writing a better paragraph.
+    //
+    // THE "NONE EXIST" CASE IS DETERMINED, NEVER ASSERTED (#148's target
+    // was a docs file with no tests -- a legitimate n/a): the checker
+    // walks the tree itself and, when it finds nothing on-topic, writes
+    // .ai/findings/no-existing-tests-run.md containing WHAT IT SEARCHED
+    // (test-file count, subject symbols, source-file count) and passes.
+    // A silent skip would be the same failure wearing a different hat.
+    //
+    // BIASED TO FALSE NEGATIVE, DELIBERATELY: a gate that blocks
+    // legitimate capsules teaches authors to route around it, which is
+    // strictly worse than not having it. Every ambiguity resolves toward
+    // PASS-with-a-finding: no test tree, no symbol resolving to a
+    // definition in the repo's own source, no test referencing one, a
+    // runner invoked with no file argument (already running everything),
+    // a scan cap hit, or the CHECKER ITSELF failing (rc>=2). That last
+    // one is a deliberate divergence from degenerate_gate, which routes
+    // its own rc>=2 to triage: an infra failure there is rare and loud,
+    // whereas this gate runs a filesystem scan in an arbitrary third-party
+    // repo, and blocking a capsule because OUR scanner tripped is exactly
+    // the false block the bias exists to prevent. It is recorded in the
+    // ledger ("verdict": "checker_error") and in the finding, never
+    // swallowed.
+    //
+    // CHEAP-BEFORE-EXPENSIVE placement (this file's own discipline): after
+    // capsule_gate (budget wall + shape) and leak_gate (a single-file text
+    // scan), before redgate (which actually EXECUTES the gate script under
+    // a 900s timeout) and long before the two mutation round-trips.
+    //
+    // WOULD THIS HAVE CAUGHT THE #156 REGRESSION? NO -- measured, not
+    // assumed. The implementer's fix for issue #144 broke
+    // substitute_context("cat $name.txt", {"name":"report"}) (it stopped
+    // substituting). Checked out that regressed commit in a scratch
+    // worktree and ran the PRE-EXISTING test tree (as of the commit
+    // immediately before it) against it: the four on-topic substitution
+    // files gave 41 passed, and the FULL pre-existing suite gave 1796
+    // passed / 1 skipped -- byte-identical to the same suite against the
+    // pre-regression parent. No pre-existing test encoded the "$key
+    // followed by an ordinary period" expectation, so folding them in
+    // would NOT have caught it. Recorded here because the tempting
+    // justification ("existing tests encode neighbouring expectations, so
+    // this also closes blast-radius blindness") is NOT supported by this
+    // case. The change stands on the n=4 gameable-gate evidence alone.
+    existing_test_gate [shape=parallelogram, class="gate", max_retries=0,
+        goal_gate=true, retry_target="author",
+        tool_command="CV=.ai/capsule/DEFINITION.verify.sh; n=$(cat .ai/iter 2>/dev/null || echo 0); mkdir -p .ai/findings; python3 \"$uplift_dir/runner/check-existing-tests.py\" --verify \"$CV\" --repo . > .ai/existing-tests-check.log 2>&1; rc=$?; if [ $rc -eq 0 ] && head -1 .ai/existing-tests-check.log | grep -q \"^VERDICT: folded_in\"; then printf '{\\\"iteration\\\": %s, \\\"gate\\\": \\\"existing_test\\\", \\\"verdict\\\": \\\"folded_in\\\"}\\n' \"$n\" >> .ai/convergence.jsonl; printf folded_in; elif [ $rc -eq 0 ]; then { echo \"# Finding: no existing on-topic test was found to fold in\"; echo; echo \"DEFINITION.verify.sh was mechanically inspected against the target repo's own test tree. check-existing-tests.py derived the subject from the symbols and source paths the gate script ITSELF names, then read every test file looking for them. Its full report follows: the absence it reports was DETERMINED by that search, never asserted by the author, and a reviewer can re-run the checker to reproduce it.\"; echo; cat .ai/existing-tests-check.log; } > .ai/findings/no-existing-tests-run.md; printf '{\\\"iteration\\\": %s, \\\"gate\\\": \\\"existing_test\\\", \\\"verdict\\\": \\\"none_exist\\\"}\\n' \"$n\" >> .ai/convergence.jsonl; printf no_on_topic_tests; elif [ $rc -eq 1 ]; then { echo \"EXISTING-TEST FOLD-IN FAIL: DEFINITION.verify.sh declares a subject (by naming those symbols in its own text) that this repo ALREADY ships tests for, and it does not run them. An existing test is free coverage and it already encodes real expectations about the code -- which is exactly what catches a degenerate hack that satisfies a narrow new assertion (PR #152: the repo's own tests/test_param_expansion.py failed the expand_params() no-op stub outright, but the authored gate ran only tests/test_unified_substitution.py). FIX: have DEFINITION.verify.sh RUN the file(s) named below -- running the whole suite also satisfies this check -- and treat their failure as the gate's own RED, not as an infrastructure error. Do NOT relegate this to a human-reviewer section of DEFINITION.md: an autonomous implementer consumes this capsule and there is no human in that loop.\"; cat .ai/existing-tests-check.log; } > .ai/gate.log; printf '{\\\"iteration\\\": %s, \\\"gate\\\": \\\"existing_test\\\", \\\"verdict\\\": \\\"unrun\\\"}\\n' \"$n\" >> .ai/convergence.jsonl; echo existing_test > .ai/last-stage-fail; exit 1; else { echo \"# Finding: the existing-test fold-in check could not run\"; echo; echo \"check-existing-tests.py exited $rc (a usage or infra error, not a defect finding). BIASED TO FALSE NEGATIVE BY DESIGN: this gate passes rather than block a capsule on its own tooling failure, because a gate that blocks legitimate work teaches authors to route around it. The failure is recorded here and in the convergence ledger instead of being swallowed.\"; echo; cat .ai/existing-tests-check.log; } > .ai/findings/no-existing-tests-run.md; printf '{\\\"iteration\\\": %s, \\\"gate\\\": \\\"existing_test\\\", \\\"verdict\\\": \\\"checker_error\\\", \\\"rc\\\": %s}\\n' \"$n\" \"$rc\" >> .ai/convergence.jsonl; printf no_on_topic_tests; fi"]
 
     // ---------- redgate: checks 1+2 -- RED with the right exit code, diagnostic names the defect ----------
     redgate [shape=parallelogram, class="gate", max_retries=0,
@@ -372,7 +513,7 @@ digraph CapsulePipeline {
     // context; it does not need mutate's own conversation.
     mutate_b [shape=box, class="maker", thread_id="mutate_b",
         must_write=".ai/hypothesis_b.patch",
-        prompt="Check 3 proved the gate goes GREEN against ONE guessed fix shape (.ai/hypothesis.patch). That proves the gate is non-vacuous, but a single hack, greened by its own author, proves almost nothing about a DIFFERENTLY-shaped real fix -- the gate could still be bound to that one guessed shape rather than to end-state behavior. Prove the stronger claim: write a SECOND, deliberately CRUDE hypothesis patch to .ai/hypothesis_b.patch that ALSO turns DEFINITION.verify.sh green, but through a genuinely DIFFERENT mechanism than .ai/hypothesis.patch used -- a different file, a different function or call path, an OPPOSITE operation (if A added a stub or hardcode, B should remove or short-circuit something instead, or vice versa), or a different internal name for the same concept. The explicit goal: DIFFERENT IN SHAPE, IDENTICAL IN OBSERVABLE OUTCOME (the gate goes green either way). This is still explicitly NOT a correct fix -- a second hack is the entire point. Ground it in the ACTUAL current file contents of $target_dir (the tree is reset to the pinned base SHA -- read the real files; do not invent paths or line numbers). If .ai/gate.log exists from a prior attempt at THIS stage, read it first: a prior .ai/hypothesis_b.patch may have been rejected as a cosmetic variant of hypothesis.patch (same file, near-identical changed lines, same add/remove polarity) or may have failed to green the gate -- do not repeat it. If you genuinely believe only ONE honest fix shape exists for this defect (a real possibility -- some defects are that narrow, e.g. a single typo or a single required magic string), do not fabricate a fake variant to satisfy this check: write .ai/hypothesis_b.patch containing ONLY a comment block whose FIRST LINE is exactly `# SINGLE-SHAPE:` followed by a concrete, specific explanation of why no second shape is honestly possible. That is itself valuable evidence about the gate, not a failure to hide -- diff_shape_gate accepts it as a distinct, honestly-labeled finding."]
+        prompt="Check 3 proved the gate goes GREEN against ONE guessed fix shape (.ai/hypothesis.patch). That proves the gate is non-vacuous, but a single hack, greened by its own author, proves almost nothing about a DIFFERENTLY-shaped real fix -- the gate could still be bound to that one guessed shape rather than to end-state behavior. Prove the stronger claim: write a SECOND, deliberately CRUDE hypothesis patch to .ai/hypothesis_b.patch that ALSO turns DEFINITION.verify.sh green, but through a genuinely DIFFERENT mechanism than .ai/hypothesis.patch used -- a different file, a different function or call path, an OPPOSITE operation (if A added a stub or hardcode, B should remove or short-circuit something instead, or vice versa), or a different internal name for the same concept. The explicit goal: DIFFERENT IN SHAPE, IDENTICAL IN OBSERVABLE OUTCOME (the gate goes green either way). This is still explicitly NOT a correct fix -- a second hack is the entire point. Ground it in the ACTUAL current file contents of $target_dir (the tree is reset to the pinned base SHA -- read the real files; do not invent paths or line numbers). If .ai/gate.log exists from a prior attempt at THIS stage, read it first: a prior .ai/hypothesis_b.patch may have been rejected as a cosmetic variant of hypothesis.patch (same file, near-identical changed lines, same add/remove polarity) or may have failed to green the gate -- do not repeat it. If you genuinely believe only ONE honest fix shape exists for this defect (a real possibility -- some defects are that narrow, e.g. a single typo or a single required magic string), do not fabricate a fake variant to satisfy this check: write .ai/hypothesis_b.patch containing ONLY a comment block whose FIRST LINE is exactly `# SINGLE-SHAPE:` followed by a concrete, specific explanation of why no second shape is honestly possible. That is itself valuable evidence about the gate, not a failure to hide -- diff_shape_gate accepts it as a distinct, honestly-labeled finding. ONE CAVEAT on the opposite-operation strategy above: 'remove or short-circuit something' must still make the code DO something observably different -- a stub that deletes the feature entirely and returns its input verbatim unchanged (a bare no-op passthrough) is a DEGENERATE hack, not a real second shape, even though it is mechanically distinct from hack A. A later mechanical gate (degenerate_gate) checks for exactly this; a genuinely different real fix, even a crude hardcoded one, passes it, a no-op does not."]
 
     // ---------- diff_shape_gate: CHEAP mechanical check -- is hack B a REAL second shape? ----------
     // Cheap-before-expensive (same discipline as capsule_gate/leak_gate
@@ -399,6 +540,43 @@ digraph CapsulePipeline {
         goal_gate=true, retry_target="author",
         tool_command="CV=.ai/capsule/DEFINITION.verify.sh; P=.ai/hypothesis_b.patch; BASE=$(cat .ai/base-sha 2>/dev/null); n=$(cat .ai/iter 2>/dev/null || echo 0); if [ -z \"$BASE\" ]; then echo 'MUTATE_GATE_B: .ai/base-sha missing -- preflight did not pin a base SHA' > .ai/gate.log; echo mutate_b > .ai/last-stage-fail; exit 1; fi; if ! git apply --check \"$P\" >/dev/null 2>&1; then printf '{\"iteration\": %s, \"gate\": \"mutate_gate_b\", \"applies\": false}\\n' \"$n\" >> .ai/convergence.jsonl; echo \"MUTATE_GATE_B: hypothesis_b.patch does not apply cleanly against pinned base $BASE\" > .ai/gate.log; echo mutate_b > .ai/last-stage-fail; exit 1; fi; git apply \"$P\"; chmod +x \"$CV\" 2>/dev/null; timeout 900 bash \"$CV\" > .ai/verify-hypothesis-b.log 2>&1; rc=$?; if [ $rc -ne 0 ]; then printf '{\"iteration\": %s, \"gate\": \"mutate_gate_b\", \"greened\": false, \"rc\": %s}\\n' \"$n\" \"$rc\" >> .ai/convergence.jsonl; { echo \"MUTATE_GATE_B: hypothesis_b.patch applied but gate rc=$rc (need 0 -- the second, differently-shaped crude patch did not turn it green -- if a real fix could only take THIS shape and not hypothesis.patch's shape, the gate may be bound to hypothesis.patch's shape, not to end-state behavior)\"; tail -30 .ai/verify-hypothesis-b.log; } > .ai/gate.log; git checkout --quiet -- .; git clean -qfd -e .ai; echo mutate_b > .ai/last-stage-fail; exit 1; fi; git checkout --quiet -- .; git clean -qfd -e .ai; if git diff --quiet -- . && [ \"$(git rev-parse HEAD)\" = \"$BASE\" ]; then printf '{\"iteration\": %s, \"gate\": \"mutate_gate_b\", \"greened\": true, \"reset_proven\": true}\\n' \"$n\" >> .ai/convergence.jsonl; printf roundtrip_b_ok; else printf '{\"iteration\": %s, \"gate\": \"mutate_gate_b\", \"greened\": true, \"reset_proven\": false}\\n' \"$n\" >> .ai/convergence.jsonl; echo \"MUTATE_GATE_B: RESET NOT PROVEN after hypothesis-B round-trip -- git diff and/or HEAD no longer matches the pinned base SHA ($BASE). Halting: an unreset tree would poison every check downstream. A human must inspect $target_dir before this pipeline (or anything else) trusts it again.\" > .ai/gate.log; printf reset_b_unproven; fi"]
 
+    // ---------- degenerate_gate: THE INVERSION RULE -- is hack B a real second shape, or a no-op? ----------
+    // Adversarial-review finding (real produced capsule, PR #152, a $key
+    // prefix-substitution fix): DEFINITION.verify.sh asserted, for
+    // substitute_context(), both "the corruption is gone" AND "real
+    // substitution still happens" -- but for expand_params() it asserted
+    // ONLY "the corrupted string does not appear." hypothesis-b.patch
+    // stubbed expand_params() to `return text` (the parameter, unchanged)
+    // and the gate went fully GREEN: EXIT=0, 12 passed. The patch's OWN
+    // comments said "the entire feature is silently disabled." diff_shape_gate
+    // (above) proves hack B is MECHANICALLY DIFFERENT from hack A; it does
+    // NOT prove hack B still does anything -- a degenerate hack (a stubbed
+    // return, a deleted function, a removed guard) can be trivially
+    // "different in shape" from hack A while being just as trivially wrong
+    // to trust. Cheap, deterministic, POST-round-trip (this is only a
+    // problem once we know hack B actually greened -- a degenerate hack
+    // that FAILS to green is not a finding, it is the gate correctly
+    // rejecting a bad hack, exactly as designed): runs
+    // check-degenerate-hack.py (this repo, runner/) against
+    // .ai/hypothesis_b.patch, which the git-clean -e .ai exclusion in
+    // mutate_gate_b left untouched on disk after the reset.
+    //
+    // THE INVERSION: a degenerate hack greening the gate is NOT evidence
+    // the gate is behavior-bound (the opposite of what the two-hypothesis
+    // check exists to prove) -- it is evidence the gate is UNDER-specified,
+    // and that is a FAILURE signal. It is deliberately NOT a hard,
+    // non-retryable halt (this checker can only ever SUSPECT from diff text
+    // alone -- "the correct fix is now an identity return" and "the feature
+    // was silently deleted" can be textually identical; see the script's own
+    // docstring) and it is deliberately NOT a silent pass either: a hit
+    // routes through the SAME root-cause wall (triage) every other gate
+    // defect in this file uses, landing back on author with a concrete,
+    // named reason to tighten DEFINITION.verify.sh -- never treated as
+    // proof hack B is invalid, never treated as proof the capsule is done.
+    degenerate_gate [shape=parallelogram, class="gate", max_retries=0,
+        goal_gate=true, retry_target="author",
+        tool_command="P=.ai/hypothesis_b.patch; n=$(cat .ai/iter 2>/dev/null || echo 0); mkdir -p .ai/findings; python3 \"$uplift_dir/runner/check-degenerate-hack.py\" \"$P\" > .ai/degenerate-check.log 2>&1; rc=$?; if [ $rc -eq 0 ]; then printf '{\"iteration\": %s, \"gate\": \"degenerate\", \"suspected\": false}\\n' \"$n\" >> .ai/convergence.jsonl; printf b_substantive; elif [ $rc -eq 1 ]; then printf '{\"iteration\": %s, \"gate\": \"degenerate\", \"suspected\": true}\\n' \"$n\" >> .ai/convergence.jsonl; { echo \"DEGENERATE-HACK SUSPECTED (INVERSION RULE): hypothesis_b.patch greened DEFINITION.verify.sh (check 3b) but check-degenerate-hack.py suspects it deletes/stubs behavior rather than implementing a real alternate fix -- see below for which function/signal. This is NOT proof the gate is behavior-bound; it is the OPPOSITE: a hack that removes a feature and still passes means the gate is under-specified (e.g. only asserting a corrupted string is ABSENT, never that real output is still PRESENT -- exactly PR #152's expand_params() hole). Tighten DEFINITION.verify.sh: add a positive assertion for the surface hypothesis_b.patch touched, mirroring any other function whose assertion already checks both 'defect gone' AND 'real behavior still happens'.\"; cat .ai/degenerate-check.log; } > .ai/gate.log; echo degenerate > .ai/last-stage-fail; exit 1; else { echo \"DEGENERATE-HACK CHECK: check-degenerate-hack.py usage/self-test error (rc=$rc) -- infra problem, not a defect finding\"; cat .ai/degenerate-check.log; } > .ai/gate.log; echo degenerate > .ai/last-stage-fail; exit 1; fi"]
+
     // ---------- discrimination_check: RED at an unrelated later commit (skippable-with-reason) ----------
     discrimination_check [shape=parallelogram, class="gate", max_retries=0,
         goal_gate=true, retry_target="author",
@@ -410,14 +588,14 @@ digraph CapsulePipeline {
     // here is a real deterministic problem (bad path, permissions), routed
     // through the SAME root-cause wall as any other gate failure.
     package [shape=parallelogram, class="gate", max_retries=0,
-        tool_command="CM=.ai/capsule/DEFINITION.md; CV=.ai/capsule/DEFINITION.verify.sh; id=$(awk '/^---$/{c++;next} c==1 && /^id:/{sub(/^id:[[:space:]]*/,\"\"); print; exit}' \"$CM\" | tr -cd 'A-Za-z0-9._-'); [ -n \"$id\" ] || id=work-definition; OUT=\"$capsule_out\"; mkdir -p \"$OUT\" && cp \"$CM\" \"$OUT/$id.md\" && cp \"$CV\" \"$OUT/$id.verify.sh\" && chmod +x \"$OUT/$id.verify.sh\"; rc=$?; [ -f .ai/base-sha ] && cp .ai/base-sha \"$OUT/$id.base-sha\"; [ -f .ai/hypothesis.patch ] && cp .ai/hypothesis.patch \"$OUT/$id.hypothesis.patch\"; [ -f .ai/hypothesis_b.patch ] && cp .ai/hypothesis_b.patch \"$OUT/$id.hypothesis-b.patch\"; [ -f .ai/findings/discrimination.md ] && cp .ai/findings/discrimination.md \"$OUT/$id.discrimination.md\"; [ -f .ai/findings/single-shape.md ] && cp .ai/findings/single-shape.md \"$OUT/$id.single-shape.md\"; if [ $rc -eq 0 ] && [ -s \"$OUT/$id.md\" ] && [ -s \"$OUT/$id.verify.sh\" ]; then printf packaged; else echo \"PACKAGE FAILED: could not write the capsule pair to $OUT (rc=$rc)\" > .ai/gate.log; echo round > .ai/last-stage-fail; exit 1; fi"]
+        tool_command="CM=.ai/capsule/DEFINITION.md; CV=.ai/capsule/DEFINITION.verify.sh; id=$(awk '/^---$/{c++;next} c==1 && /^id:/{sub(/^id:[[:space:]]*/,\"\"); print; exit}' \"$CM\" | tr -cd 'A-Za-z0-9._-'); [ -n \"$id\" ] || id=work-definition; OUT=\"$capsule_out\"; mkdir -p \"$OUT\" && cp \"$CM\" \"$OUT/$id.md\" && cp \"$CV\" \"$OUT/$id.verify.sh\" && chmod +x \"$OUT/$id.verify.sh\"; rc=$?; [ -f .ai/base-sha ] && cp .ai/base-sha \"$OUT/$id.base-sha\"; [ -f .ai/hypothesis.patch ] && cp .ai/hypothesis.patch \"$OUT/$id.hypothesis.patch\"; [ -f .ai/hypothesis_b.patch ] && cp .ai/hypothesis_b.patch \"$OUT/$id.hypothesis-b.patch\"; [ -f .ai/findings/discrimination.md ] && cp .ai/findings/discrimination.md \"$OUT/$id.discrimination.md\"; [ -f .ai/findings/single-shape.md ] && cp .ai/findings/single-shape.md \"$OUT/$id.single-shape.md\"; [ -f .ai/findings/no-existing-tests-run.md ] && cp .ai/findings/no-existing-tests-run.md \"$OUT/$id.no-existing-tests-run.md\"; if [ $rc -eq 0 ] && [ -s \"$OUT/$id.md\" ] && [ -s \"$OUT/$id.verify.sh\" ]; then printf packaged; else echo \"PACKAGE FAILED: could not write the capsule pair to $OUT (rc=$rc)\" > .ai/gate.log; echo round > .ai/last-stage-fail; exit 1; fi"]
 
     // ---------- triage: root-cause wall (task-runner.dot idiom, verbatim, on .ai/gate.log) ----------
     triage [shape=parallelogram, class="glue", max_retries=0,
         tool_command="B=$(cat .ai/budget 2>/dev/null); B=${B:-6}; n=$(cat .ai/iter 2>/dev/null || echo 0); sig=$(tail -20 .ai/gate.log 2>/dev/null | sed -E 's|/tmp/[A-Za-z0-9._-]+|TMPPATH|g; s/[0-9]+\\.[0-9]+s?//g' | md5sum | cut -d' ' -f1); prev=$(cat .ai/last-fail-sig 2>/dev/null || echo none); echo $sig > .ai/last-fail-sig; if [ \"$n\" -ge \"$B\" ]; then printf exhausted; elif [ \"$sig\" = \"$prev\" ]; then printf repeat; else printf novel; fi"]
 
     diagnose [shape=box, class="gate",
-        prompt="A capsule-round gate failed twice with the SAME failure signature (see .ai/gate.log, and .ai/last-stage-fail for which stage: round/leak/redgate/mutate/discrimination). Stop iterating blindly -- find the root cause. Read .ai/gate.log, .ai/brief.md, the report at $issue_file, and the relevant code in $target_dir. Determine what is actually wrong: (a) DEFINITION.verify.sh's assertion approach, (b) a misread of the reported defect, (c) an environment/tooling gap, or (d) a genuine ambiguity in the report that cannot be resolved from inside this run. Write .ai/postmortem/diagnosis.md with the root cause, the evidence, and the single change of course for the next attempt. If the blocker cannot be resolved from inside this run, include the word BLOCKED on its own line and explain."]
+        prompt="A capsule-round gate failed twice with the SAME failure signature (see .ai/gate.log, and .ai/last-stage-fail for which stage: round/leak/existing_test/redgate/mutate/diff_shape/mutate_b/degenerate/discrimination). Stop iterating blindly -- find the root cause. Read .ai/gate.log, .ai/brief.md, the report at $issue_file, and the relevant code in $target_dir. Determine what is actually wrong: (a) DEFINITION.verify.sh's assertion approach, (b) a misread of the reported defect, (c) an environment/tooling gap, or (d) a genuine ambiguity in the report that cannot be resolved from inside this run. Write .ai/postmortem/diagnosis.md with the root cause, the evidence, and the single change of course for the next attempt. If the blocker cannot be resolved from inside this run, include the word BLOCKED on its own line and explain."]
 
     diagnose_gate [shape=parallelogram, class="glue", max_retries=0,
         tool_command="rm -f .ai/last-fail-sig; grep -qE '^BLOCKED' .ai/postmortem/diagnosis.md && printf blocked || printf continue"]
@@ -520,8 +698,19 @@ digraph CapsulePipeline {
     capsule_gate -> leak_gate       [condition="context.tool.last_line=shape_ok && outcome=success"]
     capsule_gate -> triage          [condition="outcome=fail", label="shape defect"]
 
-    leak_gate -> redgate [condition="context.tool.last_line=leak_clean && outcome=success"]
-    leak_gate -> triage  [condition="outcome=fail", label="upstream-leak hit or scanner error"]
+    leak_gate -> existing_test_gate [condition="context.tool.last_line=leak_clean && outcome=success"]
+    leak_gate -> triage             [condition="outcome=fail", label="upstream-leak hit or scanner error"]
+
+    // existing_test_gate: TWO success tokens, both proceeding to redgate --
+    // the pipeline SAYS which case it is (an on-topic existing test is
+    // folded in, vs. the checker searched and found none), it never
+    // silently degrades one into the other. The fail edge routes through
+    // the SAME root-cause wall (triage) every other gate defect in this
+    // file uses, landing back on author -- leak_gate/redgate idiom,
+    // verbatim; never a hard halt, never a silent pass.
+    existing_test_gate -> redgate [condition="context.tool.last_line=folded_in && outcome=success", label="an existing on-topic test is actually run by the gate"]
+    existing_test_gate -> redgate [condition="context.tool.last_line=no_on_topic_tests && outcome=success", label="checker searched and found none -- finding written"]
+    existing_test_gate -> triage  [condition="outcome=fail", label="an existing on-topic test exists and the gate does not run it"]
 
     // redgate: checks 1+2. Three success-classified tokens (green_on_main
     // is a FINDING, not a retry) plus one generic fail edge.
@@ -556,9 +745,20 @@ digraph CapsulePipeline {
     diff_shape_gate -> discrimination_check [condition="context.tool.last_line=single_shape && outcome=success", label="author judged no second honest shape exists -- finding recorded, skip round-trip B"]
     diff_shape_gate -> triage                [condition="outcome=fail", label="hypothesis_b missing, identical to A, or a cosmetic variant"]
 
-    mutate_gate_b -> discrimination_check [condition="context.tool.last_line=roundtrip_b_ok && outcome=success", label="check 3b passes -- second shape also greens (discrimination proven)"]
+    mutate_gate_b -> degenerate_gate        [condition="context.tool.last_line=roundtrip_b_ok && outcome=success", label="check 3b passes mechanically -- before trusting it as discrimination proof, rule out a degenerate no-op"]
     mutate_gate_b -> reset_fail            [condition="context.tool.last_line=reset_b_unproven && outcome=success", label="reset (B) could not be proven -- LOUD halt"]
     mutate_gate_b -> triage                 [condition="outcome=fail", label="patch B would not apply, or would not green"]
+
+    // degenerate_gate -> the INVERSION-RULE gate (see header, THE INVERSION
+    // RULE). A green mutate_gate_b is NOT automatically discrimination
+    // proof: hack B could be a degenerate no-op (a stubbed return, a
+    // deleted function, a removed guard) that satisfies an under-specified
+    // assertion rather than a genuinely different real fix. That is a
+    // FAILURE signal (the gate needs tightening), never a silent pass and
+    // never a hard terminal halt -- it routes through the SAME root-cause
+    // wall (triage) every other gate defect uses, landing back on author.
+    degenerate_gate -> discrimination_check [condition="context.tool.last_line=b_substantive && outcome=success", label="hack B performs real, non-trivial behavior -- discrimination proof stands"]
+    degenerate_gate -> triage                [condition="outcome=fail", label="hack B greened via a stub/deletion/removed-guard -- gate under-specified, not discrimination-proof"]
 
     discrimination_check -> package [condition="context.tool.last_line=skip_recorded && outcome=success", label="no later_commit -- skipped with reason"]
     discrimination_check -> package [condition="context.tool.last_line=discrim_ok && outcome=success", label="RED confirmed at later commit"]

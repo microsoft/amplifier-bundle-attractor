@@ -6,16 +6,19 @@
 # byte-identical to the source file below this header -- do not hand-edit
 # the body; re-sync from source and re-apply this header instead.
 #
-# NOT CURRENTLY WIRED IN. Vendored alongside task-runner.dot so that the day
-# an OPENAI_API_KEY secret is provisioned in this repo, enabling true
-# dual-family critique (task-runner.dot's critique_b node) is a one-line
-# ATTRACTOR_PIPELINE_BUNDLE env var addition to
-# .github/workflows/capsule-implement.yml, not a new vendoring effort. See
-# that workflow and the provenance header atop the vendored task-runner.dot
-# for the honest account of why this is not yet active: only
-# ANTHROPIC_API_KEY exists as a proven secret today, and setting this bundle
-# without a real second-family key would silently under-deliver on its own
-# promise (cross-provider independence) rather than fail loudly.
+# UNCONDITIONALLY WIRED INTO BOTH WORKFLOWS (OPENAI_API_KEY exists as a
+# proven repo secret; issue #155 closed the conditional-fallback trap):
+# - .github/workflows/capsule-implement.yml mounts this bundle via
+#   ATTRACTOR_PIPELINE_BUNDLE for task-runner.dot's critique_b node
+#   (llm_provider="openai").
+# - .github/workflows/capsule-specify.yml mounts it the same way for
+#   capsule.dot's critique node (the lean rebuild's ONE judgment node, which
+#   likewise hard-declares llm_provider="openai" -- without this bundle it
+#   would either crash per round or SILENTLY run on Anthropic, the proven
+#   issue-#155 behavior).
+# Each workflow carries a loud ::error:: preflight that refuses to start if
+# OPENAI_API_KEY is missing, so this bundle is never mounted without a real
+# second-family key behind it.
 # ============================================================================
 # Dual-provider base bundle for the task-runner's dual-family critique.
 #

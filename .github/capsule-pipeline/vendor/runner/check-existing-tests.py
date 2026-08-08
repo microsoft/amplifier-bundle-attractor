@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """check-existing-tests.py -- mechanical FOLD-IN tripwire for a work capsule's
-gate script (capsule.dot's existing_test_gate).
+gate script.
+
+NO LONGER A BLOCKING GATE (lean rebuild, council 2026-08-07): the
+existing_test_gate node this script backed was removed from
+runner/capsule.dot. This script survives as a TOOL THE CRITIC MAY RUN:
+capsule.dot's critique node may invoke it while judging whether the gate
+ignores on-topic existing tests, and treats its output (any exit code) as
+ADVISORY INPUT to a judgment, never as a verdict.
 
 THE DEFECT CLASS THIS CLOSES (four reviewed capsules, n=4, all four sharing
 one habit): the authored DEFINITION.verify.sh does not run the tests that

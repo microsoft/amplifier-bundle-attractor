@@ -7,9 +7,14 @@ This directory wires two stages of an issue -> attractor -> PR system:
   a **work capsule** — a definition-of-done markdown (`DEFINITION.md`)
   paired with an executable gate script (`DEFINITION.verify.sh`) that is
   provably red-for-the-right-reason at the issue's base commit and provably
-  non-vacuous (a crude hypothesis patch turns it green, then the tree is
-  hard-reset and the reset is proven — twice, via two independently-shaped
-  hacks). The pipeline never implements a fix and never merges anything; it
+  non-vacuous (up to three crude patches — two independently-shaped
+  hypothesis hacks plus an adversarial void probe — are each applied, proven
+  to green the gate, then the tree is hard-reset and the reset itself is
+  proven, with a base control-run guarding against a broken harness), then
+  judged behavior-bound by ONE LLM critic on a second model family
+  (`critique`, `llm_provider="openai"`) whose anchored verdict a
+  deterministic `verdict` gate classifies (SHIP / ITERATE / noverdict).
+  The pipeline never implements a fix and never merges anything; it
   opens a **capsule PR** containing the proposed definition of done for a
   human to review. See `.github/workflows/capsule-specify.yml`.
 - **implement**: given a merged capsule PR (or a manual dispatch naming a
@@ -26,12 +31,11 @@ This directory wires two stages of an issue -> attractor -> PR system:
 |---|---|
 | `capsule.dot` | The specify-stage attractor pipeline (`digraph CapsulePipeline`). |
 | `task-runner.dot` | The implement-stage attractor pipeline (`digraph BacklogTaskRunner`) — a convergence loop (attempt → verify → dual critics → verdict → feedback → loop). |
-| `attractor-pipeline-dual.yaml` | Multi-provider (Anthropic + OpenAI) base bundle for `task-runner.dot`'s dual-family critique. **Vendored but not currently wired in** — see its own provenance header and `capsule-implement.yml` for why. |
+| `attractor-pipeline-dual.yaml` | Multi-provider (Anthropic + OpenAI) base bundle. **Unconditionally wired into BOTH workflows**: `capsule-implement.yml` mounts it for `task-runner.dot`'s `critique_b` (issue #155), and `capsule-specify.yml` mounts it for `capsule.dot`'s `critique` node (the lean rebuild's one judgment node, which hard-declares `llm_provider="openai"`). Each workflow carries a loud preflight that refuses to start without `OPENAI_API_KEY`. |
 | `vendor/backlog/check-upstream-leaks.sh` | Publication-safety gate: scans the produced `DEFINITION.md` for internal working-vocabulary leaks before it ships in a PR. |
 | `vendor/backlog/fixtures/leak-scan/*` | Self-test fixtures for the scanner above (RED/GREEN controls). |
-| `vendor/runner/check-degenerate-hack.py` | `degenerate_gate`'s checker: suspects a hypothesis patch (A **and** B, checked per-patch since the A/B symmetry fix) that greens the gate by deleting/stubbing behavior rather than implementing a real alternate fix (THE INVERSION RULE). |
-| `vendor/runner/check-existing-tests.py` | `existing_test_gate`'s checker: derives a capsule's subject from the symbols/paths its own `DEFINITION.verify.sh` names, and blocks if the repo already ships an on-topic test the gate doesn't run (FOLD IN THE EXISTING TESTS). **Also a load-bearing import for `check-witness-gate.py`** (see below) — it is no longer only `existing_test_gate`'s dependency. |
-| `vendor/runner/check-witness-gate.py` | Checker shared by **two gates**, `witness_gate` and `void_gate`: catches "vacuous by no-occasion" — a proven-greening (or, for `void_gate`, actively-constructed) hypothesis patch that dodges the reported defect by deleting the *occasion* to observe it (e.g. deleting a single `goal_gate=true` token) rather than fixing it. Imports `resolve_subject_symbols`/`walk_repo`/`STOPWORDS` from `check-existing-tests.py` and diff-hunk parsing from `check-degenerate-hack.py` **at runtime via `importlib`**, resolved relative to its own file location (`Path(__file__).resolve().parent`) — both sibling files must be vendored in the *same directory*, not merely somewhere under `uplift_dir`. Content is unchanged as of the void-probe sync (2026-08-07, this pass), but it gained a **second, independent graph-level caller** (`void_gate`'s own `tool_command=` shells out to it directly, exactly like `witness_gate`'s does) — see the Re-sync log entry for that sync for why an unchanged file can still need re-proving. |
+| `vendor/runner/check-existing-tests.py` | **NO LONGER A BLOCKING GATE** (lean rebuild, council 2026-08-07): the `existing_test_gate` node this script backed was deleted from `capsule.dot`. It survives as a TOOL THE CRITIC MAY RUN — the `critique` node's prompt names it explicitly (`python3 $uplift_dir/runner/check-existing-tests.py --verify ... --repo .`) and treats its output as ADVISORY INPUT to a judgment, never as a verdict. **Still a load-bearing `importlib` import for `check-witness-gate.py`** (see below). |
+| `vendor/runner/check-witness-gate.py` | **NO LONGER A BLOCKING GATE** (lean rebuild): the `witness_gate` and `void_gate` nodes this script backed were deleted from `capsule.dot` — all three passive screens (this one, `check-degenerate-hack.py`, `diff_shape_gate`) PASSED the dodge they were built to catch on issue #146's live capsule, so nothing with that measured miss record keeps acquittal power over an executed result. It survives as a TOOL THE CRITIC MAY RUN (advisory input, never a verdict). Still imports `resolve_subject_symbols`/`walk_repo`/`STOPWORDS` from `check-existing-tests.py` **at runtime via `importlib`**, resolved relative to its own file location (`Path(__file__).resolve().parent`) — that sibling must stay vendored in the *same directory*. Its former second import (diff-hunk parsing from `check-degenerate-hack.py`) is gone: that checker was **deleted outright in the source** (measured miss on its own target class) and the one generic helper (`parse_hunks`) is now inlined here. |
 
 ## Provenance — these are VENDORED copies
 
@@ -54,10 +58,9 @@ location under `vendor/` and pointing
 one of the graph's existing references with zero changes to the pipeline's
 logic:
 
-- `$uplift_dir/backlog/check-upstream-leaks.sh` (`leak_gate`) -> `vendor/backlog/check-upstream-leaks.sh`
-- `$uplift_dir/runner/check-degenerate-hack.py` (`degenerate_gate`) -> `vendor/runner/check-degenerate-hack.py`
-- `$uplift_dir/runner/check-existing-tests.py` (`existing_test_gate`) -> `vendor/runner/check-existing-tests.py`
-- `$uplift_dir/runner/check-witness-gate.py` (`witness_gate`) -> `vendor/runner/check-witness-gate.py`
+- `$uplift_dir/backlog/check-upstream-leaks.sh` (`setup` preflight existence check + `leak_gate` shell-out) -> `vendor/backlog/check-upstream-leaks.sh`
+- `$uplift_dir/runner/check-existing-tests.py` (named in the `critique` node's **LLM prompt** as a tool the judge MAY run -- an advisory input, not a `tool_command=` shell-out) -> `vendor/runner/check-existing-tests.py`
+- (`vendor/runner/check-witness-gate.py` has **zero** graph-level references as of the lean rebuild -- its gates were deleted. It stays vendored as a critic-runnable advisory tool per its own docstring, and `check-existing-tests.py` must stay its same-directory sibling for the `importlib` load below.)
 
 The `vendor/` subtree therefore mirrors the source repository's own directory
 layout (`backlog/`, `runner/`) one level down -- this is deliberate, not
@@ -65,35 +68,36 @@ incidental: any future checker `capsule.dot` grows will resolve correctly
 under `uplift_dir` for free as long as it is vendored at the same relative
 path it lives at in the source, with no path-mapping logic to maintain here.
 
-**A fourth reference exists that is *not* a `$uplift_dir/...` shell-out and
+**A reference exists that is *not* a `$uplift_dir/...` shell-out and
 will not be found by grepping `capsule.dot` for `uplift_dir` at all**:
 `check-witness-gate.py` loads `check-existing-tests.py` (for
-`resolve_subject_symbols`/`walk_repo`/`STOPWORDS`) and `check-degenerate-hack.py`
-(for its diff-hunk parser) directly via `importlib`, resolved relative to
-**its own file's location** (`Path(__file__).resolve().parent`) -- not via
-`uplift_dir`, not via a `sys.path` entry, and not via the graph at all. This
-means both sibling files must be vendored in the exact same directory as
-`check-witness-gate.py` (`vendor/runner/`), or the import silently resolves
-to nothing and `witness_gate` crashes at runtime with a `FileNotFoundError`
-that no static check on `capsule.dot` itself will ever surface. See
-"Re-syncing" step 2 below -- this is precisely the class of miss that caused
-this file's own previous re-sync to ship gates whose checker scripts weren't
-vendored.
+`resolve_subject_symbols`/`walk_repo`/`STOPWORDS`) directly via `importlib`,
+resolved relative to **its own file's location**
+(`Path(__file__).resolve().parent`) -- not via `uplift_dir`, not via a
+`sys.path` entry, and not via the graph at all. This means that sibling file
+must be vendored in the exact same directory as `check-witness-gate.py`
+(`vendor/runner/`), or the import silently resolves to nothing and the
+checker crashes at runtime with a `FileNotFoundError` that no static check
+on `capsule.dot` itself will ever surface. (Before the lean rebuild it also
+imported diff-hunk parsing from `check-degenerate-hack.py`; that checker was
+deleted in the source and the `parse_hunks` helper is now inlined, so the
+second sibling dependency is gone.) See "Re-syncing" step 2 below -- this is
+precisely the class of miss that caused this file's own previous re-sync to
+ship gates whose checker scripts weren't vendored.
 
-**A distinct-but-related trap, closed in the void-probe sync (2026-08-07, this
-pass):** a *new node* can add a **second, independent, directly-visible**
+**A distinct-but-related trap, closed in the void-probe sync (2026-08-07):**
+a *new node* can add a **second, independent, directly-visible**
 `$uplift_dir/...` shell-out to a file that is **already vendored and whose
-content does not change** -- `void_gate` shells out to
-`$uplift_dir/runner/check-witness-gate.py` exactly like `witness_gate`
-already did, with a different (single-`--patch`) argument shape and from a
-different point in the pipeline (after `void_gate`'s own hard-reset, not
-after `mutate_gate`/`mutate_gate_b`'s). Unlike the importlib case above,
-this one *is* grep-visible via step 2's `uplift_dir` search -- but "the file
-is already vendored and its self-test still passes" is not the same claim as
-"this new call site's own invocation, with its own arguments and its own
-place in the control flow, actually resolves and behaves correctly." See
-step 5's amended wording below (the "prove **each** call site" sentence) --
-this is the reason it was added.
+content does not change**, with its own argument shape and its own place in
+the control flow. "The file is already vendored and its self-test still
+passes" is not the same claim as "this new call site's own invocation, with
+its own arguments and its own place in the control flow, actually resolves
+and behaves correctly." See step 5's amended wording below (the "prove
+**each** call site" sentence) -- this is the reason it was added. The lean
+rebuild's inverse also holds: a re-sync can DELETE every graph-level caller
+of a still-vendored checker (as happened to `check-witness-gate.py` here) --
+count call sites in both directions and say which files are now
+advisory-only.
 
 `task-runner.dot` is likewise **not modified** beyond its header. It was
 authored for a slightly different invocation shape (a backlog task file with
@@ -101,10 +105,15 @@ its own `verify.sh` naming convention, drawn from a private task backlog
 rather than a specify-stage capsule) — see the **INVOCATION
 RECONCILIATION** note in its own header for exactly what was checked, what
 was compatible with zero changes, and the one genuine gap (dual-family
-critique needs a second model-provider key that does not exist as a proven
-secret in this repo yet) that was closed at the **workflow** level
-(`capsule-implement.yml` conditionally sets `ATTRACTOR_PIPELINE_BUNDLE` only
-when `secrets.OPENAI_API_KEY` is present) rather than by editing the engine.
+critique needs a second model-provider key) that was closed at the
+**workflow** level rather than by editing the engine:
+`capsule-implement.yml` unconditionally sets `ATTRACTOR_PIPELINE_BUNDLE` to
+the vendored `attractor-pipeline-dual.yaml` and carries a loud preflight
+that refuses to start without `OPENAI_API_KEY` (issue #155 -- both
+`ANTHROPIC_API_KEY` and `OPENAI_API_KEY` now exist as proven repo secrets).
+As of the lean-rebuild re-sync, `capsule-specify.yml` mirrors the exact same
+pattern for `capsule.dot`'s `critique` node, which likewise hard-declares
+`llm_provider="openai"` (a second model family, deliberately).
 
 ## Why the leak-scan gate still applies here
 
@@ -145,9 +154,15 @@ scanner correctly) before this was wired up.
    references (grep the new source for `uplift_dir`) -- every checker a
    `tool_command=` node shells out to must exist under `vendor/` at the exact
    relative path the graph resolves, or the corresponding gate breaks at
-   runtime instead of at review time. As of the 2026-08-07 re-sync that means:
-   `backlog/check-upstream-leaks.sh`, `runner/check-degenerate-hack.py`,
-   `runner/check-existing-tests.py`, and `runner/check-witness-gate.py`.
+   runtime instead of at review time. As of the 2026-08-08 lean-rebuild
+   re-sync that means: `backlog/check-upstream-leaks.sh` (the `setup`
+   preflight + `leak_gate`) and `runner/check-existing-tests.py` (named in
+   the `critique` node's LLM prompt as an advisory tool);
+   `runner/check-witness-gate.py` remains vendored with zero graph-level
+   callers (advisory-only). Also check the REVERSE direction: a re-sync can
+   delete every caller of a checker (or, as with
+   `runner/check-degenerate-hack.py` in this sync, delete the checker
+   itself in the source) -- remove deleted files and re-count.
    **This grep is NOT sufficient by itself** -- see step 2a. (This gap is
    exactly what let the previous re-sync ship `degenerate_gate` and
    `existing_test_gate` referencing checkers that were never vendored: the
@@ -358,3 +373,84 @@ scanner correctly) before this was wired up.
   explicitly (count call sites, not just presence), and step 5 was amended
   to require exercising each named call site's own extracted
   `tool_command=` text, not only the checker's generic `--self-test`.
+
+- **2026-08-08** -- `capsule.dot` re-synced
+  `34fff9618e9c0cba3feee8ac8b82c94798720cec` ->
+  `75ee4c6a7c99448a97f5fd7864fcbea43909eb77`. THE LEAN REBUILD -- not an
+  incremental sync: the source file was rebuilt after a council review (6
+  lenses, unanimous FAIL on the 34-node file) found the anti-gaming chain
+  over-built -- all three passive screens PASSED the dodge they were built
+  to catch (issue #146's live capsule) while the file had ZERO LLM judgment
+  nodes. 1002 -> 323 lines, 35 -> 31 node declarations, 66 -> 52 edges.
+  - DELETED (nodes): `mutate_gate`, `mutate_gate_b`, `diff_shape_gate`,
+    `degenerate_gate`, `witness_gate`, `void_gate`, `existing_test_gate`;
+    all five transient-recovery bypass edges (maker crashes now route to
+    `triage` and hit the root-cause wall on repeat).
+  - NEW: `nonvacuity_gate` (ONE loop over up to three patches -- A, B
+    unless `# SINGLE-SHAPE:`, V unless `# NO-VOID:` -- apply -> run gate ->
+    hard-reset -> PROVE the reset, with a base control-run guarding against
+    a broken harness; records mechanical FACTS only); `critique` (the ONE
+    judgment node, `llm_provider="openai"` / `llm_model="gpt-[5-9]*"` -- a
+    second model family, deliberately); `verdict` (anchored 3-way
+    classification of the judge's written verdict: SHIP / ITERATE /
+    noverdict).
+  - Fuse: `max_pipeline_duration` 3600s -> 14400s (4h), sized by the
+    TIMEOUT ARITHMETIC in the source header. `capsule-specify.yml`'s job
+    `timeout-minutes` was raised 90 -> 330 to clear it (same buffer ratio
+    `capsule-implement.yml` uses over the identical 4h engine wall).
+  - Checkers: `check-existing-tests.py` and `check-witness-gate.py`
+    re-copied (docstrings now say NO LONGER A BLOCKING GATE / advisory
+    input; the witness checker no longer imports the deleted degenerate
+    checker -- `parse_hunks` is inlined). `check-degenerate-hack.py`
+    **removed** -- deleted outright in the source (measured miss on its own
+    target class); `grep -r` confirms no load-bearing reference (import,
+    `_load(`, `$uplift_dir/...` shell-out) to it remains anywhere in the
+    vendored tree (only historical prose in docstrings/this log).
+  - Call-site count (step 2b, both directions):
+    `backlog/check-upstream-leaks.sh` keeps two graph-level call sites
+    (`setup`'s existence preflight, `leak_gate`'s shell-out);
+    `runner/check-existing-tests.py` drops from one `tool_command=` caller
+    to ONE LLM-prompt reference (`critique` names it as a tool the judge
+    MAY run); `runner/check-witness-gate.py` drops from two `tool_command=`
+    callers to ZERO (advisory-only, kept for the critic).
+  - THE WIRING CHANGE this sync forces: `critique` pins
+    `llm_provider="openai"`, so `capsule-specify.yml` now mirrors
+    `capsule-implement.yml`'s issue-#155 pattern exactly -- unconditional
+    `ATTRACTOR_PIPELINE_BUNDLE` pointing at the already-vendored
+    `attractor-pipeline-dual.yaml` (byte-identical to source below its
+    header; reused, not re-vendored) plus a loud `::error::` preflight that
+    refuses to start without `OPENAI_API_KEY`. Under the default
+    single-provider bundle that node either crashes per round or SILENTLY
+    runs on Anthropic (the proven issue-#155 behavior) -- the exact failure
+    the preflight exists to prevent.
+
+  Runtime proof performed (see the PR that performed this sync for full
+  transcripts), from a scratch git repo with `uplift_dir` set exactly as
+  `capsule-specify.yml` sets it (`.github/capsule-pipeline/vendor`):
+  (1) `nonvacuity_gate`'s own `tool_command=` text, extracted verbatim from
+  the re-synced `.dot`, ran end-to-end over a real A/B/V patch triple (A
+  greens, B applies-but-stays-red -- exercising the base control-run, which
+  correctly re-proved rc=1 at the clean base -- V greens as a dodge):
+  emitted `proven`, recorded the full facts ledger line
+  (`"void_greened": true`), wrote `.ai/findings/void-greened.md`, and the
+  reset proof held (clean porcelain, HEAD back at the pinned base).
+  (2) `verdict`'s `tool_command=` text classified all three anchored cases:
+  `VERDICT: SHIP` -> `ship` (rc=0), `VERDICT: ITERATE` -> `iterate` (rc=1,
+  brief copied to `.ai/gate.log`), no anchored line -> `noverdict` (rc=0).
+  (3) The `critique` prompt's advisory call site, verbatim
+  (`python3 $uplift_dir/runner/check-existing-tests.py --verify ... --repo .`),
+  resolved and ran through the vendored path (rc=0, a real determination).
+  (4) `check-witness-gate.py --self-test` from the vendored directory: ALL
+  PASSED -- proving both the surviving `importlib` sibling load and the
+  inlined `parse_hunks`; a direct invocation against the scratch dodge
+  patch also ran clean. Negative controls: a wrong `uplift_dir` reproduced
+  the loud `can't open file` failure (rc=2), and vendoring
+  `check-witness-gate.py` ALONE reproduced the exact
+  `FileNotFoundError: .../check-existing-tests.py` the import trap predicts
+  -- and did NOT ask for `check-degenerate-hack.py`, proving the inline
+  really replaced that import. `attractor lint` on the re-synced `.dot`:
+  OK, no findings; node/edge parity with source confirmed (31 node
+  declarations / 52 edges on both). `task-runner.dot` was checked against
+  the same source range and found **untouched** at its own separately-
+  pinned commit (`f5322c24ed6fd8deaeddb519de7bfdfa861094d9`; zero
+  non-comment deltas vs source) -- no re-sync needed.

@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """check-witness-gate.py -- mechanical WITNESS-DODGE tripwire for a work
-capsule's already-proven-greening hypothesis patches (capsule.dot's
-witness_gate).
+capsule's already-proven-greening hypothesis patches.
+
+NO LONGER A BLOCKING GATE (lean rebuild, council 2026-08-07): the
+witness_gate node this script backed was removed from runner/capsule.dot --
+all three passive screens (this one, check-degenerate-hack.py,
+diff_shape_gate) PASSED the dodge they were built to catch on issue #146's
+live capsule, so nothing with that measured miss record keeps acquittal
+power over an executed result. This script survives as a TOOL THE CRITIC
+MAY RUN: capsule.dot's critique node treats its output (any exit code) as
+ADVISORY INPUT to a judgment, never as a verdict. check-degenerate-hack.py
+itself was deleted outright (measured miss on its own target class); the
+one generic helper this script reused from it (parse_hunks) is inlined
+below.
 
 THE HOLE THIS CLOSES (see context/NOTES-vacuous-green.md for the full
 account -- this docstring gives the load-bearing facts, not a paraphrase):
@@ -76,9 +87,11 @@ script, decides to treat rc>=2 as PASS-with-a-finding).
 
 REUSE, NOT REIMPLEMENTATION (NOTES-vacuous-green.md \u00a710, "Not extend"):
 `resolve_subject_symbols` / `walk_repo` / `STOPWORDS` are imported directly
-from check-existing-tests.py (same directory), and diff-hunk parsing is
-imported directly from check-degenerate-hack.py. Both are already shipped
-and already self-tested; this script adds no independent copy of either.
+from check-existing-tests.py (same directory). Diff-hunk parsing
+(`parse_hunks` + HUNK_RE) is INLINED verbatim below from the now-deleted
+check-degenerate-hack.py -- the deletion retired that checker's three
+degeneracy SIGNALS (measured miss on their own target class), not its
+generic unified-diff parsing, which carried no verdict of its own.
 
 Self-test (proves the checker catches the known #146/#159 dodge AND does
 not flag the two things it must not):
@@ -108,7 +121,50 @@ def _load(mod_name: str, filename: str):
 
 
 _ET = _load("_witness_reuse_existing_tests", "check-existing-tests.py")
-_DH = _load("_witness_reuse_degenerate_hack", "check-degenerate-hack.py")
+
+# ---------------------------------------------------------------------------
+# Inlined verbatim from the deleted check-degenerate-hack.py (see docstring:
+# the deletion retired that checker's SIGNALS, not this generic diff parser).
+# ---------------------------------------------------------------------------
+HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@ ?(.*)$")
+
+
+def parse_hunks(text: str) -> list[dict]:
+    """Split a unified diff into hunks. Keeps an ORDERED tagged line list
+    (each line's diff marker + content) alongside the removed/added/context
+    convenience buckets."""
+    hunks: list[dict] = []
+    cur: dict | None = None
+    for line in text.splitlines():
+        m = HUNK_RE.match(line)
+        if m:
+            if cur is not None:
+                hunks.append(cur)
+            cur = {
+                "header": m.group(1),
+                "removed": [],
+                "added": [],
+                "context": [],
+                "ordered": [],
+            }
+            continue
+        if cur is None:
+            continue
+        if line.startswith(("+++", "---")):
+            continue
+        if line.startswith("+"):
+            cur["added"].append(line[1:])
+            cur["ordered"].append(("+", line[1:]))
+        elif line.startswith("-"):
+            cur["removed"].append(line[1:])
+            cur["ordered"].append(("-", line[1:]))
+        elif line.startswith(" "):
+            cur["context"].append(line[1:])
+            cur["ordered"].append((" ", line[1:]))
+        # lines with no marker (e.g. "\ No newline at end of file") ignored
+    if cur is not None:
+        hunks.append(cur)
+    return hunks
 
 # Same token shape check-existing-tests.py's candidate_identifiers() uses:
 # an identifier-looking run of >=4 characters. Deliberately reused rather
@@ -150,7 +206,7 @@ def patch_files(text: str) -> set[str]:
 def evaluate_patch(patch_path: Path, subject_files: set[str], red_signal: str) -> dict:
     text = patch_path.read_text(encoding="utf-8", errors="replace")
     files = patch_files(text)
-    hunks = _DH.parse_hunks(text)
+    hunks = parse_hunks(text)
     added = sum(len(h["added"]) for h in hunks)
     removed_lines = [line for h in hunks for line in h["removed"]]
     removed = len(removed_lines)

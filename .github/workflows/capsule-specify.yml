@@ -4,8 +4,9 @@
 #
 # Trigger: a human applies the `ready:spec` label to an issue -- a
 # deliberate gate. This stage is the expensive one (measured ~20-40 minutes,
-# real model calls against ANTHROPIC_API_KEY) and must never auto-fire on
-# every issue open/edit; only an explicit label add starts it.
+# real model calls against ANTHROPIC_API_KEY and, since the lean rebuild's
+# critique node, OPENAI_API_KEY) and must never auto-fire on every issue
+# open/edit; only an explicit label add starts it.
 #
 # What it does, at minimum:
 #   1. Check out the repo and record the base SHA it is specifying against.
@@ -76,11 +77,14 @@ jobs:
     env:
       ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
     # Measured capsule.dot runs take ~20-40 minutes; the graph's own
-    # max_pipeline_duration=3600s (1h) is the engine's internal wall (it
-    # writes a postmortem before dying), so the job wall must clear that
-    # plus setup/PR-creation time, while staying comfortably under GitHub
-    # Actions' 6h hard cap for hosted runners.
-    timeout-minutes: 90
+    # max_pipeline_duration=14400s (4h, the lean rebuild's fuse -- sized by
+    # the TIMEOUT ARITHMETIC in the vendored capsule.dot's header) is the
+    # engine's internal wall (it writes a postmortem before dying), so the
+    # job wall must clear that plus setup/PR-creation time, while staying
+    # comfortably under GitHub Actions' 6h hard cap for hosted runners --
+    # same 330-over-240 buffer capsule-implement.yml uses for the identical
+    # 4h engine wall.
+    timeout-minutes: 330
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -197,6 +201,31 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
+      - name: "Preflight: the critique judge is unserviceable without an OpenAI key"
+        id: preflight
+        # Mirror of capsule-implement.yml's preflight (issue #155): an
+        # unserviceable provider on a node used to drain the ENTIRE
+        # iteration budget in a crash loop (`resolve_latest_for: no adapter
+        # found for provider 'openai'`) before failing -- or, depending on
+        # engine version, SILENTLY run the node on Anthropic. The vendored
+        # capsule.dot's lean rebuild has exactly ONE judgment node,
+        # `critique`, and it HARD-DECLARES llm_provider="openai" (a second
+        # model family, deliberately -- the judge must not share the
+        # maker's family), and this job now unconditionally mounts
+        # attractor-pipeline-dual.yaml to serve it. So: check the one
+        # precondition that makes that mount meaningful BEFORE spending any
+        # of the run's multi-hour budget, and fail loudly, naming exactly
+        # what's missing and what capability is lost, if it isn't met.
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::capsule-specify: OPENAI_API_KEY secret is missing. capsule.dot's critique node (the lean rebuild's ONE judgment node) requires llm_provider=\"openai\" -- a second model family is the point: the judge must be independent of the maker's family (see issue #155 for the proven failure) -- and this job unconditionally mounts attractor-pipeline-dual.yaml to serve it. Without OPENAI_API_KEY that mount cannot serve a real OpenAI model, and running anyway would either crash the node every round (draining the whole iteration budget on a crash loop) or silently degrade the judge to the maker's own family depending on engine version -- both are exactly the failure this preflight exists to prevent. Refusing to start. Provision OPENAI_API_KEY as a repo secret, then re-run." >&2
+            exit 1
+          fi
+          echo "OPENAI_API_KEY is present -- the second-family critique judge (OpenAI) can be honored. Proceeding."
+
       - name: Run capsule.dot (specify stage)
         id: run
         # continue-on-error: this workflow classifies the result in a later
@@ -207,6 +236,16 @@ jobs:
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # DUAL-FAMILY JUDGE, UNCONDITIONALLY WIRED (mirror of
+          # capsule-implement.yml, issue #155): the vendored capsule.dot's
+          # critique node declares llm_provider="openai" -- a design
+          # requirement, not optional -- so this bundle is ALWAYS mounted;
+          # there is no single-provider fallback path. If OPENAI_API_KEY is
+          # unset, the preflight step above fails the job LOUDLY before
+          # this step (and the multi-hour run it would otherwise start)
+          # ever runs.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ATTRACTOR_PIPELINE_BUNDLE: ${{ format('{0}/.github/capsule-pipeline/attractor-pipeline-dual.yaml', github.workspace) }}
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-run/out" "$RUNNER_TEMP/capsule-run/logs"

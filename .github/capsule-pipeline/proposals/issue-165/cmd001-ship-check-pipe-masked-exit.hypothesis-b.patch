@@ -1,0 +1,78 @@
+# HYPOTHESIS PATCH B -- crude stub, NOT a correct fix
+#
+# Purpose: demonstrate the gate is non-vacuous via a SECOND, genuinely
+# different mechanism from hypothesis.patch.  Both turn DEFINITION.verify.sh
+# from RED (exit 1) to GREEN (exit 0), but through different code paths
+# in the CMD-001 lint rule.
+#
+# --- Shape comparison ---
+#
+# hypothesis.patch (Shape A):
+#   File changed:  examples/patterns/task-runner.dot
+#   Changed line:  182 (tool_command value)
+#   Mechanism:     Wraps `git log --oneline -1 | grep -q .` inside $(...),
+#                  which _strip_command_substitutions() removes before
+#                  analysis.  The pipe becomes invisible to the scanner.
+#   Code path hit: _check_pipe_masked_exit_code()
+#                    -> _strip_command_substitutions() removes the pipe
+#                    -> _find_last_bare_pipe() finds no pipe in final segment
+#                    -> no diagnostic
+#   Operation:     ADDS a $() wrapper; replaces the pipe expression with
+#                  a command substitution form.
+#
+# hypothesis_b.patch (Shape B):
+#   File changed:  examples/patterns/task-runner.dot
+#   Changed line:  182 (tool_command value)
+#   Mechanism:     Prepends `set -o pipefail; ` to the tool_command string.
+#                  _has_executable_pipefail() detects the standalone `set`
+#                  statement at the start of the command and returns True,
+#                  causing the rule to skip the node entirely via an early
+#                  `continue` -- BEFORE _strip_command_substitutions() or
+#                  _find_last_bare_pipe() are even called.
+#   Code path hit: _check_pipe_masked_exit_code()
+#                    -> _has_executable_pipefail() returns True
+#                    -> `continue` (early exit, scanner never runs)
+#                    -> no diagnostic
+#   Operation:     ADDS a pipefail declaration that triggers the early-exit
+#                  guard.  The pipe `grep -q .` is PRESERVED verbatim.
+#
+# Why these are genuinely different shapes:
+#   1. Different suppression mechanism:
+#      Shape A: makes the pipe invisible to the scanner (strip path)
+#      Shape B: prevents the scanner from running at all (early-exit guard)
+#   2. Different internal functions invoked:
+#      Shape A: _strip_command_substitutions() is the key function
+#      Shape B: _has_executable_pipefail() is the key function
+#   3. Opposite operation on the pipe itself:
+#      Shape A: the pipe `grep -q .` is REPLACED with `[ -n "$(cmd)" ]`
+#      Shape B: the pipe `grep -q .` is KEPT; only a prefix is added
+#   4. Different file positions:
+#      Shape A: changes the git log segment (end of the &&-chain)
+#      Shape B: adds a new statement at the very start of the command
+#
+# Why this is crude:
+#   `set -o pipefail` is not POSIX sh.  The engine's execution environment
+#   uses /bin/sh (create_subprocess_shell), and pipefail is unavailable on
+#   some /bin/sh implementations (e.g. dash on Debian/Ubuntu).  This stub
+#   makes the lint rule silent but does not guarantee correct runtime behavior
+#   on all platforms.  A real fix would eliminate the pipe entirely via the
+#   redirect idiom or explicit exit-code capture.
+#
+# Verified:
+#   - git apply --check: clean (no fuzz, applies at base SHA 339637e)
+#   - lint(parse_dot(...)) returns 0 CMD-001 diags for ship_check after patch
+#   - _has_executable_pipefail() returns True for the patched tool_command
+#   - tests/test_examples_lint_clean.py + tests/test_command_content_lint.py:
+#     91 passed (same count as at base SHA)
+#   - DEFINITION.verify.sh: exits 0 (GREEN) with patch applied
+--- a/examples/patterns/task-runner.dot
++++ b/examples/patterns/task-runner.dot
+@@ -179,7 +179,7 @@
+         prompt="Both gates passed. Prepare the work for handoff in $target_dir: ensure runner artifacts (.ai/) are excluded from version control via .git/info/exclude (do NOT commit them); create or reuse a branch named task/<task-id> (the id is in the task file's frontmatter at $task_file); commit all task changes with a clear conventional commit message stating WHAT changed and WHY (draw on .ai/brief.md and .ai/critique.md; include the standard Amplifier co-authored-by attribution); and write .ai/SHIPPED.md summarizing the goal, what shipped, where the evidence lives (.ai/verify.log, .ai/convergence.jsonl, run events), and anything a reviewer should know."]
+ 
+     ship_check [shape=parallelogram, class="gate", max_retries=0,
+-        tool_command="[ -z \"$(git status --porcelain | grep -v -E '^\\?\\? \\.ai')\" ] && git log --oneline -1 | grep -q . && printf shipped || printf dirty"]
++        tool_command="set -o pipefail; [ -z \"$(git status --porcelain | grep -v -E '^\\?\\? \\.ai')\" ] && git log --oneline -1 | grep -q . && printf shipped || printf dirty"]
+ 
+     // ---------- budget exhaustion: a decision point, not a fuse ----------
+     postmortem [shape=box, class="gate",

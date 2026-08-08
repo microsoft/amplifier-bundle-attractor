@@ -1,0 +1,42 @@
+# HYPOTHESIS PATCH -- crude stub, NOT a correct fix
+#
+# Purpose: demonstrate the gate is non-vacuous by making DEFINITION.verify.sh
+# exit 0 with a deliberately crude change. This is not the real fix.
+#
+# What the real fix requires (per DEFINITION.md):
+#   lint(parse_dot("examples/patterns/task-runner.dot")) returns zero CMD-001
+#   diagnostics for the ship_check node.
+#
+# What this stub does:
+#   Replaces `git log --oneline -1 | grep -q .` with
+#   `[ -n "$(git log --oneline -1)" ]`.
+#
+#   These are semantically equivalent (both test that git log produces
+#   non-empty output, i.e. there is at least one commit), but the
+#   replacement uses a command substitution $(...) rather than a bare pipe.
+#   The CMD-001 rule calls _strip_command_substitutions() before scanning
+#   for bare pipes, so the pipe inside $(...) is invisible to the lint rule.
+#   No CMD-001 fires.
+#
+# Why this is crude:
+#   The substitution form is semantically correct here, but the intent is
+#   to show the gate turns green -- not to write production-quality DOT.
+#   A real fix would also address the broader shell-quoting context and
+#   add a comment explaining the choice.
+#
+# Verified:
+#   - git apply --check: clean (no fuzz, applies at base SHA 339637e)
+#   - lint(parse_dot(...)) returns 0 CMD-001 diags for ship_check after patch
+#   - tests/test_examples_lint_clean.py + tests/test_command_content_lint.py:
+#     91 passed (same count as at base SHA)
+--- a/examples/patterns/task-runner.dot
++++ b/examples/patterns/task-runner.dot
+@@ -179,7 +179,7 @@
+         prompt="Both gates passed. Prepare the work for handoff in $target_dir: ensure runner artifacts (.ai/) are excluded from version control via .git/info/exclude (do NOT commit them); create or reuse a branch named task/<task-id> (the id is in the task file's frontmatter at $task_file); commit all task changes with a clear conventional commit message stating WHAT changed and WHY (draw on .ai/brief.md and .ai/critique.md; include the standard Amplifier co-authored-by attribution); and write .ai/SHIPPED.md summarizing the goal, what shipped, where the evidence lives (.ai/verify.log, .ai/convergence.jsonl, run events), and anything a reviewer should know."]
+ 
+     ship_check [shape=parallelogram, class="gate", max_retries=0,
+-        tool_command="[ -z \"$(git status --porcelain | grep -v -E '^\\?\\? \\.ai')\" ] && git log --oneline -1 | grep -q . && printf shipped || printf dirty"]
++        tool_command="[ -z \"$(git status --porcelain | grep -v -E '^\\?\\? \\.ai')\" ] && [ -n \"$(git log --oneline -1)\" ] && printf shipped || printf dirty"]
+ 
+     // ---------- budget exhaustion: a decision point, not a fuse ----------
+     postmortem [shape=box, class="gate",

@@ -1,0 +1,33 @@
+# Hypothesis patch — crude non-vacuity proof for goal-gate-lint-spurious-warning
+#
+# Strategy: Fix A (example-side stub). Remove the `goal_gate=true` attribute
+# from the `test_gate` node in 00-convergence-loop.dot.  This is deliberately
+# the minimal, crudest possible change — it does not fix the lint rule, it does
+# not add a retry_target, and it does not address whether goal_gate=true is
+# semantically correct on this node.  It simply removes the attribute that
+# triggers the lint rule, which is sufficient to turn DEFINITION.verify.sh
+# from exit 1 to exit 0.
+#
+# This is NOT a correct fix.  A correct fix would be either:
+#   Fix A (proper): Remove goal_gate=true with a comment explaining why it was
+#     a no-op (the tool command always exits 0 via `|| echo gate_fail`).
+#   Fix B: Extend _check_goal_gate_has_retry in validation.py to also recognize
+#     edge-based retry (outgoing edges with loop_restart="true").
+#
+# Verified at SHA 7a2991a88e1407cd250a840fefe9718f4d1253df:
+#   - Without patch: DEFINITION.verify.sh exits 1, red_signal present in output.
+#   - With patch:    DEFINITION.verify.sh exits 0, 117 tests pass.
+#   - After reset:   Tree restored to original state, gate is red again.
+#
+diff --git a/examples/pipelines/00-convergence-loop.dot b/examples/pipelines/00-convergence-loop.dot
+index b2d7582..d534cd7 100644
+--- a/examples/pipelines/00-convergence-loop.dot
++++ b/examples/pipelines/00-convergence-loop.dot
+@@ -58,7 +58,6 @@ digraph convergence_loop {
+         shape=parallelogram,
+         label="pytest",
+         tool_command="pytest -q test_word_counter.py > test_output.txt 2>&1 && echo gate_pass || echo gate_fail",
+-        goal_gate=true
+     ]
+ 
+     // --- Exit ---

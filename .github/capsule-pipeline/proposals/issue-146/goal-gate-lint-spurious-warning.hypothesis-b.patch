@@ -1,0 +1,44 @@
+# Hypothesis B patch — second crude non-vacuity proof for goal-gate-lint-spurious-warning
+#
+# Strategy: Fix B (rule-side stub). Extend _check_goal_gate_has_retry in
+# validation.py to also recognize edge-based retry: a goal_gate node that has
+# at least one outgoing edge with loop_restart=True counts as having a retry
+# mechanism, and the WARNING is suppressed.
+#
+# This is the OPPOSITE operation from hypothesis.patch:
+#   hypothesis.patch  — removes goal_gate=true from the EXAMPLE FILE (.dot)
+#   hypothesis_b.patch — adds edge-inspection logic to the LINT RULE (validation.py)
+#
+# Different in every dimension:
+#   - Different file:      validation.py  vs  examples/pipelines/00-convergence-loop.dot
+#   - Different operation: adds code to the rule  vs  removes an attribute from the example
+#   - Different internal path: inspects graph.outgoing_edges() for loop_restart=True
+#                              vs simply not having the triggering attribute present
+#   - Different fix polarity: makes the rule RECOGNIZE the existing graph topology
+#                             vs making the graph NOT trigger the rule
+#
+# This is still deliberately crude — it is NOT a correct fix. A correct Fix B
+# would also handle fallback_retry_target parity, add a comment explaining the
+# edge-based retry semantics, and update the fix hint text. This patch does none
+# of that; it only adds the minimal predicate needed to silence the WARNING.
+#
+# Verified at SHA 7a2991a88e1407cd250a840fefe9718f4d1253df:
+#   - Without patch: DEFINITION.verify.sh exits 1, red_signal present in output.
+#   - With patch:    DEFINITION.verify.sh exits 0, 117 tests pass.
+#   - After reset:   Tree restored to original state, gate is red again.
+#
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+index abc1234..def5678 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+@@ -333,6 +333,9 @@ def _check_goal_gate_has_retry(graph: Graph, diags: list[Diagnostic]) -> None:
+         if resolve_bool_attr(node.attrs.get("goal_gate"), "goal_gate"):
+             has_retry = bool(
+                 node.attrs.get("retry_target")
+                 or node.attrs.get("fallback_retry_target")
+                 or graph.graph_attrs.get("retry_target")
++                or any(
++                    e.loop_restart for e in graph.outgoing_edges(node.id)
++                )
+             )
+             if not has_retry:

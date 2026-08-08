@@ -29,6 +29,8 @@ This directory wires two stages of an issue -> attractor -> PR system:
 | `attractor-pipeline-dual.yaml` | Multi-provider (Anthropic + OpenAI) base bundle for `task-runner.dot`'s dual-family critique. **Vendored but not currently wired in** — see its own provenance header and `capsule-implement.yml` for why. |
 | `vendor/backlog/check-upstream-leaks.sh` | Publication-safety gate: scans the produced `DEFINITION.md` for internal working-vocabulary leaks before it ships in a PR. |
 | `vendor/backlog/fixtures/leak-scan/*` | Self-test fixtures for the scanner above (RED/GREEN controls). |
+| `vendor/runner/check-degenerate-hack.py` | `degenerate_gate`'s checker: suspects a hypothesis-B patch that greens the gate by deleting/stubbing behavior rather than implementing a real alternate fix (THE INVERSION RULE). |
+| `vendor/runner/check-existing-tests.py` | `existing_test_gate`'s checker: derives a capsule's subject from the symbols/paths its own `DEFINITION.verify.sh` names, and blocks if the repo already ships an on-topic test the gate doesn't run (FOLD IN THE EXISTING TESTS). |
 
 ## Provenance — these are VENDORED copies
 
@@ -43,12 +45,23 @@ source commit). Do not hand-edit the body of any of these files — if a fix
 or improvement is needed, make it in the source repository, re-copy the
 file here, and re-apply the provenance header comment.
 
-`capsule.dot` itself is **not modified** beyond the header: it references its
-leak-scanning dependency via a `uplift_dir` **parameter**, not a hardcoded
-path, so vendoring the scanner under `vendor/backlog/check-upstream-leaks.sh`
-and pointing `--param uplift_dir=.github/capsule-pipeline/vendor` at it
-satisfies the graph's existing `$uplift_dir/backlog/check-upstream-leaks.sh`
-reference with zero changes to the pipeline's logic.
+`capsule.dot` itself is **not modified** beyond the header: it references all
+three of its checker dependencies via the same `uplift_dir` **parameter**,
+never a hardcoded path, so vendoring each checker at the matching relative
+location under `vendor/` and pointing
+`--param uplift_dir=.github/capsule-pipeline/vendor` at it satisfies every
+one of the graph's existing references with zero changes to the pipeline's
+logic:
+
+- `$uplift_dir/backlog/check-upstream-leaks.sh` (`leak_gate`) -> `vendor/backlog/check-upstream-leaks.sh`
+- `$uplift_dir/runner/check-degenerate-hack.py` (`degenerate_gate`) -> `vendor/runner/check-degenerate-hack.py`
+- `$uplift_dir/runner/check-existing-tests.py` (`existing_test_gate`) -> `vendor/runner/check-existing-tests.py`
+
+The `vendor/` subtree therefore mirrors the source repository's own directory
+layout (`backlog/`, `runner/`) one level down -- this is deliberate, not
+incidental: any future checker `capsule.dot` grows will resolve correctly
+under `uplift_dir` for free as long as it is vendored at the same relative
+path it lives at in the source, with no path-mapping logic to maintain here.
 
 `task-runner.dot` is likewise **not modified** beyond its header. It was
 authored for a slightly different invocation shape (a backlog task file with
@@ -92,10 +105,47 @@ scanner correctly) before this was wired up.
 ## Re-syncing
 
 1. In the source repository, confirm the current commit of `runner/capsule.dot`
-   and `backlog/check-upstream-leaks.sh` (+ `backlog/fixtures/leak-scan/`).
-2. Copy the files here verbatim (`cp`, not a manual retype).
-3. Re-apply (or update) the provenance header comment at the top of each file
-   with the new source commit.
-4. Run `attractor lint .github/capsule-pipeline/capsule.dot` and
-   `vendor/backlog/check-upstream-leaks.sh --self-test` and note any new
-   deviations here.
+   and diff it against the vendored copy's pinned commit (its header names the
+   commit) to see exactly what's missing -- don't assume; quote the diff.
+   Do the same for `runner/task-runner.dot` against its own separately-pinned
+   commit (the two files are not necessarily in sync with each other).
+2. Check whether the diff added, removed, or renamed any `$uplift_dir/...`
+   references (grep the new source for `uplift_dir`) -- every checker a
+   `tool_command=` node shells out to must exist under `vendor/` at the exact
+   relative path the graph resolves, or the corresponding gate breaks at
+   runtime instead of at review time. As of the 2026-08-07 re-sync that means:
+   `backlog/check-upstream-leaks.sh`, `runner/check-degenerate-hack.py`, and
+   `runner/check-existing-tests.py`.
+3. Copy the files here verbatim (`cp`, not a manual retype), preserving the
+   executable bit on any `.sh`/`.py` checker.
+4. Re-apply (or update) the provenance header comment at the top of each file
+   with the new source commit and date.
+5. Run `attractor lint .github/capsule-pipeline/capsule.dot` and
+   `vendor/backlog/check-upstream-leaks.sh --self-test`, and **prove the
+   vendored checkers actually resolve** at the path the workflow sets
+   `uplift_dir` to (`$GITHUB_WORKSPACE/.github/capsule-pipeline/vendor`) --
+   a `workflow_dispatch` run or a local invocation with `uplift_dir` set the
+   same way, not just a file-existence check. Note any new deviations here.
+
+## Re-sync log
+
+- **2026-08-07** -- `capsule.dot` re-synced `67a53e531a1` (content-identical
+  to `73e75e7`, the commit actually last touching `runner/capsule.dot`) ->
+  `d93d1e60066abdc61f082e48619569eef0816a09`. Picked up two gates that did
+  not exist in the vendored copy before this sync, and were therefore never
+  exercised by any specify-stage run this repository's Actions had produced
+  up to this point:
+  - `degenerate_gate` (source commit `0afb874`, THE INVERSION RULE) --
+    routes a hypothesis-B patch that greens the gate by deleting/stubbing
+    behavior to `triage` instead of treating it as proof the gate is
+    behavior-bound.
+  - `existing_test_gate` (source commit `d93d1e6`, FOLD IN THE EXISTING
+    TESTS) -- blocks a capsule whose gate declares a subject the target
+    repo already ships an on-topic test for, and doesn't run it.
+  Vendored their checkers (`vendor/runner/check-degenerate-hack.py`,
+  `vendor/runner/check-existing-tests.py`) for the first time -- this
+  `vendor/runner/` subdirectory did not exist before this sync.
+  `task-runner.dot` was checked against the same source range and found
+  **byte-identical** at its own pinned commit (`f5322c24ed6fd8deaeddb519de7bfdfa861094d9`)
+  -- no re-sync needed; see the PR that performed this sync for the full
+  proof.

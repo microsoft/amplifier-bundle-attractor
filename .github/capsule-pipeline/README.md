@@ -29,8 +29,9 @@ This directory wires two stages of an issue -> attractor -> PR system:
 | `attractor-pipeline-dual.yaml` | Multi-provider (Anthropic + OpenAI) base bundle for `task-runner.dot`'s dual-family critique. **Vendored but not currently wired in** — see its own provenance header and `capsule-implement.yml` for why. |
 | `vendor/backlog/check-upstream-leaks.sh` | Publication-safety gate: scans the produced `DEFINITION.md` for internal working-vocabulary leaks before it ships in a PR. |
 | `vendor/backlog/fixtures/leak-scan/*` | Self-test fixtures for the scanner above (RED/GREEN controls). |
-| `vendor/runner/check-degenerate-hack.py` | `degenerate_gate`'s checker: suspects a hypothesis-B patch that greens the gate by deleting/stubbing behavior rather than implementing a real alternate fix (THE INVERSION RULE). |
-| `vendor/runner/check-existing-tests.py` | `existing_test_gate`'s checker: derives a capsule's subject from the symbols/paths its own `DEFINITION.verify.sh` names, and blocks if the repo already ships an on-topic test the gate doesn't run (FOLD IN THE EXISTING TESTS). |
+| `vendor/runner/check-degenerate-hack.py` | `degenerate_gate`'s checker: suspects a hypothesis patch (A **and** B, checked per-patch since the A/B symmetry fix) that greens the gate by deleting/stubbing behavior rather than implementing a real alternate fix (THE INVERSION RULE). |
+| `vendor/runner/check-existing-tests.py` | `existing_test_gate`'s checker: derives a capsule's subject from the symbols/paths its own `DEFINITION.verify.sh` names, and blocks if the repo already ships an on-topic test the gate doesn't run (FOLD IN THE EXISTING TESTS). **Also a load-bearing import for `check-witness-gate.py`** (see below) — it is no longer only `existing_test_gate`'s dependency. |
+| `vendor/runner/check-witness-gate.py` | `witness_gate`'s checker: catches "vacuous by no-occasion" — a proven-greening hypothesis patch that dodges the reported defect by deleting the *occasion* to observe it (e.g. deleting a single `goal_gate=true` token) rather than fixing it. Imports `resolve_subject_symbols`/`walk_repo`/`STOPWORDS` from `check-existing-tests.py` and diff-hunk parsing from `check-degenerate-hack.py` **at runtime via `importlib`**, resolved relative to its own file location (`Path(__file__).resolve().parent`) — both sibling files must be vendored in the *same directory*, not merely somewhere under `uplift_dir`. |
 
 ## Provenance — these are VENDORED copies
 
@@ -46,7 +47,7 @@ or improvement is needed, make it in the source repository, re-copy the
 file here, and re-apply the provenance header comment.
 
 `capsule.dot` itself is **not modified** beyond the header: it references all
-three of its checker dependencies via the same `uplift_dir` **parameter**,
+of its checker dependencies via the same `uplift_dir` **parameter**,
 never a hardcoded path, so vendoring each checker at the matching relative
 location under `vendor/` and pointing
 `--param uplift_dir=.github/capsule-pipeline/vendor` at it satisfies every
@@ -56,12 +57,28 @@ logic:
 - `$uplift_dir/backlog/check-upstream-leaks.sh` (`leak_gate`) -> `vendor/backlog/check-upstream-leaks.sh`
 - `$uplift_dir/runner/check-degenerate-hack.py` (`degenerate_gate`) -> `vendor/runner/check-degenerate-hack.py`
 - `$uplift_dir/runner/check-existing-tests.py` (`existing_test_gate`) -> `vendor/runner/check-existing-tests.py`
+- `$uplift_dir/runner/check-witness-gate.py` (`witness_gate`) -> `vendor/runner/check-witness-gate.py`
 
 The `vendor/` subtree therefore mirrors the source repository's own directory
 layout (`backlog/`, `runner/`) one level down -- this is deliberate, not
 incidental: any future checker `capsule.dot` grows will resolve correctly
 under `uplift_dir` for free as long as it is vendored at the same relative
 path it lives at in the source, with no path-mapping logic to maintain here.
+
+**A fourth reference exists that is *not* a `$uplift_dir/...` shell-out and
+will not be found by grepping `capsule.dot` for `uplift_dir` at all**:
+`check-witness-gate.py` loads `check-existing-tests.py` (for
+`resolve_subject_symbols`/`walk_repo`/`STOPWORDS`) and `check-degenerate-hack.py`
+(for its diff-hunk parser) directly via `importlib`, resolved relative to
+**its own file's location** (`Path(__file__).resolve().parent`) -- not via
+`uplift_dir`, not via a `sys.path` entry, and not via the graph at all. This
+means both sibling files must be vendored in the exact same directory as
+`check-witness-gate.py` (`vendor/runner/`), or the import silently resolves
+to nothing and `witness_gate` crashes at runtime with a `FileNotFoundError`
+that no static check on `capsule.dot` itself will ever surface. See
+"Re-syncing" step 2 below -- this is precisely the class of miss that caused
+this file's own previous re-sync to ship gates whose checker scripts weren't
+vendored.
 
 `task-runner.dot` is likewise **not modified** beyond its header. It was
 authored for a slightly different invocation shape (a backlog task file with
@@ -114,8 +131,26 @@ scanner correctly) before this was wired up.
    `tool_command=` node shells out to must exist under `vendor/` at the exact
    relative path the graph resolves, or the corresponding gate breaks at
    runtime instead of at review time. As of the 2026-08-07 re-sync that means:
-   `backlog/check-upstream-leaks.sh`, `runner/check-degenerate-hack.py`, and
-   `runner/check-existing-tests.py`.
+   `backlog/check-upstream-leaks.sh`, `runner/check-degenerate-hack.py`,
+   `runner/check-existing-tests.py`, and `runner/check-witness-gate.py`.
+   **This grep is NOT sufficient by itself** -- see step 2a. (This gap is
+   exactly what let the previous re-sync ship `degenerate_gate` and
+   `existing_test_gate` referencing checkers that were never vendored: the
+   step existed, but grepping `capsule.dot` alone doesn't surface every
+   load-bearing dependency a *newly-added* checker script itself introduces.)
+2a. **Grep every newly-added or newly-vendored Python checker for its OWN
+   sibling-file dependencies** -- `importlib`-based loading of another script
+   in the same directory (e.g. `check-witness-gate.py`'s `_load(...,
+   "check-existing-tests.py")`), `sys.path` manipulation, or a plain
+   `import` of a local module. These dependencies are invisible to a grep of
+   `capsule.dot` for `uplift_dir` (the referencing script isn't shelled out
+   from the graph with a path -- it's imported from *within* another
+   checker), and an already-vendored, content-unchanged file can become
+   load-bearing for a brand-new reason: `check-existing-tests.py` didn't
+   change in this sync, but it silently became a runtime dependency of
+   `check-witness-gate.py` too. Run `grep -n "^import\|^from\|_load(\|importlib"
+   vendor/runner/*.py` and confirm every named sibling file is present in the
+   same `vendor/` subdirectory.
 3. Copy the files here verbatim (`cp`, not a manual retype), preserving the
    executable bit on any `.sh`/`.py` checker.
 4. Re-apply (or update) the provenance header comment at the top of each file
@@ -125,7 +160,13 @@ scanner correctly) before this was wired up.
    vendored checkers actually resolve** at the path the workflow sets
    `uplift_dir` to (`$GITHUB_WORKSPACE/.github/capsule-pipeline/vendor`) --
    a `workflow_dispatch` run or a local invocation with `uplift_dir` set the
-   same way, not just a file-existence check. Note any new deviations here.
+   same way, not just a file-existence check. **This must include proving any
+   cross-checker `importlib` import found in step 2a actually resolves** --
+   invoke the importing checker (not just `python3 -c "import ..."` in
+   isolation) from a scratch repo with `uplift_dir` pointed at the vendored
+   location, and run a negative control (wrong `uplift_dir`, or one sibling
+   file deliberately absent) so a pass isn't accidental. Note any new
+   deviations here.
 
 ## Re-sync log
 
@@ -145,6 +186,56 @@ scanner correctly) before this was wired up.
   Vendored their checkers (`vendor/runner/check-degenerate-hack.py`,
   `vendor/runner/check-existing-tests.py`) for the first time -- this
   `vendor/runner/` subdirectory did not exist before this sync.
+  `task-runner.dot` was checked against the same source range and found
+  **byte-identical** at its own pinned commit
+  (`f5322c24ed6fd8deaeddb519de7bfdfa861094d9`) -- no re-sync needed; see the
+  PR that performed this sync for the full proof.
+
+- **2026-08-07 (later same day)** -- `capsule.dot` re-synced
+  `d93d1e60066abdc61f082e48619569eef0816a09` ->
+  `3a53cf13cbf426bcdea7e4382fae9feb9efe977d`. Picked up two more additions:
+  - `witness_gate` (new gate, catches "vacuous by no-occasion" -- a
+    hypothesis patch that greens the gate by *deleting the observed case*
+    rather than fixing the reported cause; motivating live case: GitHub
+    issue #146, where deleting the single token `goal_gate=true` from a
+    `.dot` example greens the gate while the reported lint blind spot
+    remains untouched). Vendored its checker,
+    `vendor/runner/check-witness-gate.py`, for the first time.
+  - `degenerate_gate` A/B symmetry fix -- it previously inspected only
+    `.ai/hypothesis_b.patch`; it now runs `check-degenerate-hack.py` over
+    **both** hypothesis slots (`hypothesis.patch` and `hypothesis_b.patch`)
+    and reports which fired. No new file to vendor for this half (it reuses
+    the already-vendored `check-degenerate-hack.py` unchanged), but the
+    `.dot` body calling it changed (now invoked twice per round).
+  This sync exercised the exact trap this README's checklist step 2a now
+  names explicitly: `check-witness-gate.py` imports
+  `resolve_subject_symbols`/`walk_repo`/`STOPWORDS` from
+  `check-existing-tests.py` **and** diff-hunk parsing from
+  `check-degenerate-hack.py`, both via `importlib`, resolved relative to its
+  own file's directory -- not via `uplift_dir`, and invisible to a grep of
+  `capsule.dot` for `uplift_dir` references (that grep only finds
+  `check-witness-gate.py` itself as a new `$uplift_dir/...` shell-out; it
+  would not have flagged that the *already-vendored, content-unchanged*
+  `check-existing-tests.py` had become load-bearing for a second, different
+  consumer). `check-existing-tests.py` and `check-degenerate-hack.py` were
+  diffed against this same source range and found byte-identical to the
+  copies already vendored from the prior sync -- no re-copy was needed for
+  either, only the new `check-witness-gate.py`. Runtime resolution of all
+  three checkers, including the cross-file `importlib` import, was proven
+  from a scratch repo with `uplift_dir` set exactly as
+  `capsule-specify.yml` sets it, plus a negative control (wrong
+  `uplift_dir`) -- see the PR that performed this sync for the full
+  transcripts. `task-runner.dot` was checked against the same source range
+  and found **byte-identical** at its own separately-pinned commit
+  (`f5322c24ed6fd8deaeddb519de7bfdfa861094d9`, unchanged from the previous
+  sync) -- no re-sync needed.
+  The prior version of this README's checklist (step 2 alone: grep
+  `capsule.dot` for `uplift_dir`) would **not** have caught this sync's
+  cross-file import trap on its own -- it names only references the graph
+  itself makes. Step 2a above was added in this pass specifically to close
+  that gap: newly-vendored Python checkers must themselves be grepped for
+  sibling-file loading, and any already-vendored file they reference must be
+  re-confirmed present, even when that file's own content didn't change.
   `task-runner.dot` was checked against the same source range and found
   **byte-identical** at its own pinned commit (`f5322c24ed6fd8deaeddb519de7bfdfa861094d9`)
   -- no re-sync needed; see the PR that performed this sync for the full

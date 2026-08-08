@@ -81,6 +81,47 @@ r5 = expand_params("Build a $framework app", {"framework": "FastAPI"})
 if r5 != "Build a FastAPI app":
     failures.append(f"FAIL expand_params functionality (no-op stub would pass assertion 3 alone): got {r5!r}, want 'Build a FastAPI app'")
 
+# --- Regression class (found in PR #156's own boundary-aware fix): -----------
+# A correct-looking fix for the prefix-collision defect (assertions 1-3)
+# over-broadened its lookahead to exclude ANY literal "." after $key, not just
+# a "." that starts a genuinely longer dotted sibling key. That silently
+# broke the ordinary, extremely common case of a $key immediately followed by
+# punctuation: a filename extension ("$name.txt") or a sentence-ending
+# period ("$tool. Then go."). Neither of the two prior fix hypotheses'
+# obvious sibling-shape ("exclude all dots" vs "exclude no dots") is
+# correct; assertions 6-9 discriminate between them precisely, mirroring the
+# original assertions' name/name_suffix discrimination one dimension over.
+
+# Assertion 6: substitute_context — bare $key immediately followed by a
+# literal "." (filename extension) with NO longer dotted key sharing that
+# prefix in the snapshot. This must still substitute; the "." here is
+# ordinary text, not a key-boundary marker.
+r6 = substitute_context("cat $name.txt", {"name": "report"})
+if r6 != "cat report.txt":
+    failures.append(f"FAIL substitute_context dot-as-filename-extension (regression): got {r6!r}, want 'cat report.txt'")
+
+# Assertion 7: substitute_context — bare $key immediately followed by a
+# sentence-ending period, again with no dotted sibling key present.
+r7 = substitute_context("Run $tool. Then go.", {"tool": "X"})
+if r7 != "Run X. Then go.":
+    failures.append(f"FAIL substitute_context dot-as-sentence-end (regression): got {r7!r}, want 'Run X. Then go.'")
+
+# Assertion 8: expand_params — same regression class, same boundary requirement.
+r8 = expand_params("cat $name.txt", {"name": "report"})
+if r8 != "cat report.txt":
+    failures.append(f"FAIL expand_params dot-as-filename-extension (regression): got {r8!r}, want 'cat report.txt'")
+
+# Assertion 9: substitute_context — the discriminating case. When a longer
+# dotted key sharing the prefix DOES exist in the snapshot (even with a None
+# value, i.e. not yet resolved), the "." must still block the shorter key's
+# substitution -- otherwise "$tool.last_line" would be partially corrupted
+# into "X.last_line" instead of staying literal pass-through. This is what
+# keeps assertions 6-8 from being satisfied by an over-correction that
+# simply deletes the "." exclusion outright.
+r9 = substitute_context("$tool.last_line", {"tool": "X", "tool.last_line": None})
+if r9 != "$tool.last_line":
+    failures.append(f"FAIL substitute_context dotted-sibling-still-blocks: got {r9!r}, want '$tool.last_line' (must stay literal, not partially corrupt to 'X.last_line')")
+
 if failures:
     for f in failures:
         print(f)

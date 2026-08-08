@@ -26,7 +26,6 @@ from .context import PipelineContext
 from .graph import Graph
 from .stylesheet import apply_stylesheet, parse_stylesheet
 
-
 # ---------------------------------------------------------------------------
 # L-17: Shared variable expansion utility
 # ---------------------------------------------------------------------------
@@ -45,14 +44,30 @@ def expand_params(text: str, params: dict[str, str]) -> str:
     Returns:
         Text with known ``$param`` tokens replaced.
     """
+    # Keys that have a longer dotted sibling actually present in params (e.g.
+    # "tool" when "tool.last_line" is also a params key) need "." excluded
+    # from the boundary lookahead, to avoid partially corrupting the still-
+    # literal longer token. Any other key's "." is ordinary text (a filename
+    # extension, a sentence-ending period) and must not block substitution.
+    keys_with_dotted_sibling = {
+        key
+        for key in params
+        if any(other != key and other.startswith(key + ".") for other in params)
+    }
+
     for key, value in params.items():
-        # Negative lookahead (?![A-Za-z0-9_.]) ensures token-boundary awareness:
-        # "$name" only matches when the next character is not a valid key-name
-        # character, so "$name_suffix" is never corrupted when only "name" is
-        # in params.
+        # Negative lookahead's word-character class (A-Za-z0-9_) ensures
+        # token-boundary awareness unconditionally: "$name" only matches when
+        # the next character is not a valid key-name character, so
+        # "$name_suffix" is never corrupted when only "name" is in params.
+        # "." is additionally excluded only when a longer dotted sibling key
+        # exists (see keys_with_dotted_sibling above).
         _value = str(value)
+        boundary_chars = (
+            "A-Za-z0-9_." if key in keys_with_dotted_sibling else "A-Za-z0-9_"
+        )
         text = re.sub(
-            r"\$" + re.escape(key) + r"(?![A-Za-z0-9_.])",
+            r"\$" + re.escape(key) + r"(?![" + boundary_chars + r"])",
             lambda m: _value,
             text,
         )

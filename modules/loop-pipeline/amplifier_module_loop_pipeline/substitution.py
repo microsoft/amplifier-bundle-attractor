@@ -97,15 +97,41 @@ def substitute_context(text: str, snapshot: Mapping[str, object]) -> str:
 
     # Phase 2: $key form — replace longest keys first to avoid partial matches.
     # e.g. replace "$tool.output" before "$tool" so the longer token wins.
-    # The negative lookahead (?![A-Za-z0-9_.]) ensures token-boundary awareness:
-    # "$name" only matches when the next character is not a valid key-name character,
-    # so "$name_suffix" is never corrupted when only "name" is in the snapshot.
+    #
+    # The negative lookahead's word-character class (A-Za-z0-9_) ensures
+    # token-boundary awareness unconditionally: "$name" only matches when the
+    # next character is not a valid key-name character, so "$name_suffix" is
+    # never corrupted when only "name" is in the snapshot.
+    #
+    # The lookahead additionally excludes "." — but ONLY for keys that have a
+    # longer dotted sibling actually present in the snapshot (e.g. "tool" when
+    # "tool.last_line" is also a snapshot key). That protects the case where
+    # the longer key's own value happens to be None (so it is skipped by the
+    # "val is not None" guard below and never gets its turn to substitute):
+    # without this exclusion, substituting "$tool" would partially corrupt the
+    # still-literal "$tool.last_line" token into "X.last_line" — a fresh
+    # corruption of the same class this function exists to prevent.
+    #
+    # For any other key, a "." is ordinary text (a filename extension, a
+    # sentence-ending period) and must NOT block substitution — that was the
+    # regression: "$name.txt" with only "name" defined must become
+    # "report.txt", not stay literal, because no "name.*" key exists in the
+    # snapshot to disambiguate against.
+    keys_with_dotted_sibling = {
+        key
+        for key in snapshot
+        if any(other != key and other.startswith(key + ".") for other in snapshot)
+    }
+
     for key in sorted(snapshot.keys(), key=len, reverse=True):
         val = snapshot.get(key)
         if val is not None and f"${key}" in text:
             _val = str(val)
+            boundary_chars = (
+                "A-Za-z0-9_." if key in keys_with_dotted_sibling else "A-Za-z0-9_"
+            )
             text = re.sub(
-                r"\$" + re.escape(key) + r"(?![A-Za-z0-9_.])",
+                r"\$" + re.escape(key) + r"(?![" + boundary_chars + r"])",
                 lambda m: _val,
                 text,
             )

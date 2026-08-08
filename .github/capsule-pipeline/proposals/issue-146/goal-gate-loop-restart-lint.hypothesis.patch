@@ -1,0 +1,45 @@
+# Crude hypothesis patch -- NOT a correct fix.
+#
+# Purpose: demonstrate the gate is non-vacuous by making DEFINITION.verify.sh
+# exit 0 with the minimal possible change to the codebase.
+#
+# What this does: extends the `has_retry` boolean in `_check_goal_gate_has_retry`
+# to also treat any outgoing edge with `loop_restart=true` as satisfying the
+# retry requirement.  This is the narrowest stub that silences the spurious
+# WARNING on `test_gate` in 00-convergence-loop.dot.
+#
+# Why this is "crude": it is not a correct fix in the sense of a production-
+# quality change -- it does not update the `fix` hint text, does not add a
+# regression test for the new branch, and does not touch the DEFINITION.md
+# non-goals.  It is the smallest possible code change that turns the gate green.
+#
+# Verified at SHA 44428ab67a530f23aa5579104f4ff68e4e809c37:
+#   - DEFINITION.verify.sh exits 0 with patch applied
+#   - 87 test_validation.py tests pass (including existing goal_gate_has_retry cases)
+#   - 30 test_examples_lint_clean.py tests pass
+#   - lint() on 00-convergence-loop.dot emits 0 diagnostics
+#
+# Apply via:
+#   git apply .ai/hypothesis.patch
+# from the repo root.
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+index c585e1d..d3bba4f 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+@@ -332,10 +332,16 @@ def _check_goal_gate_has_retry(graph: Graph, diags: list[Diagnostic]) -> None:
+     """LINT: goal_gate_has_retry — goal gates should have retry targets."""
+     for node in graph.nodes.values():
+         if resolve_bool_attr(node.attrs.get("goal_gate"), "goal_gate"):
++            has_loop_restart_edge = any(
++                e.loop_restart
++                for e in graph.edges
++                if e.from_node == node.id
++            )
+             has_retry = bool(
+                 node.attrs.get("retry_target")
+                 or node.attrs.get("fallback_retry_target")
+                 or graph.graph_attrs.get("retry_target")
++                or has_loop_restart_edge
+             )
+             if not has_retry:
+                 diags.append(

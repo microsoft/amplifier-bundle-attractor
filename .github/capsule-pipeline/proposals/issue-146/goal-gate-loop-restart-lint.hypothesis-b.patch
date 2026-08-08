@@ -1,0 +1,59 @@
+# Crude hypothesis patch B -- NOT a correct fix.
+#
+# Purpose: demonstrate that DEFINITION.verify.sh turns green via a SECOND,
+# genuinely different mechanism from hypothesis.patch.
+#
+# Shape comparison vs. hypothesis.patch:
+#   hypothesis.patch  -- modifies validation.py (Python, the rule checker)
+#                        WIDENS the rule to also accept loop_restart edges
+#                        operation: adds code to the checker
+#   hypothesis_b.patch -- modifies examples/pipelines/00-convergence-loop.dot (DOT data)
+#                         TEACHES the data to satisfy the existing rule as-is
+#                         operation: adds retry_target="implement" attribute to test_gate
+#
+# Opposite polarity:
+#   A fixes the rule so it accepts the example.
+#   B fixes the example so it satisfies the rule.
+#
+# Different file, different language (DOT vs. Python), different operation
+# (attribute addition vs. boolean expression widening), opposite direction.
+#
+# Why this is "crude": adding retry_target="implement" to the test_gate node
+# in the tutorial DOT is misleading -- it implies that retry_target is required
+# alongside loop_restart="true", which is not the intended teaching pattern.
+# The example deliberately uses the edge-based retry idiom without a redundant
+# retry_target attribute.  This patch silences the warning by satisfying the
+# attribute check, not by making the code correct.
+#
+# Mechanism:
+#   _check_goal_gate_has_retry computes:
+#       has_retry = bool(node.attrs.get("retry_target") or ...)
+#   Adding retry_target="implement" makes node.attrs.get("retry_target")
+#   return "implement" (truthy), so has_retry is True and no WARNING is emitted.
+#   _check_retry_target_exists also checks that the target node exists --
+#   "implement" is a valid node ID in the graph, so no additional diagnostic fires.
+#
+# Verified at SHA 44428ab67a530f23aa5579104f4ff68e4e809c37:
+#   - DEFINITION.verify.sh exits 0 with patch applied
+#   - 87 test_validation.py tests pass (validation.py is not modified)
+#   - 30 test_examples_lint_clean.py tests pass (no ERROR-severity findings)
+#   - lint() on 00-convergence-loop.dot emits 0 diagnostics
+#   - Tree hard-reset to 44428ab after verification; gate confirmed red again
+#
+# Apply via:
+#   git apply .ai/hypothesis_b.patch
+# from the repo root.
+diff --git a/examples/pipelines/00-convergence-loop.dot b/examples/pipelines/00-convergence-loop.dot
+index b2d7582..fc266dc 100644
+--- a/examples/pipelines/00-convergence-loop.dot
++++ b/examples/pipelines/00-convergence-loop.dot
+@@ -58,7 +58,8 @@ digraph convergence_loop {
+         shape=parallelogram,
+         label="pytest",
+         tool_command="pytest -q test_word_counter.py > test_output.txt 2>&1 && echo gate_pass || echo gate_fail",
+-        goal_gate=true
++        goal_gate=true,
++        retry_target="implement"
+     ]
+ 
+     // --- Exit ---

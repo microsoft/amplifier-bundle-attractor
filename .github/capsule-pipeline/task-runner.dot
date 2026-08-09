@@ -1,10 +1,13 @@
 // ============================================================================
 // VENDORED COPY -- see .github/capsule-pipeline/README.md for provenance,
 // scope, and re-sync instructions. Source: a private working repository
-// (not publicly reachable), pinned at its commit f5322c24ed6fd8deaeddb519de7bfdfa861094d9
-// (runner/task-runner.dot, 2026-08-03). This copy is otherwise byte-identical
-// to the source file below this header -- do not hand-edit the body; re-sync
-// from source and re-apply this header instead.
+// (not publicly reachable), pinned at its commit b3bcedb5da8d60ce4490ad9ad9e2d547235891f5
+// (runner/task-runner.dot, 2026-08-09 -- subtraction sweep: source header
+// slimmed 518 -> 419 lines (155 -> 56-line header; doctrine -> primer
+// cites) plus three stale in-body pointer fixes; node/edge declarations
+// UNCHANGED, 24). This copy is byte-identical to the source file below this
+// header -- do not hand-edit the body; re-sync from source and re-apply
+// this header instead.
 //
 // WHY THIS FILE IS VENDORED HERE: this is the "implement" stage of the
 // issue->attractor->PR system (see DESIGN-issue-to-attractor-pipeline.md
@@ -68,7 +71,11 @@
 //        fails the job before the run starts if OPENAI_API_KEY is absent --
 //        no more silent single-provider fallback at either layer. This file
 //        is once again a clean, unmodified copy of the pristine source for
-//        the critique_b node.
+//        the critique_b node. (The reverting pass also left a 15-line
+//        comment block INSIDE the critique_b node recording this timeline;
+//        the 2026-08-09 subtraction-sweep re-sync moved that record here --
+//        the body below is now byte-identical to source, as this header
+//        claims.)
 //
 // KNOWN, NAMED GAP CARRIED FORWARD (not fixed here, per the design doc's
 // own honesty norm, DESIGN-issue-to-attractor-pipeline.md section 6,
@@ -84,14 +91,25 @@
 // ============================================================================
 // Backlog Task Runner — an exemplar attractor
 // ============================================================================
-// Takes ONE backlog task (goal + rationale + executable DoD) and converges on
-// its completion. One run per task. Grounded in the StrongDM methodology:
-// the exit is structurally unreachable until evidence says the work is done.
+// GOAL (the one sentence; the graph goal= attribute matches it): take ONE
+// backlog task (goal + rationale + executable DoD) and converge on its
+// completion — the exit is structurally unreachable until evidence says the
+// work is done.
 //
-// Invocation (per KNOWN_ISSUES: process cwd MUST equal --cwd for box nodes).
+// Doctrine and engine semantics live in context/primer.md (the O(1) home):
+// reference shape §5; core doctrine §4 (expensive model in the gate: §4.12);
+// engine foot-gun card §6 (stale-label §6.11, param namespace §6.12,
+// target_dir seeding §6.13, fresh-eyes fidelity §6.14, goal gates fail-closed
+// §6.15, four-layer code identity §6.17, must_write= artifact contract §6.18
+// / engine EXTENSIONS §27). Design history lives in git and in the comments
+// at the nodes and edges it shaped — not in this header.
+//
+// Invocation (process cwd MUST equal --cwd — primer §6.7/§6.13).
 // ATTRACTOR_PIPELINE_BUNDLE is REQUIRED for the dual-family critique: the
 // CLI's default base bundle mounts provider-anthropic only, so critique_b
-// would SILENTLY run on Anthropic (see the DUAL-FAMILY CRITIQUE block).
+// would SILENTLY run same-family. attractor-pipeline-dual.yaml mounts
+// provider-openai and pins the child agent's provider; the empirically-probed
+// model-resolution story is documented IN that file.
 //   cd <target_repo> && \
 //   ATTRACTOR_PIPELINE_BUNDLE=<runner_dir>/attractor-pipeline-dual.yaml \
 //   attractor run <runner_dir>/task-runner.dot \
@@ -102,140 +120,30 @@
 //
 // The task's DoD script is a sibling of the task file: either
 // <task-basename>.verify.sh or <id>.verify.sh (id = first two hyphen-joined
-// tokens, e.g. T0-1 from T0-1-revive-dead-edges.md). The runner accepts both.
+// tokens, e.g. T0-1 from T0-1-revive-dead-edges.md). On a human-gate
+// timeout/auto-approve the FIRST edge is chosen: Abandon is listed first so
+// unattended runs fail safe (honest FAIL + postmortem), never a budget loop.
 //
-// SHAPE (the doctrine, made visible):
-//   - INNER loop:  attempt -> verify -(red)-> triage -(novel)-> attempt
-//     Tight mechanical fix cycle. Session continuity (thread_id=work).
-//   - OUTER loop:  verify -(green)-> critique -> stamp_a -> critique_b
-//     -> verdict -(iterate)-> feedback -(loop_restart)-> attempt
-//     Quality convergence: fresh eyes each iteration + accumulated critique
-//     in .ai/feedback/ = descent, not a coin re-flip. The expensive gate is
-//     TWO independent reviewers from different model families (see DUAL-
-//     FAMILY CRITIQUE below); verdict ships only on consensus.
-//   - ROOT-CAUSE wall: same failure signature twice -> diagnose (stop
-//     patching; an attractor absorbs model drift, not deterministic bugs).
-//   - BUDGET as a decision point: verify itself walls the budget (green
-//     and red paths BOTH spend iterations) -> postmortem -> human gate,
-//     never a bare FAIL.
-//   - Gates are deterministic (parallelogram + exit codes + tool.last_line).
-//     No diamond+outcome= routing (dead-edge trap). Cheap gate (DoD script)
-//     before expensive gate (LLM critique). goal_gate on both gates makes
-//     the exit unearnable without evidence.
-//
-// VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON (expert-probed):
-//   - STALE-LABEL RULE (weakened upstream by T0-4/#110): a failing tool
-//     node does NOT refresh tool.last_line (ToolHandler returns early on
-//     nonzero exit), so on the SECOND+ visit to a gate a stale label can
-//     match a `context.tool.last_line=X` edge alongside an `outcome=fail`
-//     edge. The engine no longer fans out on multi-match — it picks ONE
-//     edge (weight, then lexical; spec §3.3) — but that pick can be the
-//     wrong edge, so the `&& outcome=success` conjunctions on gate edges
-//     here stay as defensive explicitness (runtime sibling of the diamond
-//     trap; lint TOPO-002 warns on the ambiguity).
-//   - PARAM NAMESPACE: engine substitution rewrites $name/${name} for any
-//     context/param key, and leaves unknown refs untouched. Shell variables
-//     here (VF, n, rc, sig, B, N, prev, ok, a, b, la, lb, sc, f, hs, last) are safe ONLY
-//     because no param shares their name. Never add a param named like a shell var.
-//   - context.target_dir (tool-node cwd) is seeded from --cwd, NOT from
-//     --param target_dir. The $target_dir param is prompt text for box
-//     nodes only. The invocation above keeps them identical on purpose.
-//   - loop_restart clears engine state but NOT backend thread transcripts;
-//     fresh-eyes re-entry is expressed via edge-level fidelity (highest
-//     precedence) on the feedback->attempt edge.
-//   - .ai/iter counts TOTAL verify attempts (inner fixes + outer
-//     iterations); the budget deliberately bounds total verification spend.
-//     LEDGER-DERIVED (EX-11/EX-12 live evidence: worker shell writes bumped
-//     .ai/iter mid-run — 1→2 stray, 2→4 jump — stealing budget rounds and
-//     corrupting ledger numbering): verify DERIVES the iteration as
-//     (count of prior "gate": "verify" records in .ai/convergence.jsonl)+1
-//     — its own append-only ledger, which workers don't touch — and only
-//     then writes the derived n to .ai/iter as a MIRROR for downstream
-//     readers (triage's exhausted check, verdict's record numbering,
-//     feedback's N-next.md naming). The mutable counter file is never the
-//     source of truth for the budget decision.
-//     Feedback file numbers may skip — they order chronologically.
-//   - MUST_WRITE ARTIFACT CONTRACT (engine EXTENSIONS §27, adopted T1-7
-//     council): critique/critique_b/postmortem declare must_write= on their
-//     output artifacts. The engine enforces existence + a FRESHNESS FLOOR
-//     (artifact mtime STRICTLY > that visit's node_start_wall — per-visit,
-//     rig-proven: a first-visit artifact is stale for visit 2) + non-trivial
-//     content. A violating completion consumes retry attempts IN PLACE
-//     (~1+max_retries backend calls), then FAILs loudly through the node's
-//     normal fail edges. Relative must_write paths resolve against
-//     context.target_dir (seeded from --cwd; the invocation above keeps
-//     --cwd and --param target_dir identical on purpose — §27 path rule).
-//   - On a human-gate timeout/auto-approve, the FIRST edge is chosen:
-//     Abandon is listed first so unattended runs fail safe (honest FAIL +
-//     postmortem) instead of looping on budget bumps.
-//   - SHIP-PATH TRANSIENT RECOVERY + BUDGET WALL AT VERIFY: critique/
-//     critique_b/feedback/package carry outcome=fail edges back to verify
-//     (see the edge block below). verify derives the iteration from the
-//     convergence ledger FIRST (writing the mirror to .ai/iter) and
-//     checks the budget BEFORE running the DoD script, so every re-entry
-//     spends an iteration and a PERSISTENT provider outage drains the
-//     budget through verify and escalates via postmortem->human
-//     (verify->postmortem on last_line=exhausted). The wall must live in
-//     verify: triage runs only on verify FAIL, so a red-path-only budget
-//     check lets critique(FAIL)->verify(PASS)->critique cycle forever
-//     until the engine step cap kills the run with a bare FAIL, bypassing
-//     the postmortem path (cross-provider review catch). orient stays
-//     fail-fast (fails early, cheap to relaunch); diagnose stays
-//     fail-fast (already inside failure handling — a failure there
-//     should surface, not loop). postmortem is NO LONGER fail-fast (T1-7
-//     council, S2): its FAIL routes through the pm_gate synthesizer so
-//     escalate always has an artifact — it still surfaces to the human,
-//     never loops. Triage keeps its own exhausted check as a
-//     harmless second wall.
-//   - CONVERGENCE RECORD: exactly TWO gates append to .ai/convergence.jsonl
-//     (not every gate). verify appends {"iteration", "gate": "verify",
-//     "pass"} per DoD run, plus {"iteration", "gate": "verify", "budget":
-//     "exhausted"} when the budget wall fires; verdict appends
-//     {"iteration", "gate": "critique", "ship", "a", "b"} per critique
-//     round (consensus plus each reviewer's individual classification as
-//     a STRING: "ship" / "iterate" / "noverdict" — an unwritten verdict
-//     is recorded "noverdict", never false). The
-//     descent curve is kept in files because the engine does not yet do
-//     this for us (see backlog task T1-1).
-//
-// DUAL-FAMILY CRITIQUE (strict consensus): a cross-provider review of this
-// runner caught a real blocker (the budget-blind recovery loop above) that
-// same-family review had missed — disagreement across model families is
-// signal (the bundle's own multi-lens doctrine). The expensive gate is two
-// INDEPENDENT reviewers from different model families run in SEQUENCE
-// (critique -> critique_b, with the stamp_a forge-guard glue between
-// them); critique_b must not read critique's output —
-// independence is what makes agreement meaningful. verdict ships only on
-// consensus (both SHIP); any WRITTEN refusal follows the existing
-// stall-count path, while an unwritten/malformed verdict is noverdict —
-// the round re-runs through verify under the budget wall (see the
-// WRITTEN-VERDICT CONTRACT at the verdict node). Sequential, not
-// parallel, deliberately: parallel component
-// branches route through run_subgraph's permissive fail path
-// (engine-semantics.md).
-// MODEL RESOLUTION REALITY (probed empirically in the eval DTU): node
-// llm_provider selects only the child AGENT profile; the provider that
-// actually serves the child is the FIRST provider mounted in the base
-// bundle, because the engine's per-node llm_provider override is lost on
-// the spawn path (foundation merges it into a top-level 'orchestrator'
-// mount-plan key while the real orchestrator lives under
-// session.orchestrator). With the CLI's default base bundle
-// (provider-anthropic only) an "openai" node answered CLAUDE-ANTHROPIC to
-// an identity probe. Two things were needed to get a real OpenAI critic:
-// (1) a base bundle that MOUNTS provider-openai, and (2) llm_provider
-// pinned in the attractor-agent-openai agent's own orchestrator config
-// (which travels the normal mount path). Both live in
-// attractor-pipeline-dual.yaml next to this file; with them the identity
-// probe answers GPT-OPENAI. The node's llm_model glob is delivered via
-// provider preferences (promotes the mounted provider, sets its
-// default_model to the live-resolved id).
-//
-// MODEL DOCTRINE: the expensive model belongs in the gates (critique,
-// diagnose) — gate quality determines basin depth; maker quality only
-// affects iteration count. Map via model_stylesheet in your deployment, e.g.:
-//   model_stylesheet=".gate { llm_model: <strong-reasoning-model> } .maker { llm_model: <standard-coding-model> }"
+// FILE CONTRACTS (specific to this graph; mechanism details live at the
+// nodes/edges that implement them):
+//   - PARAM NAMESPACE: shell vars in tool_commands (VF, n, rc, sig, B, N,
+//     prev, ok, a, b, la, lb, sc, f, hs, last) are safe ONLY because no param
+//     shares their name. Never add a param named like a shell var (§6.12).
+//   - BUDGET: .ai/iter counts TOTAL verify attempts and is LEDGER-DERIVED —
+//     verify recomputes it from .ai/convergence.jsonl (append-only; workers
+//     don't touch it) and writes .ai/iter only as a downstream mirror. The
+//     budget wall lives IN verify, so green-path and transient re-entries
+//     spend iterations too (see the TRANSIENT-RECOVERY edge block).
+//   - CONVERGENCE RECORD: exactly TWO gates append to .ai/convergence.jsonl —
+//     verify ({"gate": "verify", ...} + budget-exhausted records) and verdict
+//     ({"gate": "critique", "ship", "a", "b"}; an unwritten verdict is
+//     recorded "noverdict", never false).
+//   - DUAL-FAMILY CRITIQUE: two INDEPENDENT reviewers from different model
+//     families run in SEQUENCE (critique -> stamp_a -> critique_b); B never
+//     reads A's output; verdict ships only on consensus. Sequential, not
+//     parallel, deliberately: parallel branches route through run_subgraph's
+//     permissive fail path (engine-semantics.md).
 // ============================================================================
-
 digraph BacklogTaskRunner {
     graph [
         goal="Complete the backlog task described by the task_file parameter to its full definition of done: the task's DoD script passes, and the work survives a strict doctrine critique against the task's judgment criteria.",
@@ -313,7 +221,7 @@ digraph BacklogTaskRunner {
     // skeleton. Live noverdict rates that ended prompt-level discipline:
     // 0/6 → 1/8 → 7/16 critic-rounds (EX-12, T1-4, T1-7) — the prompt
     // ceiling is measured, not assumed. Relative path resolves against
-    // context.target_dir per §27 (see header MUST_WRITE bullet).
+    // context.target_dir per §27 (primer §6.18 / engine EXTENSIONS §27).
     critique [shape=box, class="gate", must_write=".ai/critique.md",
         prompt="The mechanical DoD script passed. Now judge the work against the task's FULL definition of done — especially the judgment criteria the script cannot check. Read the task file at $task_file, the brief at .ai/brief.md, and review the ACTUAL changes in $target_dir (git diff, new and changed files; .ai/verify.log for what was verified). Apply the doctrine: evidence over claims — verify that claimed evidence is real; no test-gaming or DoD-script-gaming; docs and paired guides updated; repo conventions honored; non-goals respected; exemplar quality where the task demands it. HARD EVIDENCE RULE: a blocking finding MUST include its reproduction re-run against the CURRENT tree in THIS iteration — quote the exact command and its output. A finding carried over from a previous iteration without fresh re-run evidence is not a finding: re-run it first; if it no longer reproduces, say so explicitly and drop it. Your own prior critique is a hypothesis to re-verify, never evidence. Write .ai/critique.md: specific findings with file references, then a final line reading exactly 'VERDICT: SHIP' or 'VERDICT: ITERATE'. Be strict — a wrong-but-plausible result that ships is worse than another iteration."]
 
@@ -351,7 +259,7 @@ digraph BacklogTaskRunner {
         tool_command="hs=$(sha256sum .ai/critique.md 2>/dev/null) && printf '%s' \"${hs%% *}\" > .ai/critique.hash && printf stamped || { printf nostamp; exit 1; }"]
 
     // Second, INDEPENDENT reviewer from a different model family. Runs
-    // sequentially after critique (not in parallel — see header). Must not
+    // sequentially after critique (not in parallel — see FILE CONTRACTS). Must not
     // read .ai/critique.md: independence is what makes agreement
     // meaningful. llm_provider routes via the CLI profiles map to the
     // openai child agent; the OpenAI-family model is actually delivered by
@@ -359,21 +267,6 @@ digraph BacklogTaskRunner {
     // header — without it this node silently runs on Anthropic). llm_model
     // uses the repo's documented generation-range glob (resolved live to
     // the newest served model).
-    // REVERTED (issue #155): this node is byte-identical to upstream source
-    // commit f5322c24ed6fd8deaeddb519de7bfdfa861094d9 again. A prior pass
-    // (see this file's header, INVOCATION RECONCILIATION item 2) removed
-    // `llm_provider="openai", llm_model="gpt-[5-9]*"` from this node because
-    // this repo had no OPENAI_API_KEY secret and the attribute hard-crashed
-    // the node every round ("no adapter found for provider 'openai'"). A
-    // real OPENAI_API_KEY secret now exists, the invoking workflow
-    // unconditionally mounts attractor-pipeline-dual.yaml (which mounts
-    // provider-openai AND pins llm_provider=openai in the
-    // attractor-agent-openai agent's own orchestrator config -- see that
-    // file's header for why both are required), and the workflow's preflight
-    // check fails the job loudly before this node could ever be reached if
-    // that key were somehow missing. The two attributes are restored so
-    // critique_b is once again served by a genuinely independent,
-    // different-family model from `critique` (Anthropic).
     critique_b [shape=box, class="gate", llm_provider="openai", llm_model="gpt-[5-9]*", must_write=".ai/critique-b.md",
         prompt="You are a second, independent reviewer from a DIFFERENT model family than the first reviewer. Do NOT read .ai/critique.md and do NOT assume any other reviewer's conclusions — your value is independent judgment. The mechanical DoD script passed. Judge the work against the task's FULL definition of done — especially the judgment criteria the script cannot check. Read the task file at $task_file, the brief at .ai/brief.md, and review the ACTUAL changes in $target_dir (git diff, new and changed files; .ai/verify.log for what was verified). Apply the doctrine: evidence over claims — verify that claimed evidence is real; no test-gaming or DoD-script-gaming; docs and paired guides updated; repo conventions honored; non-goals respected; exemplar quality where the task demands it. HARD EVIDENCE RULE: a blocking finding MUST include its reproduction re-run against the CURRENT tree in THIS iteration — quote the exact command and its output. A finding carried over from a previous iteration without fresh re-run evidence is not a finding: re-run it first; if it no longer reproduces, say so explicitly and drop it. Your own prior critique is a hypothesis to re-verify, never evidence. Write .ai/critique-b.md: specific findings with file references, then a final line reading exactly 'VERDICT: SHIP' or 'VERDICT: ITERATE'. Be strict — a wrong-but-plausible result that ships is worse than another iteration."]
 
@@ -517,14 +410,14 @@ digraph BacklogTaskRunner {
     // NOTE `&& outcome=success`: a failing verify does NOT refresh
     // tool.last_line; the conjunction keeps a stale 'green' + FAIL from
     // even being a candidate edge (defensive post-T0-4 — pre-T0-4 engines
-    // fanned out here; see STALE-LABEL RULE above).
+    // fanned out here; stale-label rule: primer §6.11).
     verify -> critique [condition="context.tool.last_line=green && outcome=success"]
     verify -> triage   [condition="outcome=fail"]
     // Budget wall (cross-provider review catch): verify spends the budget
     // on EVERY entry — green path and transient re-entries included — and
     // routes exhaustion to the decision point. `&& outcome=success` is the
     // defensive STALE-LABEL conjunction (verify carries an outcome=fail
-    // edge; a stale 'exhausted' + FAIL must not compete — see rule above).
+    // edge; a stale 'exhausted' + FAIL must not compete — primer §6.11).
     verify -> postmortem [condition="context.tool.last_line=exhausted && outcome=success", label="budget exhausted"]
 
     // Inner loop + root-cause wall + budget wall.
@@ -573,7 +466,7 @@ digraph BacklogTaskRunner {
     // once credited is DELETED; the floor owns the class now).
     // The stall counter is UNTOUCHED. `&& outcome=success` is the
     // defensive STALE-LABEL conjunction (verdict carries an outcome=fail
-    // edge; a stale 'noverdict' + FAIL must not compete — see rule above).
+    // edge; a stale 'noverdict' + FAIL must not compete — primer §6.11).
     verdict  -> verify   [condition="context.tool.last_line=noverdict && outcome=success", label="no verdict written — re-run round via cheap gate"]
     // Edge-level fidelity (highest precedence) forces the fresh-eyes reset:
     // loop_restart alone does NOT clear the thread_id=work transcript.

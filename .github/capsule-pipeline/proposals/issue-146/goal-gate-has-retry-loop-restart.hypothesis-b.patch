@@ -1,0 +1,38 @@
+# CRUDE STUB: inlines the loop_restart edge scan directly inside
+# _check_goal_gate_has_retry in validation.py using the existing
+# graph.outgoing_edges() method.  This silences the goal_gate_has_retry lint
+# warning for 00-convergence-loop.dot by recognising the outgoing loop_restart
+# edge as satisfying the retry requirement.
+#
+# Shape contrast with hypothesis A:
+#   hypothesis A modifies examples/pipelines/00-convergence-loop.dot (adds
+#   retry_target attribute to the test_gate node -- example repair, zero
+#   changes to Python source).
+#
+# Shape contrast with the previous hypothesis B (iteration 2):
+#   The iteration-2 B patch touched TWO files: it added a new
+#   has_loop_restart_from() helper method to graph.py and then called that
+#   method from validation.py.  This patch touches ONE file only (validation.py)
+#   and inlines the edge scan as a generator expression directly in the has_retry
+#   boolean, using the already-present graph.outgoing_edges() method.  No new
+#   abstraction is introduced; the logic lives entirely inside the validation
+#   layer.  Different file count, different internal structure, same observable
+#   outcome.
+#
+# Why this is still NOT a correct fix: it is correct in behaviour, but it is
+# a crude stub in the sense that the generator expression is ad-hoc and
+# undocumented -- a real fix would also update the rule's docstring and the
+# fix-hint message to mention loop_restart edges as a valid retry mechanism.
+# Neither the docstring nor the fix message is updated here.
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+index c585e1d..8d80bf8 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+@@ -336,6 +336,7 @@ def _check_goal_gate_has_retry(graph: Graph, diags: list[Diagnostic]) -> None:
+                 node.attrs.get("retry_target")
+                 or node.attrs.get("fallback_retry_target")
+                 or graph.graph_attrs.get("retry_target")
++                or any(bool(e.loop_restart) for e in graph.outgoing_edges(node.id))
+             )
+             if not has_retry:
+                 diags.append(

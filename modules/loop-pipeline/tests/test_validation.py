@@ -242,6 +242,31 @@ def test_goal_gate_without_retry_target():
     )
 
 
+def test_goal_gate_with_loop_restart_edge():
+    """No warning when goal_gate=true node has an outgoing loop_restart=true edge.
+
+    This is the canonical convergence-loop pattern: the gate routes back to the
+    worker via a loop_restart back-edge rather than a retry_target attribute.
+    The rule must recognise this as a valid retry mechanism and not fire.
+    """
+    g = _graph(
+        nodes={
+            "start": _mdiamond(),
+            "worker": _box("worker"),
+            "gate": _box("gate", attrs={"goal_gate": True}),
+            "exit": _msquare(),
+        },
+        edges=[
+            Edge(from_node="start", to_node="worker"),
+            Edge(from_node="worker", to_node="gate"),
+            Edge(from_node="gate", to_node="exit", attrs={"condition": "ok"}),
+            Edge(from_node="gate", to_node="worker", loop_restart=True),
+        ],
+    )
+    diags = validate(g)
+    assert not any(d.rule == "goal_gate_has_retry" for d in diags)
+
+
 def test_prompt_on_llm_nodes():
     """WARNING: codergen nodes should have prompt or label."""
     # A box node with no prompt and default label (= id) triggers warning

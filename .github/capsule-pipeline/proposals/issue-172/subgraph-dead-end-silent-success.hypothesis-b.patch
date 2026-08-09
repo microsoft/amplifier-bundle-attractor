@@ -1,0 +1,216 @@
+# Hypothesis B patch -- crude stub to turn DEFINITION.verify.sh GREEN.
+#
+# Iteration 3 (replaces iteration 2 / shape D-old, which failed probe 3 with
+# the updated valid-fan-in topology in DEFINITION.verify.sh iteration 5).
+# This is NOT a correct fix. It is a deliberately crude hack whose only goal
+# is to make the gate exit 0 through a DIFFERENT mechanism than hypothesis.patch.
+#
+# ============================================================================
+# SHAPE COMPARISON: hypothesis.patch (A) vs hypothesis_b.patch (D-new)
+# ============================================================================
+#
+# hypothesis.patch (shape A):
+#   - Files touched: engine.py + handlers/fan_in.py (TWO files)
+#   - Mechanism for probe 1: post-hoc check in run_subgraph AFTER
+#     select_edge() returns None; calls outgoing_edges() to distinguish
+#     dead-end from no-edges; constructs Outcome(FAIL) inline.
+#   - Mechanism for probe 3: FanInHandler (fan_in.py) short-circuits
+#     if any branch result has status="fail" -- intercepts INSIDE the
+#     fan-in node's execution, after the engine has already routed to it.
+#   - Interception layer for probe 3: fan-in node handler (fan_in.py)
+#   - numstat: +31/-1 across 2 files
+#
+# hypothesis_b.patch (shape D-new):
+#   - Files touched: engine.py ONLY (ONE file, two hunks)
+#   - Mechanism for probe 1: identical to shape A (same hunk 1 in
+#     run_subgraph) -- this is acceptable because the probe 3 mechanism
+#     is genuinely different.
+#   - Mechanism for probe 3: engine.py's component-routing block
+#     (the "if current_node.shape == 'component'" section in run())
+#     short-circuits BEFORE routing to the fan-in node.  If the parallel
+#     handler's outcome is not SUCCESS, the engine returns the outcome
+#     directly without ever running the FanInHandler.
+#   - Interception layer for probe 3: engine routing block (engine.py),
+#     BEFORE the fan-in node runs -- the FanInHandler never executes.
+#   - numstat: +32/-1 across 1 file
+#
+# The two shapes are OPPOSITE in probe 3 mechanism:
+#   A: intercepts INSIDE the fan-in node handler (fan_in.py) -- the
+#      fan-in node runs but its handler short-circuits.
+#   D: intercepts BEFORE the fan-in node runs (engine.py routing block)
+#      -- the fan-in node never executes at all.
+#
+# Additional structural differences:
+#   A: touches two files (engine.py, handlers/fan_in.py)
+#   D: touches one file (engine.py), two hunks at different sites
+#
+#   A: probe 3 fix lives in the fan-in aggregation layer
+#   D: probe 3 fix lives in the engine routing layer
+#
+#   A: the fan-in node's execution is reached but short-circuited
+#   D: the fan-in node's execution is bypassed entirely by the engine
+#
+# ============================================================================
+# WHY PROBE 1 PASSES (conditional-mismatch dead end, run_subgraph)
+# ============================================================================
+#
+# DEAD_END_NODE succeeds; its only outgoing edge has condition="outcome=fail".
+# run_subgraph calls select_edge(DEAD_END_NODE, ...) => returns None.
+# Hunk 1 (run_subgraph): outgoing_edges(DEAD_END_NODE) returns [the
+#   condition=fail edge] (non-empty) => returns Outcome(FAIL, failure_reason=
+#   "Subgraph dead end at 'DEAD_END_NODE': no outgoing edge matched
+#   outcome='success'").
+# Probe 1 asserts status==FAIL with non-empty failure_reason AND node ran
+# exactly once => PASSES.
+#
+# ============================================================================
+# WHY PROBE 2 PASSES (mixed-scope / whole-scope suppression guard)
+# ============================================================================
+#
+# GOOD_NODE succeeds; its outgoing edge is unconditional.
+# run_subgraph calls select_edge(GOOD_NODE, ...) => returns the unconditional
+# edge (not None). Hunk 1's outgoing_edges() branch is never reached.
+# run_subgraph advances to GOOD_EXIT_NODE (shape=Msquare, is_exit_node()=True).
+# On the next loop iteration, is_exit_node() fires and returns last_outcome
+# (SUCCESS) BEFORE select_edge is called for GOOD_EXIT_NODE.
+# Probe 2 asserts status==SUCCESS => PASSES.
+#
+# ============================================================================
+# WHY PROBE 3 PASSES (composed parent outcome, parallel branch surface)
+# ============================================================================
+#
+# Probe 3 graph has a valid fan-in topology: both branches have a graph-level
+# path to PAR_FAN_IN (PAR_DEAD_BRANCH -> PAR_DEAD_NEXT -> PAR_FAN_IN and
+# PAR_GOOD_BRANCH -> PAR_FAN_IN). _find_fan_in_node() succeeds.
+#
+# At runtime:
+#   1. Engine runs PAR_FAN_OUT (shape=component) via ParallelHandler.
+#   2. ParallelHandler runs both branches via run_subgraph:
+#      - PAR_DEAD_BRANCH: succeeds; only outgoing edge has condition="outcome=fail"
+#        => select_edge returns None; outgoing_edges() is non-empty =>
+#        Hunk 1 returns Outcome(FAIL, failure_reason="Subgraph dead end at ...").
+#      - PAR_GOOD_BRANCH: succeeds; unconditional edge to PAR_FAN_IN
+#        (shape=tripleoctagon) => is_exit_node() fires at PAR_FAN_IN =>
+#        run_subgraph returns SUCCESS.
+#   3. _apply_join_policy(wait_all): 1 SUCCESS + 1 FAIL => returns
+#      Outcome(PARTIAL_SUCCESS, ...).
+#   4. ParallelHandler returns PARTIAL_SUCCESS to engine (stored in `outcome`).
+#   5. Engine: current_node.shape == "component", len(all_branches) > 1.
+#   6. _find_fan_in_node() => PAR_FAN_IN (not None).
+#   7. Hunk 2: outcome.status == PARTIAL_SUCCESS != SUCCESS =>
+#      _emit_complete(outcome, ...) and return outcome (PARTIAL_SUCCESS).
+#   8. par_outcome.status == PARTIAL_SUCCESS != SUCCESS => probe 3 PASSES.
+#
+# Note: PAR_DEAD_NEXT never runs (PAR_DEAD_BRANCH dead-ends before reaching
+# it), so the probe's PAR_DEAD_NEXT count check (== 0) also passes.
+#
+# ============================================================================
+# WHY THIS IS STILL A CRUDE STUB (NOT A CORRECT FIX)
+# ============================================================================
+#
+# Hunk 1 (run_subgraph dead-end detection):
+#   - Same crudeness as shape A hunk 1 (see hypothesis.patch for full list).
+#   - Does not update context/engine-semantics.md §3 or specs/EXTENSIONS.md §33.
+#   - Does not update tests/test_subgraph_runner.py::test_run_from_stops_at_dead_end.
+#   - Does not emit PIPELINE_ERROR events from run_subgraph.
+#
+# Hunk 2 (component routing short-circuit):
+#   - Wrong layer: the engine's routing block is not the right place to gate
+#     on branch health.  The fan-in node exists precisely to aggregate branch
+#     results; bypassing it entirely removes all fan-in aggregation logic
+#     (LLM evaluation, heuristic selection, context recording of best_id/
+#     best_status/best_outcome).
+#   - Breaks legitimate use cases: a pipeline that uses a fan-in node to
+#     explicitly handle partial failures (e.g. "select the best result even
+#     if some branches failed") will never run its fan-in node when any
+#     branch fails.  This is a broader breakage than shape A's fan_in.py
+#     stub, which at least runs the fan-in node before short-circuiting.
+#   - The returned outcome has failure_reason=None (from _apply_join_policy's
+#     PARTIAL_SUCCESS return); a correct fix would surface the dead-end
+#     failure_reason from the failed branch.
+#   - No doc, spec, or test updates for the new routing behavior.
+#   - _emit_complete is called with the PARTIAL_SUCCESS outcome, not a proper
+#     FAIL outcome; the pipeline events stream will show PARTIAL_SUCCESS as
+#     the final status, which is misleading.
+#
+# A correct fix would:
+#   1. Keep detection in run_subgraph (engine.py) for the dead-end case.
+#   2. Propagate the dead-end failure_reason through parallel.results so the
+#      fan-in node can see it and aggregate correctly.
+#   3. Update the fan-in node's aggregation logic to treat a dead-end branch
+#      as a hard failure (not just a lower-ranked candidate).
+#   4. Update context/engine-semantics.md §3 and specs/EXTENSIONS.md §33.
+#   5. Update tests/test_subgraph_runner.py::test_run_from_stops_at_dead_end.
+#
+# ============================================================================
+# VERIFIED BEHAVIOR (iteration 3)
+# ============================================================================
+#
+#   - git apply --check: clean apply at base SHA 64de299651b1d326ee5451a690cb1c51ff6bbca8
+#   - With patch applied: DEFINITION.verify.sh exits 0 (all three probes green)
+#       OK probe1: run_subgraph dead-end returned status='fail' with non-empty
+#                  failure_reason and dead-end node ran exactly once
+#                  (failure_reason="Subgraph dead end at 'dead_end_7858_32577':
+#                  no outgoing edge matched outcome='success'", count=1)
+#       OK probe2: run_subgraph on a node with a reachable exit returned
+#                  status='success' as expected (mixed-scope guard passed)
+#       OK probe3: parallel pipeline with a dead-ended branch returned
+#                  status=<StageStatus.PARTIAL_SUCCESS: 'partial_success'>
+#                  (not success) as expected (failure_reason=None)
+#   - With patch reverted: DEFINITION.verify.sh exits 1 (probe 1 red)
+#       FAIL probe1: run_subgraph dead-end returned status='success' but
+#                    expected 'fail' (failure_reason=None)
+#
+# numstat: +32 lines / -1 line across 1 file (engine.py only)
+#
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py
+index cb62067..e5676f6 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py
+@@ -833,6 +833,24 @@ class PipelineEngine:
+                         )
+                         await self._emit_complete(fail_outcome, pipeline_start_time)
+                         return fail_outcome
++                    # HYPOTHESIS STUB (shape D, hunk 2 -- NOT a correct fix):
++                    # If the parallel handler returned a non-success outcome
++                    # (i.e. at least one branch failed), short-circuit before
++                    # routing to the fan-in node.  Return the parallel handler's
++                    # outcome directly so the parent pipeline sees the failure.
++                    #
++                    # This is crude: a correct fix would let the fan-in node
++                    # aggregate the branch results and decide the outcome; the
++                    # engine's routing block is not the right place to gate on
++                    # branch health.  This also breaks pipelines that use a
++                    # fan-in node to explicitly handle partial failures (e.g.
++                    # a fan-in node that selects the best-of-N result even when
++                    # some branches failed).  A correct fix would propagate the
++                    # dead-end failure reason from the branch through the fan-in
++                    # aggregation logic, not bypass the fan-in entirely.
++                    if outcome.status != StageStatus.SUCCESS:
++                        await self._emit_complete(outcome, pipeline_start_time)
++                        return outcome
+                     logger.info(
+                         "Component node '%s' parallel fan-out complete; "
+                         "routing to fan-in node '%s'",
+@@ -1103,7 +1121,20 @@ class PipelineEngine:
+             # Select next edge
+             edge = select_edge(current_node.id, outcome, ctx, self.graph)
+             if edge is None:
+-                # No outgoing edge -- subgraph is complete
++                # HYPOTHESIS STUB (shape D, hunk 1 -- NOT a correct fix):
++                # Distinguish conditional-mismatch dead end from no-outgoing-edges.
++                # If outgoing edges exist but none matched, return FAIL (probe 1).
++                # If no outgoing edges at all, return outcome unchanged (preserves
++                # probe 2's normal completion path via is_exit_node() check above).
++                if self.graph.outgoing_edges(current_node.id):
++                    return Outcome(
++                        status=StageStatus.FAIL,
++                        failure_reason=(
++                            f"Subgraph dead end at '{current_node.id}': "
++                            f"no outgoing edge matched outcome={outcome.status.value!r}"
++                        ),
++                    )
++                # No outgoing edges at all -- subgraph is complete
+                 return outcome
+ 
+             current_node = self.graph.nodes[edge.to_node]

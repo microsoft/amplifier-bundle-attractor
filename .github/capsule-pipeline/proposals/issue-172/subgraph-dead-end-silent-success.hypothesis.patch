@@ -1,0 +1,160 @@
+# Hypothesis patch -- crude stub to turn DEFINITION.verify.sh GREEN.
+#
+# Iteration 5 -- two files (engine.py + handlers/fan_in.py).
+# Different from iteration 4: probe 3 is now satisfied by modifying the
+# FanInHandler to fail immediately when any branch result is "fail", rather
+# than modifying the component-routing section of engine.py's main loop.
+#
+# This is NOT a correct fix. It is a deliberately crude hack whose only goal
+# is to make the gate exit 0. A real fix is explicitly out of scope here.
+#
+# ============================================================================
+# TWO CHANGES, TWO FILES
+# ============================================================================
+#
+# Change 1 (engine.py, run_subgraph, ~line 1103): conditional-mismatch dead-end fix.
+#   When select_edge() returns None inside run_subgraph():
+#   - If outgoing edges exist (conditional mismatch): return Outcome(FAIL, ...)
+#   - If no outgoing edges at all: return outcome unchanged (original behavior)
+#   This is crude: a real fix would also handle the no-outgoing-edges case
+#   consistently and update docs/spec/tests.
+#
+# Change 2 (handlers/fan_in.py, FanInHandler.execute, ~line 85):
+#   If any branch result has status="fail", return FAIL immediately rather
+#   than picking the best (SUCCESS) candidate and masking the dead-ended branch.
+#   This is cruder than a real fix: it breaks legitimate use cases where partial
+#   failure is acceptable (e.g. first_success, k_of_n policies). A real fix
+#   would propagate the failure reason from the failed branch through the
+#   existing aggregation logic, not bypass it entirely.
+#
+# ============================================================================
+# WHY EACH PROBE PASSES
+# ============================================================================
+#
+# Probe 1 (conditional-mismatch dead end, run_subgraph):
+#   DEAD_END_NODE succeeds; its only outgoing edge has condition="outcome=fail"
+#   => select_edge returns None; outgoing_edges() is non-empty
+#   => Change 1 returns Outcome(FAIL, failure_reason=...).
+#   Probe 1 asserts status==FAIL with non-empty failure_reason AND node ran
+#   exactly once => PASSES.
+#
+# Probe 2 (mixed-scope / whole-scope suppression guard, run_subgraph):
+#   GOOD_NODE succeeds; its outgoing edge is unconditional => select_edge
+#   returns that edge (not None) => current_node advances to GOOD_EXIT_NODE
+#   (shape=Msquare). On the next loop iteration, is_exit_node() fires at
+#   line 1021 and returns last_outcome (SUCCESS) BEFORE select_edge is called
+#   for GOOD_EXIT_NODE. Change 1's outgoing_edges() branch is never reached
+#   for the GOOD_NODE path => probe 2 still returns SUCCESS => PASSES.
+#
+# Probe 3 (composed parent outcome, parallel branch surface, engine.run()):
+#   The probe 3 graph has a valid fan-in topology (both branches have a
+#   graph-level path to PAR_FAN_IN). At runtime:
+#   - Change 1 makes run_subgraph(PAR_DEAD_BRANCH) return FAIL (dead-end).
+#   - _apply_join_policy(wait_all) sees 1 SUCCESS + 1 FAIL => PARTIAL_SUCCESS.
+#   - Engine routes to PAR_FAN_IN (tripleoctagon / fan-in node).
+#   - Change 2: FanInHandler sees one result with status="fail" => returns
+#     Outcome(FAIL, failure_reason="Fan-in: at least one branch failed: ...").
+#   - Engine routes to PAR_DONE (unconditional edge from PAR_FAN_IN).
+#   - PAR_DONE is an exit node (Msquare); _check_goal_gates() returns the last
+#     outcome (FanInHandler's FAIL) => pipeline exits FAIL (not SUCCESS).
+#   Probe 3 asserts status != SUCCESS => PASSES.
+#
+# ============================================================================
+# WHY THIS IS STILL A CRUDE STUB (NOT A CORRECT FIX)
+# ============================================================================
+#
+# Change 1 (run_subgraph):
+#   - Does not update context/engine-semantics.md §3 (still documents
+#     run_subgraph as "no hard-fail on dead end").
+#   - Does not update specs/EXTENSIONS.md §33 compatibility note.
+#   - Does not update tests/test_subgraph_runner.py::test_run_from_stops_at_dead_end
+#     (which asserts SUCCESS for a no-outgoing-edge case).
+#   - Does not emit PIPELINE_ERROR events (the main loop does; run_subgraph doesn't).
+#
+# Change 2 (fan_in.py):
+#   - Breaks any pipeline that uses FanInHandler with a join policy that
+#     tolerates some branch failures (first_success, k_of_n, quorum).
+#   - The failure_reason is a generic stub message, not derived from the
+#     actual failed branch's failure_reason (lossy reconstruction).
+#   - A correct fix would propagate the dead-end failure reason from the
+#     branch through _apply_join_policy and the FanInHandler's existing
+#     aggregation logic, rather than short-circuiting it.
+#   - The FanInHandler is not the right place to enforce this: the fan-in
+#     node's job is to aggregate, not to gate on branch health. A correct
+#     fix belongs in run_subgraph (surfacing the failure) and the parallel
+#     handler's result recording, not in the fan-in's aggregation path.
+#
+# ============================================================================
+# VERIFIED BEHAVIOR (iteration 5)
+# ============================================================================
+#
+#   - git apply --check: clean apply at base SHA 64de299651b1d326ee5451a690cb1c51ff6bbca8
+#   - With patch applied: DEFINITION.verify.sh exits 0 (all three probes green)
+#       OK probe1: run_subgraph dead-end returned status='fail' with non-empty
+#                  failure_reason and dead-end node ran exactly once
+#                  (failure_reason="Subgraph dead end at 'dead_end_...':
+#                  no outgoing edge matched outcome='success'", count=1)
+#       OK probe2: run_subgraph on a node with a reachable exit returned
+#                  status='success' as expected (mixed-scope guard passed)
+#       OK probe3: parallel pipeline with a dead-ended branch returned
+#                  status=<StageStatus.FAIL: 'fail'> (not success) as expected
+#                  (failure_reason="Fan-in: at least one branch failed:
+#                  ['dead_branch_...']")
+#   - With patch reverted: DEFINITION.verify.sh exits 1 (probe 1 red)
+#       FAIL probe1: run_subgraph dead-end returned status='success' but
+#                    expected 'fail' (failure_reason=None)
+#
+# numstat: +31 lines / -1 line across 2 files (engine.py + handlers/fan_in.py)
+#
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py
+index cb62067..3275da6 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py
+@@ -1103,7 +1103,20 @@ class PipelineEngine:
+             # Select next edge
+             edge = select_edge(current_node.id, outcome, ctx, self.graph)
+             if edge is None:
+-                # No outgoing edge -- subgraph is complete
++                # CRUDE STUB (hypothesis patch iteration 5 -- NOT a correct fix):
++                # Distinguish conditional-mismatch dead end from no-outgoing-edges.
++                # If outgoing edges exist but none matched, return FAIL (probe 1).
++                # If no outgoing edges at all, return outcome unchanged (preserves
++                # probe 2's normal completion path via is_exit_node() check above).
++                if self.graph.outgoing_edges(current_node.id):
++                    return Outcome(
++                        status=StageStatus.FAIL,
++                        failure_reason=(
++                            f"Subgraph dead end at '{current_node.id}': "
++                            f"no outgoing edge matched outcome={outcome.status.value!r}"
++                        ),
++                    )
++                # No outgoing edges at all -- subgraph is complete
+                 return outcome
+ 
+             current_node = self.graph.nodes[edge.to_node]
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/fan_in.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/fan_in.py
+index 0f1edeb..e009c38 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/fan_in.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/fan_in.py
+@@ -85,6 +85,21 @@ class FanInHandler:
+                 failure_reason="No parallel results to evaluate",
+             )
+ 
++        # CRUDE STUB (hypothesis patch iteration 5 -- NOT a correct fix):
++        # If any branch failed, fail the fan-in immediately rather than
++        # picking the best (SUCCESS) candidate and masking the failed branch.
++        # This is cruder than a real fix: it breaks legitimate use cases where
++        # partial failure is acceptable (e.g. first_success, k_of_n policies
++        # that don't care about some branches failing). A real fix would
++        # propagate the failure reason from the failed branch, not just
++        # return a generic message.
++        if any(r.get("status") == "fail" for r in results):
++            failed = [r.get("node_id", "unknown") for r in results if r.get("status") == "fail"]
++            return Outcome(
++                status=StageStatus.FAIL,
++                failure_reason=f"Fan-in: at least one branch failed: {failed!r}",
++            )
++
+         # M-17: Use LLM-based evaluation when prompt and backend available
+         best: dict[str, Any] | None = None
+         if node.prompt and self._backend is not None:

@@ -1,13 +1,13 @@
 // ============================================================================
 // VENDORED COPY -- see .github/capsule-pipeline/README.md for provenance,
 // scope, and re-sync instructions. Source: a private working repository
-// (not publicly reachable), pinned at its commit 814754a09b63c12ccea6123d708f0e106dd124ef
-// (runner/capsule.dot, 2026-08-09 -- RC-8 synthetic-probe discipline: gate
-// probe names born at runtime, never fixed literals, plus mixed-scope probes
-// on per-item-scope subjects; prompt-level only, 33 nodes / 58 edges
-// unchanged). This copy is otherwise byte-identical to the source file below
-// this header -- do not hand-edit the body; re-sync from source and re-apply
-// this header instead.
+// (not publicly reachable), pinned at its commit b3bcedb5da8d60ce4490ad9ad9e2d547235891f5
+// (runner/capsule.dot, 2026-08-09 -- subtraction sweep: header slimmed
+// 498 -> 486 lines, doctrine text replaced by source-side primer citations
+// and the TIMEOUT ARITHMETIC block by a pointer to the source-side rig test
+// that recomputes it; nodes/edges UNCHANGED). This copy is otherwise
+// byte-identical to the source file below this header -- do not hand-edit
+// the body; re-sync from source and re-apply this header instead.
 // ============================================================================
 // ============================================================================
 // Capsule Pipeline -- issue-shaped report -> proven work definition
@@ -55,27 +55,15 @@
 // the escalate edges). For attended runs use `--on-human-gate console` to
 // answer [A]/[C]/[K] yourself.
 //
-// Engine semantics leaned on (verified; full card: context/primer.md sec 6):
-// FAIL/RETRY never traverse plain edges; a failing tool node does not refresh
-// tool.last_line (hence `&& outcome=success` on every last_line edge that
-// shares a source with an outcome=fail edge); must_write= enforces per-visit
-// artifact freshness; goal gates are fail-closed; optional params are read
-// into shell vars before defaulting; tool-node cwd == target_dir.
+// Engine semantics leaned on: verified foot-gun card in context/primer.md
+// sec 6 (FAIL routing, stale tool.last_line -- hence `&& outcome=success` on
+// every last_line edge that shares a source with an outcome=fail edge --
+// must_write=, fail-closed goal gates, param defaulting, tool-node cwd).
 //
-// TIMEOUT ARITHMETIC (rig-asserted: tests/test_timeout_arithmetic.sh):
-// worst-case explicit tool timeouts on the longest happy path = redgate 1x900
-// + nonvacuity_gate up to 6x900 (3 patch round-trips + 3 base-control runs)
-// + 2xRVTO=900 (the RC-6 rival lane: one rival round-trip + one base-control
-// re-run, each at most ONCE per gate visit) + 1xHPTO=900 (the relocated-
-// worktree hermeticity probe fires at most ONCE per gate visit, only after a
-// patch greens) + discrimination_check 1x900 = 9900s; + 7 LLM legs (orient,
-// rival, author, mutate, mutate_b, void, critique) at a 600s nominal
-// allowance = 4200s; (9900+4200) x 1.2 headroom = 16920s <= the 18000s fuse
-// below. (context/NOTES-fix-shape-independence.md sec 5.C computed 15840s
-// for the same change; its sum omitted the 900s hermeticity leg -- the
-// conclusion stands either way: the old 14400s fuse fails this arithmetic,
-// 18000s holds the house margin.) The original 3600s fuse vs 5x900 tool
-// legs failed this arithmetic first.
+// TIMEOUT ARITHMETIC is rig-asserted, not header-maintained:
+// tests/test_timeout_arithmetic.sh recomputes the worst case from this file's
+// text on every run -- any timeout/leg/fuse change that breaks the arithmetic
+// goes RED there instead of live.
 // ============================================================================
 
 digraph CapsulePipeline {

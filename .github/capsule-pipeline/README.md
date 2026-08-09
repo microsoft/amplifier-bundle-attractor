@@ -34,8 +34,7 @@ This directory wires two stages of an issue -> attractor -> PR system:
 | `attractor-pipeline-dual.yaml` | Multi-provider (Anthropic + OpenAI) base bundle. **Unconditionally wired into BOTH workflows**: `capsule-implement.yml` mounts it for `task-runner.dot`'s `critique_b` (issue #155), and `capsule-specify.yml` mounts it for `capsule.dot`'s `critique` node (the lean rebuild's one judgment node, which hard-declares `llm_provider="openai"`). Each workflow carries a loud preflight that refuses to start without `OPENAI_API_KEY`. |
 | `vendor/backlog/check-upstream-leaks.sh` | Publication-safety gate: scans the produced `DEFINITION.md` for internal working-vocabulary leaks before it ships in a PR. |
 | `vendor/backlog/fixtures/leak-scan/*` | Self-test fixtures for the scanner above (RED/GREEN controls). |
-| `vendor/runner/check-existing-tests.py` | **NO LONGER A BLOCKING GATE** (lean rebuild, council 2026-08-07): the `existing_test_gate` node this script backed was deleted from `capsule.dot`. It survives as a TOOL THE CRITIC MAY RUN — the `critique` node's prompt names it explicitly (`python3 $uplift_dir/runner/check-existing-tests.py --verify ... --repo .`) and treats its output as ADVISORY INPUT to a judgment, never as a verdict. **Still a load-bearing `importlib` import for `check-witness-gate.py`** (see below). |
-| `vendor/runner/check-witness-gate.py` | **NO LONGER A BLOCKING GATE** (lean rebuild): the `witness_gate` and `void_gate` nodes this script backed were deleted from `capsule.dot` — all three passive screens (this one, `check-degenerate-hack.py`, `diff_shape_gate`) PASSED the dodge they were built to catch on issue #146's live capsule, so nothing with that measured miss record keeps acquittal power over an executed result. It survives as a TOOL THE CRITIC MAY RUN (advisory input, never a verdict). Still imports `resolve_subject_symbols`/`walk_repo`/`STOPWORDS` from `check-existing-tests.py` **at runtime via `importlib`**, resolved relative to its own file location (`Path(__file__).resolve().parent`) — that sibling must stay vendored in the *same directory*. Its former second import (diff-hunk parsing from `check-degenerate-hack.py`) is gone: that checker was **deleted outright in the source** (measured miss on its own target class) and the one generic helper (`parse_hunks`) is now inlined here. |
+| `vendor/runner/check-existing-tests.py` | **NO LONGER A BLOCKING GATE** (lean rebuild, council 2026-08-07): the `existing_test_gate` node this script backed was deleted from `capsule.dot`. It survives as a TOOL THE CRITIC MAY RUN — the `critique` node's prompt names it explicitly (`python3 $uplift_dir/runner/check-existing-tests.py --verify ... --repo .`) and treats its output as ADVISORY INPUT to a judgment, never as a verdict. (It was also a load-bearing `importlib` import for `check-witness-gate.py` until that checker was **deleted in the 2026-08-09 subtraction-sweep re-sync** — see the re-sync log; it now stands alone.) |
 
 ## Provenance — these are VENDORED copies
 
@@ -60,7 +59,7 @@ logic:
 
 - `$uplift_dir/backlog/check-upstream-leaks.sh` (`setup` preflight existence check + `leak_gate` shell-out) -> `vendor/backlog/check-upstream-leaks.sh`
 - `$uplift_dir/runner/check-existing-tests.py` (named in the `critique` node's **LLM prompt** as a tool the judge MAY run -- an advisory input, not a `tool_command=` shell-out) -> `vendor/runner/check-existing-tests.py`
-- (`vendor/runner/check-witness-gate.py` has **zero** graph-level references as of the lean rebuild -- its gates were deleted. It stays vendored as a critic-runnable advisory tool per its own docstring, and `check-existing-tests.py` must stay its same-directory sibling for the `importlib` load below.)
+- (`vendor/runner/check-witness-gate.py` is **gone** as of the 2026-08-09 subtraction-sweep re-sync: it had held zero graph-level references since the lean rebuild, the source repository then deleted it outright — zero callers, verified by grep — and the vendored copy was deleted to match. Its former `importlib` dependency on `check-existing-tests.py` vanished with it; that sibling stays vendored for the `critique` prompt reference above.)
 
 The `vendor/` subtree therefore mirrors the source repository's own directory
 layout (`backlog/`, `runner/`) one level down -- this is deliberate, not
@@ -68,22 +67,23 @@ incidental: any future checker `capsule.dot` grows will resolve correctly
 under `uplift_dir` for free as long as it is vendored at the same relative
 path it lives at in the source, with no path-mapping logic to maintain here.
 
-**A reference exists that is *not* a `$uplift_dir/...` shell-out and
-will not be found by grepping `capsule.dot` for `uplift_dir` at all**:
-`check-witness-gate.py` loads `check-existing-tests.py` (for
-`resolve_subject_symbols`/`walk_repo`/`STOPWORDS`) directly via `importlib`,
-resolved relative to **its own file's location**
-(`Path(__file__).resolve().parent`) -- not via `uplift_dir`, not via a
-`sys.path` entry, and not via the graph at all. This means that sibling file
-must be vendored in the exact same directory as `check-witness-gate.py`
-(`vendor/runner/`), or the import silently resolves to nothing and the
-checker crashes at runtime with a `FileNotFoundError` that no static check
-on `capsule.dot` itself will ever surface. (Before the lean rebuild it also
-imported diff-hunk parsing from `check-degenerate-hack.py`; that checker was
-deleted in the source and the `parse_hunks` helper is now inlined, so the
-second sibling dependency is gone.) See "Re-syncing" step 2 below -- this is
-precisely the class of miss that caused this file's own previous re-sync to
-ship gates whose checker scripts weren't vendored.
+**A class of reference exists that is *not* a `$uplift_dir/...` shell-out
+and will not be found by grepping `capsule.dot` for `uplift_dir` at all**:
+a checker loading a sibling script directly via `importlib`, resolved
+relative to **its own file's location** (`Path(__file__).resolve().parent`)
+-- not via `uplift_dir`, not via a `sys.path` entry, and not via the graph
+at all. Such a sibling must be vendored in the exact same directory as its
+importer, or the import silently resolves to nothing and the checker
+crashes at runtime with a `FileNotFoundError` that no static check on
+`capsule.dot` itself will ever surface. (The live instance of this class
+was `check-witness-gate.py` loading `check-existing-tests.py` for
+`resolve_subject_symbols`/`walk_repo`/`STOPWORDS`; that importer was
+deleted in the 2026-08-09 subtraction-sweep re-sync, so as of that sync NO
+cross-checker `importlib` import remains in the vendored tree -- but the
+trap class stays named because the next vendored checker can reintroduce
+it.) See "Re-syncing" step 2 below -- this is precisely the class of miss
+that caused this file's own previous re-sync to ship gates whose checker
+scripts weren't vendored.
 
 **A distinct-but-related trap, closed in the void-probe sync (2026-08-07):**
 a *new node* can add a **second, independent, directly-visible**
@@ -130,18 +130,16 @@ exemplars), not in unexplained jargon from an unrelated private project.
 Nothing about the gate's DENY list needed to change for that reason; it is
 vendored as-is.
 
-**Known, harmless deviation**: `vendor/backlog/check-upstream-leaks.sh
---self-test` reports 2 of its 6 self-checks failing here (the GREEN controls
-that assert specific historical document text from the *source* repository
-scans clean, and that a specific historical task-ID census matches). Those
-two checks are about the source repository's own document set, not about
-this repository, and the same two checks already fail identically when run
-from the source repo's own checkout — this is a pre-existing property of the
-fixtures, not something vendoring introduced, and it does not affect the
-scanner's actual runtime behavior (scanning an arbitrary file against the
-DENY list), which is exercised directly by `leak_gate` in `capsule.dot` and
-was independently re-verified working (the 4 RED fixtures all still trip the
-scanner correctly) before this was wired up.
+**Historical deviation, since resolved**: an earlier fixture set made
+`vendor/backlog/check-upstream-leaks.sh --self-test` report 2 of its 6
+self-checks failing from this vendored location (GREEN controls asserting
+source-repository document text; they failed identically from the source
+repo's own checkout — a fixture property, not a vendoring defect). The
+current fixture set passes ALL self-checks from the vendored location
+(`PASS (RED x4, GREEN x2)`, re-verified at the 2026-08-09 subtraction-sweep
+re-sync). The scanner's runtime behavior (scanning an arbitrary file
+against the DENY list) is exercised directly by `leak_gate` in
+`capsule.dot`.
 
 ## Re-syncing
 
@@ -154,12 +152,13 @@ scanner correctly) before this was wired up.
    references (grep the new source for `uplift_dir`) -- every checker a
    `tool_command=` node shells out to must exist under `vendor/` at the exact
    relative path the graph resolves, or the corresponding gate breaks at
-   runtime instead of at review time. As of the 2026-08-08 lean-rebuild
-   re-sync that means: `backlog/check-upstream-leaks.sh` (the `setup`
-   preflight + `leak_gate`) and `runner/check-existing-tests.py` (named in
-   the `critique` node's LLM prompt as an advisory tool);
-   `runner/check-witness-gate.py` remains vendored with zero graph-level
-   callers (advisory-only). Also check the REVERSE direction: a re-sync can
+   runtime instead of at review time. As of the 2026-08-09
+   subtraction-sweep re-sync that means: `backlog/check-upstream-leaks.sh`
+   (the `setup` preflight + `leak_gate`) and
+   `runner/check-existing-tests.py` (named in the `critique` node's LLM
+   prompt as an advisory tool); `runner/check-witness-gate.py` was DELETED
+   (source deleted it at zero callers; the vendored copy went with it).
+   Also check the REVERSE direction: a re-sync can
    delete every caller of a checker (or, as with
    `runner/check-degenerate-hack.py` in this sync, delete the checker
    itself in the source) -- remove deleted files and re-count.
@@ -617,3 +616,73 @@ scanner correctly) before this was wired up.
   `task-runner.dot` was checked against the same source range and found
   **untouched** (identical blob `5d95826e` at `7cb9ebc`, `814754a`, and
   `dfbfe3d`) -- no re-sync needed.
+
+- **2026-08-09 (subtraction sweep)** -- a NET-NEGATIVE sync (+121/-843 in the
+  source commit): the source repository ran a measure-then-remove sweep and
+  this re-sync mirrors it. All three vendored-from-source files re-pinned to
+  the SAME source commit `b3bcedb5da8d60ce4490ad9ad9e2d547235891f5` (their
+  pins had been allowed to drift apart; they now coincide):
+  - `capsule.dot` re-synced `814754a09b63c12ccea6123d708f0e106dd124ef` ->
+    `b3bcedb`. Source header slimmed 498 -> 486 lines (doctrine text
+    replaced by source-side primer citations; the TIMEOUT ARITHMETIC block
+    replaced by a pointer to the source-side rig test that recomputes it).
+    Nodes/edges UNCHANGED. No `$uplift_dir/...` reference gained or lost.
+    No workflow change forced: the fuse (`max_pipeline_duration=18000`) and
+    every timeout literal are untouched, so `capsule-specify.yml`'s
+    360-minute budget still clears it.
+  - `task-runner.dot` re-synced `f5322c24ed6fd8deaeddb519de7bfdfa861094d9`
+    -> `b3bcedb` -- the FIRST re-sync of this file since it was vendored.
+    Source header slimmed 518 -> 419 lines (155 -> 56-line header) plus
+    three stale in-body pointer fixes; node/edge declarations UNCHANGED.
+    This sync also REMOVED the 15-line issue-#155 REVERTED comment block a
+    prior pass had inserted inside the `critique_b` node (its content moved
+    into this file's own provenance header, INVOCATION RECONCILIATION item
+    2), so the vendored body is now genuinely byte-identical to source --
+    `cmp` clean below the header, as the header has always claimed.
+  - `vendor/backlog/check-upstream-leaks.sh` re-synced
+    `67a53e531a133f44fa7bfc1afed3b6849a5a5610` -> `b3bcedb`. ONE deny-seed
+    RETIRED: `\bcapsules?\b` -- the word became PUBLIC vocabulary when this
+    very pipeline shipped upstream (301 occurrences of capsule/capsules in
+    this repository's shipped tree), and its measured cost was burning
+    iteration 1 in most runs (authors legitimately echo the word).
+    Retirement is recorded in the script's own SEED NOTES. No fixture
+    existed solely for that pattern, so none was removed; all 5 fixtures
+    byte-compare identical to `b3bcedb` (`cmp` clean) -- no re-copy needed.
+  - `vendor/runner/check-witness-gate.py` DELETED. The source deleted it
+    outright at ZERO callers (both graph nodes that once invoked it,
+    `witness_gate` and `void_gate`, died in the lean rebuild; verified by
+    grep on both sides). The reverse-direction rule in step 2 is exactly
+    what fired here. A full-repo dangling-reference sweep
+    (`grep -r "check-witness-gate"` across workflows, docs, and this
+    vendored tree) found NO load-bearing reference -- only prose in this
+    README (current-state sections updated in this pass; historical log
+    entries above left as history, they describe syncs that really
+    happened). With the importer gone, NO cross-checker `importlib` import
+    remains anywhere in `vendor/` (step 2a's grep of `vendor/runner/*.py`
+    shows only stdlib imports plus string-literal test fixtures).
+  - `vendor/runner/check-existing-tests.py` and
+    `attractor-pipeline-dual.yaml` verified byte-identical to `b3bcedb`
+    (`cmp` clean against their pins' bodies; both unchanged in the source
+    range) -- NOT touched.
+  - Call-site count (step 2b, both directions):
+    `backlog/check-upstream-leaks.sh` keeps its two graph-level call sites
+    (`setup` preflight, `leak_gate`); `runner/check-existing-tests.py`
+    keeps ONE LLM-prompt reference (`critique`);
+    `runner/check-witness-gate.py` goes from ZERO callers to NOT VENDORED.
+  Runtime proof performed (see the PR that performed this sync for full
+  transcripts): (1) `check-upstream-leaks.sh --self-test` from the vendored
+  location: `PASS (RED x4, GREEN x2)`. (2) `leak_gate`'s `tool_command=`
+  text, extracted verbatim from the re-synced `.dot` and run in a scratch
+  git repo with `uplift_dir` set exactly as `capsule-specify.yml` sets it:
+  a `DEFINITION.md` containing the word "capsule" now PASSES (`leak_clean`,
+  rc=0, ledger row `"clean": true`) while one containing "primer" still
+  TRIPS (rc=1, `.ai/gate.log` carrying
+  `LEAK-HIT [...] pattern '\bprimer\b'` + the BLOCKED line,
+  `last-stage-fail=round`) -- the retirement changed exactly the one seed
+  it claimed. (3) `attractor lint`: `capsule.dot` OK, no findings;
+  `task-runner.dot` 1 pre-existing CMD-001 warning (`ship_check` pipe to
+  grep) -- present identically on the previous vendored copy, 0 errors,
+  rc=0 on both files. (4) Node/edge parity, same comment-stripped count
+  method on vendored and source: `capsule.dot` 34 declaration statements
+  (33 nodes + the `graph [` attribute statement) / 58 edges on BOTH sides;
+  `task-runner.dot` 24 declaration statements / 36 edges on BOTH sides.

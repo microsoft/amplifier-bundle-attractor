@@ -3,11 +3,12 @@
 # VENDORED COPY -- see .github/capsule-pipeline/README.md for provenance,
 # scope, and re-sync instructions. Source: a private working repository
 # (not publicly reachable), pinned at its commit
-# 67a53e531a133f44fa7bfc1afed3b6849a5a5610 (backlog/check-upstream-leaks.sh,
-# 2026-08-06), fixtures from the same commit. Otherwise byte-identical to the
-# source below this header -- do not hand-edit the body; re-sync from source
-# and re-apply this header instead.
-# ============================================================================
+# b3bcedb5da8d60ce4490ad9ad9e2d547235891f5 (backlog/check-upstream-leaks.sh,
+# 2026-08-09 -- subtraction sweep: the \bcapsules?\b deny-seed RETIRED as
+# public upstream vocabulary, retirement recorded in the SEED NOTES below),
+# fixtures from the same commit. Otherwise byte-identical to the source
+# below this header -- do not hand-edit the body; re-sync from source and
+# re-apply this header instead.
 # ============================================================================
 # check-upstream-leaks.sh — structural-leak tripwire for upstream-bound text.
 #
@@ -67,6 +68,13 @@
 #     upstream's shipped tree contains zero uses of the word (same census
 #     ref). Section pointers into it are exactly the leak shape that
 #     slipped.
+#   - \bcapsules?\b RETIRED (subtraction sweep 2026-08-09): the word became
+#     PUBLIC vocabulary when the pipeline shipped upstream —
+#     .github/capsule-pipeline/ plus workflows/README/docs carry 301 uses of
+#     capsule/capsules in the shipped tree. Measured cost of keeping it:
+#     burned iteration 1 in 5/6 eval runs + live CI iteration burns (authors
+#     legitimately echo the word). No fixture existed solely for this
+#     pattern, so none was removed with it.
 #
 # Usage:
 #   backlog/check-upstream-leaks.sh <file>...     # scan files ('-' = stdin)
@@ -86,7 +94,6 @@ evals?[-_ ](loop|harness|batter(y|ies))
 test[_-]verdict[_-]classification|verdict[-_ ]classification
 attractor[-_ ]uplift|\buplift\b
 \bbacklog\b
-\bcapsules?\b
 \bprimer\b'
 DENY_PM='pm[_-]?gate\b'
 PM_ANCHOR='examples/patterns/task-runner'

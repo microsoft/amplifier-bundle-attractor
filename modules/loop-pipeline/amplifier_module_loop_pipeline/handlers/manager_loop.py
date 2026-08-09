@@ -253,6 +253,7 @@ class ManagerLoopHandler:
                         # manager node unsatisfiable even when the child
                         # produced an explicit verdict).
                         is_explicit=child_outcome.is_explicit,
+                        failure_reason=child_outcome.failure_reason,
                         notes=f"Manager completed in {cycle} cycle(s) — stop condition satisfied",
                         context_updates={
                             "last_stage": node.id,
@@ -267,6 +268,7 @@ class ManagerLoopHandler:
                         # EXTENSIONS.md §25: propagate the child's
                         # explicitness (see stop-condition branch above).
                         is_explicit=child_outcome.is_explicit,
+                        failure_reason=child_outcome.failure_reason,
                         notes=f"Manager completed in {cycle} cycle(s)",
                         context_updates={
                             "last_stage": node.id,

@@ -34,7 +34,7 @@ set -euo pipefail
 #                 failure, never 2.
 # ---------------------------------------------------------------------------
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 MODULE_SRC="$REPO_ROOT/modules/loop-pipeline"
 TESTS_DIR="$MODULE_SRC/tests"
 

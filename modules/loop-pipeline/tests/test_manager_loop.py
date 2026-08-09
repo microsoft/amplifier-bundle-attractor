@@ -1023,3 +1023,96 @@ digraph parent_manager_hitl {
             "Interviewer may not have reached the child HITL gate through the "
             "manager child_dotfile pipeline."
         )
+
+
+# ---------------------------------------------------------------------------
+# Dead-end failure_reason propagation tests
+# ---------------------------------------------------------------------------
+
+
+class TestManagerDeadEndPropagation:
+    """Manager loop must propagate failure_reason from a dead-ended child subgraph.
+
+    When run_subgraph() returns FAIL with a non-empty failure_reason because
+    the child subgraph hit a conditional-mismatch dead end, the manager's
+    returned Outcome must carry that failure_reason — not silently drop it.
+    This locks down the no-lossy-reconstruction criterion from the task brief.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stop_condition_child_dead_end_failure_reason_propagated(self):
+        """Stop-condition exit: failure_reason from a dead-ended child is forwarded.
+
+        Simulates: run_subgraph returns FAIL with a traceable dead-end reason.
+        The manager's stop condition matches (outcome=fail), so the manager
+        exits via the stop-condition branch.  The returned Outcome must carry
+        the same failure_reason — not None.
+        """
+        dead_end_reason = (
+            "Subgraph dead end at node 'work': 1 outgoing edge(s) exist "
+            "but none match the current outcome (status=success). "
+            "This is a conditional-mismatch dead end."
+        )
+        runner = _make_runner(
+            [
+                Outcome(
+                    status=StageStatus.FAIL,
+                    failure_reason=dead_end_reason,
+                ),
+            ]
+        )
+        handler = ManagerLoopHandler()
+        graph = _make_graph(
+            manager_attrs={
+                "manager.max_cycles": "3",
+                "manager.stop_condition": "outcome=fail",
+                "manager.poll_interval": "0s",
+            }
+        )
+        ctx = PipelineContext()
+
+        result = await handler.execute(
+            graph.nodes["manager"], ctx, graph, "/tmp", engine=runner
+        )
+
+        assert result.status == StageStatus.FAIL
+        assert result.failure_reason, (
+            "Manager must forward the child's failure_reason — got None. "
+            "A dead-ended child's traceable reason was silently dropped at "
+            "the manager boundary (lossy reconstruction)."
+        )
+        assert dead_end_reason in result.failure_reason, (
+            f"Expected dead-end reason in manager outcome, got: {result.failure_reason!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_default_guard_child_dead_end_failure_reason_propagated(self):
+        """Default-guard exit: failure_reason is forwarded even on is_success path.
+
+        Simulates: run_subgraph returns PARTIAL_SUCCESS (is_success=True) but
+        carries a failure_reason (e.g. from a partial failure with context).
+        The default guard stops on is_success; the manager must forward the
+        failure_reason rather than constructing a fresh Outcome that drops it.
+        """
+        partial_reason = "partial failure: some steps skipped"
+        runner = _make_runner(
+            [
+                Outcome(
+                    status=StageStatus.PARTIAL_SUCCESS,
+                    failure_reason=partial_reason,
+                ),
+            ]
+        )
+        handler = ManagerLoopHandler()
+        graph = _make_graph(manager_attrs={"manager.max_cycles": "3"})
+        ctx = PipelineContext()
+
+        result = await handler.execute(
+            graph.nodes["manager"], ctx, graph, "/tmp", engine=runner
+        )
+
+        assert result.is_success
+        assert result.failure_reason == partial_reason, (
+            f"Manager must forward child failure_reason on default-guard exit. "
+            f"Expected {partial_reason!r}, got {result.failure_reason!r}."
+        )

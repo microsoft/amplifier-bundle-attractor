@@ -454,3 +454,92 @@ scanner correctly) before this was wired up.
   the same source range and found **untouched** at its own separately-
   pinned commit (`f5322c24ed6fd8deaeddb519de7bfdfa861094d9`; zero
   non-comment deltas vs source) -- no re-sync needed.
+
+- **2026-08-09** -- `capsule.dot` re-synced
+  `75ee4c6a7c99448a97f5fd7864fcbea43909eb77` ->
+  `7cb9ebc0f31061494c0db107c4cbd414976ba9f3`. Picks up the five-commit
+  wave that just PASSED its earn-back evaluation as a set (4/6 vs the
+  >=3/6 bar, zero guard-machinery episodes):
+  - `25aa020` -- earn-back fix wave: `diagnose_gate` anchored sentinel;
+    `--on-human-gate` invocation doc; `feedback_from="verdict"` on
+    `author` (the judge's ITERATE became a SUCCESS routing token -- exit
+    0, brief printed to stdout for the engine's bounded critique channel,
+    routed by a `loop_restart` edge; `outcome=fail` now covers in-node
+    crashes only); GREEN-binding language in the author prompt.
+  - `e95f863` -- judge dodge-classification (SABOTAGE-CLASS is a recorded
+    finding, REVIEWER-PLAUSIBLE blocks) + "THE GATE ASSERTS WHAT, NEVER
+    HOW" (prompt-level only).
+  - `9f43ba2` -- hermeticity rider on `nonvacuity_gate` (relocated-
+    worktree probe after a hypothesis patch greens; `hermetic` ledger
+    field; ambient-install scan recorded, never blocking) + "THE GATE
+    RUNS WHERE IT STANDS" in the author prompt.
+  - `f167cb3` -- RC-6 rival probe: new `rival` maker between orient and
+    author (the `orient -> author` direct edge deleted), a 4th non-gating
+    nonvacuity lane (`rival`/`rival_rc`/`rival_numstat`/`rival_paths`
+    ledger facts, `rival-red-unadjudicated.md`/`no-rival.md` findings),
+    the judge's RIVAL RULING and mandatory SURFACES stanza, and the fuse
+    `max_pipeline_duration` 14400s -> 18000s (re-derived TIMEOUT
+    ARITHMETIC in the source header).
+  - `7cb9ebc` -- RC-7: new `rival_reset` glue node (hard-reset +
+    reset-proof the moment the rival maker ends; unproven reset ->
+    `reset_fail`), a pristineness PRECONDITION on `redgate` (refuses to
+    measure a contaminated tree: `tree_dirty` token, `"pristine": false`
+    ledger row), and per-round stale rival-finding cleanup inside
+    `nonvacuity_gate`.
+  Call-site count (step 2b, both directions) -- UNCHANGED by this sync:
+  `backlog/check-upstream-leaks.sh` keeps its two graph-level call sites
+  (`setup` preflight, `leak_gate`); `runner/check-existing-tests.py`
+  keeps ONE LLM-prompt reference (`critique`); `runner/check-witness-gate.py`
+  keeps ZERO (advisory-only). No checker was added or deleted in the
+  source range (`git log 75ee4c6..7cb9ebc -- runner/check-*.py` is
+  empty); both vendored checkers byte-compare identical to `7cb9ebc`
+  (`cmp` clean) -- no re-copy needed. `grep -r` re-confirms no
+  load-bearing reference to the deleted `check-degenerate-hack.py`
+  anywhere in the vendored tree (historical prose only). The new
+  `rival_reset` and the `redgate` precondition are pure inline shell --
+  no `$uplift_dir` reference gained or lost.
+  THE WIRING CHANGE this sync forces: the fuse grew to 18000s (300 min),
+  so `capsule-specify.yml`'s `timeout-minutes` was raised 330 -> 360
+  (the GitHub-hosted-runner hard cap; 330 no longer clears 300 +
+  overhead). The reduced ~60-minute overhead budget was verified against
+  real run timings, not asserted: runs 31259303929 and 31113280518 show
+  all non-engine steps (checkout/setup-python/uv install before;
+  classify/PR/comment/upload after) completing in SECONDS (~5s before,
+  ~6-10s after) -- the 60-minute buffer exceeds observed overhead by
+  more than two orders of magnitude.
+  Runtime proof performed (see the PR that performed this sync for full
+  transcripts), from a scratch git repo with `uplift_dir` set exactly as
+  `capsule-specify.yml` sets it: (1) `redgate`'s re-synced
+  `tool_command=` text, extracted verbatim: pristine tree + RED script ->
+  `red_ok`; NEGATIVE (a dirty tracked file) -> `tree_dirty`,
+  `"pristine": false` ledger row, refusal diagnostic in `.ai/gate.log`.
+  (2) `nonvacuity_gate`'s full four-lane text over a real A/B/V/rival
+  set (A greens; B applies-but-stays-red -- exercising the base
+  control-run; V greens as a dodge; rival applies-but-stays-red --
+  exercising the rival control-run): emitted `proven`, ledger row
+  carried `"void_greened": true`, `"rival": "red", "rival_rc": "1"`,
+  `"halt": "none", "hermetic": "proven"` (the relocated-worktree probe
+  ran the greened gate hermetically); wrote `void-greened.md` and a
+  fresh `rival-red-unadjudicated.md`, and REMOVED a deliberately-planted
+  stale `no-rival.md` (the per-round cleanup). (3) `rival_reset`: a tree
+  with the rival patch applied plus untracked junk -> `reset_proven`,
+  tree restored, `.ai/` preserved; NEGATIVE (HEAD moved off base) ->
+  `reset_unproven` with the loud RIVAL-RESET diagnostic in
+  `.ai/gate.log`. (4) `verdict` classified all three anchored cases:
+  SHIP -> `ship` (rc=0), ITERATE -> `iterate` at exit 0 (the new
+  success-token contract) with the brief on stdout AND copied to
+  `.ai/gate.log` + `last-stage-fail=critique`, no anchored line ->
+  `noverdict` (rc=0). (5) The `critique` prompt's advisory call site,
+  verbatim, resolved through the vendored path (rc=0, a real
+  determination). Negative controls: a wrong `uplift_dir` reproduced the
+  loud `can't open file` failure (rc=2); vendoring
+  `check-witness-gate.py` ALONE reproduced the exact
+  `FileNotFoundError: .../check-existing-tests.py` (rc=1) and did NOT
+  ask for `check-degenerate-hack.py`; `check-witness-gate.py
+  --self-test` from the vendored directory: ALL PASSED, and a direct
+  invocation against the scratch dodge patch returned
+  `VERDICT: witness_clean` (rc=0). `attractor lint` on the re-synced
+  `.dot`: OK, no findings; node/edge parity with source confirmed (33
+  node declarations / 58 edges on both). `task-runner.dot` was checked
+  against the same source range and found **untouched** (identical blob
+  at `7cb9ebc` and at its pinned `f5322c24`) -- no re-sync needed.

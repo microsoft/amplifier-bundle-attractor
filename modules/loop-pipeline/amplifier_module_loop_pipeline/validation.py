@@ -329,13 +329,27 @@ def _check_reachability(graph: Graph, diags: list[Diagnostic]) -> None:
 
 
 def _check_goal_gate_has_retry(graph: Graph, diags: list[Diagnostic]) -> None:
-    """LINT: goal_gate_has_retry — goal gates should have retry targets."""
+    """LINT: goal_gate_has_retry — goal gates should have a retry mechanism.
+
+    A goal-gate node satisfies this rule when any of the following is true:
+
+    * The node carries a ``retry_target`` or ``fallback_retry_target``
+      attribute pointing to a node in the graph.
+    * The graph carries a top-level ``retry_target`` attribute.
+    * The node has at least one outgoing edge with ``loop_restart=true``,
+      which is the canonical retry mechanism for convergence-loop patterns.
+    """
     for node in graph.nodes.values():
         if resolve_bool_attr(node.attrs.get("goal_gate"), "goal_gate"):
+            has_loop_restart_edge = any(
+                resolve_bool_attr(e.loop_restart, "loop_restart")
+                for e in graph.outgoing_edges(node.id)
+            )
             has_retry = bool(
                 node.attrs.get("retry_target")
                 or node.attrs.get("fallback_retry_target")
                 or graph.graph_attrs.get("retry_target")
+                or has_loop_restart_edge
             )
             if not has_retry:
                 diags.append(
@@ -344,7 +358,10 @@ def _check_goal_gate_has_retry(graph: Graph, diags: list[Diagnostic]) -> None:
                         severity="WARNING",
                         message=f"Node '{node.id}' has goal_gate=true but no retry_target",
                         node_id=node.id,
-                        fix="Add retry_target or fallback_retry_target attribute",
+                        fix=(
+                            "Add retry_target or fallback_retry_target attribute, "
+                            "or add an outgoing edge with loop_restart=true"
+                        ),
                     )
                 )
 

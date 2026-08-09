@@ -543,3 +543,77 @@ scanner correctly) before this was wired up.
   node declarations / 58 edges on both). `task-runner.dot` was checked
   against the same source range and found **untouched** (identical blob
   at `7cb9ebc` and at its pinned `f5322c24`) -- no re-sync needed.
+
+- **2026-08-09** -- `capsule.dot` re-synced
+  `7cb9ebc0f31061494c0db107c4cbd414976ba9f3` ->
+  `814754a09b63c12ccea6123d708f0e106dd124ef`. RC-8 synthetic-probe
+  discipline -- **PROMPT-LEVEL ONLY**, one source commit, the named fix
+  from issue #146's 5th CI attempt (an honest non-convergence: the
+  authored gate probed synthetic graphs with FIXED node names and lost a
+  6-round name-enumeration arms race -- every fixed name the author added
+  simply joined the dodge's hardcoded skip-list, because the patch author
+  can read the gate; a second recurring objection was a whole-graph
+  early-return greening without the gate ever verifying per-node scope).
+  The source diff is exactly two attribute lines
+  (`git diff --numstat 7cb9ebc..814754a -- runner/capsule.dot` = `2 2`):
+  - `author` prompt gains SYNTHETIC PROBES ARE BORN AT RUNTIME: synthetic
+    witness names must be GENERATED AT GATE RUNTIME (a random suffix --
+    `$RANDOM`, a `mktemp -u`-style unique name, a uuid), never fixed
+    literals (a name that does not exist until the gate runs cannot be
+    enumerated by any patch); plus MIXED-SCOPE PROBES -- when the reported
+    rule has per-item scope (per-node, per-file, per-entry), at least one
+    probe must place a triggering and a non-triggering item in the SAME
+    input, so a whole-scope suppression cannot green.
+  - `critique` prompt gains PROBE ENUMERABILITY: fixed enumerable probe
+    IDs in the gate source are a blocking dodgeability finding ON THEIR
+    OWN (a name skip-list is always reviewer-plausible; the race
+    terminates only when enumeration is structurally impossible), and a
+    missing mixed-scope probe on a per-item-scope subject is the same
+    class at the same weight.
+  Nodes/edges UNCHANGED: 33 node declarations / 58 edges, parity
+  confirmed vendored vs source with the same count method on both files.
+  No checker changes: `git log 7cb9ebc..dfbfe3d -- runner/check-*.py
+  backlog/check-upstream-leaks.sh backlog/fixtures/leak-scan` is EMPTY;
+  both vendored `vendor/runner/` checkers byte-compare identical to the
+  new source pin (`cmp` clean), and the vendored leak scanner differs
+  from source only by its own provenance header (body identical).
+  Call-site count (step 2b, both directions) -- UNCHANGED: the
+  `$uplift_dir/...` census is identical on both sides of the sync (2x
+  `backlog/check-upstream-leaks.sh` from `setup`/`leak_gate`, 1x
+  LLM-prompt reference to `runner/check-existing-tests.py` in `critique`;
+  `check-witness-gate.py` stays at ZERO graph-level callers,
+  advisory-only). NO workflow change forced: the fuse
+  (`max_pipeline_duration=18000`) and every timeout literal are
+  untouched, so `capsule-specify.yml`'s 360-minute budget still clears it.
+  ONE NEW TOKEN-SHAPED LITERAL enters the prompt text: `$RANDOM`. Proven
+  (not assumed) to survive this repo's own shipped substitution layer as
+  a literal: `modules/loop-pipeline`'s `substitution.py` contract is
+  "Absent keys leave the token unchanged (literal pass-through)" (the
+  brace form returns `m.group(0)` when the key is absent; the bare form
+  iterates ONLY snapshot keys, so `$RANDOM` is never a substitution
+  candidate), and the prompt path
+  (`handlers/codergen.py::_expand_variables` ->
+  `transforms.expand_params`, whose docstring reads "Unknown
+  `$`-prefixed tokens are left unchanged") was exercised directly: the
+  exact RC-8 phrase was run through both `substitute_context` and
+  `expand_params` with a realistic context snapshot and came back
+  byte-identical, `$RANDOM` still literal; the two shipped absent-key
+  regression tests
+  (`test_substitute_context_missing_key_leaves_literal`,
+  `test_expand_params_preserves_undefined_prefixed_param`) both pass.
+  The engine's eager M2 scan is inert here too: `_check_node_skip` only
+  acts on refs present in `failed_outputs`, so an unresolvable `$RANDOM`
+  ref never fails or skips a node. (The token sits in PROMPT text, not in
+  a `tool_command` -- substitution.py's "unbound shell variable under
+  `set -eu`" caveat applies only at the tool_command layer; `$RANDOM`
+  becomes real shell only if the AUTHOR writes it into
+  `DEFINITION.verify.sh`, where bash supplies `RANDOM` itself -- exactly
+  the intent.)
+  `attractor lint` on the re-synced `.dot`: OK, no findings.
+  `vendor/backlog/check-upstream-leaks.sh --self-test`: PASS (RED x4,
+  GREEN x2) -- note this is BETTER than the "2 of 6 failing"
+  known-deviation documented above, which described an earlier fixture
+  set; the current fixtures all pass from the vendored location.
+  `task-runner.dot` was checked against the same source range and found
+  **untouched** (identical blob `5d95826e` at `7cb9ebc`, `814754a`, and
+  `dfbfe3d`) -- no re-sync needed.

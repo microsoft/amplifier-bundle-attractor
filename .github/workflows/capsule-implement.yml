@@ -143,12 +143,45 @@ jobs:
             CAPSULE_MD="${{ inputs.capsule_path }}"
           else
             PR_NUMBER="${{ github.event.pull_request.number }}"
-            CAPSULE_MD="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
-              --json files -q '.files[].path' \
-              | grep -E '^\.github/capsule-pipeline/proposals/issue-[0-9]+/[^/]+\.md$' \
-              | head -1 || true)"
-            if [ -z "$CAPSULE_MD" ]; then
-              echo "::error::Merged PR #$PR_NUMBER touched .github/capsule-pipeline/proposals/** but no <id>.md capsule file was found among its changed files -- refusing to guess." >&2
+            # Enumerate the merged PR's changed files via the PR files API --
+            # merge-strategy-independent (identical result for rebase, squash,
+            # and merge-commit merges; no git-range arithmetic against main).
+            # --paginate clears the per-page cap so a large PR cannot silently
+            # truncate the list. Removed files are excluded: a deletion is not
+            # a capsule to implement.
+            CHANGED_FILES="$(gh api --paginate \
+              "repos/${{ github.repository }}/pulls/$PR_NUMBER/files" \
+              --jq '.[] | select(.status != "removed") | .filename')"
+
+            # A capsule PR ships supporting artifacts NEXT TO the capsule in
+            # the same proposal dir (<id>.discrimination.md, <id>.hypothesis.patch,
+            # <id>.base-sha, ...), so "any .md under proposals/" is AMBIGUOUS.
+            # The previous `... | head -1` silently guessed the alphabetically
+            # first .md and picked <id>.discrimination.md over <id>.md the very
+            # first time the production trigger fired (PR #171, run 31329562759).
+            # The capsule is structurally identifiable instead: it is the one
+            # .md whose sibling <id>.verify.sh is in the SAME changed-file set
+            # -- a pairing the specify stage's package step guarantees. Zero or
+            # multiple such pairs is refused loudly, never guessed.
+            MD_CANDIDATES="$(printf '%s\n' "$CHANGED_FILES" \
+              | grep -E '^\.github/capsule-pipeline/proposals/issue-[0-9]+/[^/]+\.md$' || true)"
+            CAPSULE_MD=""
+            PAIRED_COUNT=0
+            while IFS= read -r md; do
+              [ -n "$md" ] || continue
+              if printf '%s\n' "$CHANGED_FILES" | grep -qxF "${md%.md}.verify.sh"; then
+                CAPSULE_MD="$md"
+                PAIRED_COUNT=$((PAIRED_COUNT + 1))
+              fi
+            done <<< "$MD_CANDIDATES"
+
+            CANDIDATES_ONE_LINE="$(printf '%s' "${MD_CANDIDATES:-none}" | tr '\n' ' ')"
+            if [ "$PAIRED_COUNT" -eq 0 ]; then
+              echo "::error::Merged PR #$PR_NUMBER touched .github/capsule-pipeline/proposals/** but no capsule (<id>.md with its sibling <id>.verify.sh in the same PR) was found among its changed files -- refusing to guess. .md candidates seen: $CANDIDATES_ONE_LINE" >&2
+              exit 1
+            fi
+            if [ "$PAIRED_COUNT" -gt 1 ]; then
+              echo "::error::Merged PR #$PR_NUMBER contains $PAIRED_COUNT capsule (<id>.md + <id>.verify.sh) pairs -- one capsule per capsule PR; refusing to guess which one to implement. .md candidates seen: $CANDIDATES_ONE_LINE" >&2
               exit 1
             fi
           fi

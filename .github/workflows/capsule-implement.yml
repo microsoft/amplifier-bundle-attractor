@@ -342,27 +342,81 @@ jobs:
           # degraded-single-family fallback message exists any more.
           DUAL_NOTE="Both reviewers ran as independent, cross-provider critics (Anthropic + OpenAI) -- enforced by this workflow's preflight check, not merely hoped for."
 
+          # MEASURE the gate-modification claim instead of asserting it.
+          # Run 31335891096 / PR #178: the previous template asserted the
+          # gate was "unmodified" while that very PR edited the gate's
+          # verify.sh (a REPO_ROOT path line). Never assert what isn't
+          # checked -- diff the proposal dir (capsule .md, verify.sh, and
+          # sibling artifacts) against the base this run started from and
+          # state the measured result either way.
+          PROPOSAL_DIR="$(dirname "${{ steps.locate.outputs.capsule_md }}")"
+          GATE_CHANGED="$(git diff --name-only origin/main HEAD -- "$PROPOSAL_DIR")"
+          if [ -z "$GATE_CHANGED" ]; then
+            GATE_NOTE="Gate files unmodified -- measured: \`git diff --name-only origin/main HEAD -- ${PROPOSAL_DIR}\` is empty."
+          else
+            GATE_CHANGED_ONE_LINE="$(printf '%s' "$GATE_CHANGED" | tr '\n' ' ')"
+            GATE_NOTE="Gate files MODIFIED by this PR (measured): ${GATE_CHANGED_ONE_LINE} -- review the gate diff alongside the fix; a gate edit changes what \"passed\" means."
+          fi
+
+          # EXIT distinguishes the two ways this step is reached (see this
+          # step's \`if:\`): '0' = task-runner.dot genuinely converged and
+          # shipped. '' = non-convergence whose committed work-in-progress
+          # is salvaged here: the run step's script aborts before its
+          # \`echo attractor_exit=$?\` under the runner's default \`bash -e\`
+          # when the engine exits non-zero, so the output is never written,
+          # and GitHub's expression rules coerce a missing output to 0 --
+          # making this step's \`== '0'\` condition true. The PR body must
+          # say which of the two this is: run 31335891096 shipped a salvage
+          # PR (#178) wearing the converged template's claims.
+          EXIT="${{ steps.run.outputs.attractor_exit }}"
+
           BODY_FILE="$RUNNER_TEMP/capsule-implement/pr-body.md"
-          {
-            echo "## Implement-stage fix for #${ISSUE}"
-            echo
-            echo "Refs #${ISSUE}. Produced by \`task-runner.dot\` (see \`.github/capsule-pipeline/\`)"
-            echo "converging against the capsule's own definition of done and gate:"
-            echo "\`.github/capsule-pipeline/proposals/issue-${ISSUE}/${CAPSULE_ID}.md\` /"
-            echo "\`${CAPSULE_ID}.verify.sh\`."
-            echo
-            echo "The gate script (the capsule's own DoD, unmodified) passed, and this"
-            echo "change was additionally critiqued by an LLM reviewer against the"
-            echo "capsule's judgment criteria before shipping. $DUAL_NOTE"
-            echo
-            echo "This PR is opened non-draft and is NOT auto-merged -- a human reviews"
-            echo "the diff and the run evidence before merging."
-            echo
-            echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          } > "$BODY_FILE"
+          if [ "$EXIT" = "0" ]; then
+            TITLE="implement: fix for #${ISSUE} (${CAPSULE_ID})"
+            {
+              echo "## Implement-stage fix for #${ISSUE}"
+              echo
+              echo "Refs #${ISSUE}. Produced by \`task-runner.dot\` (see \`.github/capsule-pipeline/\`)"
+              echo "converging against the capsule's own definition of done and gate:"
+              echo "\`.github/capsule-pipeline/proposals/issue-${ISSUE}/${CAPSULE_ID}.md\` /"
+              echo "\`${CAPSULE_ID}.verify.sh\`."
+              echo
+              echo "The gate script (the capsule's own DoD) passed, and this change was"
+              echo "additionally critiqued by an LLM reviewer against the capsule's"
+              echo "judgment criteria before shipping. $DUAL_NOTE"
+              echo
+              echo "$GATE_NOTE"
+              echo
+              echo "This PR is opened non-draft and is NOT auto-merged -- a human reviews"
+              echo "the diff and the run evidence before merging."
+              echo
+              echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            } > "$BODY_FILE"
+          else
+            TITLE="implement: work-in-progress for #${ISSUE} (${CAPSULE_ID}) -- did not converge"
+            {
+              echo "## Implement-stage WORK-IN-PROGRESS for #${ISSUE} (did not converge)"
+              echo
+              echo "Refs #${ISSUE}. \`task-runner.dot\` (see \`.github/capsule-pipeline/\`) did"
+              echo "NOT converge on this capsule within its budget; this branch salvages the"
+              echo "committed work-in-progress so it is not lost. The judge's objections and"
+              echo "the postmortem (if written) are in the workflow run's uploaded artifacts."
+              echo
+              echo "Do NOT read this PR as a proven fix: the gate/critique claims a converged"
+              echo "run would carry do not apply here."
+              echo
+              echo "$GATE_NOTE"
+              echo
+              echo "This PR is opened non-draft and is NOT auto-merged -- a human reviews"
+              echo "the diff and the run evidence before deciding whether to adopt, finish,"
+              echo "or close this work."
+              echo
+              echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            } > "$BODY_FILE"
+          fi
 
           url=$(gh pr create --repo "${{ github.repository }}" \
-            --title "implement: fix for #${ISSUE} (${CAPSULE_ID})" \
+            --title "$TITLE" \
             --body-file "$BODY_FILE" \
             --base main --head "$BRANCH")
           echo "url=$url" >> "$GITHUB_OUTPUT"
@@ -376,12 +430,33 @@ jobs:
           COMMENT="$RUNNER_TEMP/capsule-implement/comment.md"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           EXIT="${{ steps.run.outputs.attractor_exit }}"
+          PR_URL="${{ steps.pr.outputs.url }}"
 
-          if [ "$EXIT" = "0" ] && [ -n "${{ steps.pr.outputs.url }}" ]; then
+          # Three real outcomes, three honest messages. Run 31335891096
+          # posted "no fix PR opened" while the SAME run's previous step had
+          # just pushed a branch and opened PR #178 (non-convergence salvage
+          # path) -- the old two-way template asserted a PR's absence it
+          # never checked. Claim "no fix PR opened" only when none was.
+          if [ "$EXIT" = "0" ] && [ -n "$PR_URL" ]; then
             {
               echo "**Implement stage: fix PR opened.**"
               echo
-              echo "${{ steps.pr.outputs.url }}"
+              echo "$PR_URL"
+              echo
+              echo "Workflow run: $RUN_URL"
+            } > "$COMMENT"
+          elif [ -n "$PR_URL" ]; then
+            {
+              echo "**Implement stage did not converge -- work-in-progress salvaged as $PR_URL.**"
+              echo
+              echo "task-runner.dot did not converge on a shipped fix within its iteration"
+              echo "budget. The committed work-in-progress was salvaged as the PR above --"
+              echo "it is NOT a proven fix; the judge's objections are in the run artifacts."
+              echo "Postmortem (if written):"
+              echo
+              echo '```'
+              cat "$GITHUB_WORKSPACE/.ai/postmortem/report.md" 2>/dev/null || echo "(no postmortem report was written)"
+              echo '```'
               echo
               echo "Workflow run: $RUN_URL"
             } > "$COMMENT"

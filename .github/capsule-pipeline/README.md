@@ -819,3 +819,76 @@ against the DENY list) is exercised directly by `leak_gate` in
   No new token-shaped literal enters the prompt text (the RC-8 `$RANDOM`
   analysis above remains the only such case). `attractor lint` on the
   re-synced `.dot`: OK, no findings (rc=0).
+
+- **2026-08-10 (RC-10 interpreter-bytecode purge + RC-11 prescription
+  compliance)** -- `capsule.dot` re-synced
+  `94dfc060b14a3f07e1c703811eda1f7a66817864` ->
+  `d6f8d3a300eb9bb78087f78c596ad9d6d040be03`. ONE source commit; the
+  `runner/capsule.dot` diff is `60 12` (numstat), 13 hunks, nodes/edges
+  UNCHANGED at 34/60:
+  - **RC-10 (interpreter-bytecode purge; tool_command + comment changes,
+    5 nodes)** -- from a mechanically-proven guard-machinery false fact in
+    the source repo's heldout-v4 evaluation (E-1): stale `__pycache__`
+    bytecode survived a git-proven reset because a size-preserving edit
+    round-tripped within one integer mtime-second, so CPython's
+    timestamp-based pyc validation (int-second mtime + size) kept serving
+    fix-shaped bytecode at a truly git-pristine base -- a false
+    `green_on_main`. A targeted purge idiom (`find` deleting `__pycache__/`
+    dirs + `*.py[co]` files, with `.git`/`.venv`/`venv` pruned -- NEVER
+    `git clean -x`, which would nuke module venvs) now extends the
+    `tool_command=` of `rival_reset`, `author_reset`, `redgate`
+    (pre-measure), `nonvacuity_gate` (entry + every round-trip reset,
+    including the rival leg), and `discrimination_check` (after checking
+    out `$later_commit`). **Additive ledger field for
+    `.ai/convergence.jsonl` consumers**: the `author_reset` and `redgate`
+    ledger rows gain `"pyc_purged": "<count>"` (existing fields
+    unchanged); `rival_reset` echoes its count into the reset-proof output
+    (`PYC-PURGE (RC-10): removed N interpreter-cache entries ...`).
+  - **RC-11 (prescription compliance; PROMPT-ONLY, 2 nodes)** -- `author`
+    gains PRESCRIPTION COMPLIANCE: when the latest critique names a
+    concrete, specific change, the next draft MUST either APPLY it or
+    carry an explicit written rebuttal at
+    `.ai/findings/prescription-rebuttal.md` (**a new in-loop artifact**:
+    quote the prescription, argue concretely, overwrite any stale rebuttal
+    -- the file speaks for THIS draft only). `critique` gains PRESCRIPTION
+    FOLLOW-THROUGH: compliance is checked FIRST, and an un-applied,
+    un-rebutted prescription produces a blocking finding in exactly the
+    ledger shape 'prescription from the prior round neither applied nor
+    rebutted'; a written rebuttal is an argument, never auto-compliance --
+    a rebuttal the judge rejects leaves the prescription standing.
+  Body byte-identity: sha256 of the vendored copy below its (now 16-line)
+  header == sha256 of `runner/capsule.dot` at `d6f8d3a`
+  (`19b9b8ad4af85285bc8266a995e12be5f1048eabd71f65067fdc164e4ec5e707`).
+  No checker/deny-list/task-runner/dual-yaml changes:
+  `git log 94dfc06..d6f8d3a -- runner/check-existing-tests.py
+  backlog/check-upstream-leaks.sh backlog/fixtures/leak-scan
+  runner/task-runner.dot runner/attractor-pipeline-dual.yaml` is EMPTY
+  (the source commit's other files are its own rig tests --
+  `runner/tests/test_capsule_stale_bytecode.sh`, new -- and a
+  retirement-audit note, none vendored). Verified by `cmp` at `d6f8d3a`:
+  `task-runner.dot` (below its 90-line header),
+  `attractor-pipeline-dual.yaml` (below 22), the leak scanner (below its
+  10 inserted header lines), `check-existing-tests.py` (byte-identical,
+  no header), and all 5 leak-scan fixtures (byte-identical) -- none
+  touched. Call-site count (step 2b, both directions) -- UNCHANGED: the
+  `$uplift_dir/...` census is identical on both sides of the sync (2x
+  `backlog/check-upstream-leaks.sh` from `setup`/`leak_gate`, 1x
+  LLM-prompt reference to `runner/check-existing-tests.py` in
+  `critique`); the purge idiom is pure inline shell -- no `$uplift_dir`
+  reference gained or lost. NO workflow change forced: the fuse
+  (`max_pipeline_duration="18000s"`) and every timeout literal (4x
+  `timeout 900`) are untouched on both sides, so `capsule-specify.yml`'s
+  360-minute budget still clears it. Runtime proof performed (see the PR
+  that performed this sync for full transcripts), from a scratch git repo
+  shaped as the workflow shapes `target_dir`: (1) `author_reset`'s
+  `tool_command=` text, extracted verbatim from the re-synced `.dot`, with
+  a planted `__pycache__/x.pyc` in the tree AND a decoy
+  `.venv/lib/keep.pyc`: printed `reset_proven` (rc=0), the planted cache
+  REMOVED, the venv decoy PRESERVED (venvs pruned, proving the purge is
+  targeted, not `git clean -x`-shaped), ledger row carrying
+  `"pyc_purged"` with a non-zero count; (2) the same command on a clean
+  tree: `reset_proven` (rc=0), `"pyc_purged": "0"`, behavior otherwise
+  unchanged from the pre-sync node; (3) `redgate`'s `tool_command=` text,
+  same two cases: purge fires pre-measure, `"pyc_purged"` rides the
+  redgate ledger row, gate verdict logic unchanged. `attractor lint` on
+  the re-synced `.dot`: OK, no findings (rc=0).

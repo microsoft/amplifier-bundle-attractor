@@ -113,15 +113,19 @@ def test_d200_no_matching_edge_main_loop_documented():
 def test_d200_subgraph_path_distinguished():
     """D-200c (text-anchored): the doc must distinguish the subgraph path.
 
-    run_subgraph (engine.py:917-919) still returns the last outcome on a
-    dead-end — no hard-fail.  Both halves must be stated to avoid authors
-    over-trusting the hard-fail inside parallel/manager layers.
+    run_subgraph now distinguishes two dead-end cases:
+    - Conditional-mismatch (outgoing edges exist but none matched): returns FAIL
+      with a non-empty failure_reason (issue-172 fix; EXTENSIONS.md §33 update).
+    - No outgoing edges at all (designed terminus): returns last outcome unchanged.
+    Both halves must be stated to avoid authors over-trusting the hard-fail
+    inside parallel/manager layers.
     """
     doc = _doc()
     assert re.search(r"subgraph|run_subgraph|parallel branch", doc, re.IGNORECASE), (
         "engine-semantics.md documents no-matching-edge behavior but never "
-        "distinguishes the subgraph path. run_subgraph (engine.py:917-919) still "
-        "returns the last outcome on a dead-end. Both halves must be stated. (D-200c)"
+        "distinguishes the subgraph path. run_subgraph distinguishes conditional-"
+        "mismatch dead ends (FAIL with failure_reason) from designed termini "
+        "(last outcome unchanged). Both halves must be stated. (D-200c)"
     )
 
 
@@ -194,9 +198,10 @@ def test_d202a_main_loop_hard_fails_no_matching_edge(tmp_path):
     terminate_pipeline, emits PIPELINE_ERROR with error_type: no_matching_edge.'
     This test verifies that claim against the running engine.
 
-    Note: this does NOT test the subgraph path (run_subgraph returns the
-    last outcome on a dead-end — see engine.py:917-919).  The doc documents
-    both halves; this test covers the main-loop half.  (D-202a)
+    Note: this does NOT test the subgraph path (run_subgraph now distinguishes
+    conditional-mismatch dead ends from designed termini — see issue-172 and
+    EXTENSIONS.md §33).  The doc documents both halves; this test covers the
+    main-loop half.  (D-202a)
     """
     from typing import Any
 

@@ -992,3 +992,88 @@ against the DENY list) is exercised directly by `leak_gate` in
   source: 35 node declarations / 62 edges on BOTH sides (34/60 at the
   prior pin -- exactly the one-node, two-edge delta the source commit
   claims).
+
+- **2026-08-10 (heldout-v6 fixes: gate self-containment, no-shipped-tests
+  package)** -- `capsule.dot` re-synced
+  `5c1d79d2d93c0fbe2fe7923bfde728d8aaed4dec` ->
+  `957293fc5687997b68244b4991a49faf2f293b29`. ONE source commit; the
+  `runner/capsule.dot` diff is `69 9` (numstat), nodes/edges **UNCHANGED at
+  35/62** (5 hunks: `setup` comment + `tool_command`, `author` prompt,
+  `nonvacuity_gate` comment + `tool_command`, `critique` prompt):
+  - **GATE SELF-CONTAINMENT (behavior change worth a sentence for
+    workflow operators: a capsule whose gate is not self-contained now
+    BLOCKS instead of shipping)** -- `nonvacuity_gate`'s hermeticity
+    classification splits: the greened gate exiting rc>=2 in the pristine
+    relocated worktree (`hermetic=unprobed_rc<N>`) is a machine-proven
+    NOT-SELF-CONTAINED fact (the gate cannot produce a verdict on a fresh
+    clone -- the exact invocation official scoring and every downstream
+    consumer runs) and is now a BLOCKING corrective: gate FAIL -> triage
+    -> author, with `.ai/gate.log` naming the failed invocation and the
+    remedy class (self-provision via `uv run --with` / a script-created
+    venv, or bind to repo-native fresh-clone invocations). Only
+    probe-machinery trouble (`unprobed_worktree` / `unprobed_apply`)
+    keeps the old undecidable-proceed posture, finding recorded in
+    `.ai/findings/hermeticity.md`. The `author` prompt gains "THE CLONE
+    IS PRISTINE -- SELF-PROVISION OR BIND TO REPO CONVENTIONS".
+  - **NO-SHIPPED-TESTS PACKAGE (behavior change worth a sentence:
+    test-less target repos now run at +2 iterations)** -- `setup` records
+    a TEST-SCAN fact after the base-SHA checkout (flag file
+    `.ai/no-shipped-tests` + **new ledger fields**: a `'gate': 'setup'`
+    row carrying `no_shipped_tests`, `shipped_test_files`, and `budget`)
+    and mints the budget in its ok-branch: a test-less subject gets
+    `max_iterations`+2 (default 6 -> 8), bounded, capped at 15
+    (`bump_budget`'s own cap). The `author` prompt requires a real
+    regression test in the repo's own conventions on test-less subjects
+    (+ SEAM FAKES PIN THE REAL PATH); the `critique` prompt gains the
+    TEST-LESS SUBJECTS gate (zero real tests on a test-less subject =
+    blocking unless the DoD records concretely why none is possible).
+  Body byte-identity: sha256 of the vendored copy below its (now 21-line)
+  header == sha256 of `runner/capsule.dot` at `957293f`
+  (`6d6243b557e9f6330f8aceac444d7f312f644c65af1ad17b63b7817624c33b87`).
+  No checker/deny-list/task-runner/dual-yaml changes:
+  `git log 5c1d79d..957293f -- runner/check-existing-tests.py
+  backlog/check-upstream-leaks.sh backlog/fixtures/leak-scan
+  runner/task-runner.dot runner/attractor-pipeline-dual.yaml` is EMPTY
+  (the source commit's other files are its own rig tests --
+  `test_capsule_hermeticity.sh`, `test_capsule_testless_budget.sh`,
+  `test_capsule_prompt_doctrine.sh` -- and a retirement-audit note, none
+  vendored). Verified by `cmp` at `957293f`: `task-runner.dot` (below its
+  90-line header), `attractor-pipeline-dual.yaml` (below 22), the leak
+  scanner (below its 10 inserted header lines),
+  `check-existing-tests.py` (byte-identical, no header), and all 5
+  leak-scan fixtures (byte-identical) -- none touched. Call-site count
+  (step 2b, both directions) -- UNCHANGED: the `$uplift_dir/...` census
+  is identical on both sides of the sync (2x
+  `backlog/check-upstream-leaks.sh` from `setup`/`leak_gate`, 1x
+  LLM-prompt reference to `runner/check-existing-tests.py` in
+  `critique`). NO workflow change forced: the fuse
+  (`max_pipeline_duration="18000s"`) and every `timeout` literal are
+  identical on both sides of the sync (census diffed), so
+  `capsule-specify.yml`'s 360-minute budget still clears it; the +2
+  budget bump changes round COUNT only, and the source comment's
+  recomputed fuse arithmetic (an 8-round worst case projecting to ~56%
+  of the fuse) rides in the body. Runtime proof performed (see the PR
+  that performed this sync for full transcripts), from a scratch git
+  repo shaped as the workflow shapes `target_dir`: (1) `setup`'s
+  `tool_command=` text, extracted verbatim from the re-synced `.dot`, on
+  a repo with NO test files: echoed `TEST-SCAN (recorded fact):
+  shipped_test_files=0 no_shipped_tests=true budget=8`, wrote the ledger
+  row `{"iteration": 0, "gate": "setup", "no_shipped_tests": true,
+  "shipped_test_files": 0, "budget": 8}` and flag file `true`, printed
+  `ok`; after committing a `tests/test_x.py`: `no_shipped_tests=false
+  budget=6`, ledger row `false`/`1`/`6`, printed `ok`. (2)
+  `nonvacuity_gate`'s blocking arm, proven statically from the re-synced
+  `tool_command=` text (full hermeticity execution not re-run here -- the
+  source rig `tests/test_capsule_hermeticity.sh` covers behavior): the
+  classification arm reads `case "$h_st" in unprobed_rc*)
+  UNP=selfcontain;; unprobed*) UNP=yes;; *) UNP=no;; esac` and the ONLY
+  blocking arm reads `case "$h_st" in unprobed_rc*) { echo "HERMETICITY
+  FAIL: THE GATE IS NOT SELF-CONTAINED. ..." ... } > .ai/gate.log; echo
+  nonvacuity > .ai/last-stage-fail; exit 1;; esac` -- `unprobed_rc*`
+  only; `unprobed_worktree`/`unprobed_apply` fall through to `printf
+  proven` with the finding recorded. `attractor lint` on the re-synced
+  `.dot`: OK, no findings (rc=0); `check-upstream-leaks.sh --self-test`:
+  PASS (RED x4, GREEN x2). Node/edge parity, same comment-stripped count
+  method on vendored and source: 35 node declarations / 62 edges on BOTH
+  sides (35/62 at the prior pin -- exactly the zero-topology delta the
+  source commit claims).

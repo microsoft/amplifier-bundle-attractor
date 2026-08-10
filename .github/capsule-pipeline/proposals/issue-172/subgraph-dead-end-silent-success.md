@@ -58,3 +58,39 @@ A fix must also address the following (facts, not a prescribed fix shape):
 - The verify script does not check doc wording, spec text, or test names. It only checks the behavioral observables described above.
 - The verify script does not prescribe how `run_subgraph` detects or signals the dead end (e.g. whether it calls `terminate_pipeline`, emits a `PIPELINE_ERROR` event, or uses a different mechanism). Any correct fix that returns `status=fail` with a non-empty `failure_reason` for a conditional-mismatch dead end satisfies the gate.
 - The verify script does not prescribe the behavior of a node with no outgoing edges at all. That is a separate design question the report explicitly left open.
+## Post-stall addendum: binding scope ruling and remaining work
+
+Added after the first implement run for this capsule stalled honestly: the
+second judge held the same blocking finding three times, an in-loop feedback
+step attempted to acquit that finding in prose, and independent review ruled
+for the judge. A standing blocking finding is retired only by code, never by
+feedback prose. The ruling and the remaining work below are binding for the
+next run.
+
+### Binding scope ruling (from independent review -- ends the prior stall)
+
+Judgment criterion 1's traceability is TRANSITIVE. A manager-loop that
+exhausts its cycles because its in-graph child dead-ended MUST surface the
+child's causal failure text; a reconstructed generic "Manager exhausted N
+cycle(s)" alone violates the definition of done. This is a scope ruling, not
+a new requirement: "a traceable `failure_reason`" (Goal; Definition of done
+item 1) has always meant a reason that traces to the cause, at every
+composition level the fix touches.
+
+### Remaining work (the prior attempt was ~95% complete)
+
+1. `handlers/manager_loop.py`: the max-cycles exhaustion return must
+   incorporate the last child `failure_reason` when present, retaining the
+   cycle context (e.g. "Manager exhausted N cycle(s): <child reason>").
+2. A third `TestManagerDeadEndPropagation` case driving the DEFAULT-config
+   route: a dead-ending child, the manager exhausts its cycles, and the
+   parent `failure_reason` carries the child's dead-end text. The prior
+   run's judge posted this exact reproduction; encode it as a test.
+
+### Prior work pointer
+
+Branch `implement/issue-172-subgraph-dead-end-silent-success` @ `bf3f422`
+(open PR #178) contains the reviewed, gate-green core fix -- adopt or
+cherry-pick it rather than rebuilding. Its engine two-case rule, its doc
+updates, and its two tests were independently verified correct; only the
+manager-loop exhaustion message and the third propagation test above remain.

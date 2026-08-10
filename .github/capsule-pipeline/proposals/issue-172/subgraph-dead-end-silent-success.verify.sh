@@ -34,7 +34,18 @@ set -euo pipefail
 #                 failure, never 2.
 # ---------------------------------------------------------------------------
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Resolve the repo root from git itself, anchored at this script's own
+# directory. The gate ships in TWO layouts and must work from both: the
+# committed proposals dir (.github/capsule-pipeline/proposals/issue-172/)
+# and the runtime layout the pipeline copies it into (.ai/capsule/). The
+# previous relative "../.." was correct only for the runtime layout; from
+# the committed layout it resolved to .github/capsule-pipeline and the
+# gate died INFRA (exit 2) instead of measuring the defect.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "INFRA: cannot resolve the repository root (git rev-parse --show-toplevel failed from $SCRIPT_DIR)" >&2
+    exit 2
+fi
 MODULE_SRC="$REPO_ROOT/modules/loop-pipeline"
 TESTS_DIR="$MODULE_SRC/tests"
 
@@ -97,6 +108,9 @@ PAR_GRAPH_NAME="gate_par_probe_${SUFFIX}"
 # with Python's own brace syntax.  All runtime values are substituted before
 # the probe runs.
 # ---------------------------------------------------------------------------
+# The runtime layout guarantees .ai/capsule exists (the script lives there);
+# from the committed layout it may not -- create it so mktemp cannot fail.
+mkdir -p "$REPO_ROOT/.ai/capsule"
 PROBE_SCRIPT="$(mktemp "$REPO_ROOT/.ai/capsule/probe_XXXXXX.py")"
 trap 'rm -f "$PROBE_SCRIPT"' EXIT
 

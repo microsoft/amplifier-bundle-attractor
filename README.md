@@ -32,6 +32,7 @@ cited as prior-art inspiration where useful.
 | [Routing Reference](docs/ROUTING-REFERENCE.md) | Edge selection algorithm, `report_outcome` tool, condition expressions, common pitfalls |
 | [App Integration Guide](docs/APP-INTEGRATION-GUIDE.md) | Using pipelines from Python applications (DirectProvider vs AmplifierSession) |
 | [Pipeline Design Principles](docs/PIPELINE_DESIGN_PRINCIPLES.md) | Six framework-agnostic design principles: tier discipline, validation patterns, loop convergence, LLM output protocols, parameterization, verdict-bearing nodes |
+| [Issue Pipeline](docs/ISSUE_PIPELINE.md) | What happens after a maintainer labels an issue `ready:spec` -- the autonomous specify/implement pipeline, its human review gates, and what makes a good defect report |
 
 ## Quick Start
 

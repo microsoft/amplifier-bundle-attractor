@@ -1,0 +1,94 @@
+name: Defect report
+description: Report a defect in a form the autonomous issue pipeline can work with. Describe what the software DOES — not what the fix should be.
+labels: ["defect-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a defect report. This repo runs an autonomous pipeline that can
+        take a well-specified defect report all the way to a proposed fix
+        (see [docs/ISSUE_PIPELINE.md](https://github.com/microsoft/amplifier-bundle-attractor/blob/main/docs/ISSUE_PIPELINE.md)).
+        Whether it converges depends almost entirely on the quality of this report.
+
+        Three rules that measurably decide the outcome:
+
+        1. **Describe what the software DOES, not what the fix should be.** Do not
+           prescribe the fix — the pipeline verifies against behavior, and a prescription
+           narrows and biases its verification gate.
+        2. **Be self-contained.** Everything needed to understand the defect belongs in
+           this report, in plain English. Links-only reports don't work — the pipeline
+           reads this text, not your browser tabs.
+        3. **Quote real output.** Paste the actual bytes the commands produced. Don't
+           paraphrase or reconstruct from memory.
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: >-
+        The observable behavior, in plain English. What does the software actually do?
+        Stick to observations — no diagnosis, no proposed fix.
+      placeholder: >-
+        Running the linter over the first tutorial example produces a warning even though
+        the graph does implement a retry route.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Exact reproduction
+      description: >-
+        The exact commands you ran and the ACTUAL output they produced, quoted verbatim.
+        This is the single most important field — the pipeline builds an executable
+        verification gate from observable behavior, and a reproduction it can run is the
+        strongest possible input.
+      render: shell
+      placeholder: |
+        $ attractor lint --strict examples/pipelines/00-convergence-loop.dot
+        WARNING: [goal_gate_has_retry] [test_gate] Node 'test_gate' has goal_gate=true but no retry_target
+          fix: Add retry_target or fallback_retry_target attribute
+
+        attractor lint: examples/pipelines/00-convergence-loop.dot: 1 warning(s)
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: >-
+        What you expected instead, stated plainly. Expected-vs-actual is what makes a
+        defect checkable. (Saying what SHOULD happen is not a fix prescription — saying
+        HOW to change the code is.)
+      placeholder: >-
+        Expected the first tutorial example to pass the tool's own strict lint with no
+        warnings.
+    validations:
+      required: true
+  - type: input
+    id: observed-on
+    attributes:
+      label: Commit SHA or branch observed on
+      description: >-
+        The SHA (preferred) or branch where you observed the behavior. The pipeline pins
+        its verification to a base commit, so knowing where you saw it matters.
+      placeholder: "e.g. 16cd142, or main as of 2026-08-10"
+    validations:
+      required: true
+  - type: input
+    id: affected-area
+    attributes:
+      label: Affected area or module (optional)
+      description: >-
+        If you happen to know roughly where the behavior lives (a module, a doc, an
+        example file), name it. Leave blank if unsure — a wrong guess is worse than no
+        guess.
+      placeholder: "e.g. modules/loop-pipeline validation, examples/pipelines/"
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        **What happens next:** a maintainer reviews this report and, if it is
+        pipeline-ready, applies the `ready:spec` label to hand it to the pipeline — that
+        label is deliberately maintainer-applied, never automatic. The full flow, its
+        human review gates, and honest expectations about what converges are described in
+        [docs/ISSUE_PIPELINE.md](https://github.com/microsoft/amplifier-bundle-attractor/blob/main/docs/ISSUE_PIPELINE.md).

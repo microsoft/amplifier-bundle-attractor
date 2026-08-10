@@ -752,3 +752,70 @@ against the DENY list) is exercised directly by `leak_gate` in
   vendored and source: 34 node declarations / 60 edges on BOTH sides
   (33/58 at the prior pin -- exactly the one-node, two-edge delta the
   source commit claims).
+
+- **2026-08-10 (RC-9 surface binding)** -- `capsule.dot` re-synced
+  `5c39ebf7ed3ae68997d66c888eeace300d561e26` ->
+  `94dfc060b14a3f07e1c703811eda1f7a66817864`. ONE source commit,
+  **PROMPT-ONLY**: the `runner/capsule.dot` diff is `3 3` (numstat), three
+  hunks, each replacing one `prompt=` attribute line -- the surface-binding
+  doctrine from the v3 transfer evaluation's named false-SHIP class (both
+  false SHIPs were shipped gates red or crashing at the real merged fix
+  because they bound to internal plumbing):
+  - `author` gains THE GATE BINDS TO BEHAVIOR, NOT PLUMBING (assert the
+    reported symptom at the outermost public surface that exhibits it;
+    reach internals only THROUGH public entries; never hand-assemble
+    internal state or invoke underscore-private functions with synthetic
+    intermediates) and EXIT BY ASSERTION, NEVER BY CRASH (probe-setup
+    exceptions -> exit >=2; code-under-test exceptions -> caught, printed,
+    exit 1 -- a crash exits with the assertion code while asserting
+    nothing).
+  - `rival` gains SURFACE DIVERSITY IS YOUR DUTY: when the issue admits
+    more than one plausible repair surface, the rival MUST repair on a
+    surface DIFFERENT from the obvious first one (it samples the space of
+    correct fixes); the honest single-surface degradation is a leading
+    `# SINGLE-SURFACE:` comment line above the diff (a leading comment
+    line is `git apply`-safe), recorded as a CLAIM the critic verifies.
+    This REPLACES the old selection rule ("use the surface the reported
+    symptom lives at as a user experiences it") -- the source rig's
+    negative controls assert the retirement; grep confirms the old wording
+    is GONE from the vendored copy.
+  - `critique` gains PRIVATE-SURFACE BINDING, the sibling licensing duty
+    (a probe invoking private underscore-prefixed functions or
+    hand-assembling internal payloads/state binds the verdict to PLUMBING:
+    either QUOTE the issue text placing the defect at that internal seam
+    with no public surface exhibiting it, or it is blocking
+    over-specification), plus unhandled-exception probes as a blocking
+    exit-discipline finding ON THEIR OWN; and the SURFACES stanza is
+    SHARPENED to named file-level coverage from the ledger's touched-path
+    facts -- "no surface foreclosed" may only be claimed of surfaces some
+    measured patch touched, with the mandatory shape "all measured patches
+    touched only <path> -- foreclosure of other surfaces is unmeasured"
+    when every measured patch landed on one surface. This REPLACES the old
+    blanket wording ("which of them this run MEASURED the gate greening
+    under" without named paths) -- retirement likewise rig-asserted and
+    grep-confirmed gone from the vendored copy.
+  Nodes/edges UNCHANGED: 34 node declarations / 60 edges, parity confirmed
+  vendored vs source with the same comment-stripped count method on both
+  files. Body byte-identity: sha256 of the vendored copy below its 13-line
+  header == sha256 of `runner/capsule.dot` at `94dfc06`
+  (`b8f7b7c7f67f796925205e9123ff47a8ea3b0820844fb3e08782e0b0c55029a6`).
+  No checker/deny-list/task-runner/dual-yaml changes:
+  `git log 5c39ebf..94dfc06 -- runner/check-existing-tests.py
+  backlog/check-upstream-leaks.sh backlog/fixtures/leak-scan
+  runner/task-runner.dot runner/attractor-pipeline-dual.yaml` is EMPTY
+  (the source commit's other files are its own rig tests and a
+  retirement-audit note, none vendored). Verified by `cmp` at `94dfc06`:
+  `task-runner.dot` (below its 90-line header),
+  `attractor-pipeline-dual.yaml` (below 22), the leak scanner (below its
+  10 inserted header lines), `check-existing-tests.py` (byte-identical,
+  no header), and all 5 leak-scan fixtures (byte-identical) -- none
+  touched. Call-site count (step 2b, both directions) -- UNCHANGED: the
+  `$uplift_dir/...` census is identical on both sides of the sync (2x
+  `backlog/check-upstream-leaks.sh` from `setup`/`leak_gate`, 1x
+  LLM-prompt reference to `runner/check-existing-tests.py` in
+  `critique`). NO workflow change forced: the fuse
+  (`max_pipeline_duration="18000s"`) and every timeout literal are
+  untouched, so `capsule-specify.yml`'s 360-minute budget still clears it.
+  No new token-shaped literal enters the prompt text (the RC-8 `$RANDOM`
+  analysis above remains the only such case). `attractor lint` on the
+  re-synced `.dot`: OK, no findings (rc=0).

@@ -1737,23 +1737,39 @@ success costs an operator hours before anyone notices nothing happened.
 first commit; this entry and the corresponding `SPEC_CONFORMANCE.md` update record the decision
 that was made, not a code change.
 
-**Compatibility note — `run_subgraph` is intentionally NOT changed by this decision.**
-`run_subgraph()` (`engine.py:917-925` at time of writing) returns the last outcome unchanged on
-a dead end, matching the spec's permissive shape — this is deliberate: subgraph dead-ends are
-the *compositional* path (a folder/sub-pipeline node's internal routing choices are its own
-business), while the top-level main loop is where an unrouted graph is a run-ending authoring
-defect. Any future change to `run_subgraph`'s dead-end behavior is a separate decision, not
-implied by this entry.
+**Compatibility note — `run_subgraph` behavior updated by issue-172 (separate decision).**
+This §33 entry originally reserved any change to `run_subgraph`'s dead-end behavior as a
+separate decision. That decision has now been made (issue-172):
+
+- **Conditional-mismatch dead end** (outgoing edges exist but none matched): `run_subgraph()`
+  now returns `Outcome(status=FAIL, is_explicit=False)` with a non-empty `failure_reason`
+  naming the node and the unmatched outcome. This is consistent with the main loop's
+  hard-fail posture above. A dead-ended parallel branch surfaces this failure in
+  `parallel.results` (the entry carries `status=fail` and a non-empty `failure_reason`),
+  where join policies and the fan-in can aggregate it.
+- **No outgoing edges at all** (designed terminus): `run_subgraph()` still returns the last
+  outcome unchanged — graceful subgraph completion. The distinction between the two cases
+  is: `self.graph.outgoing_edges(current_node.id)` is non-empty (conditional mismatch) vs.
+  empty (designed terminus).
+
+The `folder`/`dot_file=` composition path is unaffected — it runs the child via a full child-engine
+`run()` call, which already hard-failed on dead ends under this §33 entry.
 
 **Implementation locations:**
 - `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` — main loop's no-matching-edge
   hard-fail (`terminate_pipeline()` call + `PIPELINE_ERROR` emission with
   `error_type=no_matching_edge`, around the retry-target fallback check)
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py: run_subgraph()` — the
+  conditional-mismatch dead-end detection (`outgoing_edges` check after `select_edge` returns
+  `None`); returns `Outcome(FAIL, failure_reason=...)` for mismatch, last outcome for terminus
 - `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py: terminate_pipeline()` — the
-  sole construction path for a routing-termination outcome (see `AGENTS.md` common-pitfalls: never
-  construct a fresh `Outcome(FAIL, ...)` inline at this boundary — it drops `failure_reason`)
+  sole construction path for a routing-termination outcome in the main loop (see `AGENTS.md`
+  common-pitfalls: never construct a fresh `Outcome(FAIL, ...)` inline at this boundary —
+  it drops `failure_reason`). Note: `run_subgraph`'s dead-end path constructs its own
+  `Outcome(FAIL, ...)` directly, which is correct here because it is not a routing-termination
+  in the main-loop sense — it is a subgraph-level routing failure with its own traceable reason.
 - `context/engine-semantics.md` §3 — documents both halves (main-loop hard-fail vs.
-  `run_subgraph`'s permissive dead-end) and is guarded against drift by
+  `run_subgraph`'s two-case dead-end behavior) and is guarded against drift by
   `modules/loop-pipeline/tests/test_engine_semantics_doc_guard.py` (D-200a/b/c)
 - `examples/pipelines/practical/bug-fix.dot` (`escalated` node) — the shipped exemplar that
   depends on this hard-fail to report failure after writing handoff artifacts

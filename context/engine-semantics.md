@@ -112,10 +112,17 @@ Source: `edge_selection.py`; `handlers/tool.py`; nlspec §3.3, §3.7, §10.
     (Shipped behavior since the initial engine commit `6c8bf5a`; the earlier claim here
     transcribed nlspec §3.2 step 6, which the shipped main loop has never followed — an
     unreconciled spec/engine divergence.)
-  - **Subgraph branches** (`run_subgraph`, `engine.py:917-919`): returns the last outcome on a
-    dead-end — no hard-fail. "Every LLM node needs an unconditional fallback" is an
-    authoring/lint discipline for the main loop; inside `run_subgraph` a dead-end is a
-    graceful termination. [MEDIUM]
+  - **Subgraph branches** (`run_subgraph`): behavior depends on *why* no edge was selected:
+    - **Conditional-mismatch dead end** (outgoing edges exist but none matched the current
+      outcome): returns `Outcome(status=FAIL, is_explicit=False)` with a non-empty
+      `failure_reason` naming the node and the unmatched outcome. Consistent with the
+      main loop's hard-fail posture (EXTENSIONS.md §33). A dead-ended parallel branch
+      surfaces this failure in `parallel.results` (the entry carries `status=fail` and a
+      non-empty `failure_reason`), where join policies and the fan-in can aggregate it.
+      (Resolved in issue-172; see EXTENSIONS.md §33 compatibility note update.)
+    - **No outgoing edges at all** (designed terminus): returns the last outcome unchanged —
+      graceful subgraph completion. This is the intended exit for a branch that reaches
+      the end of its designed path with no further routing required.
 
 ---
 

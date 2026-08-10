@@ -253,6 +253,7 @@ class ManagerLoopHandler:
                         # manager node unsatisfiable even when the child
                         # produced an explicit verdict).
                         is_explicit=child_outcome.is_explicit,
+                        failure_reason=child_outcome.failure_reason,
                         notes=f"Manager completed in {cycle} cycle(s) — stop condition satisfied",
                         context_updates={
                             "last_stage": node.id,
@@ -267,6 +268,7 @@ class ManagerLoopHandler:
                         # EXTENSIONS.md §25: propagate the child's
                         # explicitness (see stop-condition branch above).
                         is_explicit=child_outcome.is_explicit,
+                        failure_reason=child_outcome.failure_reason,
                         notes=f"Manager completed in {cycle} cycle(s)",
                         context_updates={
                             "last_stage": node.id,
@@ -279,9 +281,18 @@ class ManagerLoopHandler:
                 await asyncio.sleep(poll_interval_s)
 
         # -- Max cycles exhausted -----------------------------------------------
+        # Traceability is transitive: if the last child outcome carried a
+        # non-empty failure_reason (e.g. from a conditional-mismatch dead end),
+        # incorporate it so the causal text is not lost at the manager boundary.
+        _child_reason = last_outcome.failure_reason if last_outcome else None
+        _exhaustion_reason = (
+            f"Manager exhausted {max_cycles} cycle(s): {_child_reason}"
+            if _child_reason
+            else f"Manager exhausted {max_cycles} cycle(s)"
+        )
         return Outcome(
             status=StageStatus.FAIL,
-            failure_reason=f"Manager exhausted {max_cycles} cycle(s)",
+            failure_reason=_exhaustion_reason,
             notes=f"Last child status: {last_outcome.status.value if last_outcome else 'none'}",
             context_updates={
                 "last_stage": node.id,

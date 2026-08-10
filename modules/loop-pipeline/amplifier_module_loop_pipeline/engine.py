@@ -1103,7 +1103,29 @@ class PipelineEngine:
             # Select next edge
             edge = select_edge(current_node.id, outcome, ctx, self.graph)
             if edge is None:
-                # No outgoing edge -- subgraph is complete
+                # Distinguish two cases:
+                # (a) Conditional-mismatch dead end: outgoing edges exist but
+                #     none matched the current outcome. This is a hard failure
+                #     consistent with the main loop's no-matching-edge posture
+                #     (EXTENSIONS.md §33). The engine forced this FAIL; no node
+                #     produced a verdict, so is_explicit=False.
+                # (b) No outgoing edges at all: a designed terminus. Return the
+                #     last outcome unchanged (graceful subgraph completion).
+                outgoing = self.graph.outgoing_edges(current_node.id)
+                if outgoing:
+                    return Outcome(
+                        status=StageStatus.FAIL,
+                        failure_reason=(
+                            f"Subgraph dead end at node '{current_node.id}': "
+                            f"{len(outgoing)} outgoing edge(s) exist but none "
+                            f"match the current outcome "
+                            f"(status={outcome.status.value}). "
+                            f"This is a conditional-mismatch dead end \u2014 "
+                            f"add a matching edge or a fallback route."
+                        ),
+                        is_explicit=False,
+                    )
+                # No outgoing edges at all -- subgraph reached a designed terminus.
                 return outcome
 
             current_node = self.graph.nodes[edge.to_node]

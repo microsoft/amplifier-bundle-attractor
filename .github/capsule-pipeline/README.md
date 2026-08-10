@@ -686,3 +686,69 @@ against the DENY list) is exercised directly by `leak_gate` in
   method on vendored and source: `capsule.dot` 34 declaration statements
   (33 nodes + the `graph [` attribute statement) / 58 edges on BOTH sides;
   `task-runner.dot` 24 declaration statements / 36 edges on BOTH sides.
+
+- **2026-08-09 (RC-7 third leg + RC-8 boundary neutrality)** -- `capsule.dot`
+  re-synced `b3bcedb5da8d60ce4490ad9ad9e2d547235891f5` ->
+  `5c39ebf7ed3ae68997d66c888eeace300d561e26`. ONE source commit; the
+  `runner/capsule.dot` diff is `42 5` (numstat), five hunks:
+  - NEW `author_reset` glue node between `author` and `capsule_gate` (the
+    `author -> capsule_gate` direct edge is DELETED) -- the RC-7 idiom
+    applied to the author leg, symmetric with `rival_reset`: the author is
+    an LLM maker that legitimately self-tests fix-shaped edits against the
+    pinned tree; nothing restored the tree afterward, so `redgate`'s
+    pristineness precondition (working as built) refused to measure and the
+    run died at `reset_fail` with budget remaining. The node hard-resets
+    (`git checkout -- .` + `git clean -qfd -e .ai`), PROVES the reset
+    (clean porcelain excluding `.ai/`, HEAD back at the pinned base), and
+    records the dirt EITHER WAY as a ledger fact
+    (`{"gate": "author_reset", "dirty": true|false}` in
+    `.ai/convergence.jsonl`) plus, when dirty, a shipped finding
+    (`.ai/findings/author-tree-dirt.md`). Unproven reset ->
+    `reset_unproven` -> `reset_fail` LOUD halt; `reset_fail`'s message now
+    names the post-author leg alongside the others. Nodes 33 -> 34, edges
+    58 -> 60.
+  - `package` gains ONE new finding-ship line
+    (`$id.author-tree-dirt.md`).
+  - RC-8 boundary-neutrality prompt doctrine (prompt-level only): `author`
+    gains RUNTIME-BORN IS NOT ENOUGH -- generated probe identifiers must be
+    SEMANTICALLY NEUTRAL (no subject-domain tokens; a domain-word-plus-
+    random-suffix probe smuggles an unlicensed boundary extension into the
+    gate, so a correct fix of exactly the reported cases stays RED);
+    `critique` gains BOUNDARY LICENSING -- embedded domain vocabulary in a
+    probe is an explicit ruling the judge must make (QUOTE the issue text
+    that licenses the wider boundary, or block as over-specification).
+  No checker/deny-list/task-runner/dual-yaml changes:
+  `git log b3bcedb..5c39ebf -- runner/check-existing-tests.py
+  backlog/check-upstream-leaks.sh backlog/fixtures/leak-scan
+  runner/task-runner.dot runner/attractor-pipeline-dual.yaml` is EMPTY.
+  Verified by `cmp` at `5c39ebf`: `task-runner.dot` (below its 90-line
+  header), `attractor-pipeline-dual.yaml` (below 22), the leak scanner
+  (below its 10 header lines), `check-existing-tests.py` (byte-identical,
+  no header), and all 5 leak-scan fixtures (byte-identical) -- none
+  touched. Call-site count (step 2b, both directions) -- UNCHANGED: the
+  `$uplift_dir/...` census is identical on both sides of the sync (2x
+  `backlog/check-upstream-leaks.sh` from `setup`/`leak_gate`, 1x LLM-prompt
+  reference to `runner/check-existing-tests.py` in `critique`); the new
+  `author_reset` is pure inline shell -- no `$uplift_dir` reference gained
+  or lost. NO workflow change forced: the fuse
+  (`max_pipeline_duration="18000s"`) and every timeout literal are
+  untouched, so `capsule-specify.yml`'s 360-minute budget still clears it.
+  Runtime proof performed (see the PR that performed this sync for full
+  transcripts), from a scratch git repo shaped as the workflow shapes
+  `target_dir`: (1) `author_reset`'s `tool_command=` text, extracted
+  verbatim from the re-synced `.dot` -- DIRTY case (a modified tracked
+  file + untracked junk, a prior-round ledger present): printed
+  `reset_proven` (rc=0), tree restored (porcelain empty excluding `.ai/`,
+  HEAD == pinned base), ledger row
+  `{"iteration": 2, "gate": "author_reset", "dirty": true}` appended, and
+  `.ai/findings/author-tree-dirt.md` written naming the exact dirty
+  entries; CLEAN case (pristine tree): `reset_proven` (rc=0),
+  `{"iteration": 1, "gate": "author_reset", "dirty": false}`, and NO
+  finding file created. (2) `package`'s `tool_command=` text with a
+  capsule pair + that finding present: printed `packaged` (rc=0) and the
+  new ship line landed `demo-fix.author-tree-dirt.md` in `$capsule_out`
+  alongside the pair. `attractor lint` on the re-synced `.dot`: OK, no
+  findings (rc=0). Node/edge parity, same comment-stripped count method on
+  vendored and source: 34 node declarations / 60 edges on BOTH sides
+  (33/58 at the prior pin -- exactly the one-node, two-edge delta the
+  source commit claims).

@@ -892,3 +892,103 @@ against the DENY list) is exercised directly by `leak_gate` in
   same two cases: purge fires pre-measure, `"pyc_purged"` rides the
   redgate ledger row, gate verdict logic unchanged. `attractor lint` on
   the re-synced `.dot`: OK, no findings (rc=0).
+
+- **2026-08-10 (heldout-v5 structural fixes: launch contract, typed diagnose
+  verdict, rebut-only move, engine-record visibility)** -- `capsule.dot`
+  re-synced `d6f8d3a300eb9bb78087f78c596ad9d6d040be03` ->
+  `5c1d79d2d93c0fbe2fe7923bfde728d8aaed4dec`. ONE source commit; the
+  `runner/capsule.dot` diff is `95 24` (numstat), nodes/edges 34/60 ->
+  **35/62** (one new node, two new edges):
+  - **LAUNCH CONTRACT (behavior change worth a sentence for workflow
+    operators: the pipeline now writes into the target repo's
+    `.git/info/exclude`)** -- `setup` idempotently appends `.ai/` to
+    `.git/info/exclude` BEFORE the porcelain pristineness check.
+    Repo-local and uncommitted (correct for someone else's repo), NEVER
+    `.gitignore` (a `.gitignore` edit would itself dirty the tree the
+    check is about to measure). This closes the class where the pipeline
+    self-tripped on its own `?? .ai/` scratch and refused at `dirty_tree`
+    on any target repo that does not ship an `.ai/` ignore rule (3/3
+    fresh sibling-repo clones in the source repo's heldout-v5
+    evaluation). The action is echoed as a recorded fact
+    (`AI-EXCLUDE (launch contract): ...`). A genuinely dirty tree (any
+    tracked-file modification, any non-`.ai` untracked file) still
+    refuses loud.
+  - **STRUCTURAL SENTINEL CLOSE (typed diagnose verdict; ONE new node,
+    TWO new edges, ONE new in-loop artifact)** -- the third recurrence of
+    the typed-sentinel class (a BLOCKED the diagnose LLM emitted inside a
+    conditional construction matched the anchored prose grep, abandoning
+    a run against its own diagnosis) is closed structurally: the verdict
+    no longer lives in prose. `diagnose` gains
+    `must_write=".ai/diagnose-verdict"` -- **a new in-loop artifact**, a
+    single-line machine-fact file reading exactly CONTINUE or BLOCKED,
+    presence + per-visit freshness enforced by the engine's `must_write=`
+    contract -- plus a rewritten prompt (prose declared routing-inert; an
+    engine-record reading duty: locate the runner's logs dir and QUOTE
+    the failed node's `status.json` `failure_reason` verbatim before
+    theorizing). `diagnose_gate` now exact-matches the FILE only (the
+    prose grep on `diagnosis.md` is retired; BLOCKED anywhere in prose is
+    inert); anything other than exactly one line reading CONTINUE or
+    BLOCKED routes to **`diagnose_fail`** (new node), the loud-halt idiom
+    -- never a silent abandon, never a silent continue. A new
+    `diagnose -> escalate [outcome=fail]` edge covers `must_write`
+    exhaustion/in-node crash (the retry ladder handles no-writes first;
+    the edge is what remains after it), so the lane cannot dead-end.
+  - **REBUT-ONLY MOVE (prompt-only, 2 nodes)** -- `author`: a rebut-only
+    round re-emits the gate file as-is (satisfying the engine's freshness
+    floor deliberately) and writes the rebuttal; `critique`: an
+    unchanged-but-re-emitted gate accompanied by a written rebuttal is a
+    LEGITIMATE compliance shape -- rule on the rebuttal's merits, never
+    on the unchanged bytes.
+  - **ENGINE-RECORD VISIBILITY (prompt + comment only)** -- the diagnose
+    lane previously read only `.ai/` state, so engine-level `must_write`
+    violations were structurally invisible; the prompt now points the LLM
+    at the engine's own per-node records first. A glue capture (tee
+    `failure_reason` into `.ai/`) was weighed and REJECTED in the node's
+    own comment: edges cannot execute commands and the engine does not
+    substitute `outcome.failure_reason` into any `tool_command` context
+    key -- the prompt is the smallest mechanism that puts the fact in
+    front of the model.
+  Body byte-identity: sha256 of the vendored copy below its (now 19-line)
+  header == sha256 of `runner/capsule.dot` at `5c1d79d`
+  (`91d8cceff5c0d6461dc72c9f98d14a0c5472c5294e8ac015b67a46bdbbb4614e`).
+  No checker/deny-list/task-runner/dual-yaml changes:
+  `git log d6f8d3a..5c1d79d -- runner/check-existing-tests.py
+  backlog/check-upstream-leaks.sh backlog/fixtures/leak-scan
+  runner/task-runner.dot runner/attractor-pipeline-dual.yaml` is EMPTY
+  (the source commit's other files are its own rig tests -- including
+  the new `runner/tests/test_capsule_launch_contract.sh` -- and a
+  retirement-audit note, none vendored). Verified by `cmp` at `5c1d79d`:
+  `task-runner.dot` (below its 90-line header),
+  `attractor-pipeline-dual.yaml` (below 22), the leak scanner (below its
+  10 inserted header lines), `check-existing-tests.py` (byte-identical,
+  no header), and all 5 leak-scan fixtures (byte-identical) -- none
+  touched. Call-site count (step 2b, both directions) -- UNCHANGED: the
+  `$uplift_dir/...` census is identical on both sides of the sync (2x
+  `backlog/check-upstream-leaks.sh` from `setup`/`leak_gate`, 1x
+  LLM-prompt reference to `runner/check-existing-tests.py` in
+  `critique`); the new `diagnose_fail` and the exclude-append are pure
+  inline shell -- no `$uplift_dir` reference gained or lost. NO workflow
+  change forced: the fuse (`max_pipeline_duration="18000s"`) and every
+  timeout literal are untouched on both sides, so `capsule-specify.yml`'s
+  360-minute budget still clears it. No new token-shaped literal enters
+  the prompt text (the RC-8 `$RANDOM` analysis above remains the only
+  such case). Runtime proof performed (see the PR that performed this
+  sync for full transcripts), from a scratch git repo shaped as the
+  workflow shapes `target_dir`: (1) `setup`'s `tool_command=` text,
+  extracted verbatim from the re-synced `.dot`, on a repo WITHOUT an
+  `.ai/` ignore rule (the command creates `.ai/` itself): echoed the
+  AI-EXCLUDE appended fact and printed `ok`; rerun: echoed the idempotent
+  fact, printed `ok`, exactly ONE `.ai/` line in `.git/info/exclude`; a
+  modified tracked file and a non-`.ai` untracked file each still
+  printed `dirty`. (2) `diagnose_gate`'s `tool_command=` text: verdict
+  file `CONTINUE` -> `continue`; `BLOCKED` -> `blocked`; the exact
+  conditional-BLOCKED prose shape in `diagnosis.md` with verdict file
+  `CONTINUE` -> `continue` (prose ignored); two-line and missing verdict
+  files -> `malformed` with the malformation named in `.ai/gate.log`;
+  whitespace-padded `CONTINUE` -> `continue`. `attractor lint` on the
+  re-synced `.dot`: OK, no findings (rc=0);
+  `check-upstream-leaks.sh --self-test`: PASS (RED x4, GREEN x2).
+  Node/edge parity, same comment-stripped count method on vendored and
+  source: 35 node declarations / 62 edges on BOTH sides (34/60 at the
+  prior pin -- exactly the one-node, two-edge delta the source commit
+  claims).

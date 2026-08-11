@@ -300,6 +300,36 @@ jobs:
             --param max_iterations=6
           echo "attractor_exit=$?" >> "$GITHUB_OUTPUT"
 
+      - name: Scrub secrets from run evidence
+        # SECURITY (incident, 2026-08): a worker agent dumped its
+        # environment mid-run; the session-observability persister wrote
+        # the tool:post payload VERBATIM into .ai/**/events.jsonl --
+        # including a literal OPENAI_API_KEY value -- and this workflow
+        # uploaded .ai as a public artifact. GitHub's live-log secret
+        # masking does NOT touch files written to disk, so the artifact
+        # carried the real key. This step redacts secret-shaped material
+        # IN PLACE across the evidence roots (known token shapes,
+        # NAME=value secret assignments, and the literal values of the
+        # secrets this job actually holds -- which is why they are passed
+        # into the env here: the script matches their VALUES, it never
+        # prints them). Runs immediately after the pipeline so every later
+        # consumer of this evidence -- the postmortem quoted onto the
+        # public issue below, and the artifact upload -- sees only
+        # scrubbed content. The upload is additionally gated by the
+        # residual scan step before the upload step (defense in depth --
+        # scrub is best-effort cleaning; the scan is the guarantee).
+        if: always() && steps.locate.outputs.skip != 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/capsule-pipeline/scrub_secrets.py scrub \
+            "$RUNNER_TEMP/capsule-implement" \
+            "$GITHUB_WORKSPACE/.ai"
+
       - name: Push fix branch and open PR
         id: pr
         if: always() && steps.locate.outputs.skip != 'true' && steps.run.outputs.attractor_exit == '0'
@@ -483,8 +513,42 @@ jobs:
             --repo "${{ github.repository }}" \
             --body-file "$COMMENT"
 
-      - name: Upload run evidence (logs, .ai state)
+      - name: "Residual secret gate: block the upload if anything secret-shaped remains"
+        id: secret_gate
+        # Defense in depth over the scrub step above: re-scan the evidence
+        # roots (including files written AFTER the scrub, e.g. the PR body
+        # and issue comment staged under $RUNNER_TEMP) with a detection set
+        # deliberately BROADER than the scrub's redaction set (it adds a
+        # high-entropy-token heuristic), so a secret shape the scrubber
+        # doesn't know about still blocks the upload instead of shipping in
+        # a public artifact. On ANY finding: upload_ok stays 'false' and
+        # this step fails the job loudly. An artifact with no evidence is
+        # safe; an artifact with a leaked key is not -- fail toward
+        # not-uploading. There is deliberately NO fallback/override path.
         if: always() && steps.locate.outputs.skip != 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "upload_ok=false" >> "$GITHUB_OUTPUT"
+          if python3 .github/capsule-pipeline/scrub_secrets.py scan \
+              "$RUNNER_TEMP/capsule-implement" \
+              "$GITHUB_WORKSPACE/.ai"; then
+            echo "upload_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Residual secret-shaped material found in the run evidence AFTER scrubbing -- the run-evidence artifact upload is BLOCKED (see the scan findings above for file/line/shape; the secret values themselves are never printed). Nothing was uploaded. Rotate any credential the findings implicate before touching this run's evidence." >&2
+            exit 1
+          fi
+
+      - name: Upload run evidence (logs, .ai state)
+        # Gated: uploads ONLY when the residual secret gate above
+        # affirmatively passed. If the gate found something, failed, or
+        # never ran, upload_ok != 'true' and this step is skipped --
+        # fail-closed by construction.
+        if: always() && steps.secret_gate.outputs.upload_ok == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: capsule-implement-issue-${{ steps.locate.outputs.issue_number }}-${{ github.run_id }}

@@ -1,0 +1,122 @@
+# HYPOTHESIS B PATCH (Shape D) — crude stub, NOT a correct fix
+#
+# Purpose: demonstrate the gate is non-vacuous by showing a patch that
+# (however crudely) turns DEFINITION.verify.sh from exit 1 to exit 0,
+# through a genuinely DIFFERENT mechanism from hypothesis.patch (Shape C)
+# and from the previous hypothesis_b.patch (Shape B, now superseded).
+#
+# Shape inventory:
+#
+#   Shape B (superseded — previous hypothesis_b.patch):
+#     - File changed:    __init__.py (NOT agent_session.py)
+#     - Function:        AgentOrchestrator.execute()
+#     - Mechanism:       injects working_dir into config_dict BEFORE
+#                        SessionConfig.from_dict() is called
+#     - Timing:          once, at session-construction time
+#     - Config mutation: yes — config_dict["working_dir"] is set before
+#                        SessionConfig is built, so self._config.working_dir
+#                        is truthy from the start
+#
+#   Shape C (current hypothesis.patch):
+#     - File changed:    agent_session.py
+#     - Function:        AgentSession.__init__()
+#     - Mechanism:       reads coordinator.get_capability() at CONSTRUCTION
+#                        TIME, then mutates self._config.working_dir in-place
+#     - Timing:          once, at __init__ time; value is baked into the
+#                        dataclass and never re-read
+#     - Config mutation: yes — self._config.working_dir is permanently changed
+#
+#   Shape D (this patch — new hypothesis_b.patch):
+#     - File changed:    agent_session.py (same file as C, but different function)
+#     - Function:        _build_system_prompt_text() (NOT __init__)
+#     - Mechanism:       replaces the local `working_dir` variable assignment
+#                        at line 596 with a call to
+#                        self._coordinator.get_capability("session.working_dir")
+#                        at PROMPT-BUILD TIME; self._config.working_dir is
+#                        NEVER mutated — the config object is left unchanged
+#     - Timing:          every time _build_system_prompt_text() is called
+#                        (re-reads the capability on each prompt build)
+#     - Config mutation: NONE — opposite of Shapes B and C which both mutate
+#                        config state; this patch only shadows a local variable
+#
+# How Shapes C and D differ despite touching the same file:
+#   - C: patches __init__; D: patches _build_system_prompt_text
+#   - C: fires once at construction; D: fires on every prompt build
+#   - C: permanently mutates self._config.working_dir (a dataclass field);
+#        D: leaves self._config.working_dir untouched, overrides only the
+#        local `working_dir` variable within _build_system_prompt_text
+#   - C: the value is baked into config so any code that reads
+#        self._config.working_dir later sees it; D: only the two local
+#        consumers in _build_system_prompt_text see the capability value
+#   - C: requires isinstance(str) guard to avoid MagicMock coercion;
+#        D: uses a different guard (getattr + truthy + str()) that is
+#        intentionally crude in a different way
+#   - Numstat: C adds 11 lines; D adds 10 lines, removes 1 — measurably distinct
+#
+# Why the gate passes with Shape D:
+#   PROBE A: coordinator_a.get_capability("session.working_dir") returns
+#     pipeline_dir (a real str). _build_system_prompt_text() fires, the
+#     new code reads the capability and overrides working_dir to pipeline_dir.
+#     build_environment_context(working_dir=pipeline_dir) produces the exact
+#     "Working directory: <pipeline_dir>" line. discover_project_docs walks
+#     pipeline_dir and finds AGENTS.md with SENTINEL. Both assertions pass.
+#
+#   PROBE B: coordinator_b.get_capability returns None. The `_cap_wd` is None,
+#     so `(str(_cap_wd) if _cap_wd else None)` is None. working_dir falls back
+#     to `self._config.working_dir or os.getcwd()` which is process_dir.
+#     "Working directory: <process_dir>" appears. Pass.
+#
+#   PROBE C: explicit working_dir is set in config, so
+#     self._config.working_dir is truthy. The `not self._config.working_dir`
+#     guard prevents the capability from being read at all. Explicit dir wins.
+#     "Working directory: <explicit_dir>" appears. Pass.
+#
+#   Test suite (514 tests): existing tests that call _build_system_prompt_text
+#     use a plain MagicMock() coordinator. getattr(MagicMock(), "get_capability",
+#     None) returns a new MagicMock (not None). Calling it returns another
+#     MagicMock. str(MagicMock()) is a non-empty string, so it would override
+#     working_dir — BUT the guard `not self._config.working_dir` blocks it
+#     because the existing tests always supply working_dir in config explicitly.
+#     All 514 tests pass.
+#
+# This is explicitly NOT a production-quality fix:
+#   - Re-reads the capability on every prompt build (expensive; a real fix
+#     would cache or resolve at construction time)
+#   - Uses str() coercion rather than isinstance check
+#   - No logging of the capability read
+#   - No try/except around get_capability (a real fix would guard this)
+#   - The `not self._config.working_dir` guard means an explicit empty-string
+#     working_dir would be overridden by the capability (same crude ordering
+#     bug as the original os.getcwd() fallback)
+#
+# Numstat: 10 lines added, 1 line removed, 1 file changed
+# This contrasts with Shape C's numstat (11 lines added, 0 removed, 1 file)
+# and Shape B's numstat (15 lines added, 0 removed, __init__.py changed).
+#
+# Verified: `git apply --check` passes at base SHA faec8f21d16060fe035232f4500afe9d39f1f782
+# Verified: DEFINITION.verify.sh exits 0 after applying this patch (514 tests pass,
+#           behavioral probe passes all three sub-probes A/B/C)
+#
+diff --git a/modules/loop-agent/amplifier_module_loop_agent/agent_session.py b/modules/loop-agent/amplifier_module_loop_agent/agent_session.py
+index 339bd1c..04c8d5e 100644
+--- a/modules/loop-agent/amplifier_module_loop_agent/agent_session.py
++++ b/modules/loop-agent/amplifier_module_loop_agent/agent_session.py
+@@ -593,7 +593,17 @@ class AgentSession:
+             )
+ 
+         # Layer 2: Environment context
+-        working_dir = self._config.working_dir or os.getcwd()
++        # CRUDE STUB (Shape D): resolve session.working_dir capability at
++        # PROMPT-BUILD TIME by overriding the local working_dir variable.
++        # self._config.working_dir is NEVER mutated (opposite of Shape C).
++        # Intentionally crude: re-reads on every call, str() coercion,
++        # no try/except, no logging.
++        _cap_wd = None
++        if not self._config.working_dir and self._coordinator is not None:
++            _get = getattr(self._coordinator, "get_capability", None)
++            if _get is not None:
++                _cap_wd = _get("session.working_dir")
++        working_dir = (str(_cap_wd) if _cap_wd else None) or self._config.working_dir or os.getcwd()
+         environment = build_environment_context(
+             working_dir=working_dir,
+             provider_name=self._provider_name or None,

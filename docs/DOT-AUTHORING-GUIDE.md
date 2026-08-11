@@ -640,6 +640,16 @@ digraph {
 Explicit node attributes (`llm_model="..."` on the node) always override
 stylesheet values.
 
+**Startup provider preflight (fail-loud):** every provider a node declares --
+explicitly or via the stylesheet -- must be serviceable by the run (a mounted
+provider/profile with its credential env var set). The engine cross-checks
+this BEFORE the walk begins and refuses to start, naming each failing node,
+its provider, and the missing credential, instead of letting one
+unserviceable node crash on every visit and drain the whole iteration budget
+(issue #155, `specs/EXTENSIONS.md` §36). There is deliberately no silent
+fallback to another provider: a multi-provider graph (e.g. dual-family
+critique) that cannot be honored is an error, not a quiet downgrade.
+
 ### Model selection: globs and evergreen forms
 
 A node's `llm_model` -- whether set directly on the node or via

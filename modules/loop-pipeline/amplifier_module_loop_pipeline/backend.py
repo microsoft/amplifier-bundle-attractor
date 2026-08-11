@@ -241,9 +241,15 @@ class AmplifierBackend:
         max_agent_turns = (
             int(max_agent_turns_raw) if max_agent_turns_raw is not None else None
         )
-        profile_name = self._profiles.get(
-            provider, next(iter(self._profiles.values()), "")
-        )
+        # Profile lookup is exact-or-nothing (issue #155 R3): the former
+        # `next(iter(self._profiles.values()), "")` default silently routed a
+        # node whose declared provider had no profile onto SOME OTHER
+        # provider's profile -- the "silent single-provider fallback" that
+        # defeats dual-family critique (a run reporting a dual-critic quorum
+        # while both critics ran on the same model family). A missing profile
+        # now fails loud on the spawn path (see step 6 below); the tool-loop
+        # path never consumes a profile.
+        profile_name = self._profiles.get(provider)
 
         # 3. Resolve fidelity mode (spec FID-001–010)
         if graph is not None:
@@ -300,6 +306,29 @@ class AmplifierBackend:
 
         # 6. Route to Path A (spawn) or Path B (direct tool loop)
         if self._spawn_fn is not None:
+            # Fail-loud guard (issue #155 R3, defense-in-depth under the
+            # startup preflight in preflight.py): the spawn path consumes a
+            # provider->agent profile, and there is NO fallback when the
+            # node's provider has none.  Silently substituting another
+            # provider's profile is how a run reports a dual-critic quorum
+            # while both critics ran on the same model family.  ValueError is
+            # terminal in the retry ladder (retry.should_retry), so this
+            # surfaces once, loudly -- never as a budget-draining crash loop.
+            if profile_name is None:
+                from .preflight import PROVIDER_KEY_ENV
+
+                raise ValueError(
+                    f"Node '{node.id}' resolved llm_provider={provider!r} but no "
+                    f"profile is mounted for that provider (mounted profiles: "
+                    f"{sorted(self._profiles) or 'none'}). Refusing to fall back "
+                    f"to another provider's profile -- silent single-provider "
+                    f"fallback defeats dual-family critique (issue #155, "
+                    f"EXTENSIONS.md section 36). Fix: add "
+                    f"'{provider}: <agent-name>' to the orchestrator 'profiles' "
+                    f"config and ensure its credential "
+                    f"({PROVIDER_KEY_ENV.get(provider, '<PROVIDER>_API_KEY')}) "
+                    f"is set, or change the node's llm_provider."
+                )
             outcome = await self._run_with_spawn(
                 node,
                 instruction,

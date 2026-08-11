@@ -61,8 +61,8 @@ it is not consulted on per-node failure.)
 depend on missing inputs don't silently receive nothing — they don't run at all. Pipeline
 authors must explicitly opt in to any failure-routing behavior they want.
 
-**Reference:** `modules/loop-pipeline/amplifier_module_loop_pipeline/edge_selection.py`
-(lines 65–101; outcome-status guard at line 79).
+**Reference:** `modules/loop-pipeline/amplifier_module_loop_pipeline/edge_selection.py::select_edge`
+(the outcome-status guard is the `if outcome.status != StageStatus.FAIL:` check inside it).
 
 ### Explicit fail-forward opt-ins
 
@@ -79,13 +79,15 @@ Three mechanisms let pipeline authors override fail-fast for specific scenarios:
 `continue_on_fail=true` that fails has its outcome flipped FAIL→SUCCESS before edge
 selection; a downstream `runs_on=failure` node will NOT see that predecessor as failed
 (the failure was swallowed). Use `runs_on=always` on cleanup nodes that must fire after
-a `continue_on_fail` predecessor. See engine.py lines 582–596 for the canonical
+a `continue_on_fail` predecessor. See the `continue_on_fail and runs_on are NOT
+orthogonal` comment block in `engine.py::PipelineEngine.run` for the canonical
 explanation.
 
 **Reference:** `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py`
-(lines 597–600 for the `continue_on_fail` check; lines 1332–1357 for `_get_runs_on` and
-1383–1481 for the skip-gate `_check_node_skip`). Also: `edge_selection.py` lines 65–78
-for the edge-level routing comment.
+(the `continue_on_fail` check in `engine.py::PipelineEngine.run`;
+`engine.py::PipelineEngine._get_runs_on`; and the skip-gate
+`engine.py::PipelineEngine._check_node_skip`). Also: the edge-level routing comment at
+the top of `edge_selection.py::select_edge`.
 
 ---
 
@@ -107,8 +109,8 @@ branches the engine dispatches simultaneously; any additional rate control is th
 provider module's responsibility.
 
 **Reference:**
-`modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py` (lines 91–94,
-`ParallelHandler`). The former engine-level helper is documented in
+`modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py::ParallelHandler.execute`
+(the `max_parallel` + semaphore setup). The former engine-level helper is documented in
 `engine.py` (T0-4 retirement comment near the old `_execute_parallel_fan_out` site).
 
 ---
@@ -160,9 +162,9 @@ event stream is a documented extension (EXTENSIONS.md §26).
 | Contract | File | Location |
 |---|---|---|
 | M5 substitution | `modules/loop-pipeline/amplifier_module_loop_pipeline/substitution.py` | Module docstring |
-| Fail-fast / edge selection | `modules/loop-pipeline/amplifier_module_loop_pipeline/edge_selection.py` | Lines 65–101 (`select_edge`) |
-| `continue_on_fail` override | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 593–596 and comment block at 578–592 |
-| `runs_on` logic | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | Lines 1299–1323 (`_get_runs_on`) and 1350–1447 (`_check_node_skip`) |
-| Structural concurrency (component) | `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py` | Lines 91–94 (`max_parallel` + semaphore) |
+| Fail-fast / edge selection | `modules/loop-pipeline/amplifier_module_loop_pipeline/edge_selection.py` | `select_edge` (includes the outcome-status guard) |
+| `continue_on_fail` override | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | `PipelineEngine.run` — the `continue_on_fail` check and its comment block |
+| `runs_on` logic | `modules/loop-pipeline/amplifier_module_loop_pipeline/engine.py` | `PipelineEngine._get_runs_on` and `PipelineEngine._check_node_skip` |
+| Structural concurrency (component) | `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/parallel.py` | `ParallelHandler.execute` (`max_parallel` + semaphore setup) |
 | Worker observability seam | `modules/loop-pipeline/amplifier_module_loop_pipeline/worker_observability.py` | Module docstring (`current_worker_sessions_dir`) |
 | Session-event persistence | `modules/hooks-pipeline-observability/amplifier_module_hooks_pipeline_observability/session_events.py` | `SessionEventPersister` |

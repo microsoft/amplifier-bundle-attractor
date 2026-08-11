@@ -130,7 +130,7 @@ digraph BugFix {
     verdict_gate [
         shape=parallelogram,
         label="Ship?",
-        tool_command="grep -E '^VERDICT:' .ai/critique.md 2>/dev/null | tail -1 | grep -q 'SHIP' && printf ship || printf iterate"
+        tool_command="awk '/^VERDICT:/ { v = $0 } END { if (v ~ /SHIP/) exit 0; exit 1 }' .ai/critique.md 2>/dev/null && printf ship || printf iterate"
     ]
 
     // Feedback: distill the highest-leverage change for the next iteration.

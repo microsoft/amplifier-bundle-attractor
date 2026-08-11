@@ -1323,6 +1323,84 @@ for a separate non-compliant loop.
 
 ---
 
+### TOPO-006 — Failure outcome routed into the terminal success node
+
+**What it detects:** A failure-conditioned edge (`outcome=fail`,
+`outcome=error`, `outcome!=success`) routed into the exit node — directly, or
+through a silent pass-through path.  Two forms:
+
+1. **Direct:** `verify -> done [condition="outcome=fail"]`.  The failure
+   leaves through the pipeline's success door: no corrective loop, no retry,
+   no distinct failure terminal.  Always flagged — there is no intermediary
+   to mark.
+2. **Indirect:** the failure edge's receiving path reaches the exit with
+   every hop unconditional and no re-gating in between, through at least one
+   *unmarked* intermediary (default `runs_on`, only unconditional outgoing
+   edges).
+
+**Why it matters:** This is the graph-topology sibling of the CMD-001/CMD-002
+hazard class — a gate whose failure is structurally converted into a
+completed, green-looking run — and the "silent-success exit" incident class.
+The indirect form is the sharper hazard: add ONE succeeding bookkeeping step
+between the failed gate and `done` (a recorder, a notifier, a cleanup) and
+the run's final status comes from that step, not from the failed gate —
+`status: success`, exit code 0, hours of work silently lost.
+
+**What is NOT flagged** (grounded in the engine's own failure-routing
+semantics — `engine.py::_get_runs_on` and `edge_selection.py::select_edge`):
+
+- **A marked handled-failure path.**  `runs_on` normalizes to `"always"`,
+  `"failure"`, or the default `"success"` (anything else normalizes to
+  `"success"` — `_get_runs_on`).  On a FAIL outcome, plain edges are followed
+  ONLY to targets whose `runs_on` is `always` or `failure`; default targets
+  are not reached — the documented fail-fast behavior (`select_edge`).
+  `runs_on` is therefore the engine's first-class failure-routing opt-in: a
+  failure route in which **every** intermediary carries `runs_on="always"` or
+  `runs_on="failure"` is a deliberately declared handled-failure termination
+  and stays silent:
+
+  ```dot
+  verify -> record_failure [condition="outcome=fail"]
+  record_failure -> done
+  record_failure [shape=parallelogram, tool_command="echo recorded", runs_on=always]
+  ```
+
+- **A re-gating intermediary.**  A node with at least one condition-bearing
+  outgoing edge makes a fresh routing decision (retry-vs-escalate and the
+  like) — corrective routing, not a silent pass-through.
+
+- **A human-gate intermediary.**  A `hexagon` (`wait.human`) node on the
+  failure path is external human judgment — the failure cannot exit green
+  without a human seeing it (the TOPO-004/TOPO-005 human-gate precedent).
+
+**Severity:** WARNING — joins the CMD-001/CMD-002 family: the hazard is real
+but intent is not statically provable, and deliberate finish-through-`done`
+designs exist (e.g. a budget-exhaustion exit that deliberately ends at the
+single exit node with a genuine FAIL outcome, as in
+`examples/patterns/convergence-factory.dot`, which consciously carries this
+diagnostic).  ERROR would hard-fail such graphs via `validate_or_raise`.
+
+**Fix:** Route the failure to a corrective target with a back-edge to retry:
+
+```dot
+// WRONG — failure exits through the success door
+verify -> done [condition="outcome=success"]
+verify -> done [condition="outcome=fail"]
+
+// CORRECT — failure routes to a corrective loop
+verify -> done [condition="outcome=success"]
+verify -> fix  [condition="outcome=fail"]
+fix -> verify
+```
+
+Or, if finishing after a handled failure is deliberate, declare it: mark
+every intermediary on the path with `runs_on="always"` or
+`runs_on="failure"`, or re-gate the flow with a condition-bearing edge on an
+intermediary.  The diagnostic names the failure-conditioned edge, its source
+node, and (for the indirect form) the pass-through path.
+
+---
+
 ### CMD-001 — Pipe-masked exit code
 
 **What it detects:** A `parallelogram` (tool) node whose `tool_command` ends
@@ -1370,7 +1448,7 @@ If you need to see the last N lines, write to a file and read it separately
 from the routing logic.
 
 **Severity:** WARNING — consistent with the WARNING-severity TOPO rules
-(TOPO-002 through TOPO-005; note TOPO-001 is `ERROR`, not this family's
+(TOPO-002 through TOPO-006; note TOPO-001 is `ERROR`, not this family's
 default).  The hazard is real but static analysis cannot prove the command is
 a meaningful gate; conservative analysis may miss complex cases.
 
@@ -1432,7 +1510,7 @@ influence either the exit code or the emitted token?  The hazard shapes
 destroy that influence.  The honest idioms preserve it.
 
 **Severity:** WARNING — consistent with CMD-001 and the WARNING-severity TOPO
-rules (TOPO-002 through TOPO-005; TOPO-001 is `ERROR`).
+rules (TOPO-002 through TOPO-006; TOPO-001 is `ERROR`).
 
 **What this rule does NOT catch:** sentinels inside `$(...)` substitutions,
 sentinels after non-pipe-masked commands (where `&& echo TOKEN` is the honest

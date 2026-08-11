@@ -360,7 +360,7 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    ```
    bash -c "attractor lint <path>"
    ```
-   A `.dot` that fails `attractor lint` (TOPO-001 through TOPO-005, documented in
+   A `.dot` that fails `attractor lint` (TOPO-001 through TOPO-006, documented in
    `docs/DOT-AUTHORING-GUIDE.md`) is not a runnable artifact. Fix lint findings
    before handing back.
 

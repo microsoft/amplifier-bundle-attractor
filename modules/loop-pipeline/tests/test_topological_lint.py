@@ -1,4 +1,4 @@
-"""Tests for topological (basin-lint) rules — TOPO-001 through TOPO-005.
+"""Tests for topological (basin-lint) rules — TOPO-001 through TOPO-006.
 
 These rules reason about cycle structure and handler semantics, not just
 graph topology.  They are exposed via ``lint()`` (not ``validate()``) so
@@ -1017,3 +1017,319 @@ class TestDeadDiamondRegressions:
         dead = _diag(diags, "dead_conditional_edge")
         assert dead
         assert any(d.node_id == "test_gate" for d in dead)
+
+
+# ---------------------------------------------------------------------------
+# TOPO-006: fail_routed_to_exit
+# ---------------------------------------------------------------------------
+
+
+def _tool_with_runs_on(node_id: str, runs_on: str | None = None) -> Node:
+    attrs = {"tool_command": "echo ok"}
+    if runs_on is not None:
+        attrs["runs_on"] = runs_on
+    return Node(id=node_id, shape="parallelogram", attrs=attrs)
+
+
+class TestFailRoutedToExit:
+    """TOPO-006: a failure outcome routed into the terminal success node.
+
+    Issue #173.  The isolated-probe structure required by the maintainer
+    ruling: hazard graphs assert the diagnostic fires AND names the
+    failure-conditioned edge + source node; marked/corrective graphs assert
+    no fail_routed_to_exit diagnostic appears at all.
+    """
+
+    # -- direct form ---------------------------------------------------------
+
+    def test_direct_fail_to_done_flagged(self):
+        """Hazard probe: verify -> done [outcome=fail] fires, names edge+source."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "build": _tool("build"),
+                "verify": _tool("verify"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "build"),
+                Edge("build", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "done", condition="outcome=fail"),
+            ],
+        )
+        diags = _diag(lint(g), "fail_routed_to_exit")
+        assert diags, "Expected fail_routed_to_exit diagnostic"
+        assert all(d.severity == "WARNING" for d in diags)
+        d = diags[0]
+        assert d.node_id == "verify"
+        assert d.edge == ("verify", "done")
+        assert "verify" in d.message and "done" in d.message
+        assert "outcome=fail" in d.message
+
+    def test_direct_fires_on_llm_source(self):
+        """Ruling 1: fires regardless of source shape — box (LLM) source."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "judge": _box("judge", prompt="judge it"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "judge"),
+                Edge("judge", "done", condition="outcome=success"),
+                Edge("judge", "done", condition="outcome=fail"),
+            ],
+        )
+        diags = _diag(lint(g), "fail_routed_to_exit")
+        assert diags and diags[0].node_id == "judge"
+
+    def test_direct_outcome_not_success_flagged(self):
+        """outcome!=success targeting the exit is a failure-conditioned edge."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "verify": _tool("verify"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "done", condition="outcome!=success"),
+            ],
+        )
+        assert _diag(lint(g), "fail_routed_to_exit")
+
+    def test_success_edge_to_exit_not_flagged(self):
+        """No false positive: the normal success exit edge stays silent."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _tool("work"),
+                "verify": _tool("verify"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "work", condition="outcome=fail"),
+            ],
+        )
+        assert not _diag(lint(g), "fail_routed_to_exit")
+
+    # -- indirect form (required, not stretch) -------------------------------
+
+    def _recorder_graph(self, recorder_runs_on: str | None) -> Graph:
+        """The issue's own runtime demonstration: fail -> recorder -> done."""
+        return _graph(
+            nodes={
+                "start": _mdiamond(),
+                "verify": _tool("verify"),
+                "record_failure": _tool_with_runs_on(
+                    "record_failure", recorder_runs_on
+                ),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "record_failure", condition="outcome=fail"),
+                Edge("record_failure", "done"),
+            ],
+        )
+
+    def test_indirect_unmarked_passthrough_flagged(self):
+        """Hazard probe: unmarked recorder before done — the sharper hazard
+        (failed gate, status success, exit 0)."""
+        g = self._recorder_graph(recorder_runs_on=None)
+        diags = _diag(lint(g), "fail_routed_to_exit")
+        assert diags, "Expected fail_routed_to_exit on unmarked pass-through"
+        d = diags[0]
+        assert d.node_id == "verify"
+        assert d.edge == ("verify", "record_failure")
+        # Encouraged by the ruling: the pass-through path is named.
+        assert "record_failure" in d.message and "done" in d.message
+
+    def test_indirect_runs_on_always_not_flagged(self):
+        """Ruling 2 probe: runs_on=always recorder is a deliberately declared
+        handled-failure termination — MUST NOT be flagged."""
+        g = self._recorder_graph(recorder_runs_on="always")
+        assert not _diag(lint(g), "fail_routed_to_exit")
+
+    def test_indirect_runs_on_failure_not_flagged(self):
+        """Ruling 2 probe: runs_on=failure intermediary — MUST NOT be flagged."""
+        g = self._recorder_graph(recorder_runs_on="failure")
+        assert not _diag(lint(g), "fail_routed_to_exit")
+
+    def test_indirect_unrecognized_runs_on_flagged(self):
+        """engine.py::_get_runs_on normalizes anything but always/failure to
+        the default 'success' — an unrecognized marker is unmarked."""
+        g = self._recorder_graph(recorder_runs_on="sometimes")
+        assert _diag(lint(g), "fail_routed_to_exit")
+
+    def test_indirect_regating_intermediary_not_flagged(self):
+        """An intermediary with a condition-bearing outgoing edge re-gates the
+        flow (retry-vs-escalate routing) — corrective, not flagged."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="do it"),
+                "verify": _tool("verify"),
+                "triage": _tool("triage"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "triage", condition="outcome=fail"),
+                Edge("triage", "work", condition="context.tool.last_line=retry"),
+                Edge("triage", "done"),
+            ],
+        )
+        assert not _diag(lint(g), "fail_routed_to_exit")
+
+    def test_indirect_multihop_one_unmarked_flagged(self):
+        """Multi-hop path with one unmarked intermediary among marked ones
+        is still the accident class — flagged."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "verify": _tool("verify"),
+                "cleanup": _tool_with_runs_on("cleanup", "always"),
+                "notify": _tool_with_runs_on("notify", None),  # unmarked
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "cleanup", condition="outcome=fail"),
+                Edge("cleanup", "notify"),
+                Edge("notify", "done"),
+            ],
+        )
+        diags = _diag(lint(g), "fail_routed_to_exit")
+        assert diags and diags[0].edge == ("verify", "cleanup")
+
+    def test_indirect_multihop_all_marked_not_flagged(self):
+        """Every intermediary marked runs_on=always/failure — deliberate."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "verify": _tool("verify"),
+                "cleanup": _tool_with_runs_on("cleanup", "always"),
+                "notify": _tool_with_runs_on("notify", "failure"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "cleanup", condition="outcome=fail"),
+                Edge("cleanup", "notify"),
+                Edge("notify", "done"),
+            ],
+        )
+        assert not _diag(lint(g), "fail_routed_to_exit")
+
+    def test_indirect_no_path_to_exit_not_flagged(self):
+        """Failure routed to a corrective back-edge target (never reaches the
+        exit unconditionally) — the healthy pattern, not flagged."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="do it"),
+                "verify": _tool("verify"),
+                "fix": _box("fix", prompt="fix it"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "fix", condition="outcome=fail"),
+                Edge("fix", "verify"),
+            ],
+        )
+        assert not _diag(lint(g), "fail_routed_to_exit")
+
+    def test_indirect_mixed_paths_flagged(self):
+        """A marked path AND an unmarked path both exist from the receiving
+        node — the unmarked pass-through path is the hazard, flagged."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "verify": _tool("verify"),
+                "recorder": _tool_with_runs_on("recorder", None),  # unmarked
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "recorder", condition="outcome=fail"),
+                Edge("recorder", "done"),
+            ],
+        )
+        assert _diag(lint(g), "fail_routed_to_exit")
+
+    # -- DOT-text isolated probes (issue #173's own fixtures) -----------------
+
+    def test_issue_repro_dot_fires(self):
+        """The issue's fail_to_done.dot repro, via the real DOT parser."""
+        from amplifier_module_loop_pipeline.dot_parser import parse_dot
+
+        dot = """
+        digraph fail_to_done {
+            graph [goal="Implement the change and verify it"]
+            start  [shape=Mdiamond]
+            build  [shape=parallelogram, tool_command="echo built"]
+            verify [shape=parallelogram, tool_command="./run_verify.sh"]
+            done   [shape=Msquare]
+            start -> build -> verify
+            verify -> done [condition="outcome=success"]
+            verify -> done [condition="outcome=fail"]
+        }
+        """
+        diags = _diag(lint(parse_dot(dot)), "fail_routed_to_exit")
+        assert diags, "Expected fail_routed_to_exit on the issue repro"
+        assert diags[0].node_id == "verify"
+        assert diags[0].edge == ("verify", "done")
+
+    def test_issue_legit_recorder_dot_silent(self):
+        """The issue's legitimate runs_on=always recorder variant stays silent."""
+        from amplifier_module_loop_pipeline.dot_parser import parse_dot
+
+        dot = """
+        digraph handled_failure {
+            graph [goal="Implement the change and verify it"]
+            start  [shape=Mdiamond]
+            build  [shape=parallelogram, tool_command="echo built"]
+            verify [shape=parallelogram, tool_command="./run_verify.sh"]
+            record_failure [shape=parallelogram, tool_command="echo recorded the failure", runs_on=always]
+            done   [shape=Msquare]
+            start -> build -> verify
+            verify -> done [condition="outcome=success"]
+            verify -> record_failure [condition="outcome=fail"]
+            record_failure -> done
+        }
+        """
+        assert not _diag(lint(parse_dot(dot)), "fail_routed_to_exit")
+
+    def test_indirect_human_gate_intermediary_not_flagged(self):
+        """A hexagon (wait.human) intermediary re-gates via external human
+        judgment — TOPO-004/005 human-gate precedent — not flagged."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "verify": _tool("verify"),
+                "approve": Node(id="approve", shape="hexagon", label="Approve?"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "approve", condition="outcome=fail"),
+                Edge("approve", "done"),
+            ],
+        )
+        assert not _diag(lint(g), "fail_routed_to_exit")

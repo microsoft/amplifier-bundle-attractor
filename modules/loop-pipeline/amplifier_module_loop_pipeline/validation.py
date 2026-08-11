@@ -4,7 +4,7 @@ Validates parsed Graph models against the rules defined in
 spec Section 7 (Validation and Linting). Produces Diagnostic objects
 with severity ERROR (blocks execution) or WARNING (informational).
 
-Spec coverage: LINT-001–018.  TOPO-001–005 are topological basin-lint rules
+Spec coverage: LINT-001–018.  TOPO-001–006 are topological basin-lint rules
 implemented here beyond the canonical spec; they are lint-only (exposed via
 ``lint()``, not ``validate()``) and do not change run-time behaviour.
 
@@ -116,8 +116,8 @@ def lint(graph: Graph) -> list[Diagnostic]:
     """Run topological (basin-lint) and command-content rules in addition to structural rules.
 
     This is the entry point for the ``attractor lint`` CLI command.  It runs
-    the full structural ``validate()`` suite plus the five topological rules
-    (TOPO-001–005) that reason about cycle structure, handler semantics, and
+    the full structural ``validate()`` suite plus the six topological rules
+    (TOPO-001–006) that reason about cycle structure, handler semantics, and
     evidence-routing patterns, plus the two command-content rules (CMD-001–002)
     that inspect ``tool_command`` strings for hazard shapes.
 
@@ -137,6 +137,7 @@ def lint(graph: Graph) -> list[Diagnostic]:
     _check_acyclic_graph(graph, diags)
     _check_cycle_no_conditional_exit(graph, diags)
     _check_cycle_no_deterministic_exit(graph, diags)
+    _check_fail_routed_to_exit(graph, diags)
     _check_pipe_masked_exit_code(graph, diags)
     _check_always_true_sentinel(graph, diags)
     return diags
@@ -724,7 +725,7 @@ def _check_response_schema(graph: Graph, diags: list[Diagnostic]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Topological (basin-lint) rules — TOPO-001 through TOPO-005
+# Topological (basin-lint) rules — TOPO-001 through TOPO-006
 #
 # These rules reason about cycle structure and handler semantics, not just
 # graph topology.  They are exposed via ``lint()`` (not ``validate()``) so
@@ -1345,6 +1346,257 @@ def _check_cycle_no_deterministic_exit(graph: Graph, diags: list[Diagnostic]) ->
                 ),
             )
         )
+
+
+def _node_runs_on(node: Node | None) -> str:
+    """Static mirror of ``engine.py::PipelineEngine._get_runs_on``.
+
+    The engine normalizes the ``runs_on`` node attribute to exactly one of
+    ``"success"`` (default), ``"always"``, or ``"failure"``; any other value
+    normalizes to the default ``"success"``.  Lint applies the identical
+    normalization so that an unrecognized marker (e.g. ``runs_on=sometimes``)
+    is treated as unmarked, exactly as the engine will treat it at run time.
+    """
+    if node is None:
+        return "success"
+    raw = node.attrs.get("runs_on", "success") or "success"
+    val = str(raw).strip().lower()
+    if val in ("always", "failure"):
+        return val
+    return "success"
+
+
+def _condition_matches_fail(cond: str) -> bool:
+    """Return True if a condition expression matches a FAIL outcome.
+
+    A clause of the form ``outcome=fail``, ``outcome=error``, or
+    ``outcome!=success`` makes the edge failure-conditioned.  Mirrors the
+    clause patterns recognized by TOPO-001 (``_check_dead_conditional_edge``).
+    """
+    for key, op, val in parse_condition(cond):
+        if key == "outcome" and (
+            (op == "=" and val in ("fail", "error"))
+            or (op == "!=" and val == "success")
+        ):
+            return True
+    return False
+
+
+def _node_regates(graph: Graph, node_id: str) -> bool:
+    """Return True if the node re-gates the flow.
+
+    A node with at least one condition-bearing outgoing edge makes a fresh
+    routing decision (retry-vs-escalate and the like) — flow through it is
+    corrective routing, not a silent pass-through.
+
+    A human-gate (hexagon / wait.human) node also re-gates: routing beyond
+    it passes through external human judgment, so a failure cannot exit the
+    pipeline green without a human seeing it.  This follows the TOPO-004/
+    TOPO-005 precedent (a labeled human-gate exit is an explicit gate; a
+    human gate on a cycle is a real gate) — warning on a failure route that
+    a human explicitly adjudicates would be a false positive that trains
+    authors to ignore the rule.
+    """
+    node = graph.nodes.get(node_id)
+    if node is not None and _is_human_gate(node):
+        return True
+    return any(
+        e.condition and e.condition.strip() for e in graph.outgoing_edges(node_id)
+    )
+
+
+def _unmarked_passthrough_path_to_exit(
+    graph: Graph, start_id: str, exit_ids: set[str]
+) -> list[str] | None:
+    """Find a silent pass-through path from ``start_id`` to an exit node.
+
+    Returns a node-ID path ``[start_id, ..., exit_id]`` such that:
+
+    - every hop is an unconditional (plain) edge,
+    - no node on the path re-gates the flow (``_node_regates``), and
+    - at least one intermediary on the path is UNMARKED — its ``runs_on``
+      normalizes to the default ``"success"`` (``_node_runs_on``).
+
+    Returns ``None`` when no such path exists: either the exit is not
+    reachable through pass-through intermediaries, or every reaching path
+    has all intermediaries marked ``runs_on="always"``/``"failure"`` (a
+    deliberately declared handled-failure termination — issue #173
+    Ruling 2).
+
+    BFS over ``(node, has_unmarked)`` states so a node may be revisited when
+    a later path reaches it with a different marked/unmarked prefix.
+    """
+    if start_id not in graph.nodes:
+        return None
+
+    start_unmarked = _node_runs_on(graph.nodes.get(start_id)) == "success"
+    queue: deque[tuple[str, bool, list[str]]] = deque(
+        [(start_id, start_unmarked, [start_id])]
+    )
+    seen: set[tuple[str, bool]] = {(start_id, start_unmarked)}
+
+    while queue:
+        node_id, has_unmarked, path = queue.popleft()
+        if _node_regates(graph, node_id):
+            # Re-gating intermediary: corrective routing — stop this branch.
+            continue
+        for edge in graph.outgoing_edges(node_id):
+            if edge.condition and edge.condition.strip():
+                continue  # unreachable given the re-gate check; kept for clarity
+            if edge.to_node in exit_ids:
+                if has_unmarked:
+                    return path + [edge.to_node]
+                continue  # all-marked path to exit: deliberate; keep searching
+            if edge.to_node not in graph.nodes:
+                continue
+            next_unmarked = (
+                has_unmarked
+                or _node_runs_on(graph.nodes.get(edge.to_node)) == "success"
+            )
+            state = (edge.to_node, next_unmarked)
+            if state not in seen:
+                seen.add(state)
+                queue.append((edge.to_node, next_unmarked, path + [edge.to_node]))
+    return None
+
+
+def _check_fail_routed_to_exit(graph: Graph, diags: list[Diagnostic]) -> None:
+    """TOPO-006: A failure outcome routed into the terminal success node.
+
+    An edge whose condition matches a FAIL outcome (``outcome=fail``,
+    ``outcome=error``, ``outcome!=success``) that targets the exit node —
+    or whose receiving path reaches the exit with every hop unconditional
+    and no re-gating in between — structurally converts a failed gate into
+    a completed, green-looking run.  This is the graph-topology sibling of
+    the CMD-001/CMD-002 hazard class (a gate whose failure is converted into
+    success) and the "silent-success exit" incident class: a pipeline runs
+    for hours, its verification gate fails, a bookkeeping step succeeds
+    afterward, and the run exits 0 reporting success.
+
+    Two forms are detected (issue #173, Ruling 1):
+
+    - **Direct:** the failure-conditioned edge targets the exit node.
+      Always flagged — there is no intermediary to mark.
+    - **Indirect:** the failure-conditioned edge's receiving path reaches
+      the exit through silent pass-through intermediaries — every hop
+      unconditional, no node re-gating the flow, and at least one
+      intermediary unmarked.
+
+    The exception (issue #173, Ruling 2), grounded in the engine's own
+    semantics:
+
+    - ``engine.py::_get_runs_on``: a node's ``runs_on`` attribute
+      normalizes to ``"always"``, ``"failure"``, or the default
+      ``"success"`` (any other value normalizes to ``"success"``).
+    - ``edge_selection.py::select_edge``: on a FAIL outcome, plain
+      (unconditional) edges are followed ONLY to targets whose ``runs_on``
+      is ``always`` or ``failure``; default ``runs_on=success`` targets are
+      not reached — the documented fail-fast behavior.  ``runs_on`` is
+      therefore the engine's first-class failure-routing opt-in.
+
+    A failure route in which EVERY intermediary between the failure edge
+    and the exit carries ``runs_on="always"`` or ``runs_on="failure"`` is a
+    deliberately declared handled-failure termination (e.g. a
+    ``runs_on=always`` recorder before ``done``) and is NOT flagged.
+    Likewise, an intermediary with at least one condition-bearing outgoing
+    edge re-gates the flow (retry-vs-escalate routing) — corrective
+    routing, not flagged.  A human-gate (hexagon / wait.human) intermediary
+    likewise re-gates — external human judgment on the failure path, per
+    the TOPO-004/TOPO-005 human-gate precedent.  An UNMARKED pass-through
+    intermediary (default
+    ``runs_on``, only unconditional outgoing edges, exit reachable) is
+    exactly the accident class this rule catches: flagged.
+
+    The rule fires regardless of the source node's shape.  On a diamond
+    source, TOPO-001 (ERROR — the edge is provably dead) additionally
+    fires and takes precedence; this rule still reports the declared
+    routing intent.
+
+    Severity: WARNING (issue #173, Ruling 3) — joins the CMD-001/CMD-002
+    family: the hazard is real but intent is not statically provable,
+    deliberate finish-through-done designs exist, and ERROR would hard-fail
+    deliberate graphs via ``validate_or_raise``.  The ``runs_on`` opt-in
+    gives authors a first-class way to declare intent and silence the
+    diagnostic entirely.
+    """
+    exit_ids = {n.id for n in graph.nodes.values() if n.is_exit_node()}
+    if not exit_ids:
+        return
+
+    for node in graph.nodes.values():
+        if node.is_exit_node():
+            continue
+        for edge in graph.outgoing_edges(node.id):
+            cond = edge.condition.strip() if edge.condition else ""
+            if not cond or not _condition_matches_fail(cond):
+                continue
+
+            if edge.to_node in exit_ids:
+                # Direct form: failure-conditioned edge targeting the exit.
+                diags.append(
+                    Diagnostic(
+                        rule="fail_routed_to_exit",
+                        severity="WARNING",
+                        message=(
+                            f"Node '{node.id}' routes a failure outcome "
+                            f"directly into the terminal success node: edge to "
+                            f"'{edge.to_node}' with condition '{cond}'. The "
+                            f"failure leaves through the pipeline's success "
+                            f"door — no corrective loop, no retry, no distinct "
+                            f"failure terminal."
+                        ),
+                        node_id=node.id,
+                        edge=(edge.from_node, edge.to_node),
+                        fix=(
+                            f"Route the failure to a corrective target instead "
+                            f"(e.g. '{node.id}' -> fix "
+                            f'[condition="outcome=fail"] with a back-edge to '
+                            f"retry), or — if finishing after a handled failure "
+                            f"is deliberate — route it through a "
+                            f"recorder/cleanup node marked "
+                            f'runs_on="always" or runs_on="failure" so the '
+                            f"intent is declared. See DOT-AUTHORING-GUIDE.md "
+                            f"(TOPO-006)."
+                        ),
+                    )
+                )
+                continue
+
+            path = _unmarked_passthrough_path_to_exit(graph, edge.to_node, exit_ids)
+            if path is not None:
+                path_str = " -> ".join(path)
+                diags.append(
+                    Diagnostic(
+                        rule="fail_routed_to_exit",
+                        severity="WARNING",
+                        message=(
+                            f"Node '{node.id}' routes a failure outcome into "
+                            f"the terminal success node via an unmarked "
+                            f"pass-through path: edge to '{edge.to_node}' with "
+                            f"condition '{cond}', then {path_str} — every hop "
+                            f"is unconditional, no node re-gates the flow, and "
+                            f"at least one intermediary lacks "
+                            f'runs_on="always"/"failure". A failed gate '
+                            f"followed by one succeeding step exits the "
+                            f"pipeline green (status success, exit code 0) — "
+                            f"the silent-success exit incident class."
+                        ),
+                        node_id=node.id,
+                        edge=(edge.from_node, edge.to_node),
+                        fix=(
+                            f"Either route the failure to a corrective target "
+                            f"with a back-edge to retry, add a "
+                            f"condition-bearing edge on an intermediary so the "
+                            f"flow is re-gated, or — if this handled-failure "
+                            f"termination is deliberate — mark every "
+                            f"intermediary on the path ({path_str}) with "
+                            f'runs_on="always" or runs_on="failure" (the '
+                            f"engine's failure-routing opt-in) so the intent "
+                            f"is declared. See DOT-AUTHORING-GUIDE.md "
+                            f"(TOPO-006)."
+                        ),
+                    )
+                )
 
 
 # ---------------------------------------------------------------------------

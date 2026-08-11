@@ -70,8 +70,10 @@ fi
 # but with NO working_dir in the config dict.
 #
 # Asserts:
-#   (a) the exact "Working directory: <capability_path>" line appears in the
-#       system prompt (not merely that the path appears anywhere)
+#   (a) EXACTLY ONE line in the system prompt starts with "Working directory:"
+#       and that line EQUALS "Working directory: <capability_path>" — an
+#       append-dodge that keeps the real line on os.getcwd() and adds a
+#       second, contradictory line fails on both arms (equality + uniqueness)
 #   (b) the AGENTS.md sentinel from the capability directory appears in
 #       the system prompt (discover_project_docs walked the right root)
 #
@@ -123,6 +125,28 @@ def _make_hooks():
         return MagicMock(action="continue")
     hooks.emit = AsyncMock(side_effect=_emit)
     return hooks
+
+def _assert_exact_wd_line(system_content, expected_path, label):
+    """Line-anchored equality + uniqueness for the Working directory: line.
+
+    Exactly ONE line in the system prompt may start with "Working directory:",
+    and that line must EQUAL "Working directory: <expected_path>".
+    An append-dodge that leaves the real line wrong and adds a second,
+    contradictory line fails BOTH arms: the real line mismatches expected,
+    and the line count is 2.
+    """
+    expected_line = f"Working directory: {expected_path}"
+    wd_lines = [
+        line for line in system_content.splitlines()
+        if line.startswith("Working directory:")
+    ]
+    if len(wd_lines) != 1 or wd_lines[0] != expected_line:
+        print(
+            f"working_dir capability not propagated to agent session: "
+            f"{label}: expected exactly one working-directory line "
+            f"'{expected_line}', got {len(wd_lines)} line(s): {wd_lines!r}"
+        )
+        sys.exit(1)
 
 async def main():
     # -----------------------------------------------------------------------
@@ -183,23 +207,12 @@ async def main():
             request = call_args[0][0]
             system_content = request.messages[0].content
 
-            # (a) Environment context: the exact "Working directory: <pipeline_dir>" line
-            # must appear — not merely pipeline_dir somewhere in the prompt.
-            # A dodge that appends pipeline_dir elsewhere but keeps "Working directory:"
-            # pointing at os.getcwd() must fail here.
-            expected_wd_line = f"Working directory: {pipeline_dir}"
-            if expected_wd_line not in system_content:
-                actual_wd_line = "<not found>"
-                for line in system_content.splitlines():
-                    if line.startswith("Working directory:"):
-                        actual_wd_line = line
-                        break
-                print(
-                    f"working_dir capability not propagated to agent session: "
-                    f"expected '{expected_wd_line}' in system prompt, "
-                    f"got '{actual_wd_line}'"
-                )
-                sys.exit(1)
+            # (a) Environment context: line-anchored equality + uniqueness.
+            # Exactly one "Working directory:" line, and it must equal the
+            # capability path. A dodge that keeps the real line pointing at
+            # os.getcwd() and APPENDS a second, contradictory line fails here
+            # on both arms (mismatched real line, and two matching lines).
+            _assert_exact_wd_line(system_content, pipeline_dir, "capability path")
 
             # (b) Project-doc discovery: SENTINEL from pipeline_dir/AGENTS.md must appear
             if SENTINEL not in system_content:
@@ -245,18 +258,20 @@ async def main():
             request_b = call_args_b[0][0]
             system_content_b = request_b.messages[0].content
 
-            # process_dir is current cwd — fallback must name it in the Working directory: line
-            expected_wd_line_b = f"Working directory: {process_dir}"
-            if expected_wd_line_b not in system_content_b:
-                actual_wd_line_b = "<not found>"
-                for line in system_content_b.splitlines():
-                    if line.startswith("Working directory:"):
-                        actual_wd_line_b = line
-                        break
+            # process_dir is current cwd — fallback must name it in the
+            # Working directory: line (same equality + uniqueness discipline).
+            _assert_exact_wd_line(system_content_b, process_dir, "fallback path")
+
+            # Doc-discovery scope: no capability was offered on this session,
+            # so the sentinel from pipeline_dir/AGENTS.md must NOT appear —
+            # nothing may inject docs from a directory this session was never
+            # pointed at.
+            if SENTINEL in system_content_b:
                 print(
                     f"working_dir capability not propagated to agent session: "
-                    f"fallback path: expected '{expected_wd_line_b}', "
-                    f"got '{actual_wd_line_b}'"
+                    f"fallback path: sentinel from the capability directory "
+                    f"leaked into a session with no capability — doc "
+                    f"discovery is not scoped to the resolved working dir"
                 )
                 sys.exit(1)
 
@@ -308,25 +323,28 @@ async def main():
                 request_c = call_args_c[0][0]
                 system_content_c = request_c.messages[0].content
 
-                # The exact "Working directory: <explicit_dir>" line must appear
-                expected_wd_line_c = f"Working directory: {explicit_dir}"
-                if expected_wd_line_c not in system_content_c:
-                    actual_wd_line_c = "<not found>"
-                    for line in system_content_c.splitlines():
-                        if line.startswith("Working directory:"):
-                            actual_wd_line_c = line
-                            break
-                    print(
-                        f"working_dir capability not propagated to agent session: "
-                        f"explicit working_dir did not win over capability: "
-                        f"expected '{expected_wd_line_c}', got '{actual_wd_line_c}'"
-                    )
-                    sys.exit(1)
+                # Explicit dir must win — same equality + uniqueness discipline.
+                _assert_exact_wd_line(
+                    system_content_c, explicit_dir, "explicit-wins path"
+                )
 
                 if PROBE_ID not in system_content_c:
                     print(
                         f"working_dir capability not propagated to agent session: "
                         f"AGENTS.md from explicit_dir not found — discover_project_docs used wrong root"
+                    )
+                    sys.exit(1)
+
+                # Doc-discovery scope: explicit working_dir won, so docs must
+                # come ONLY from explicit_dir. A dodge that walks BOTH roots
+                # (appending the capability dir's docs as well) carries the
+                # capability-dir sentinel here and fails.
+                if SENTINEL in system_content_c:
+                    print(
+                        f"working_dir capability not propagated to agent session: "
+                        f"explicit-wins path: capability-dir sentinel present "
+                        f"alongside explicit-dir docs — doc discovery walked "
+                        f"more than the winning root"
                     )
                     sys.exit(1)
 
@@ -341,13 +359,18 @@ PYEOF
 
 # Run the probe via uv so deps are resolved from the module's own project.
 # We pass the script to uv run python so it uses the module's environment.
-if ! ( cd "$MODULE_DIR" && uv run python "$PROBE_SCRIPT" 2>&1 ); then
-    # The probe script already printed the red_signal line and exited 1.
-    # If uv itself failed (exit 2+), surface that as infra.
-    PROBE_RC=$?
-    if [ "$PROBE_RC" -ge 2 ]; then
-        echo "INFRA: probe script exited with rc=$PROBE_RC (uv or import failure)" >&2
-        exit 2
-    fi
+# Capture the probe's real exit code. (Inside an `if ! cmd` body, $? is the
+# already-negated condition result — always 0 — so the previous INFRA branch
+# here was dead code and probe-setup failures were misreported as RED rc=1.)
+set +e
+( cd "$MODULE_DIR" && uv run python "$PROBE_SCRIPT" 2>&1 )
+PROBE_RC=$?
+set -e
+if [ "$PROBE_RC" -ge 2 ]; then
+    # uv failure or probe import/setup failure — infrastructure, not behavior.
+    echo "INFRA: probe script exited with rc=$PROBE_RC (uv or import failure)" >&2
+    exit 2
+elif [ "$PROBE_RC" -ne 0 ]; then
+    # The probe already printed the red_signal diagnostic on stdout.
     exit 1
 fi

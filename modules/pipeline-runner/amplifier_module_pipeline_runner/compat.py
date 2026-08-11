@@ -26,15 +26,18 @@ Three shapes were available to close the version-skew window:
    the required version and the resolution command.  This is the lowest
    friction shape for a single-repo, actively-developed package.
 
-``amplifier-foundation @main`` float
--------------------------------------
-The ``amplifier-foundation`` dep in ``pipeline-runner/pyproject.toml`` also
-floats on ``@main``.  It is a separate package from a different repository;
-pinning it requires coordinating with that repo's release cadence.  Explicit
-deferral: the foundation symbols the runner uses (``Bundle``, ``load_bundle``
--- imported lazily inside functions, never at module level) are long-stable
-core API, unlike the recently-added engine module that caused the incident,
-so there is currently no discriminating symbol to probe.  Apply the same
+``amplifier-foundation`` pin (formerly an ``@main`` float)
+-----------------------------------------------------------
+The ``amplifier-foundation`` dep in ``pipeline-runner/pyproject.toml``
+originally floated on ``@main`` (an explicit deferral: the foundation symbols
+the runner uses -- ``Bundle``, ``load_bundle``, imported lazily inside
+functions, never at module level -- are long-stable core API, so there was no
+discriminating symbol to probe).  That deferral did not weigh the CI-hygiene
+cost: with no committed lockfile, every CI run re-resolved foundation's live
+``main``, so an upstream foundation change could redden this repo's CI with no
+local change.  As of microsoft-amplifier/amplifier-support#391 the dep is
+pinned to an immutable commit SHA.  Bumps are deliberate: update the SHA in
+``pyproject.toml`` and verify against this module's test suite.  Apply the
 compat-assert pattern here the moment the runner starts depending on a
 recently-added foundation symbol.
 """

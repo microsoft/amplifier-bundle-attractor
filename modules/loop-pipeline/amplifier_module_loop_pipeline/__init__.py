@@ -28,6 +28,7 @@ from .handlers.context import HandlerContext
 from .hook_bridge import _current_node_context, set_node_context
 from .outcome import Outcome, StageStatus
 from .pipeline_events import PROVIDER_ERROR, PROVIDER_REQUEST, PROVIDER_RESPONSE
+from .preflight import check_provider_preflight
 from .transforms import apply_transforms
 from .validation import validate_or_raise
 
@@ -547,6 +548,29 @@ class PipelineOrchestrator:
 
             # 5. Validate the (transformed) graph
             validate_or_raise(graph)
+
+            # 5b. Provider preflight (issue #155, EXTENSIONS.md section 36):
+            # before the walk begins, cross-check every node's DECLARED
+            # llm_provider against what this run can serve and refuse to
+            # start -- naming each failing node, its provider, and the
+            # missing credential.  An unserviceable provider used to crash
+            # on every visit and drain the entire iteration budget in a
+            # crash loop.  Skipped when the caller injects an explicit
+            # backend (kwargs["backend"]): an injected backend's
+            # serviceability is the injector's responsibility and is not
+            # described by `providers`/`profiles` (this is also what keeps
+            # mock-backend tests honest -- they are not making provider
+            # claims).  The auto-constructed backend path (production) is
+            # always checked.
+            if kwargs.get("backend") is None:
+                explicit_profiles = self.config.get("profiles")
+                check_provider_preflight(
+                    graph,
+                    mounted_providers=tuple(providers) if providers else (),
+                    profiles=explicit_profiles
+                    if isinstance(explicit_profiles, dict)
+                    else None,
+                )
 
             # 6. Set up logs directory
             logs_root = self.config.get(

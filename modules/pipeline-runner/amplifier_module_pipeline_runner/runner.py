@@ -270,6 +270,23 @@ async def drive_engine(
             # Fail loud on graph-shape problems before spending an LLM call.
             validate_or_raise(graph)
 
+        # Provider preflight (issue #155, EXTENSIONS.md section 36): before
+        # the walk begins, cross-check every node's DECLARED llm_provider
+        # against the profiles this run mounts (and each profile's statically
+        # checkable credential env var) and refuse to start, naming each
+        # failing node, its provider, and the missing credential.  On this
+        # path the AmplifierBackend below spawns per-provider agents via the
+        # `profiles` map -- a declared provider whose profile cannot construct
+        # its provider (missing API key) used to crash on every visit and
+        # drain the entire iteration budget in a crash loop
+        # (`resolve_latest_for: no adapter found for provider 'openai'`).
+        # Always on: the incident path was exactly this invoker.  A hermetic
+        # harness that mocks spawn satisfies the static check by setting the
+        # provider's env var (presence is checked, never validity).
+        from amplifier_module_loop_pipeline.preflight import check_provider_preflight
+
+        check_provider_preflight(graph, profiles=dict(profiles or DEFAULT_PROFILES))
+
         # Default engine/handler observability to the coordinator's own hook stack
         # when the caller didn't supply hooks. A mounted observability hook (e.g.
         # a session-level logging/telemetry hook composed onto the bundle) lives on

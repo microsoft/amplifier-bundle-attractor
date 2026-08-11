@@ -36,7 +36,7 @@ digraph {
 | `max_retries` | int | graph default | In-place re-attempts for RETRY-class outcomes, retryable exceptions, and `must_write=` violations. A plain FAIL is returned immediately, never retried (use `retry_target` / `outcome=fail` edges for that) |
 | `retry_target` | string | -- | Node to jump to on gate failure |
 | `fidelity` | string | "compact" | Context carryover mode |
-| `llm_provider` | string | -- | Override provider (anthropic/openai/gemini) |
+| `llm_provider` | string | -- | Override provider (anthropic/openai/gemini). A declared provider must be serviceable by the run -- the engine cross-checks every declared provider at startup and refuses to start otherwise, naming the node, provider, and missing credential (fail-loud, `specs/EXTENSIONS.md` §36) |
 | `llm_model` | string | -- | Override model name |
 | `reasoning_effort` | string | -- | low/medium/high (provider-dependent) |
 | `auto_status` | bool | false | Force SUCCESS regardless of outcome |

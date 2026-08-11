@@ -1982,3 +1982,78 @@ This is additive at the spawn boundary:
   `modules/loop-agent/tests/test_parallel_gating.py`, and
   `modules/loop-pipeline/tests/test_backend_fidelity.py` — contract tests
 
+---
+
+## 36. Startup Provider Preflight and No-Fallback Profile Resolution (Fail-Loud)
+
+> **depends-on:** none (this closes a fail-open configuration hole; it does not build on or
+> narrow any other ledger entry. It is the same fail-closed doctrine as §25 — refuse loudly at
+> the earliest static checkpoint instead of degrading silently — applied to provider
+> serviceability instead of gate verdicts.)
+>
+> **upstream action:** not applicable — the canonical spec is silent on provider mounting and
+> credential configuration (§4.5 explicitly delegates backend internals to the implementer).
+> A startup serviceability preflight and loud profile resolution are implementer-level
+> configuration validation; no spec change is needed and community `.dot` files written against
+> the canonical spec are unaffected unless they declare a provider the run genuinely cannot
+> serve — in which case they previously crashed per-visit or silently ran on the wrong provider.
+
+**Origin (issue #155):** a live `task-runner.dot` run completed its implementation work at
+iteration 1, then burned its ENTIRE remaining iteration budget in a crash loop —
+`resolve_latest_for: no adapter found for provider 'openai'` — because the `critique_b` node
+declares `llm_provider="openai"` (deliberately: dual-family critique) and the environment had no
+`OPENAI_API_KEY`. Every round the node crashed; every round the graph re-entered via its
+transient-recovery route. Nothing in the run surfaced the cause. Related second mode: with a
+provider missing from the `profiles` map, the spawn path silently substituted ANOTHER provider's
+profile — a run could report a dual-critic quorum while both critics ran on the same model family.
+
+**What (two changes, one doctrine — a provider misconfiguration costs one clear error at startup,
+never a drained budget or a silent substitution):**
+
+1. **Startup preflight** (`loop-pipeline preflight.py`, wired into BOTH engine entry points:
+   `PipelineOrchestrator.execute()` and pipeline-runner `drive_engine()`): before the walk
+   begins, every node's DECLARED `llm_provider` (explicit attribute or stylesheet-assigned;
+   LLM-consuming node types only) is cross-checked against what the run can serve. Unserviceable
+   ⇒ `ProviderPreflightError` naming EACH failing node, its provider, and the missing credential.
+   Zero nodes execute; zero budget is spent. "Serviceable" is static (no live API call): a
+   provider module mounted under that name, or a `profiles` entry whose known credential env var
+   (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`) is present. Unknown providers with
+   a profile get the benefit of the doubt (nothing to check statically).
+
+2. **No-fallback profile resolution** (`backend.py`): the former
+   `self._profiles.get(provider, next(iter(self._profiles.values()), ""))` silently routed a
+   node whose provider had no profile onto some other provider's profile. The spawn path now
+   fails loud (`ValueError`, terminal in the retry ladder — never a crash loop) naming the node,
+   the provider, the mounted profiles, and the credential to set. The tool-loop path never
+   consumed a profile and is unchanged.
+
+**Deliberate scope boundaries (documented in `preflight.py`):**
+
+- **Declared providers only.** A node with no `llm_provider` uses the engine default
+  (`"anthropic"`); the implicit default is NOT policed by the preflight — policing it would make
+  simulation mode (no providers mounted; a documented degraded mode) and mock-provider harnesses
+  unreachable. The CLI separately preflights the default provider's credential (`cli.py`).
+- **Root graph only.** Nested `dot_file` children are loaded mid-walk; their unserviceable
+  declarations fail loud at first execution via change 2 rather than at startup.
+- **Injected backends skip the preflight.** `execute(..., backend=...)` is the invoker taking
+  responsibility for serviceability (mock backends make no provider claims); the auto-constructed
+  backend path — the production path — is always checked.
+- **Presence, never validity.** The credential check is `env var is set`, not `key works`; a
+  hermetic harness satisfies it with a dummy value. An invalid key still fails at the provider
+  call — loudly, per §25's fail-closed doctrine.
+
+**Behavior change (intended):** a graph that previously "worked" by silently running a declared
+provider on a different provider's profile now refuses (at startup where statically detectable,
+at the node otherwise). Degrading to fewer model families must be an explicit graph/bundle
+change — never a silent fallback (issue #155 ruling R6: silent single-provider fallback is the
+disease, not a remedy).
+
+**Implementation locations:**
+
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/preflight.py` — the check + refusal
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py` — orchestrator wiring (step 5b)
+- `modules/pipeline-runner/amplifier_module_pipeline_runner/runner.py` — `drive_engine` wiring
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py` — no-fallback profile resolution
+- `modules/loop-pipeline/tests/test_provider_preflight.py`,
+  `modules/pipeline-runner/tests/test_provider_preflight_drive_engine.py` — contract + regression
+  tests (including the provider-not-in-profiles class, ruling R5)

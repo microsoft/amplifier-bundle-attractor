@@ -236,6 +236,25 @@ class AgentOrchestrator:
             # working directory) and fail-loud on a missing file.
             config_dict = dict(self._config)
 
+            # Resolve working_dir with priority order:
+            #   1. Explicit working_dir in orchestrator config wins outright.
+            #   2. coordinator.get_capability("session.working_dir") when (1) absent.
+            #   3. os.getcwd() is the last resort when neither exists.
+            #
+            # The isinstance(val, str) guard is required: existing tests pass a plain
+            # MagicMock() coordinator whose get_capability() returns another MagicMock,
+            # not a str. Without the guard, str(MagicMock()) would be used as the path,
+            # breaking every test that checks the Working directory: line. Using
+            # getattr(..., None) also guards against coordinators that lack get_capability
+            # entirely (e.g. minimal stubs).
+            if not config_dict.get("working_dir"):
+                import os as _os
+                _get_cap = getattr(self._coordinator, "get_capability", None)
+                _cap_val = _get_cap("session.working_dir") if callable(_get_cap) else None
+                config_dict["working_dir"] = (
+                    _cap_val if isinstance(_cap_val, str) else _os.getcwd()
+                )
+
             # Select the provider for this session (Bug B). This SINGLE assignment
             # feeds BOTH the Layer-1 base-prompt default (_resolve_base_prompt below)
             # AND the actual completion (providers[provider_name]), so base+completion

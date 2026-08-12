@@ -814,3 +814,249 @@ def test_resolve_existing_absolute_file_used_as_is(tmp_path):
     resolved = _resolve_system_prompt_file(str(f))
     assert resolved == f
     assert resolved.read_text(encoding="utf-8") == "ABS-BASE"
+
+
+# ---------------------------------------------------------------------------
+# Issue-142: working_dir capability propagation through AgentOrchestrator.execute()
+# ---------------------------------------------------------------------------
+# These tests exercise the capability-propagation path through the PUBLIC
+# AgentOrchestrator.execute() surface, not just internal functions.
+#
+# Priority order under test:
+#   1. Explicit working_dir in config wins outright.
+#   2. coordinator.get_capability("session.working_dir") used when (1) absent.
+#   3. os.getcwd() is the last resort when neither exists.
+#
+# MagicMock guard: existing tests use MagicMock() coordinators whose
+# get_capability() returns another MagicMock (not a str). The fix must
+# guard with isinstance(val, str) so those tests are unaffected.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_capability_working_dir_propagates_to_environment_context(tmp_path):
+    """Capability path: coordinator returns a str from get_capability('session.working_dir').
+
+    AgentOrchestrator.execute() must inject that value into the session config
+    so the 'Working directory:' line in the system prompt equals the capability
+    path, not os.getcwd().
+
+    This exercises the full path through AgentOrchestrator.execute() (the public
+    surface), not just AgentSession directly.
+    """
+    import os
+    import tempfile
+
+    # pipeline_dir has an AGENTS.md with a sentinel; process_dir has none.
+    with tempfile.TemporaryDirectory() as pipeline_dir, \
+         tempfile.TemporaryDirectory() as process_dir:
+
+        sentinel = "CAPABILITY_PROPAGATION_SENTINEL_XQ7K9"
+        agents_md = os.path.join(pipeline_dir, "AGENTS.md")
+        with open(agents_md, "w") as f:
+            f.write(f"# Project Rules\n\n{sentinel}\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(process_dir)
+        try:
+            provider = AsyncMock()
+            provider.complete = AsyncMock(return_value=_text_response("done"))
+            hooks = _make_hooks()
+
+            coordinator = MagicMock()
+            coordinator.register_capability = MagicMock()
+
+            def get_cap(key):
+                if key == "session.working_dir":
+                    return pipeline_dir
+                return None
+
+            coordinator.get_capability = MagicMock(side_effect=get_cap)
+
+            orch = AgentOrchestrator(
+                coordinator=coordinator,
+                # No working_dir in config — capability must supply it.
+                config={"system_prompt": "Base.", "max_tool_rounds_per_input": 1},
+            )
+            await orch.execute("hello", MagicMock(), {"anthropic": provider}, {}, hooks)
+
+            request = provider.complete.call_args[0][0]
+            system_content = request.messages[0].content
+
+            # (a) Environment context: exactly one Working directory: line, equal to
+            # the capability path. A dodge that keeps the real line pointing at
+            # os.getcwd() fails here (wrong value).
+            expected_line = f"Working directory: {pipeline_dir}"
+            wd_lines = [
+                line for line in system_content.splitlines()
+                if line.startswith("Working directory:")
+            ]
+            assert len(wd_lines) == 1 and wd_lines[0] == expected_line, (
+                f"expected exactly one working-directory line {expected_line!r}, "
+                f"got {wd_lines!r}"
+            )
+
+            # (b) Project-doc discovery: AGENTS.md from pipeline_dir must appear.
+            assert sentinel in system_content, (
+                "AGENTS.md sentinel from capability dir not found in system prompt "
+                "— discover_project_docs walked the wrong root"
+            )
+        finally:
+            os.chdir(original_cwd)
+
+
+@pytest.mark.asyncio
+async def test_capability_fallback_to_getcwd_when_no_capability(tmp_path):
+    """Fallback path: coordinator returns None from get_capability.
+
+    When no capability and no explicit working_dir, the session must use
+    os.getcwd() and must NOT include docs from any other directory.
+    """
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as process_dir:
+        original_cwd = os.getcwd()
+        os.chdir(process_dir)
+        try:
+            provider = AsyncMock()
+            provider.complete = AsyncMock(return_value=_text_response("done"))
+            hooks = _make_hooks()
+
+            coordinator = MagicMock()
+            coordinator.register_capability = MagicMock()
+            coordinator.get_capability = MagicMock(return_value=None)
+
+            orch = AgentOrchestrator(
+                coordinator=coordinator,
+                config={"system_prompt": "Base.", "max_tool_rounds_per_input": 1},
+            )
+            await orch.execute("hello", MagicMock(), {"anthropic": provider}, {}, hooks)
+
+            request = provider.complete.call_args[0][0]
+            system_content = request.messages[0].content
+
+            # Fallback: Working directory: line must equal process_dir (os.getcwd()).
+            expected_line = f"Working directory: {process_dir}"
+            wd_lines = [
+                line for line in system_content.splitlines()
+                if line.startswith("Working directory:")
+            ]
+            assert len(wd_lines) == 1 and wd_lines[0] == expected_line, (
+                f"expected fallback working-directory line {expected_line!r}, "
+                f"got {wd_lines!r}"
+            )
+        finally:
+            os.chdir(original_cwd)
+
+
+@pytest.mark.asyncio
+async def test_explicit_working_dir_wins_over_capability(tmp_path):
+    """Explicit config wins: working_dir in config overrides the capability.
+
+    When working_dir is set explicitly in the orchestrator config, it must be
+    used regardless of what the coordinator capability returns.
+    """
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as pipeline_dir, \
+         tempfile.TemporaryDirectory() as explicit_dir:
+
+        # Write AGENTS.md in both dirs with distinct sentinels.
+        cap_sentinel = "CAP_DIR_SENTINEL_Z9M2"
+        explicit_sentinel = "EXPLICIT_DIR_SENTINEL_W4K7"
+        with open(os.path.join(pipeline_dir, "AGENTS.md"), "w") as f:
+            f.write(f"# Cap Rules\n\n{cap_sentinel}\n")
+        with open(os.path.join(explicit_dir, "AGENTS.md"), "w") as f:
+            f.write(f"# Explicit Rules\n\n{explicit_sentinel}\n")
+
+        provider = AsyncMock()
+        provider.complete = AsyncMock(return_value=_text_response("done"))
+        hooks = _make_hooks()
+
+        coordinator = MagicMock()
+        coordinator.register_capability = MagicMock()
+
+        def get_cap(key):
+            if key == "session.working_dir":
+                return pipeline_dir  # capability points elsewhere
+            return None
+
+        coordinator.get_capability = MagicMock(side_effect=get_cap)
+
+        orch = AgentOrchestrator(
+            coordinator=coordinator,
+            config={
+                "system_prompt": "Base.",
+                "max_tool_rounds_per_input": 1,
+                "working_dir": explicit_dir,  # explicit wins
+            },
+        )
+        await orch.execute("hello", MagicMock(), {"anthropic": provider}, {}, hooks)
+
+        request = provider.complete.call_args[0][0]
+        system_content = request.messages[0].content
+
+        # Explicit dir must win — Working directory: line equals explicit_dir.
+        expected_line = f"Working directory: {explicit_dir}"
+        wd_lines = [
+            line for line in system_content.splitlines()
+            if line.startswith("Working directory:")
+        ]
+        assert len(wd_lines) == 1 and wd_lines[0] == expected_line, (
+            f"expected explicit working-directory line {expected_line!r}, "
+            f"got {wd_lines!r}"
+        )
+
+        # Explicit dir's AGENTS.md sentinel must appear.
+        assert explicit_sentinel in system_content, (
+            "explicit_dir AGENTS.md not found — discover_project_docs used wrong root"
+        )
+
+        # Capability dir's sentinel must NOT appear.
+        assert cap_sentinel not in system_content, (
+            "capability-dir sentinel leaked in despite explicit working_dir winning"
+        )
+
+
+@pytest.mark.asyncio
+async def test_magicmock_coordinator_not_coerced_to_string():
+    """MagicMock guard: existing tests use MagicMock() coordinators.
+
+    MagicMock().get_capability("session.working_dir") returns another MagicMock,
+    not a str. The fix must NOT coerce it to a string path. Instead it must
+    fall through to os.getcwd(). This test confirms no regression in that path.
+    """
+    import os
+
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+
+    # Plain MagicMock coordinator — get_capability returns a MagicMock, not str.
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+    # (coordinator.get_capability is auto-created by MagicMock and returns MagicMock)
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={"system_prompt": "Base.", "max_tool_rounds_per_input": 1},
+    )
+    await orch.execute("hello", MagicMock(), {"anthropic": provider}, {}, hooks)
+
+    request = provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+
+    # The Working directory: line must be a real path string, not a MagicMock repr.
+    wd_lines = [
+        line for line in system_content.splitlines()
+        if line.startswith("Working directory:")
+    ]
+    assert len(wd_lines) == 1, f"expected exactly one Working directory: line, got {wd_lines!r}"
+    wd_value = wd_lines[0].removeprefix("Working directory: ")
+    # Must be an absolute path (os.getcwd() result), not a MagicMock repr.
+    assert os.path.isabs(wd_value), (
+        f"Working directory value is not an absolute path: {wd_value!r} — "
+        "MagicMock was coerced to string instead of falling back to os.getcwd()"
+    )

@@ -2,26 +2,24 @@
 
 ## Box/agent nodes: run from within `--cwd` (process-cwd alignment)
 
-**Constraint:** for a pipeline that contains **box (LLM/agent) nodes**, invoke `attractor run` with the
-process working directory equal to `--cwd` — e.g.
+**Resolved in issue-142.** The `loop-agent` orchestrator now reads the
+`session.working_dir` capability from the coordinator in `AgentOrchestrator.execute()`
+and injects it into the session config before the session is created. Both consumers
+— the `Working directory:` line in the environment context and `discover_project_docs`
+— are driven from the same resolved value. The resolution order is:
+
+1. Explicit `working_dir` in the orchestrator config wins outright.
+2. `coordinator.get_capability("session.working_dir")` when (1) is absent.
+3. `os.getcwd()` as the last resort when neither exists.
+
+Tool-only pipelines remain unaffected (tool nodes always root at `--cwd` via
+`context.target_dir`).
+
+**Historical note:** prior to issue-142, the workaround was to invoke `attractor run`
+with the process working directory equal to `--cwd`:
 
 ```sh
 cd <workdir> && attractor run pipeline.dot --cwd .
 ```
 
-rather than running from some other directory with `--cwd /elsewhere`.
-
-**Why:** the runner threads `--cwd` into every spawned agent as `session_cwd`, and the agent's
-**tools** (filesystem, bash) are correctly rooted there. But the `loop-agent` orchestrator that drives
-a spawned agent currently derives the agent's *declared* working directory from `os.getcwd()` (the
-runner's process cwd) instead of honoring the `session.working_dir` capability the way its sibling
-`tool-bash` / `tool-filesystem` modules do. When the process cwd differs from `--cwd`, the agent's
-system prompt (and its project-doc discovery) point at the wrong directory, so the agent can look in
-the wrong place and fail to find files that tool nodes wrote at `--cwd`.
-
-Tool-only pipelines are unaffected (tool nodes always root at `--cwd` via `context.target_dir`).
-
-**Status:** this is a `loop-agent` bug, not a runner bug. The fix (have `loop-agent`'s `mount()` honor
-`coordinator.get_capability("session.working_dir")`) is **deferred** — `loop-agent` is a shared
-orchestrator and the change needs downstream-impact analysis before it lands. Tracked as a focused
-follow-up task. Until then, use process-cwd alignment as above.
+This workaround is no longer required for box/agent nodes.

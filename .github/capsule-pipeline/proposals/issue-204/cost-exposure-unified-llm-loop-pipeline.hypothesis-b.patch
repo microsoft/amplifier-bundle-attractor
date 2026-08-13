@@ -1,0 +1,390 @@
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
+index 33b34cd..4f79d51 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
+@@ -230,6 +230,7 @@ class DirectProviderBackend:
+                     "cache_read_tokens": result.total_usage.cache_read_tokens,
+                     "cache_write_tokens": result.total_usage.cache_write_tokens,
+                 },
++                "cost_usd": getattr(result.total_usage, "cost_usd", None),
+                 "finish_reason": result.finish_reason.reason,
+                 "text_length": len(result.text) if result.text else 0,
+                 "step_count": len(result.steps),
+diff --git a/modules/unified-llm-client/unified_llm/__init__.py b/modules/unified-llm-client/unified_llm/__init__.py
+index 4056901..35b9858 100644
+--- a/modules/unified-llm-client/unified_llm/__init__.py
++++ b/modules/unified-llm-client/unified_llm/__init__.py
+@@ -77,6 +77,9 @@ from unified_llm.retry import RetryPolicy
+ # Catalog
+ from unified_llm.catalog import get_latest_model, get_model_info, list_models
+ 
++# Cost computation
++from unified_llm._cost import compute_cost
++
+ # Resolver — live-backed model selection (eliminates id-seam)
+ from unified_llm.resolver import resolve_latest, resolve_latest_for, select_latest
+ 
+@@ -153,6 +156,8 @@ __all__ = [
+     "get_model_info",
+     "list_models",
+     "get_latest_model",
++    # Cost computation
++    "compute_cost",
+     # Resolver — live-backed model selection
+     "select_latest",
+     "resolve_latest",
+diff --git a/modules/unified-llm-client/unified_llm/_cost.py b/modules/unified-llm-client/unified_llm/_cost.py
+new file mode 100644
+index 0000000..f80bfc7
+--- /dev/null
++++ b/modules/unified-llm-client/unified_llm/_cost.py
+@@ -0,0 +1,109 @@
++"""Per-call cost computation for unified_llm — catalog-driven implementation.
++
++Public API: compute_cost(model, input_tokens, output_tokens, *,
++                         cache_read_tokens=0, cache_write_tokens=0,
++                         speed=None) -> Decimal | None
++
++Rates are resolved through the catalog (get_model_info / ModelInfo fields)
++rather than a self-contained internal rate table.  This is the implementer's
++choice delegated by the acceptance criteria: the internal home of the rate data
++is not constrained.
++
++Returns None for unrecognised models or when a required rate dimension is
++absent from the catalog data (never 0, never a float, never a partial sum).
++"""
++
++from __future__ import annotations
++
++from decimal import Decimal
++
++from unified_llm.catalog import get_model_info
++
++_PER_M = Decimal("1_000_000")
++
++# Models for which the 2x fast-mode multiplier applies when speed=='fast'.
++_FAST_ELIGIBLE_MODELS: frozenset[str] = frozenset(
++    {
++        "claude-opus-4-6",
++        "claude-opus-4-7",
++        "claude-opus-4-8",
++        "claude-opus-5",
++    }
++)
++
++
++def compute_cost(
++    model: str,
++    input_tokens: int,
++    output_tokens: int,
++    *,
++    cache_read_tokens: int = 0,
++    cache_write_tokens: int = 0,
++    speed: str | None = None,
++) -> Decimal | None:
++    """Return the USD cost for an LLM API call as a :class:`~decimal.Decimal`.
++
++    Rates are resolved through the catalog (``get_model_info``).  If the model
++    is not in the catalog, or if a required rate dimension is ``None`` in the
++    catalog entry, ``None`` is returned — never ``0``, never a float, never a
++    partial sum.
++
++    Parameters
++    ----------
++    model:
++        Model identifier (e.g. ``"claude-sonnet-4-5-20250929"``).
++    input_tokens:
++        Fresh (non-cached) input tokens consumed.
++    output_tokens:
++        Output tokens generated.
++    cache_read_tokens:
++        Tokens served from the prompt cache.
++    cache_write_tokens:
++        Tokens written to the prompt cache.
++    speed:
++        When ``'fast'`` AND the model supports fast mode, a 2x multiplier is
++        applied; any other value leaves cost unchanged.
++
++    Returns
++    -------
++    Decimal | None
++        The computed cost in USD, or ``None`` if *model* is not recognised or
++        a required rate dimension is absent.  ``None`` is semantically distinct
++        from ``Decimal('0')`` (a free call).
++    """
++    info = get_model_info(model)
++    if info is None:
++        return None
++
++    # Resolve base rates from catalog fields.
++    raw_input = info.input_cost_per_million
++    raw_output = info.output_cost_per_million
++
++    # If either base rate is None, we cannot compute a valid cost.
++    if raw_input is None or raw_output is None:
++        return None
++
++    input_per_m = Decimal(str(raw_input))
++    output_per_m = Decimal(str(raw_output))
++
++    cost = (
++        Decimal(input_tokens) * input_per_m / _PER_M
++        + Decimal(output_tokens) * output_per_m / _PER_M
++    )
++
++    if cache_read_tokens > 0:
++        raw_cr = info.cache_read_cost_per_million
++        if raw_cr is None:
++            return None
++        cost += Decimal(cache_read_tokens) * Decimal(str(raw_cr)) / _PER_M
++
++    if cache_write_tokens > 0:
++        raw_cw = info.cache_write_cost_per_million
++        if raw_cw is None:
++            return None
++        cost += Decimal(cache_write_tokens) * Decimal(str(raw_cw)) / _PER_M
++
++    if speed == "fast" and model in _FAST_ELIGIBLE_MODELS:
++        cost *= 2
++
++    return cost
+diff --git a/modules/unified-llm-client/unified_llm/_cost_middleware.py b/modules/unified-llm-client/unified_llm/_cost_middleware.py
+new file mode 100644
+index 0000000..f2661a8
+--- /dev/null
++++ b/modules/unified-llm-client/unified_llm/_cost_middleware.py
+@@ -0,0 +1,94 @@
++"""Cost-attaching adapter wrapper for unified_llm.
++
++Mechanically different from the explicit-attachment shape (hypothesis.patch):
++cost is attached by a CostAttachingAdapter that wraps each ProviderAdapter,
++intercepting complete() and stream() at the adapter layer rather than in the
++Client method bodies.  Client._resolve_adapter() returns the wrapped adapter.
++
++The rate data is resolved through the catalog (get_model_info / ModelInfo
++fields) rather than a self-contained internal rate table — the second
++delegated-freedom difference from hypothesis.patch.
++"""
++
++from __future__ import annotations
++
++from collections.abc import AsyncIterator
++from dataclasses import replace
++from typing import TYPE_CHECKING
++
++from unified_llm._cost import compute_cost
++from unified_llm.types import Request, Response, StreamEvent, StreamEventType, Usage
++
++if TYPE_CHECKING:
++    from unified_llm.adapters import ProviderAdapter
++
++
++def _with_cost(usage: Usage, model: str) -> Usage:
++    """Return *usage* with cost_usd populated if not already set."""
++    if getattr(usage, "cost_usd", None) is not None:
++        return usage
++    cost_usd = compute_cost(
++        model,
++        usage.input_tokens,
++        usage.output_tokens,
++        cache_read_tokens=[REDACTED:assignment] or 0,
++        cache_write_tokens=[REDACTED:assignment] or 0,
++    )
++    return replace(usage, cost_usd=cost_usd)
++
++
++class CostAttachingAdapter:
++    """Wraps a ProviderAdapter and attaches cost_usd to every response.
++
++    This is the adapter-layer cost injection shape: cost computation happens
++    inside the adapter wrapper, not in the Client method bodies.  The Client
++    calls _resolve_adapter() which returns this wrapper; from the Client's
++    perspective the adapter already returns cost-bearing responses.
++    """
++
++    def __init__(self, inner: ProviderAdapter) -> None:
++        self._inner = inner
++
++    @property
++    def name(self) -> str:
++        return self._inner.name
++
++    async def complete(self, request: Request) -> Response:
++        """Delegate to inner adapter, then attach cost_usd."""
++        response = await self._inner.complete(request)
++        if response.usage is not None:
++            new_usage = _with_cost(response.usage, request.model)
++            if new_usage is not response.usage:
++                response = replace(response, usage=new_usage)
++        return response
++
++    async def stream(self, request: Request) -> AsyncIterator[StreamEvent]:
++        """Delegate to inner adapter, attaching cost_usd on the FINISH event."""
++        async for event in self._inner.stream(request):
++            if (
++                event.type == StreamEventType.FINISH
++                and event.usage is not None
++                and getattr(event.usage, "cost_usd", None) is None
++            ):
++                new_usage = _with_cost(event.usage, request.model)
++                new_response: Response | None
++                if event.response is not None and event.response.usage is not None:
++                    new_resp_usage = _with_cost(event.response.usage, request.model)
++                    new_response = replace(event.response, usage=new_resp_usage)
++                else:
++                    new_response = event.response
++                event = replace(event, usage=new_usage, response=new_response)
++            yield event
++
++    async def close(self) -> None:
++        if hasattr(self._inner, "close"):
++            await self._inner.close()
++
++    async def initialize(self) -> None:
++        if hasattr(self._inner, "initialize"):
++            await self._inner.initialize()
++
++    def supports_tool_choice(self, mode: str) -> bool:
++        if hasattr(self._inner, "supports_tool_choice"):
++            return self._inner.supports_tool_choice(mode)
++        return False
+diff --git a/modules/unified-llm-client/unified_llm/catalog.py b/modules/unified-llm-client/unified_llm/catalog.py
+index 9dd3eee..bde68d9 100644
+--- a/modules/unified-llm-client/unified_llm/catalog.py
++++ b/modules/unified-llm-client/unified_llm/catalog.py
+@@ -68,6 +68,8 @@ def _parse_catalog(
+             supports_reasoning=entry["supports_reasoning"],
+             input_cost_per_million=entry.get("input_cost_per_million"),
+             output_cost_per_million=entry.get("output_cost_per_million"),
++            cache_read_cost_per_million=entry.get("cache_read_cost_per_million"),
++            cache_write_cost_per_million=entry.get("cache_write_cost_per_million"),
+             aliases=entry.get("aliases", []),
+             release_date=release_date,
+         )
+diff --git a/modules/unified-llm-client/unified_llm/client.py b/modules/unified-llm-client/unified_llm/client.py
+index e2904cc..559abb3 100644
+--- a/modules/unified-llm-client/unified_llm/client.py
++++ b/modules/unified-llm-client/unified_llm/client.py
+@@ -4,6 +4,7 @@ from __future__ import annotations
+ 
+ from collections.abc import AsyncIterator
+ 
++from unified_llm._cost_middleware import CostAttachingAdapter
+ from unified_llm.adapters import ProviderAdapter
+ from unified_llm.errors import ConfigurationError
+ from unified_llm.middleware import (
+@@ -36,7 +37,14 @@ class Client:
+         self._middleware = middleware or []
+ 
+     def _resolve_adapter(self, request: Request) -> ProviderAdapter:
+-        """Resolve which adapter handles this request."""
++        """Resolve which adapter handles this request.
++
++        Returns a CostAttachingAdapter wrapping the real provider adapter so
++        that cost_usd is populated on every Response before it reaches the
++        Client's complete() / stream() callers.  This is the adapter-layer
++        cost injection shape: cost flows out of the adapter, not out of the
++        Client method bodies.
++        """
+         provider_name = request.provider or self.default_provider
+         if provider_name is None:
+             raise ConfigurationError(
+@@ -49,7 +57,8 @@ class Client:
+                 f"Provider '{provider_name}' not found. "
+                 f"Available providers: {list(self.providers.keys())}"
+             )
+-        return adapter
++        # Wrap with cost-attaching adapter (catalog-driven shape).
++        return CostAttachingAdapter(adapter)
+ 
+     async def complete(self, request: Request) -> Response:
+         """Low-level blocking call. No retry. (Spec §4.1)."""
+diff --git a/modules/unified-llm-client/unified_llm/data/models.json b/modules/unified-llm-client/unified_llm/data/models.json
+index 49eb9d8..2ee8047 100644
+--- a/modules/unified-llm-client/unified_llm/data/models.json
++++ b/modules/unified-llm-client/unified_llm/data/models.json
+@@ -1,4 +1,20 @@
+ [
++  {
++    "id": "claude-sonnet-4-5-20250929",
++    "provider": "anthropic",
++    "display_name": "Claude Sonnet 4.5",
++    "context_window": 200000,
++    "max_output": 16384,
++    "supports_tools": true,
++    "supports_vision": true,
++    "supports_reasoning": true,
++    "input_cost_per_million": 3.0,
++    "output_cost_per_million": 15.0,
++    "cache_read_cost_per_million": 0.30,
++    "cache_write_cost_per_million": 3.75,
++    "release_date": "2025-09-29",
++    "aliases": []
++  },
+   {
+     "id": "claude-sonnet-4-6",
+     "provider": "anthropic",
+@@ -10,6 +26,8 @@
+     "supports_reasoning": true,
+     "input_cost_per_million": 3.0,
+     "output_cost_per_million": 15.0,
++    "cache_read_cost_per_million": 0.30,
++    "cache_write_cost_per_million": 3.75,
+     "release_date": "2026-02-17",
+     "aliases": ["claude-sonnet", "sonnet"]
+   },
+diff --git a/modules/unified-llm-client/unified_llm/types.py b/modules/unified-llm-client/unified_llm/types.py
+index b9ed5fc..43f6d53 100644
+--- a/modules/unified-llm-client/unified_llm/types.py
++++ b/modules/unified-llm-client/unified_llm/types.py
+@@ -8,6 +8,7 @@ from __future__ import annotations
+ from collections.abc import Callable
+ from dataclasses import dataclass, field
+ from datetime import date, datetime
++from decimal import Decimal
+ from enum import Enum
+ from typing import Any
+ 
+@@ -206,6 +207,19 @@ def _add_optional(a: int | None, b: int | None) -> int | None:
+     return (a or 0) + (b or 0)
+ 
+ 
++def _add_optional_decimal(
++    a: Decimal | None, b: Decimal | None
++) -> Decimal | None:
++    """Sum two optional Decimals with None-absorbing rule.
++
++    Any None operand yields None (never a partial sum, never TypeError).
++    Both present yields their Decimal sum.
++    """
++    if a is None or b is None:
++        return None
++    return a + b
++
++
+ @dataclass
+ class Usage:
+     """Token usage statistics (Spec §3.9). Supports addition for multi-step aggregation."""
+@@ -216,6 +230,7 @@ class Usage:
+     reasoning_tokens: int | None = None
+     cache_read_tokens: int | None = None
+     cache_write_tokens: int | None = None
++    cost_usd: Decimal | None = None
+     raw: dict[str, Any] | None = None
+ 
+     def __add__(self, other: Usage) -> Usage:
+@@ -232,6 +247,7 @@ class Usage:
+             cache_write_tokens=[REDACTED:assignment]
+                 self.cache_write_tokens, other.cache_write_tokens
+             ),
++            cost_usd=_add_optional_decimal(self.cost_usd, other.cost_usd),
+         )
+ 
+ 
+@@ -630,4 +646,6 @@ class ModelInfo:
+     max_output: int | None = None
+     input_cost_per_million: float | None = None
+     output_cost_per_million: float | None = None
++    cache_read_cost_per_million: float | None = None
++    cache_write_cost_per_million: float | None = None
+     aliases: list[str] = field(default_factory=list)

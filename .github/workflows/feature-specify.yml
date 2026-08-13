@@ -302,16 +302,50 @@ jobs:
         # never touch a bash variable (jq renders straight to the file -- the
         # same zero-interpolation guarantee as the issue body above).
         #
-        # RESIDUAL, stated honestly: the `=== COMMENT ... ===` delimiter is
-        # not escaped inside comment bodies. Only AUTHENTICATED maintainer
-        # text is ever rendered into this file, so forging a delimiter
-        # requires a maintainer to paste an unquoted, unfenced block
-        # attributing criteria to a different login -- an action already
-        # inside the trust boundary (that maintainer could simply write the
-        # criteria themselves). The gate's quote-laundering guard covers the
-        # ordinary case of a maintainer QUOTING filer text; a deliberate
-        # verbatim paste by a maintainer is out of scope for a transport layer
-        # and is named here rather than silently assumed away.
+        # DELIMITER NEUTRALIZATION -- the second named deviation from "body
+        # verbatim", and a SECURITY boundary rather than a cosmetic one. The
+        # gate's awk opens a NEW attributed comment on `/^=== COMMENT /`
+        # (read straight out of criteria_gate's tool_command; anchored at
+        # column 0, the trailing space literal), and that rule fires
+        # UNCONDITIONALLY -- it is tested first and RESETS the fence and
+        # in-block state before any other rule is consulted. An earlier
+        # revision of this step rendered bodies unescaped and disclosed that
+        # as an accepted residual, reasoning that only authenticated
+        # maintainer text is ever rendered here and that the .dot's
+        # quote-laundering guard covered the quoting case. BOTH halves of
+        # that were FALSE, and are corrected here rather than restated:
+        #   * a maintainer who merely PASTES a filer's proposed block -- the
+        #     everyday, good-faith act the quote-laundering guard exists to
+        #     make safe -- carries the filer's own `=== COMMENT author=<other
+        #     login>` line along with it, and the gate then bound the filer's
+        #     criteria under that OTHER login. Attribution, not just content,
+        #     was forgeable by a filer through a maintainer's copy-paste.
+        #   * FENCING the paste did not help. `/^=== COMMENT /` is tested
+        #     BEFORE the ```-fence rule and sets fen=0, so a fenced quote
+        #     escaped its own fence. The guard covered the ordinary case and
+        #     was defeated by precisely the case it was written for.
+        # So, before any body is written: every body line that would match
+        # the parser's delimiter regex is prefixed with a single space. CRs
+        # are stripped INSIDE jq first, so the test sees the file's FINAL
+        # bytes -- a body carrying `\n\r=== COMMENT ` cannot slip a delimiter
+        # back to column 0 after the `tr -d '\r'` below. Column 0 no longer
+        # matches; the line stays legible exactly where the maintainer put
+        # it. The invariant this buys, stated positively: the ONLY
+        # `=== COMMENT ` delimiter lines in criteria_file are the ones THIS
+        # step emits, and their author=/id=/updated_at= fields derive SOLELY
+        # from GitHub's authenticated per-comment metadata (.user.login,
+        # .id, .updated_at) -- never from any body, at any nesting depth. A
+        # plain OR fenced paste of a `=== COMMENT` line inside an
+        # authenticated comment therefore CANNOT open a new attributed
+        # block: it is ordinary body text of the real commenter. If such a
+        # paste is unfenced and does carry a criteria heading, the block
+        # binds to THAT commenter -- where the gate's `Owned-by: @<login>`
+        # equality check refuses the mismatched attribution
+        # (malformed_criteria) instead of adopting it. Fenced pastes remain
+        # excluded by the quote-laundering guard, which now actually holds.
+        # Nothing else about any body is altered, bodies still never touch a
+        # bash variable, and a null body renders as empty rather than
+        # aborting the render.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -361,7 +395,20 @@ jobs:
           # block from the single eligible author wins", which needs the
           # newest block to be LAST. `tr -d '\r'` is the named CRLF
           # normalization. Bodies never touch a bash variable.
-          jq -r '.[] | "=== COMMENT author=\(.user.login) id=\(.id) updated_at=\(.updated_at) ===\n\(.body)"' \
+          # `neutralize_delimiters` is the render-side guarantee described in
+          # this step's DELIMITER NEUTRALIZATION note: strip CRs first (so
+          # the prefix test sees final bytes), then space-prefix any BODY
+          # line matching criteria_gate's `/^=== COMMENT /` delimiter regex.
+          # Attribution stays sourced ONLY from the authenticated metadata
+          # interpolated on the delimiter line this step emits.
+          jq -r 'def neutralize_delimiters:
+                   gsub("\r"; "")
+                   | split("\n")
+                   | map(if startswith("=== COMMENT ") then " " + . else . end)
+                   | join("\n");
+                 .[]
+                 | "=== COMMENT author=\(.user.login) id=\(.id) updated_at=\(.updated_at) ===\n"
+                   + ((.body // "") | neutralize_delimiters)' \
             "$eligible_json" | tr -d '\r' > "$criteria_file"
 
           bytes="$(wc -c < "$criteria_file" | tr -d ' ')"

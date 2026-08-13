@@ -102,10 +102,10 @@ jobs:
     # max_pipeline_duration="9000s" (150 min), deliberately HALF capsule.dot's
     # 18000s. The vendored .dot's header shows that recompute: 11 tool legs x
     # the 180s gate_time_ceiling (1980s) + 7 LLM legs x 600s (4200s), x1.2 =
-    # 7416s <= the 9000s fuse. That fuse is the ENGINE's internal wall -- it
-    # writes a postmortem before dying -- so the job wall must clear it plus
-    # the non-engine overhead: checkout, uv install, the two materialize
-    # steps, classify, PR creation, comment, scrub/scan, upload.
+    # 7416s <= the 9000s fuse. That fuse is the ENGINE's internal wall, so
+    # the job wall must clear it plus the non-engine overhead: checkout, uv
+    # install, the two materialize steps, classify, PR creation, comment,
+    # scrub/scan, upload.
     #
     # capsule-specify.yml sits at 360 (GitHub's hard cap for hosted runners)
     # over its 300-minute fuse: a ~60-minute margin. That margin is
@@ -1224,16 +1224,48 @@ jobs:
       - name: "Residual secret gate: block the upload if anything secret-shaped remains"
         id: secret_gate
         # Defense in depth over the scrub step above: re-scan the evidence
-        # roots -- including files written AFTER the scrub (the PR body, the
-        # issue comment, the quoted questions, all staged under $RUNNER_TEMP)
-        # -- with a detection set deliberately BROADER than the scrub's
-        # redaction set (it adds a high-entropy-token heuristic), so a secret
-        # shape the scrubber doesn't know about still blocks the upload
-        # instead of shipping in a public artifact. On ANY finding: upload_ok
-        # stays 'false' and this step fails the job loudly. An artifact with
-        # no evidence is safe; an artifact with a leaked key is not -- fail
-        # toward not-uploading. There is deliberately NO fallback/override
-        # path.
+        # roots (including files written AFTER the scrub, e.g. the PR body
+        # and issue comment staged under $RUNNER_TEMP) with a detection set
+        # deliberately BROADER than the scrub's redaction set (it adds a
+        # high-entropy-token heuristic), so a secret shape the scrubber
+        # doesn't know about never rides out in a public artifact. An
+        # artifact with no evidence is safe; an artifact with a leaked key
+        # is not -- fail toward not-uploading.
+        #
+        # THE VERDICT IS SPLIT BY FINDING CLASS (issue #206). This step ran
+        # `scan` and blocked on ANY finding, and the measurement came back
+        # 4 real runs out of 4: every one tripped the entropy heuristic on
+        # legitimate worker-session payloads in
+        # logs/*/sessions/*/events.jsonl -- digests, base64 fragments,
+        # request ids (run 31657343281: findings at events.jsonl lines
+        # 5/6/10/11/14, all shape=high-entropy-token). The evidence
+        # artifact therefore NEVER survived a run, every run read red, and
+        # a failed run could not be diagnosed at all. `gate` keeps the hard
+        # block for every KNOWN credential shape -- the sk-/gh[posur]_/
+        # github_pat_ prefixes, the end-anchored sensitive NAME=value
+        # assignments, and the literal values of this job's own secrets --
+        # and QUARANTINES entropy-only findings instead: it redacts those
+        # spans in place as [REDACTED:entropy], RE-SCANS, and proceeds only
+        # if that second pass is clean, annotating the job (::notice) with
+        # the count and the file list. Nothing secret-shaped is uploaded
+        # either way; the difference is that the old behavior shipped
+        # NOTHING and lost the evidence, and this ships the evidence with
+        # the suspicious spans removed. If the re-scan still finds
+        # anything, the upload is blocked exactly as before.
+        #
+        # --never-redact FENCES THE CAPSULE PAIR, and that fence is
+        # load-bearing (PR #207, incident 2026-08-13). $RUNNER_TEMP/
+        # capsule-run INCLUDES capsule-run/out -- the pair just pushed to
+        # the capsule branch -- and redaction is right for evidence and
+        # WRONG for artifacts: the run's proofs attach to the pair's exact
+        # bytes, and the scrubber rewriting a shipped verify.sh is
+        # precisely how PR #205 published a gate that no longer parses.
+        # Inside the fence the pre-#206 semantics hold unchanged: ANY
+        # finding there, entropy included, blocks loudly, and no byte under
+        # it is ever rewritten. (The pair has already been scanned under
+        # those same semantics by the capsule_secret_gate step above, which
+        # uses the read-only `scan` verb; this is the second, independent
+        # expression of the same rule.)
         if: always() && steps.idem.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -1243,12 +1275,13 @@ jobs:
         run: |
           set -euo pipefail
           echo "upload_ok=false" >> "$GITHUB_OUTPUT"
-          if python3 .github/capsule-pipeline/scrub_secrets.py scan \
+          if python3 .github/capsule-pipeline/scrub_secrets.py gate \
+              --never-redact "$RUNNER_TEMP/capsule-run/out" \
               "$RUNNER_TEMP/capsule-run" \
               "$GITHUB_WORKSPACE/.ai"; then
             echo "upload_ok=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::Residual secret-shaped material found in the run evidence AFTER scrubbing -- the run-evidence artifact upload is BLOCKED (see the scan findings above for file/line/shape; the secret values themselves are never printed). Nothing was uploaded. Rotate any credential the findings implicate before touching this run's evidence." >&2
+            echo "::error::The residual secret gate BLOCKED the run-evidence artifact upload -- either a KNOWN credential shape was found in the evidence after scrubbing, or an entropy finding sits inside the --never-redact capsule pair, or the entropy quarantine's confirming re-scan did not come back clean (see the scan findings above for file/line/shape; the secret values themselves are never printed). Nothing was uploaded. Rotate any credential the findings implicate before touching this run's evidence." >&2
             exit 1
           fi
 

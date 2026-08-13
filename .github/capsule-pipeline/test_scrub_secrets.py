@@ -8,6 +8,19 @@ The fixture in test_incident_shape_events_jsonl reproduces the exact shape
 of the 2026-08 incident: a tool:post payload persisted verbatim into
 events.jsonl carrying a literal `OPENAI_API_KEY=sk-proj-...` value inside a
 JSON string.
+
+CAPSULE_GATE_LINES_FROM_PR_205 reproduces the SECOND incident (2026-08-13):
+the assignment rule used to match any name CONTAINING `_TOKEN`, so it
+rewrote the token-accounting assignments in a shipped capsule gate --
+`input_tokens=`, `output_tokens=`, `total_tokens=`, `cache_read_tokens=`,
+`reasoning_tokens=` -- into `[REDACTED:assignment]`, swallowing the
+trailing comma with the value and leaving a Python heredoc that no longer
+parses. Those lines are quoted verbatim from the pre-corruption form of
+`.github/capsule-pipeline/proposals/issue-204/
+cost-exposure-unified-llm-loop-pipeline.verify.sh` (PR #205: 54 markers
+across 31 lines). The pair of directional tests below is the regression:
+these shapes must survive BYTE-IDENTICAL, and real credential assignments
+must still be redacted.
 """
 
 from __future__ import annotations
@@ -32,6 +45,41 @@ FAKE_GHP = "ghp_" + "Zx9Ab" * 8  # classic PAT shape
 FAKE_FG_PAT = "github_pat_" + "11AABBCC0" * 5
 FAKE_ASSIGNMENT_VALUE = "hunter2-value-9931"
 FAKE_NOVEL = "xai-" + "qZ3vB8kN1pW6yT4mJ0hRdC7fLsGuE2aX"  # novel prefix + random tail
+
+# The 2026-08-13 corruption class, quoted from PR #205's shipped gate in its
+# PRE-corruption form. Every one of these was rewritten in place by the old
+# CONTAINS-based assignment rule; all must now survive byte-identical.
+# (Shapes 1-4 are the literal line shapes recoverable from the corrupted
+# file; the rest are the same class in other idioms a token-math gate uses.)
+CAPSULE_GATE_LINES_FROM_PR_205 = (
+    "            dict(model=MODEL, input_tokens=inp1, output_tokens=0),",
+    "            dict(model=MODEL, input_tokens=inp3, output_tokens=out3, cache_read_tokens=cr3),",
+    "                        total_tokens=in3b + out3b,",
+    "        u4 = Usage(input_tokens=inp4, output_tokens=out4, total_tokens=inp4 + out4)",
+    "            reasoning_tokens=r_a,",
+    "            cache_read_tokens=cr_a, cache_write_tokens=cw_a,",
+    "                 cache_read_input_tokens=0, cache_creation_input_tokens=1024, speed=None),",
+    "max_tokens=4096",
+    "input_tokens=5000",
+    "token_count=1234",
+)
+
+# Real credential assignments -- the shape the scrubber exists for. Every
+# one must STILL be redacted after the narrowing.
+CREDENTIAL_ASSIGNMENT_NAMES = (
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "CAPSULE_PR_TOKEN",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "MY_API_KEY",
+    "X_SECRET",
+    "CLIENT_SECRET",
+    "AWS_SECRET_ACCESS_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "PASSWORD",
+    "DB_PASSWORD",
+)
 
 
 def run_cli(args: list[str], env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
@@ -167,6 +215,100 @@ class ScrubTests(unittest.TestCase):
                 proc = run_cli(["scan", sub.name])
                 self.assertEqual(proc.returncode, 1, f"{shape}: {proc.stdout}")
                 self.assertIn(f"shape={shape}", proc.stdout)
+
+    # ---- 2026-08-13 artifact-corruption regression, BOTH directions ----
+
+    def test_capsule_gate_token_math_survives_scrub(self) -> None:
+        """DIRECTION 1 (the corruption): the token-accounting assignments
+        that a real shipped capsule gate is full of must come out of the
+        scrubber BYTE-IDENTICAL.
+
+        The old CONTAINS-based rule rewrote every one of these -- 54
+        markers across 31 lines of PR #205's shipped
+        `cost-exposure-unified-llm-loop-pipeline.verify.sh` -- swallowing
+        the trailing comma along with the value and leaving a Python
+        heredoc that no longer parses.
+        """
+        original = "\n".join(CAPSULE_GATE_LINES_FROM_PR_205) + "\n"
+        f = self.write("out/capsule.verify.sh", original)
+
+        proc = run_cli(["scrub", str(self.root)])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+        after = f.read_text()
+        self.assertEqual(
+            after,
+            original,
+            "the scrubber mutated a capsule gate's token-accounting lines "
+            "-- this is the 2026-08-13 corruption regressing",
+        )
+        self.assertNotIn("[REDACTED:", after)
+
+        # And it must not merely survive the SCRUB: a `scan` FINDING on
+        # capsule_out is now a hard failure of the whole specify run (both
+        # specify workflows scan the capsule pair instead of scrubbing it),
+        # so a false positive here would block every honest capsule whose
+        # subject happens to be token math.
+        proc2 = run_cli(["scan", str(self.root)])
+        self.assertEqual(proc2.returncode, 0, proc2.stdout + proc2.stderr)
+
+    def test_credential_assignment_shapes_still_redact(self) -> None:
+        """DIRECTION 2 (the thing the scrubber is FOR): narrowing the name
+        match must not let a real credential assignment through -- neither
+        past `scrub` nor past the `scan` gate."""
+        value = "hunter2-value-9931-abcdef"
+        for name in CREDENTIAL_ASSIGNMENT_NAMES:
+            with self.subTest(name=name):
+                sub = tempfile.TemporaryDirectory()
+                self.addCleanup(sub.cleanup)
+                p = Path(sub.name, "env.log")
+                p.write_text(f"PATH=/usr/bin\n{name}={value}\nLANG=C.UTF-8\n")
+
+                proc = run_cli(["scrub", sub.name])
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                after = p.read_text()
+                self.assertNotIn(value, after, f"{name}= leaked its value past the scrubber")
+                self.assertIn(f"{name}=[REDACTED:assignment]", after)
+                # Innocent neighbours untouched.
+                self.assertIn("PATH=/usr/bin", after)
+                self.assertIn("LANG=C.UTF-8", after)
+
+                # scan must independently see the unscrubbed shape.
+                p.write_text(f"{name}={value}\n")
+                proc2 = run_cli(["scan", sub.name])
+                self.assertEqual(proc2.returncode, 1, f"{name}: {proc2.stdout}")
+                self.assertIn(f"shape=assignment:{name}", proc2.stdout)
+
+    def test_assignment_name_match_is_end_anchored(self) -> None:
+        """The rule itself, stated directly: a sensitive word at the END of
+        the name matches; the same word merely CONTAINED does not."""
+        redacts = ("SERVICE_TOKEN", "A_SECRET", "SOME_PASSWORD", "V2_API_KEY")
+        survives = (
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "max_tokens",
+            "cache_read_tokens",
+            "cache_creation_input_tokens",
+            "reasoning_tokens",
+            "token_count",
+            "token_budget",
+            "secret_name",
+            "password_field",
+            "credential_path",
+            "api_key_name",
+        )
+        for name in redacts:
+            with self.subTest(name=name, expect="redact"):
+                text, shapes = scrub_secrets.scrub_text(f"{name}=valuevalue\n", {})
+                self.assertEqual(text, f"{name}=[REDACTED:assignment]\n")
+                self.assertEqual(shapes, [f"assignment:{name}"])
+        for name in survives:
+            with self.subTest(name=name, expect="survive"):
+                line = f"{name}=somevalue,\n"
+                text, shapes = scrub_secrets.scrub_text(line, {})
+                self.assertEqual(text, line)
+                self.assertEqual(shapes, [])
 
     def test_binaryish_file_does_not_crash(self) -> None:
         p = self.root / "blob.bin"

@@ -37,10 +37,33 @@ Detection layers:
   1. Known token shapes (regex): OpenAI-style `sk-...` (covers sk-proj-,
      sk-ant-), GitHub fine-grained `github_pat_...`, GitHub classic/app
      tokens `ghp_/gho_/ghs_/ghu_/ghr_...`.
-  2. Assignments: `<NAME>=<value>` where NAME contains API_KEY / _TOKEN /
-     _SECRET / PASSWORD / CREDENTIAL (case-insensitive) -- the exact shape
-     the incident's env dump produced. Only the VALUE is redacted; the
-     name and `=` survive so evidence still shows WHICH variable leaked.
+  2. Assignments: `<NAME>=<value>` where NAME *ENDS WITH* API_KEY /
+     SECRET_ACCESS_KEY / _TOKEN / _SECRET / PASSWORD / CREDENTIAL(S)
+     (case-insensitive) -- the exact shape the incident's env dump
+     produced. Only the VALUE is redacted; the name and `=` survive so
+     evidence still shows WHICH variable leaked.
+
+     THE END-ANCHOR IS LOAD-BEARING (second incident, 2026-08-13). This
+     rule originally matched any name CONTAINING one of those words, and
+     that CORRUPTED A SHIPPED ARTIFACT: a capsule whose subject was LLM
+     cost/token math had its judge-approved gate rewritten by this
+     scrubber -- 54 `input_tokens=` / `output_tokens=` / `total_tokens=` /
+     `cache_read_tokens=` / `reasoning_tokens=` assignments across 31
+     lines replaced with `[REDACTED:assignment]` (swallowing the trailing
+     comma with the value) -- and the corrupted, no-longer-parseable
+     script is what got pushed (PR #205). Credential variables put the
+     sensitive word at the END of the name (`GITHUB_TOKEN`,
+     `OPENAI_API_KEY`, `CLIENT_SECRET`, `AWS_SECRET_ACCESS_KEY`,
+     `GOOGLE_APPLICATION_CREDENTIALS`); ordinary identifiers that merely
+     CONTAIN it do not (`input_tokens`, `max_tokens`, `token_count`).
+     Anchoring at the end keeps every credential shape above and drops
+     that entire false-positive class. ACCEPTED, DOCUMENTED NARROWING:
+     names where the word is genuinely interior (`password_hash=`,
+     `token_bucket=`) are no longer redacted by THIS layer -- layers 1 and
+     3 still cover every credential this job actually holds by shape and
+     by literal value, and layer 4 still BLOCKS the upload on anything
+     secret-shaped that survives. (Scrubbing is best-effort cleaning; the
+     scan is the guarantee. Narrowing the cleaner does not widen the gate.)
   3. Literal values of the secrets this job actually holds: the watched
      env vars below (plus any named in $SCRUB_WATCH_ENV, comma-separated)
      are read from the environment and their VALUES are redacted/detected
@@ -91,11 +114,43 @@ TOKEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("github-token", re.compile(r"gh[posur]_[A-Za-z0-9]{20,}")),
 ]
 
-# Layer 2: NAME=value assignments (the incident's env-dump shape). The
-# negative lookahead keeps an already-redacted value from being re-redacted
-# into a less specific shape.
+# Layer 2: NAME=value assignments (the incident's env-dump shape).
+#
+# SENSITIVE_NAME_TAILS are matched at the END of the variable name -- the
+# name group has NO trailing `[A-Za-z0-9_]*`, so the tail must butt directly
+# against the `=`. That anchor is the fix for the 2026-08-13 artifact
+# corruption (see the module docstring, layer 2): a CONTAINS match turns
+# every `input_tokens=`/`max_tokens=`/`total_tokens=` in ordinary LLM
+# accounting code into a redaction, and the pipeline scrubs artifacts that
+# are later executed as code.
+#
+# Each tail is a real credential-name ending, not a guess:
+#   API_KEYS?          OPENAI_API_KEY, ANTHROPIC_API_KEY (2 of the 5 watched
+#                      vars), MY_API_KEY
+#   SECRET_ACCESS_KEY  AWS_SECRET_ACCESS_KEY -- listed explicitly because it
+#                      ends in _KEY, and a bare `_KEY` tail would swallow
+#                      cache_key=/sort_key=/primary_key= (the same
+#                      false-positive class this fix exists to remove)
+#   _TOKEN             GITHUB_TOKEN, GH_TOKEN, CAPSULE_PR_TOKEN (3 of the 5
+#                      watched vars). SINGULAR ONLY -- `_TOKENS` is the
+#                      corruption class, never a credential name
+#   _SECRET            CLIENT_SECRET, X_SECRET
+#   PASSWORD           PASSWORD, DB_PASSWORD, PGPASSWORD
+#   CREDENTIALS?       GOOGLE_APPLICATION_CREDENTIALS
+#
+# The negative lookahead keeps an already-redacted value from being
+# re-redacted into a less specific shape.
+SENSITIVE_NAME_TAILS = (
+    "API_KEYS?",
+    "SECRET_ACCESS_KEY",
+    "_TOKEN",
+    "_SECRET",
+    "PASSWORD",
+    "CREDENTIALS?",
+)
+
 ASSIGNMENT_PATTERN = re.compile(
-    r"(?P<name>[A-Za-z0-9_]*(?:API_KEY|_TOKEN|_SECRET|PASSWORD|CREDENTIAL)[A-Za-z0-9_]*)"
+    r"(?P<name>[A-Za-z0-9_]*(?:" + "|".join(SENSITIVE_NAME_TAILS) + r"))"
     r"(?P<sep>\s*=\s*)"
     r"(?P<quote>[\"']?)"
     r"(?!\[REDACTED:)"

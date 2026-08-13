@@ -372,6 +372,70 @@ jobs:
             --param max_iterations=6
           echo "attractor_exit=$?" >> "$GITHUB_OUTPUT"
 
+      - name: "Fence the capsule pair: record sha256 of every capsule_out file"
+        # INCIDENT, 2026-08-13 (PR #205): the scrub step below used to run
+        # over capsule_out along with the logs, and it rewrote 54
+        # token-accounting assignments across 31 lines of a
+        # judge-approved verify.sh. The corrupted file is what got pushed.
+        # Nothing between the pipeline run and the branch push had any
+        # opinion about whether those bytes changed.
+        #
+        # This is the first half of the fence. It runs IMMEDIATELY after
+        # the pipeline, before any later step can touch capsule_out, and
+        # records what the pipeline actually produced. The second half
+        # ("verify") runs immediately before the bytes are staged for the
+        # push, in the Open capsule PR step below. Any difference fails
+        # the run and names the files.
+        if: always()
+        run: |
+          set -euo pipefail
+          bash .github/capsule-pipeline/capsule_pair_fence.sh record \
+            "$RUNNER_TEMP/capsule-run/out" \
+            "$RUNNER_TEMP/capsule-pair.sha256"
+
+      - name: "Capsule artifacts: a secret finding FAILS the run, never redacts"
+        id: capsule_secret_gate
+        # POLICY SPLIT, and it is the point of this step (incident,
+        # 2026-08-13). Evidence and capsule artifacts are not the same
+        # kind of thing and must not get the same treatment:
+        #
+        #   run evidence (.ai/, logs) -- best-effort CLEANING. A redacted
+        #     log is still a useful log; scrubbing it in place is right.
+        #
+        #   capsule_out (the pair destined for the PR) -- NEVER mutated.
+        #     These bytes are the run's reviewed output; every proof the
+        #     run just spent hours establishing (articulate-RED at base,
+        #     non-vacuity, the judge's SHIP) attaches to THESE bytes and
+        #     no others. Redacting them in place silently invalidates all
+        #     of it while leaving every check green.
+        #
+        # So the capsule pair is SCANNED, not scrubbed, and a finding is a
+        # loud failure of the whole run: the push is blocked, the issue
+        # gets an honest comment, and a human decides. `scan` is used
+        # deliberately (not the scrub patterns): it detects a strict
+        # superset -- known token shapes, sensitive assignments, this
+        # job's literal secret values, AND the high-entropy heuristic --
+        # so a capsule carrying anything secret-shaped stops here rather
+        # than riding out in a public PR. Runs BEFORE the scrub step so
+        # the verdict is about what the pipeline produced, not about what
+        # a redaction pass left behind. There is deliberately no override.
+        if: always()
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "capsule_clean=false" >> "$GITHUB_OUTPUT"
+          if python3 .github/capsule-pipeline/scrub_secrets.py scan \
+              "$RUNNER_TEMP/capsule-run/out"; then
+            echo "capsule_clean=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Secret-shaped material found in the CAPSULE ARTIFACTS (see the scan findings above for file/line/shape; values are never printed). These artifacts are never redacted in place -- they are the run's reviewed output and the run's proofs attach to their exact bytes. The capsule PR is BLOCKED and this run fails. Rotate any credential the findings implicate, then re-run." >&2
+            exit 1
+          fi
+
       - name: Scrub secrets from run evidence
         # SECURITY (incident, 2026-08): a worker agent dumped its
         # environment mid-run; the session-observability persister wrote
@@ -385,12 +449,23 @@ jobs:
         # secrets this job actually holds -- which is why they are passed
         # into the env here: the script matches their VALUES, it never
         # prints them). Runs immediately after the pipeline so every later
-        # consumer of this evidence -- the capsule PR built from
-        # $RUNNER_TEMP/capsule-run/out, the finding/postmortem quoted onto
-        # the public issue, and the artifact upload -- sees only scrubbed
+        # consumer of this evidence -- the finding/postmortem quoted onto
+        # the public issue and the artifact upload -- sees only scrubbed
         # content. The upload is additionally gated by the residual scan
         # step before the upload step (defense in depth -- scrub is
         # best-effort cleaning; the scan is the guarantee).
+        #
+        # THE ROOTS ARE NARROWED, DELIBERATELY (incident, 2026-08-13).
+        # This step used to scrub "$RUNNER_TEMP/capsule-run", which
+        # INCLUDES capsule-run/out -- the capsule pair destined for the
+        # PR. It rewrote 54 token-accounting assignments across 31 lines
+        # of a judge-approved verify.sh and the corrupted script is what
+        # got pushed (PR #205). Redaction is right for evidence and wrong
+        # for artifacts: an evidence log survives redaction, an executable
+        # gate does not, and the run's proofs attach to the gate's exact
+        # bytes. capsule-run/out is therefore SCANNED (see the step above,
+        # which fails the run on a finding) and never scrubbed; the roots
+        # here are the evidence roots only -- capsule-run/logs and .ai.
         if: always()
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -400,7 +475,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/capsule-pipeline/scrub_secrets.py scrub \
-            "$RUNNER_TEMP/capsule-run" \
+            "$RUNNER_TEMP/capsule-run/logs" \
             "$GITHUB_WORKSPACE/.ai"
 
       - name: Classify the result
@@ -423,9 +498,50 @@ jobs:
           echo "id=$id" >> "$GITHUB_OUTPUT"
           echo "Classified as: kind=$kind id=$id"
 
+      - name: "Execute the SHIPPED gate at the pinned base SHA"
+        id: gate_exec
+        # THE CHECK THAT WAS MISSING (incident, 2026-08-13). PR #205
+        # shipped a verify.sh carrying 54 `[REDACTED:assignment]` markers
+        # across 31 lines -- a Python heredoc that no longer parses -- and
+        # every CI check on it was green, because NOTHING anywhere runs a
+        # shipped capsule gate. The pipeline proves the gate in-run
+        # against the PRE-push copy; CI only tests the modules; a human
+        # reviewer is asked to approve a definition of done on the
+        # strength of proofs about a script nobody re-ran.
+        #
+        # So: run the EXACT bytes about to be pushed, from a pristine
+        # scratch worktree at the pinned base SHA, and assert capsule.dot's
+        # own redgate contract -- rc exactly 1 (rc>=2 is the shape a
+        # corrupted script produces; rc=0 would be green-on-main) with the
+        # DECLARED red_signal present in the output, which is what makes
+        # the red red for the stated reason rather than an unrelated
+        # crash. Capped at 300s: these gates run in seconds, and one that
+        # hangs is not shippable either.
+        #
+        # Runs after packaging is decided and BEFORE the capsule PR is
+        # opened. Failure means no PR -- an unverifiable capsule is worse
+        # than no capsule, because it consumes a reviewer's trust.
+        if: always() && steps.classify.outputs.kind == 'capsule' && steps.capsule_secret_gate.outputs.capsule_clean == 'true'
+        run: |
+          set -euo pipefail
+          echo "gate_ok=false" >> "$GITHUB_OUTPUT"
+          bash .github/capsule-pipeline/verify_shipped_gate.sh \
+            --lane defect \
+            --capsule-dir "$RUNNER_TEMP/capsule-run/out" \
+            --id "${{ steps.classify.outputs.id }}" \
+            --repo "$GITHUB_WORKSPACE" \
+            --base-sha "${{ steps.base.outputs.sha }}" \
+            --log-dir "$RUNNER_TEMP/capsule-run/logs/shipped-gate" \
+            --timeout 300
+          echo "gate_ok=true" >> "$GITHUB_OUTPUT"
+
       - name: Open capsule PR
         id: pr
-        if: always() && steps.classify.outputs.kind == 'capsule'
+        # GATED ON THE PRE-PUBLICATION CHECKS, not just on classification.
+        # `if: always()` steps still run after an earlier step fails, so
+        # each new gate is required by NAME here -- otherwise a blocked
+        # capsule would sail straight into a PR behind a red job.
+        if: always() && steps.classify.outputs.kind == 'capsule' && steps.capsule_secret_gate.outputs.capsule_clean == 'true' && steps.gate_exec.outputs.gate_ok == 'true'
         # KNOWN LIMITATION, confirmed empirically (workflow run 31099116800,
         # PR #141's own pre-merge proof): `gh pr create` fails with
         # "GraphQL: GitHub Actions is not permitted to create or approve
@@ -461,6 +577,18 @@ jobs:
             git status --porcelain >&2 || true
             exit 1
           fi
+
+          # PAIR-INTEGRITY FENCE, second half (incident, 2026-08-13).
+          # Everything that could have touched capsule_out -- the scan, the
+          # scrub, classification -- has now run. This is the last moment
+          # before those bytes become the pushed bytes: the `cp` below is a
+          # byte copy and the commit follows it immediately, so verifying
+          # here is verifying exactly what ships. A mismatch means
+          # something mutated the run's reviewed output; that fails the run
+          # and names the files rather than publishing a capsule whose
+          # proofs no longer attach to it.
+          bash .github/capsule-pipeline/capsule_pair_fence.sh verify \
+            "$OUT" "$RUNNER_TEMP/capsule-pair.sha256"
 
           git checkout -b "$BRANCH"
           mkdir -p "$DEST"
@@ -549,24 +677,69 @@ jobs:
         # only the attribution of responsibility is corrected.
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+          CAPSULE_SECRET_GATE: ${{ steps.capsule_secret_gate.outcome }}
+          GATE_EXEC: ${{ steps.gate_exec.outcome }}
+          PR_STEP: ${{ steps.pr.outcome }}
         run: |
           set -euo pipefail
           COMMENT="$RUNNER_TEMP/capsule-run/comment.md"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           KIND="${{ steps.classify.outputs.kind }}"
 
+          # A capsule can be produced and still, correctly, not be
+          # published: the pre-publication checks (secret finding in the
+          # capsule artifacts, the shipped gate failing to run at base, a
+          # broken pair-integrity fence) BLOCK the push. Say so honestly
+          # rather than posting an empty PR link -- the filer is owed the
+          # real state, and a maintainer needs to know a capsule is sitting
+          # in the run evidence waiting on a human.
+          if [ "$KIND" = "capsule" ] && [ -z "${PR_URL:-}" ]; then
+            KIND="capsule_blocked"
+          fi
+
           case "$KIND" in
             capsule)
               {
                 echo "**Specify stage: work capsule opened.**"
                 echo
-                echo "${{ steps.pr.outputs.url }}"
+                echo "$PR_URL"
                 echo
                 echo "Please review the proposed definition of done and its hypothesis"
                 echo "patch(es) before merging (merging approves the capsule; it does not"
                 echo "implement anything)."
                 echo
                 echo "Workflow run: $RUN_URL"
+              } > "$COMMENT"
+              ;;
+            capsule_blocked)
+              {
+                echo "**Specify stage: a work capsule was produced, but a pre-publication check failed -- no PR was opened.**"
+                echo
+                echo "**What happened:** the pipeline converged on a work capsule, but one"
+                echo "of the checks that runs between producing it and publishing it did"
+                echo "not pass, so nothing was pushed."
+                echo
+                echo "**What this does NOT mean:** it is not a judgment of this report."
+                echo "These checks are about the ARTIFACT (does the gate being shipped"
+                echo "actually run? did anything mutate it? is it free of secret-shaped"
+                echo "material?), never about the quality of the issue."
+                echo
+                echo "**What happens next:** a maintainer will personally review this issue"
+                echo "and follow up. The capsule itself is preserved in this run's evidence."
+                echo
+                echo "<details>"
+                echo "<summary>Which check blocked it (for maintainers)</summary>"
+                echo
+                echo "| check | outcome |"
+                echo "| --- | --- |"
+                echo "| capsule artifacts free of secret-shaped material | \`${CAPSULE_SECRET_GATE:-did not run}\` |"
+                echo "| shipped gate executes RED at the pinned base SHA | \`${GATE_EXEC:-did not run}\` |"
+                echo "| open capsule PR (includes the pair-integrity fence) | \`${PR_STEP:-did not run}\` |"
+                echo
+                echo "Workflow run: $RUN_URL"
+                echo
+                echo "</details>"
               } > "$COMMENT"
               ;;
             green_on_main)

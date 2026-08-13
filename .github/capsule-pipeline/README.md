@@ -1,6 +1,7 @@
 # Capsule pipeline — the "specify" and "implement" stages
 
-This directory wires two stages of an issue -> attractor -> PR system:
+This directory wires two stages of an issue -> attractor -> PR system, with the
+specify stage existing in two sibling flavors (defect and feature):
 
 - **specify**: given a GitHub issue labeled `ready:spec`, an attractor
   pipeline reads the issue, investigates the pinned repository, and produces
@@ -17,6 +18,18 @@ This directory wires two stages of an issue -> attractor -> PR system:
   The pipeline never implements a fix and never merges anything; it
   opens a **capsule PR** containing the proposed definition of done for a
   human to review. See `.github/workflows/capsule-specify.yml`.
+- **specify (feature)**: the same stage for a FEATURE request, driven by the
+  `ready:feature-spec` label and `feature-capsule.dot`. Everything above about
+  RED-at-base stops holding when the capability is simply absent (every
+  candidate gate is red at base -- correct, wrong, and vacuous alike), so the
+  anchor becomes **maintainer-authored acceptance criteria** delivered over the
+  authenticated issue-comment channel and pinned by digest before any budget is
+  spent. The retained red check is demoted to a harness proof (the gate must
+  articulate each absence as a per-criterion census row); non-vacuity inverts to
+  the feature sense (a capability STUB must not green the gate). The output is
+  the same shape of capsule PR, landing in the same `proposals/issue-<n>/`
+  layout, so merging it fires the same implement stage. See
+  `.github/workflows/feature-specify.yml`.
 - **implement**: given a merged capsule PR (or a manual dispatch naming a
   capsule path), a hardened convergence-loop attractor (`task-runner.dot`)
   reads the capsule's definition of done and its gate script, makes real
@@ -30,6 +43,7 @@ This directory wires two stages of an issue -> attractor -> PR system:
 | Path | What it is |
 |---|---|
 | `capsule.dot` | The specify-stage attractor pipeline (`digraph CapsulePipeline`). |
+| `feature-capsule.dot` | The FEATURE specify-stage attractor pipeline (`digraph FeatureCapsulePipeline`) -- the sibling of `capsule.dot` for feature requests rather than defects. The defect pipeline's epistemic anchor (RED-at-base, informative *because* it could have been green) breaks structurally on a feature ask: an absent capability makes EVERY candidate gate red at base, so red stops discriminating. This graph replaces the anchor with BINDING maintainer-authored acceptance criteria arriving over the authenticated issue-comment channel (`author_association` in {OWNER, MEMBER, COLLABORATOR}, Bot-excluded -- server-side facts a filer cannot forge), ingested and digest-pinned by its `criteria_gate` before any budget is spent; the retained RED check is demoted to a HARNESS proof (the gate must ARTICULATE each absence into a per-criterion census row, not merely fail). Driven by `.github/workflows/feature-specify.yml` on the `ready:feature-spec` label. **The one vendored file that is NOT byte-identical below its header** -- three comment lines in the source's own header were rewritten for upstream-legality; the GRAPH BODY is byte-identical and its sha256 is pinned in the provenance box. See that box before re-syncing. |
 | `task-runner.dot` | The implement-stage attractor pipeline (`digraph BacklogTaskRunner`) — a convergence loop (attempt → verify → dual critics → verdict → feedback → loop). |
 | `attractor-pipeline-dual.yaml` | Multi-provider (Anthropic + OpenAI) base bundle. **Unconditionally wired into BOTH workflows**: `capsule-implement.yml` mounts it for `task-runner.dot`'s `critique_b` (issue #155), and `capsule-specify.yml` mounts it for `capsule.dot`'s `critique` node (the lean rebuild's one judgment node, which hard-declares `llm_provider="openai"`). Each workflow carries a loud preflight that refuses to start without `OPENAI_API_KEY`. |
 | `scrub_secrets.py` + `test_scrub_secrets.py` | **NATIVE to this repo (not vendored).** Run-evidence secret scrubber + residual gate: both workflows `scrub` the evidence roots (`.ai/`, the runner-temp capsule dir) in place right after the pipeline runs, then `scan` them immediately before the artifact upload and BLOCK the upload if anything secret-shaped remains. Added after a 2026-08 incident where a worker's env dump (containing a live `OPENAI_API_KEY`) was persisted verbatim into `.ai/**/events.jsonl` and uploaded as a public artifact. Stdlib-only; see the script's docstring for the detection layers. |

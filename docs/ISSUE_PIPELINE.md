@@ -38,6 +38,72 @@ expect after filing a [defect report](../.github/ISSUE_TEMPLATE/defect-report.ym
      committed work, with the judge's objections and the postmortem in the workflow
      run's uploaded artifacts.
 
+## Feature requests
+
+Defects and features are different problems, and they run on different pipelines.
+
+The defect lane's proof rests on a gate being **RED at the base commit for the right
+reason** -- informative precisely because it *could* have come out green. That anchor
+breaks for a feature ask: when a capability is simply absent, *every* candidate gate is
+red at base -- the correct one, the wrong one, and the vacuous one alike -- so red stops
+telling you anything. The feature lane (`.github/workflows/feature-specify.yml`, driving
+`.github/capsule-pipeline/feature-capsule.dot`) replaces that anchor with something a
+machine must not invent: **acceptance criteria a maintainer wrote down**.
+
+**How a maintainer starts a feature run.** Two things, in this order:
+
+1. **Post the acceptance criteria as a comment on the issue** -- not in the issue body;
+   see below. The block must look like this:
+
+   ```markdown
+   ## Acceptance criteria (feature-capsule)
+
+   Owned-by: @your-github-login
+   Scope: IN -- what this feature covers. OUT -- what it does not, and where that is tracked instead.
+
+   AC-1: <one testable criterion, stated as an observable behavior through a public surface>
+   AC-2: <another>
+   AC-3 [guard]: <a criterion that ALREADY holds at the base commit and must keep holding>
+   ```
+
+   - `Owned-by:` must be **your own** login. Adoption is an explicit act, so pasting
+     someone else's proposed criteria does not bind until you own them.
+   - `Scope:` is required. "Deferred" needs a named home, and silence about what is OUT
+     is itself an unmade decision.
+   - Each `AC-<n>` becomes exactly one row of a machine-checked census, so IDs must be
+     unique and each criterion must be independently testable. `[guard]` marks a
+     criterion that must already hold today -- a regression guard.
+   - A criteria block inside a quote (`>`) or a fenced code block is deliberately
+     **ignored**: quoting someone else's proposal is not a ruling.
+
+2. **Apply the `ready:feature-spec` label.** Same deliberate, maintainer-only cost gate
+   as `ready:spec`, and -- as with the defect lane -- the label is the only trigger.
+
+**Why a comment, and not the issue body.** Anyone can write anything in an issue body,
+including a section claiming to be a maintainer ruling, and the body can be edited after
+the fact. GitHub reports each *comment's* author role (OWNER / MEMBER / COLLABORATOR)
+server-side, computed from that account's real relationship to this repository, and a
+filer cannot forge it. So the comment channel is the only one here that can carry
+authority. The issue body is still read, as background; it just cannot bind.
+
+**What you get back**, posted as a comment on the issue either way:
+
+- **A capsule PR**, the same shape as the defect lane's, with the maintainer's criteria
+  shipped alongside the capsule and pinned by digest. Merging it approves the definition
+  of done and fires the same implement stage; it contains no implementation.
+- **A refusal, before any real compute is spent**, if no usable criteria block was found
+  -- posted together with the criteria template, so the next action is copy-edit-post
+  rather than archaeology. The pipeline also refuses (rather than guessing) when two
+  different maintainers have posted competing criteria: settling that by
+  last-poster-wins would be the pipeline quietly rewriting your spec.
+- **Blocking questions for the maintainer**, if the run got as far as a working draft
+  gate and then hit a genuine fork in the criteria. Each question is written to be
+  closable in about a sentence. Answer it, post corrected criteria, re-label.
+
+**If you filed the request and are not a maintainer:** the refusal and
+blocked-on-criteria outcomes are not judgments of your request -- they mean a maintainer
+still has to say what "done" means. Both templates say so explicitly.
+
 ## The human gates are features
 
 - Labeling is deliberate and maintainer-only -- the cost gate.
@@ -48,9 +114,12 @@ expect after filing a [defect report](../.github/ISSUE_TEMPLATE/defect-report.ym
 
 Issue quality determines convergence -- this is measured, not a guess. Well-specified
 defect reports (observable behavior, exact repro with real output quoted, expected vs.
-actual, pinned SHA, no fix prescriptions) converge. Vague reports, design questions,
-and feature requests produce honest non-convergence: a polite refusal with reasons,
-not a fix. Each run costs real compute, which is exactly why the label gate exists.
+actual, pinned SHA, no fix prescriptions) converge. Vague reports and design questions produce
+honest non-convergence: a polite refusal with reasons, not a fix. Feature requests are
+not a defect-lane input at all -- they have their own lane and their own entry
+requirement (see [Feature requests](#feature-requests)); handing one to `ready:spec`
+still produces a refusal. Each run costs real compute, which is exactly why the label
+gate exists.
 
 ## What makes a good report
 

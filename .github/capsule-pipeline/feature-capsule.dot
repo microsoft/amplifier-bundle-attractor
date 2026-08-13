@@ -1,26 +1,27 @@
 // ============================================================================
 // VENDORED COPY -- see .github/capsule-pipeline/README.md for provenance,
 // scope, and re-sync instructions. Source: a private working repository
-// (not publicly reachable), pinned at its commit cf5bb0fd6e221841b43d69f5fa311ffc013283a3
-// (runner/feature-capsule.dot, 2026-08-12 -- the FEATURE sibling of
+// (not publicly reachable), pinned at its commit 5d91fe498f70ad6ecdcf5312269faec200385a41
+// (runner/feature-capsule.dot, 2026-08-13 -- the FEATURE sibling of
 // capsule.dot: the defect pipeline's RED-at-base epistemic anchor breaks
 // structurally on feature asks (an absent capability makes EVERY candidate
 // gate RED at base -- correct, wrong, and vacuous alike), so this graph
 // replaces the anchor with BINDING maintainer-authored acceptance criteria
 // arriving over the authenticated issue-comment channel and pins them by
-// digest before any budget is spent. The commit pinned here is the last
-// pipeline-behavior change in the source; the source's own subsequent
-// commit touches only its private task-tracking notes, not this file
-// (verified: `git diff` of runner/feature-capsule.dot between the two is
-// empty). Nodes/edges 41/75, counted the same comment-stripped way the
-// README counts capsule.dot's 35/62.)
+// digest before any budget is spent. The commit pinned here is the source
+// repository's current tip of main and is a FUSE change: it raises
+// max_pipeline_duration 9000s -> 12000s on run-31673398453 evidence (see
+// the round-budget block in the source header below) and re-pins the
+// source's own fuse-arithmetic rig test to the new value. Nodes/edges
+// 41/75 -- UNCHANGED by this sync, counted the same comment-stripped way
+// the README counts capsule.dot's 35/62.)
 //
 // DEVIATION FROM VERBATIM -- READ BEFORE RE-SYNCING (this file differs from
 // its siblings, which are byte-identical below their headers):
 // the GRAPH BODY is byte-identical to the source -- sha256 of this file from
 // its `digraph FeatureCapsulePipeline {` line to EOF ==
-// e0fb3259a5f3976977c1e503edc91de32bdbc1bcb0f0fe4fed22f36a4cd639d0 == the
-// same range of runner/feature-capsule.dot at cf5bb0f -- but THREE comment
+// 684333184e96a9265b421c245f5d1481708bb774284650da8faa839cf9e8b568 == the
+// same range of runner/feature-capsule.dot at 5d91fe4 -- but THREE comment
 // lines in the source's OWN header (below this box, above `digraph`) were
 // rewritten to upstream-truthful equivalents, because this file is
 // upstream-bound text and the source header carried source-repo-internal
@@ -149,8 +150,35 @@
 // file's text on every run): worst single traversal at the 180s default =
 // 1 redgate + 3x(patch leg + base control) + 1 hermeticity probe + 2
 // rival legs + 1 discrimination = 11 x 180s = 1980s tool_worst; + 7 LLM
-// legs x 600s = 4200s allowance; (1980 + 4200) x 1.2 = 7416s <= the
-// 9000s fuse -- half the defect fuse, clearing with margin.
+// legs x 600s = 4200s allowance; (1980 + 4200) x 1.2 = 7416s. That is the
+// FLOOR the rig pins -- ONE traversal, which the fuse must clear.
+//
+// THE FUSE IS SIZED BY THE ROUND BUDGET, NOT BY ONE TRAVERSAL (raised
+// 9000s -> 12000s, 2026-08-13, on fire-3 evidence). A traversal is not a
+// run: retry_target=author re-enters the authoring legs every round, and
+// the upstream feature-specify workflow spends max_iterations=8. Observed
+// round costs on this graph:
+//   pilot 6 (SHIP, budget 8)     6581s / 6 rounds  ~= 1100s per round
+//   pilot 3 (human-door exit)    7474s / 4 rounds  ~= 1870s per round
+//   fire 3 (ratified criteria)   one round measured at 1370s
+// Fire 3 is upstream run 31673398453 (issue #204) under the ratified
+// multi-model-parity + vendored-oracle criteria, which made the authoring
+// rounds heavier. It died on this fuse: `Pipeline exceeded max duration of
+// 9000000ms`, step 06:19:35Z -> 08:53:10Z -- the whole 9000s spent
+// mid-loop, no terminal outcome, no postmortem written. Its 1370s round is
+// measured between that run's own node events (last round-1 `void` attempt
+// 07:04:46Z -> round-2 `mutate_b` 07:27:36Z, an interval spanning void ->
+// nonvacuity_gate -> critique -> verdict -> author -> redgate -> mutate ->
+// mutate_b). At that rate 9000s funds ~6 rounds: the old fuse
+// CONTRADICTED the 8-round budget it was meant to contain and cut it short
+// by two, which is the failure it produced. New sizing: 8 rounds x a 1500s
+// per-round allowance = 12000s. 1500s is the two converged-run rates
+// (1100s, 1370s) rounded up, and THAT ROUNDING IS THE HEADROOM -- no
+// second invented multiplier on top. The pilot-3 outlier (~1870s/round) is
+// NOT covered at 8 rounds and is not claimed to be: the fuse is a
+// wall-clock backstop, not a per-round guarantee. Still under the defect
+// pipeline's 18000s -- recomputed from feature telemetry, never inherited
+// (design sec 3.4).
 //
 // Engine semantics leaned on: verified foot-gun card in context/primer.md
 // sec 6 (FAIL routing #2, stale tool.last_line #11 -- hence
@@ -167,7 +195,7 @@ digraph FeatureCapsulePipeline {
         params="issue_file, criteria_file, target_dir, base_sha, later_commit, uplift_dir, capsule_out, max_iterations, gate_time_ceiling",
         default_max_retries=2,
         default_fidelity="compact",
-        max_pipeline_duration="9000s",
+        max_pipeline_duration="12000s",
         retry_target="author"
     ]
 

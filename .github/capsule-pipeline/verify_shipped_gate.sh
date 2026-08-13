@@ -135,6 +135,49 @@ shipped_sum="$(sha256sum < "$GATE" | awk '{print $1}')"
 installed_sum="$(sha256sum < "$WORKTREE/.ai/capsule/DEFINITION.verify.sh" | awk '{print $1}')"
 [ "$shipped_sum" = "$installed_sum" ] \
     || fail "internal: the installed gate is not byte-identical to the shipped gate ($shipped_sum != $installed_sum)"
+
+# --- stage the capsule's VENDORED GATE FIXTURES beside the gate --------
+# A capsule may carry plain sibling files its gate loads by path. That is
+# the shape acceptance criteria demand when they require an oracle
+# "VENDORED beside the gate inside the capsule": the specify stage's
+# `package` step copies every plain regular file from .ai/capsule/ out as
+# <id>.<original-name>, so re-staging is exactly the inverse -- strip the
+# `<id>.` prefix and put the file back where the gate expects to find it.
+#
+# WHY THIS EXISTS (incident, 2026-08-13, run 31689374533): before plain
+# files could travel with the pair, the only shape that satisfied
+# "vendored inside the capsule" was embedding the pinned oracle in
+# verify.sh as a base64-ish blob -- which the capsule-artifacts scan then
+# blocked, correctly, as shape=high-entropy-token (an encoded blob is
+# secret-shaped AND unreviewable). Now the readable file ships. If this
+# script did not re-stage it, a gate that loads its oracle from
+# .ai/capsule/ would fail HERE, for a reason that is this script's fault
+# rather than the gate's -- and the diagnostic above would blame the
+# capsule.
+#
+# Scope is deliberately narrow: `<id>.*.py` and `<id>.*.json` only. Every
+# artifact `package` ships alongside the pair (<id>.criteria.md,
+# <id>.criteria-digest, <id>.base-sha, <id>.census-red,
+# <id>.hypothesis.patch, <id>.critique.md, the findings, the questions)
+# carries a different suffix, so the two sets cannot collide -- and an
+# extension not named here is left alone rather than guessed at.
+fixture_count=0
+for fixture in "$CAPSULE_DIR/$ID."*.py "$CAPSULE_DIR/$ID."*.json; do
+    [ -f "$fixture" ] || continue
+    fixture_base="$(basename "$fixture")"
+    staged_name="${fixture_base#"$ID."}"
+    cp "$fixture" "$WORKTREE/.ai/capsule/$staged_name"
+    fixture_sum="$(sha256sum < "$fixture" | awk '{print $1}')"
+    staged_sum="$(sha256sum < "$WORKTREE/.ai/capsule/$staged_name" | awk '{print $1}')"
+    [ "$fixture_sum" = "$staged_sum" ] \
+        || fail "internal: the staged fixture .ai/capsule/$staged_name is not byte-identical to the shipped $fixture_base ($staged_sum != $fixture_sum)"
+    echo "verify_shipped_gate: staged vendored fixture $fixture_base -> .ai/capsule/$staged_name (sha256 $fixture_sum)"
+    fixture_count=$((fixture_count + 1))
+done
+if [ "$fixture_count" -eq 0 ]; then
+    echo "verify_shipped_gate: no vendored gate fixtures shipped with this capsule (<id>.*.py / <id>.*.json) -- the gate runs with the pair alone."
+fi
+
 echo "verify_shipped_gate: running the shipped gate (sha256 $shipped_sum, ${TIMEOUT}s cap)"
 chmod +x "$WORKTREE/.ai/capsule/DEFINITION.verify.sh" 2>/dev/null || true
 rm -f "$WORKTREE/.ai/census"

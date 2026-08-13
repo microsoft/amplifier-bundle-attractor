@@ -25,6 +25,8 @@ must still be redacted.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -79,6 +81,48 @@ CREDENTIAL_ASSIGNMENT_NAMES = (
     "GOOGLE_APPLICATION_CREDENTIALS",
     "PASSWORD",
     "DB_PASSWORD",
+)
+
+
+# ---- issue #206: the entropy false positive, reproduced from real runs ----
+#
+# A worker-session event line of the shape the pipeline actually persists to
+# logs/<run>/sessions/<id>/events.jsonl. NOTHING here is a credential: a
+# base64 attachment fragment, a sha256 content digest, a provider request
+# id, a workspace path, and prose. On 4 of 4 real runs this class of line
+# tripped `shape=high-entropy-token` and the gate skipped the evidence
+# upload (issue #206; e.g. run 31657343281, findings at lines 5/6/10/11/14).
+ENTROPY_SHAPE = scrub_secrets.ENTROPY_SHAPE
+ENTROPY_B64_BLOB = "dGhlIHF1aWNrIGJyb3duIGZveCBqdW1wcyBvdmVyIHRoZSBsYXp5IGRvZyAwMTIzNDU2Nzg5"
+ENTROPY_SHA256_DIGEST = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+ENTROPY_REQUEST_ID = "req_01JQ8ZK4M7N2P5R9T3V6X8Y0AB"
+
+REALISTIC_SESSION_EVENT = {
+    "event": "tool:post",
+    "ts": "2026-08-13T06:31:19.324332Z",
+    "payload": {
+        "tool": "read_file",
+        "cwd": "/home/runner/work/amplifier-bundle-attractor/amplifier-bundle-attractor",
+        "note": "reading the capsule brief",
+        "request_id": ENTROPY_REQUEST_ID,
+        "content_sha256": ENTROPY_SHA256_DIGEST,
+        "attachment_b64": ENTROPY_B64_BLOB,
+    },
+}
+REALISTIC_SESSION_LINES = (
+    {"event": "session:start", "payload": {"stage": "capsule", "iteration": 3}},
+    REALISTIC_SESSION_EVENT,
+    {"event": "session:end", "payload": {"note": "no findings", "exit": 0}},
+)
+
+# A capsule-pair line carrying an entropy span. Not a credential and not a
+# sensitive assignment -- only the layer-4 heuristic fires on it -- which is
+# exactly what makes it the right probe for the scope rule: entropy is the
+# ONE class `gate` may quarantine, and it must still hard-block here.
+CAPSULE_LINE_WITH_ENTROPY = (
+    "set -euo pipefail\n"
+    f'EXPECTED_B64="{ENTROPY_B64_BLOB}"\n'
+    'test "$(printf %s "$payload" | base64 -w0)" = "$EXPECTED_B64" || exit 1\n'
 )
 
 
@@ -309,6 +353,184 @@ class ScrubTests(unittest.TestCase):
                 text, shapes = scrub_secrets.scrub_text(line, {})
                 self.assertEqual(text, line)
                 self.assertEqual(shapes, [])
+
+    # ---- issue #206: the entropy gate's split verdict ----
+
+    def test_entropy_span_redaction_is_surgical(self) -> None:
+        """The redaction primitive: the suspicious RUN is replaced and
+        nothing else moves.
+
+        This is what makes the quarantine honest -- the evidence survives
+        because only the guessed-secret span leaves, not the line, not the
+        file, and not the JSON structure carrying it.
+        """
+        line = json.dumps(REALISTIC_SESSION_EVENT)
+        redacted, n = scrub_secrets.redact_entropy_text(line)
+
+        self.assertGreaterEqual(n, 1, "the realistic payload must trip the heuristic at all")
+        # The span is gone; the marker is there.
+        self.assertNotIn(ENTROPY_B64_BLOB, redacted)
+        self.assertIn("[REDACTED:entropy]", redacted)
+        # Innocent bytes -- prose, paths, field names, the sha256 digest
+        # (excluded from the heuristic as pure hex) -- are untouched.
+        for innocent in (
+            '"event"',
+            '"tool:post"',
+            "/home/runner/work/amplifier-bundle-attractor",
+            "reading the capsule brief",
+            ENTROPY_SHA256_DIGEST,
+        ):
+            self.assertIn(innocent, redacted, f"redaction ate innocent content: {innocent!r}")
+        # And it is still the same JSON document, one string value shorter.
+        reparsed = json.loads(redacted)
+        self.assertEqual(reparsed["event"], "tool:post")
+        self.assertEqual(reparsed["payload"]["cwd"], REALISTIC_SESSION_EVENT["payload"]["cwd"])
+        # Idempotent: the marker is not itself an entropy candidate, so a
+        # second pass (the confirming re-scan's premise) changes nothing.
+        again, n2 = scrub_secrets.redact_entropy_text(redacted)
+        self.assertEqual(n2, 0)
+        self.assertEqual(again, redacted)
+
+    def test_gate_quarantines_entropy_only_evidence(self) -> None:
+        """THE ISSUE #206 FLOW, end to end: a realistic worker-session
+        events.jsonl blocks the upload today and survives it after.
+
+        `scan` (unchanged, and what the capsule pair gets) still exits 1 on
+        this file. `gate` redacts the spans, re-scans clean, and exits 0 so
+        the evidence artifact is actually uploaded.
+        """
+        events = self.write(
+            "logs/attractor-run-1/sessions/abc123/events.jsonl",
+            "\n".join(json.dumps(e) for e in REALISTIC_SESSION_LINES) + "\n",
+        )
+        innocent = self.write("logs/run.log", "PIPELINE ok at f09775f4aca234fc2417dbec034cbde\n")
+        before = innocent.read_text()
+
+        # 1. The false positive, reproduced: scan blocks on entropy alone.
+        pre = run_cli(["scan", str(self.root)])
+        self.assertEqual(pre.returncode, 1, pre.stdout)
+        self.assertIn(f"shape={ENTROPY_SHAPE}", pre.stdout)
+        self.assertNotIn("shape=openai-key", pre.stdout)
+
+        # 2. The gate quarantines instead of blocking.
+        proc = run_cli(["gate", str(self.root)])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("::notice::", proc.stdout)
+        self.assertIn("QUARANTINED", proc.stdout)
+        self.assertIn(str(events), proc.stdout)
+        self.assertIn("clean after quarantine", proc.stdout)
+
+        # 3. The spans are gone from disk, the evidence is still evidence.
+        after = events.read_text()
+        self.assertNotIn(ENTROPY_B64_BLOB, after)
+        self.assertIn("[REDACTED:entropy]", after)
+        self.assertIn("reading the capsule brief", after)
+        for raw in after.splitlines():
+            json.loads(raw)  # every line still parses
+        # A file with no findings is never rewritten.
+        self.assertEqual(innocent.read_text(), before)
+
+        # 4. The guarantee: a plain scan of the quarantined tree is clean,
+        #    which is exactly what the gate asserted before returning 0.
+        post = run_cli(["scan", str(self.root)])
+        self.assertEqual(post.returncode, 0, post.stdout)
+
+    def test_gate_blocks_when_a_real_token_rides_along(self) -> None:
+        """MIXED CASE: entropy findings do NOT buy a real credential a
+        ride. One known shape anywhere and the whole gate hard-blocks,
+        with nothing redacted -- the fail-closed guarantee is unchanged
+        for every shape the scrubber actually recognizes."""
+        events = self.write(
+            "logs/attractor-run-1/sessions/abc123/events.jsonl",
+            "\n".join(json.dumps(e) for e in REALISTIC_SESSION_LINES) + "\n",
+        )
+        leak = self.write("logs/env-dump.log", f"PATH=/usr/bin\nOPENAI_API_KEY={FAKE_OPENAI}\n")
+        events_before = events.read_text()
+        leak_before = leak.read_text()
+
+        proc = run_cli(["gate", str(self.root)])
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("shape=openai-key", proc.stdout)
+        self.assertIn("The upload must be blocked", proc.stdout)
+        self.assertNotIn("::notice::", proc.stdout)
+        self.assertNotIn("QUARANTINED", proc.stdout)
+        # A blocked gate rewrites NOTHING -- not even the entropy spans it
+        # would have quarantined on its own. Evidence a human must now
+        # inspect is the evidence the run produced.
+        self.assertEqual(events.read_text(), events_before)
+        self.assertEqual(leak.read_text(), leak_before)
+
+    def test_gate_never_redacts_a_fenced_capsule_pair(self) -> None:
+        """PR #207's scope rule, mechanically: inside --never-redact, ANY
+        finding blocks -- entropy included -- and no byte is rewritten.
+
+        The capsule pair is the run's reviewed output; its proofs attach
+        to its exact bytes (the 2026-08-13 corruption incident). Evidence
+        may be redacted to survive; the pair may not.
+        """
+        pair = self.write("out/work-definition.verify.sh", CAPSULE_LINE_WITH_ENTROPY)
+        pair_before = pair.read_text()
+        self.write(
+            "logs/attractor-run-1/sessions/abc123/events.jsonl",
+            json.dumps(REALISTIC_SESSION_EVENT) + "\n",
+        )
+
+        proc = run_cli(
+            ["gate", "--never-redact", str(self.root / "out"), str(self.root)],
+        )
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("--never-redact subtree", proc.stdout)
+        self.assertIn("this BLOCKS", proc.stdout)
+        self.assertIn("The upload must be blocked", proc.stdout)
+        self.assertNotIn("::notice::", proc.stdout)
+        # The pair is byte-identical -- the whole point.
+        self.assertEqual(pair.read_text(), pair_before)
+        self.assertNotIn("[REDACTED:entropy]", pair.read_text())
+
+        # And the read-only verb the workflows point at the pair is
+        # unchanged by any of this: entropy there still exits 1.
+        scan_pair = run_cli(["scan", str(self.root / "out")])
+        self.assertEqual(scan_pair.returncode, 1, scan_pair.stdout)
+        self.assertIn(f"shape={ENTROPY_SHAPE}", scan_pair.stdout)
+        self.assertEqual(pair.read_text(), pair_before)
+
+    def test_gate_is_clean_and_silent_on_ordinary_evidence(self) -> None:
+        """No findings at all -> no redaction, no annotation, exit 0. The
+        quarantine path must not fire on evidence that never tripped
+        anything."""
+        p = self.write(
+            "logs/run.log",
+            "base_sha=f09775f4aca234fc2417dbec034cbde0bce543a3\n"
+            "Classified as: kind=capsule id=work-definition\n",
+        )
+        before = p.read_text()
+        proc = run_cli(["gate", str(self.root)])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("clean -- scanned", proc.stdout)
+        self.assertNotIn("::notice::", proc.stdout)
+        self.assertEqual(p.read_text(), before)
+
+    def test_gate_blocks_when_the_rescan_does_not_clear(self) -> None:
+        """The guarantee is the RE-SCAN, not the redaction: if anything
+        survives the entropy pass, the gate blocks exactly as before.
+
+        Simulated by making the redactor a no-op, which is the honest
+        model of 'the quarantine failed to clear the finding'."""
+        self.write(
+            "logs/attractor-run-1/sessions/abc123/events.jsonl",
+            json.dumps(REALISTIC_SESSION_EVENT) + "\n",
+        )
+        original = scrub_secrets.redact_entropy_text
+        buf = io.StringIO()
+        try:
+            scrub_secrets.redact_entropy_text = lambda text: (text, 1)  # type: ignore[assignment]
+            with contextlib.redirect_stdout(buf):
+                rc = scrub_secrets.cmd_gate([str(self.root)], [])
+        finally:
+            scrub_secrets.redact_entropy_text = original  # type: ignore[assignment]
+        self.assertEqual(rc, 1)
+        self.assertIn("QUARANTINE DID NOT CLEAR", buf.getvalue())
+        self.assertNotIn("::notice::", buf.getvalue())
 
     def test_binaryish_file_does_not_crash(self) -> None:
         p = self.root / "blob.bin"

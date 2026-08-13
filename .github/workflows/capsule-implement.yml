@@ -121,7 +121,7 @@ jobs:
     name: "Run task-runner.dot (implement stage)"
     runs-on: ubuntu-latest
     # task-runner.dot's own max_pipeline_duration=14400s (4h) is the
-    # engine's internal wall (it writes a postmortem before dying); the
+    # engine's internal wall; the
     # job wall must clear that plus setup/critique/PR-creation overhead,
     # while staying comfortably under GitHub Actions' 6h hard cap for
     # hosted runners -- same ratio-of-buffer reasoning as
@@ -520,11 +520,41 @@ jobs:
         # and issue comment staged under $RUNNER_TEMP) with a detection set
         # deliberately BROADER than the scrub's redaction set (it adds a
         # high-entropy-token heuristic), so a secret shape the scrubber
-        # doesn't know about still blocks the upload instead of shipping in
-        # a public artifact. On ANY finding: upload_ok stays 'false' and
-        # this step fails the job loudly. An artifact with no evidence is
-        # safe; an artifact with a leaked key is not -- fail toward
-        # not-uploading. There is deliberately NO fallback/override path.
+        # doesn't know about never rides out in a public artifact. An
+        # artifact with no evidence is safe; an artifact with a leaked key
+        # is not -- fail toward not-uploading.
+        #
+        # THE VERDICT IS SPLIT BY FINDING CLASS (issue #206). This step ran
+        # `scan` and blocked on ANY finding, and the measurement came back
+        # 4 real runs out of 4: every one tripped the entropy heuristic on
+        # legitimate worker-session payloads in
+        # logs/*/sessions/*/events.jsonl -- digests, base64 fragments,
+        # request ids (run 31657343281: findings at events.jsonl lines
+        # 5/6/10/11/14, all shape=high-entropy-token). The evidence
+        # artifact therefore NEVER survived a run, every run read red, and
+        # a failed run could not be diagnosed at all. `gate` keeps the hard
+        # block for every KNOWN credential shape -- the sk-/gh[posur]_/
+        # github_pat_ prefixes, the end-anchored sensitive NAME=value
+        # assignments, and the literal values of this job's own secrets --
+        # and QUARANTINES entropy-only findings instead: it redacts those
+        # spans in place as [REDACTED:entropy], RE-SCANS, and proceeds only
+        # if that second pass is clean, annotating the job (::notice) with
+        # the count and the file list. Nothing secret-shaped is uploaded
+        # either way; the difference is that the old behavior shipped
+        # NOTHING and lost the evidence, and this ships the evidence with
+        # the suspicious spans removed. If the re-scan still finds
+        # anything, the upload is blocked exactly as before.
+        #
+        # NO --never-redact FENCE IS NEEDED HERE, and that is a fact about
+        # this lane, not an omission: the implement stage produces a FIX
+        # BRANCH from the workspace git tree, not a capsule pair, so
+        # $RUNNER_TEMP/capsule-implement holds only evidence (logs/, the
+        # staged pr-body.md and comment.md). The specify workflows, whose
+        # $RUNNER_TEMP/capsule-run DOES contain the capsule pair under
+        # out/, pass --never-redact for it -- PR #207's rule that the pair
+        # is scanned and never mutated. Should this lane ever stage a
+        # to-be-pushed artifact under $RUNNER_TEMP, it must be fenced the
+        # same way.
         if: always() && steps.locate.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -534,12 +564,12 @@ jobs:
         run: |
           set -euo pipefail
           echo "upload_ok=false" >> "$GITHUB_OUTPUT"
-          if python3 .github/capsule-pipeline/scrub_secrets.py scan \
+          if python3 .github/capsule-pipeline/scrub_secrets.py gate \
               "$RUNNER_TEMP/capsule-implement" \
               "$GITHUB_WORKSPACE/.ai"; then
             echo "upload_ok=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::Residual secret-shaped material found in the run evidence AFTER scrubbing -- the run-evidence artifact upload is BLOCKED (see the scan findings above for file/line/shape; the secret values themselves are never printed). Nothing was uploaded. Rotate any credential the findings implicate before touching this run's evidence." >&2
+            echo "::error::The residual secret gate BLOCKED the run-evidence artifact upload -- either a KNOWN credential shape was found in the evidence after scrubbing, or the entropy quarantine's confirming re-scan did not come back clean (see the scan findings above for file/line/shape; the secret values themselves are never printed). Nothing was uploaded. Rotate any credential the findings implicate before touching this run's evidence." >&2
             exit 1
           fi
 

@@ -63,6 +63,31 @@ and `gate` additionally takes --never-redact <path> for any root subtree
 that must keep the old semantics, where ANY finding -- entropy included --
 hard-blocks and no byte is ever rewritten.
 
+THAT FENCED-ENTROPY ARM IS NOT A BUG, and it has now fired in production
+(run 31689374533, issue #204). Recorded here because the log looks alarming
+and the investigation should not be repeated: that run produced 487
+findings, EVERY ONE of them shape=high-entropy-token (no known credential
+shape anywhere), and the gate still returned 1. Three of them sat inside
+the fence, and the gate said so in as many words:
+
+    scan FINDING .../out/llm-cost-exposure-204.verify.sh:605:
+      shape=high-entropy-token is inside a --never-redact subtree (the
+      capsule pair) -- quarantine does not apply there; this BLOCKS.
+
+Because `blocking` was non-zero, the quarantine pass never ran at all --
+which is why no `quarantined ...` line appears in that log. That is the
+`if blocking: ... return 1` short-circuit below doing its job, not a
+failed re-scan and not a quarantine defect on JSON-escaped spans. The 484
+unfenced findings (the `logs/*/sessions/*/events.jsonl` model transcripts,
+and the in-workspace `.ai/` copies) would all have been quarantined had
+the fenced three not blocked first. The three fenced findings are exactly
+the three the capsule-artifacts `scan` step had already failed on one step
+earlier -- same file:line triple -- i.e. ONE root cause reaching two
+doors: the gate author had embedded a pinned oracle in the capsule's
+verify.sh as a base64-ish blob, because nothing shipped plain sibling
+files with the pair. Fixed at the source (the specify pipeline now ships
+`.ai/capsule/` fixtures as readable files); nothing in this file changed.
+
 This file is NATIVE to this repository (not one of the vendored pipeline
 files in this directory -- see README.md's provenance section; the
 "do not hand-edit" rule there applies to the vendored copies, not to this).

@@ -9,11 +9,11 @@ authors = [
 ]
 dependencies = [
     "amplifier-core>=0.1.0",
-    # Pinned to an immutable SHA (re-filed from microsoft-amplifier/amplifier-support#391):
-    # an unpinned @main here let upstream foundation changes redden this repo's CI with
-    # no local change. Bump deliberately: verify the new SHA against this module's test
-    # suite, then update this line. See compat.py's module docstring for the history.
-    "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation@4490bf5f3cf9e5a7829365e84c318a7fd9db7e3d",
+    # Floating on @main is deliberate. Version skew against the engine is closed by
+    # compat.py's symbol-presence assertion at startup, not by a pin -- see that
+    # module's docstring, and runner.py's "a floating dependency plus a
+    # symbol-presence assertion, deliberately not a pin".
+    "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation@main",
     "amplifier-module-loop-pipeline[remote] @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline",
 ]
 

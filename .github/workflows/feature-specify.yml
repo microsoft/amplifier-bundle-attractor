@@ -99,25 +99,39 @@ jobs:
       ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
     # FUSE ARITHMETIC (the defect workflow's method, recomputed against THIS
     # graph's own fuse -- not inherited): feature-capsule.dot declares
-    # max_pipeline_duration="9000s" (150 min), deliberately HALF capsule.dot's
-    # 18000s. The vendored .dot's header shows that recompute: 11 tool legs x
-    # the 180s gate_time_ceiling (1980s) + 7 LLM legs x 600s (4200s), x1.2 =
-    # 7416s <= the 9000s fuse. That fuse is the ENGINE's internal wall, so
-    # the job wall must clear it plus the non-engine overhead: checkout, uv
-    # install, the two materialize steps, classify, PR creation, comment,
-    # scrub/scan, upload.
+    # max_pipeline_duration="12000s" (200 min), raised from 9000s after run
+    # 31673398453 died ON that fuse ("Pipeline exceeded max duration of
+    # 9000000ms") mid-loop, with no terminal outcome. The vendored .dot's
+    # header carries the re-derivation: the old 9000s was sized from ONE
+    # traversal (11 tool legs x the 180s gate_time_ceiling = 1980s + 7 LLM
+    # legs x 600s = 4200s, x1.2 = 7416s), but retry_target=author re-enters
+    # the authoring legs every round and this workflow spends
+    # max_iterations=8, so the fuse is now sized by the ROUND BUDGET:
+    # 8 rounds x a 1500s/round allowance (observed round costs 1100s-1370s,
+    # rounded up) = 12000s. Still under capsule.dot's 18000s.
     #
-    # capsule-specify.yml sits at 360 (GitHub's hard cap for hosted runners)
-    # over its 300-minute fuse: a ~60-minute margin. That margin is
-    # FIXED-COST work, not fuse-proportional -- the runs it was sized from
-    # measured the non-engine steps in SECONDS (setup ~5s;
-    # classify/PR/comment/upload ~6-10s), with the uv install the only
-    # material item. So this job takes the same ABSOLUTE margin rather than
-    # scaling it down with the fuse: 150 + 60 = 210. (Scaling the ratio
-    # instead would give 150 x 1.2 = 180, a 30-minute margin -- still ample,
-    # but there is no reason to buy a THINNER buffer than the defect lane's
-    # for identical fixed-cost overhead. Both clear the 360 hard cap.)
-    timeout-minutes: 210
+    # That fuse is the ENGINE's internal wall, so the job wall must clear it
+    # plus TWO things the fuse does not cover:
+    #   1. FUSE OVERSHOOT -- the engine only trips the fuse BETWEEN nodes, so
+    #      the step runs past it by however long the crossing node takes. Run
+    #      31673398453 measured this: the step ran 06:19:35Z -> 08:53:10Z
+    #      (9215s) against a 9000s fuse, a 215s overshoot.
+    #   2. NON-ENGINE OVERHEAD -- checkout, uv install, the two materialize
+    #      steps, classify, PR creation, comment, scrub/scan, upload. Still
+    #      measured in SECONDS, and that has not changed: on run 31673398453
+    #      the whole job was 9230s against a 9215s pipeline step, i.e. ~15s
+    #      of everything outside it.
+    #
+    # 200 + 50 = 250. The 50-minute margin is FIXED-COST work plus overshoot,
+    # not fuse-proportional -- it is already two orders of magnitude over the
+    # measured overhead and ~14x the measured overshoot. It is 10 minutes
+    # under the defect lane's absolute 60 (capsule-specify.yml: 360 over a
+    # 300-minute fuse) purely because the fuse itself grew by 50 minutes and
+    # buying the extra 10 would purchase nothing any run has ever needed; if
+    # a future run is ever killed by the JOB wall rather than the fuse, that
+    # is the number to revisit, and it will say so in the log. Clears
+    # GitHub's 360-minute hard cap for hosted runners with 110 to spare.
+    timeout-minutes: 250
     steps:
       - name: Checkout
         uses: actions/checkout@v4

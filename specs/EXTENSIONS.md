@@ -49,9 +49,17 @@ entry with no banner):
   revisited: either file it, replace the date with a fresh one and a fresh reason, or — if
   the honest conclusion is that filing was never going to land — switch to `declining`.
 
+An entry may additionally carry a **`status:` ABSORBED UPSTREAM @ `<sha>`** banner recording that
+the canonical spec has since adopted that entry's behavior item-for-item — from that point the
+cited canonical section is the normative text, `upstream action:` no longer applies (there is
+nothing left to propose), and the entry body below the banner is retained verbatim purely for
+numbering contiguity and history rather than as an independent specification.
+
 ---
 
 ## 1. BareValue Grammar Production
+
+> **status:** ABSORBED UPSTREAM @ `fb57a55` — canonical spec §2.2 (attractor-spec-canonical.md:99, :106) now specifies this behavior. The canonical snapshot is the normative text; this entry is retained verbatim for numbering/history.
 
 **What:** The value grammar accepts unquoted bare identifiers in addition to quoted strings.
 Examples: `shape=box`, `rankdir=LR`, `node_type=llm`. The grammar production is:
@@ -71,6 +79,8 @@ departure from spec intent.
 
 ## 2. `default_max_retries` (with Legacy Alias `default_max_retry`)
 
+> **status:** ABSORBED UPSTREAM @ `fb57a55` — canonical spec §2.5 (attractor-spec-canonical.md:139) now specifies this behavior. The canonical snapshot is the normative text; this entry is retained verbatim for numbering/history.
+
 **What:** The graph-level retry ceiling attribute is `default_max_retries` (plural). The
 singular `default_max_retry` is accepted as a legacy alias and maps to the same behavior.
 Default value is `0` (no retries unless explicitly configured).
@@ -84,6 +94,8 @@ singular name continue to work without modification.
 ---
 
 ## 3. `max_retries` Node Attribute Inherits Graph-Level Default
+
+> **status:** ABSORBED UPSTREAM @ `fb57a55` — canonical spec §2.6 (attractor-spec-canonical.md:152) now specifies this behavior. The canonical snapshot is the normative text; this entry is retained verbatim for numbering/history.
 
 **What:** When a node omits the `max_retries` attribute, it inherits the graph's
 `default_max_retries` value rather than defaulting to `0` independently. This allows a
@@ -100,6 +112,8 @@ graph level. Pipelines that do not set it see no change (effective retries remai
 ---
 
 ## 4. `goal_gate` Accepts `PARTIAL_SUCCESS`
+
+> **status:** ABSORBED UPSTREAM @ `fb57a55` — canonical spec §2.6 + §3.4 (attractor-spec-canonical.md:153, :466, :475) now specifies this behavior. The canonical snapshot is the normative text; this entry is retained verbatim for numbering/history.
 
 **What:** A node marked `goal_gate=true` is considered satisfied by either `SUCCESS` or
 `PARTIAL_SUCCESS` outcome status. It is NOT satisfied by `FAIL`, `SKIP`, or other
@@ -119,6 +133,8 @@ caused a pipeline failure.
 ---
 
 ## 5. Explicit TRANSFORM Phase in Execution Lifecycle
+
+> **status:** ABSORBED UPSTREAM @ `fb57a55` — canonical spec §3.1 (attractor-spec-canonical.md:320-326) now specifies this behavior. The canonical snapshot is the normative text; this entry is retained verbatim for numbering/history.
 
 **What:** The execution lifecycle includes six phases rather than five:
 
@@ -142,6 +158,8 @@ not hook into lifecycle events are unaffected.
 
 ## 6. Error Semantics: `RETURN Outcome(status=FAIL)` vs `RAISE`
 
+> **status:** ABSORBED UPSTREAM @ `fb57a55` — canonical spec §4.5 (attractor-spec-canonical.md:686-687; corroborated at §3.5 :502 and §3.2 :391-392) now specifies this behavior. The canonical snapshot is the normative text; this entry is retained verbatim for numbering/history.
+
 **What:** Handler error paths use `RETURN Outcome(status=FAIL, ...)` rather than raising
 exceptions. Unhandled exceptions in handler code are caught and wrapped into a `FAIL`
 outcome with the exception message in `notes`.
@@ -159,6 +177,8 @@ exceptions or return values. Existing pipelines are unaffected.
 ---
 
 ## 7. `type` vs `node_type` Internal Naming
+
+> **status:** ABSORBED UPSTREAM @ `fb57a55` — canonical spec §2.6 (attractor-spec-canonical.md:166) now specifies this behavior. The canonical snapshot is the normative text; this entry is retained verbatim for numbering/history.
 
 **What:** The externally visible DOT attribute name for the node handler type is `type`.
 The engine may use an internal field named `node_type` to avoid reserved-word conflicts in
@@ -455,6 +475,18 @@ without hand-rolling them in conditions.
 
 **Compatibility:** Additive — default join behavior matches canonical `wait_all`.
 
+> **Note (usage check, 2026-08-14):** upstream **removed** all three of these from the spec at
+> `fb57a55` — canonical §4.8's join-policy table now lists only `wait_all` and `first_success`
+> (`specs/canonical/attractor-spec-canonical.md:848-851`) and the error-policy table is gone
+> entirely; `k_of_n`, `quorum`, and `error_policy` appear nowhere in the canonical snapshot. They
+> are therefore pure extensions now rather than a superset of a canonical vocabulary. Shipped-graph
+> usage across every `.dot` in this repo (`examples/**`, `.github/capsule-pipeline/**`, module and
+> e2e fixtures): **`k_of_n` = 0, `quorum` = 0, `error_policy` = 5** (`examples/pipelines/05-parallel-fan-out.dot:33`,
+> `examples/pipelines/10-full-attractor.dot:65`, `examples/pipelines/practical/pr-review.dot:29`,
+> `examples/pipelines/practical/feature-build.dot:35`, `examples/pipelines/practical/multi-lens-review.dot:41`).
+> `k_of_n` and `quorum` are a **subtraction candidate — no shipped graph uses them**; `error_policy`
+> is genuinely in use and is not. No code was removed here; this note records the finding only.
+
 ## 19. `wait.human` `freeform` Mode and Attachments
 
 **What:** The human-gate node supports a `freeform` response mode (open text, not only
@@ -565,6 +597,32 @@ existing unknown-attr passthrough behaviour of `dot_parser.py::_apply_node`).
 > **This extension is NOT in the canonical attractor spec.** The canonical spec defines the run
 > directory layout (Appendix C / Section 5.6) but does not specify per-iteration sub-directories
 > or a `trace.jsonl` descent curve. This extension is additive and backward-compatible.
+
+> **REFILED 2026-08-14 — this entry ALSO records a DIVERGENCE, not a pure addition.** The banner
+> above is accurate for the three observability additions it was written about (per-iteration
+> records, `$iteration`/`$loop_count`, `trace.jsonl`), but it under-states the `loop_restart`
+> semantics those additions ride on, which the canonical spec *does* define. Canonical §2.7
+> (`specs/canonical/attractor-spec-canonical.md:177`) specifies `loop_restart=true` as an edge
+> attribute that **"terminates the current run and re-launches with a fresh log directory"**, and
+> §3.2 step 7 (`:395-398`) implements that as `restart_run(...)` followed by a `RETURN` — the run
+> ends. This engine instead performs an **in-process reset**: `$iteration`/`$loop_count` increment,
+> completed nodes are cleared so they may execute again, the run directory is retained (gaining an
+> `iteration_N/` sub-tree rather than a fresh root), and `context_updates` **survive** the restart.
+>
+> That divergence is deliberate, not drift: `docs/plans/2026-02-24-engine-enhancements-design.md:95-102`
+> quotes the spec's terminate-and-relaunch wording and then specifies the in-process behavior
+> instead. It is also load-bearing — `feedback_from=` accumulation (§29) reads the just-completed
+> iteration's `node_outcomes` *before* they are cleared, `$iteration` continuity depends on a single
+> in-process counter that a relaunch would reset, and preserved `context_updates` are the channel by
+> which attempt N+1 learns what attempt N found. A spec-literal terminate-and-relaunch would break
+> all three. Ledgered as `ATX-12` in `SPEC_CONFORMANCE.md`.
+>
+> **depends-on:** none
+>
+> **upstream action:** declining, reason: `strongdm/attractor` has had no commits since
+> 2026-03-17, has issues disabled, and its own open community spec-correction PRs (#9, #10)
+> have sat unmerged for 4+ months — filing there would not land. The divergence is tracked
+> here instead.
 
 **What:** Three coordinated additions that make the attractor convergence claim measurable:
 

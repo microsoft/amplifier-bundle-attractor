@@ -488,6 +488,28 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-implement/logs"
+          # --on-human-gate auto-approve is REQUIRED for unattended runs: the
+          # CLI default 'fail' crashes at the `escalate` hexagon. auto-approve
+          # answers it with its FIRST option, [A] Abandon -- the declared
+          # fail-safe (option order is load-bearing); [C] Continue would raise
+          # the budget and spend more real money with nobody watching. Same
+          # flag, same position, same reason as feature-specify.yml's "Run
+          # feature-capsule.dot" step -- this lane simply never got it.
+          #
+          # Run 31789137305 is what that omission costs. task-runner.dot
+          # reached `escalate` after a genuine stall (gate GREEN, all 6 ACs
+          # met, critic A ship / critic B iterate x3) and the node RAISED
+          # instead of being answered:
+          #   Node escalate attempt 1/3 raised: HumanGateHandler requires an
+          #   Interviewer but none was provided.
+          #   [PIPELINE] X Error at escalate (no_matching_edge): ...
+          #   attractor: status=fail
+          # A crash AT the decision point is not the same event as a declared
+          # abandonment: the postmortem's own options (continue with more
+          # budget / change approach / split the task / abandon) were never
+          # answered by anything, and every classifier downstream in this job
+          # was left inferring what happened from an exit code alone.
+          #
           # DETACHED ENGINE (fires 9 + 10): --project points at the
           # $RUNNER_TEMP snapshot taken before any maker touched the tree, so
           # the engine's venv and its editable path deps live where workspace
@@ -498,10 +520,75 @@ jobs:
             .github/capsule-pipeline/task-runner.dot \
             --cwd "$GITHUB_WORKSPACE" \
             --logs-root "$RUNNER_TEMP/capsule-implement/logs" \
+            --on-human-gate auto-approve \
             --param task_file="$GITHUB_WORKSPACE/${{ steps.locate.outputs.capsule_md }}" \
             --param target_dir="$GITHUB_WORKSPACE" \
             --param max_iterations=6
           echo "attractor_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: "Classify the run: exit code AND the pipeline's own recorded outcome"
+        id: classify
+        # WHY THIS EXISTS (run 31789137305). Every classifier downstream in
+        # this job -- the PR title/body, the issue comment, the job's own
+        # pass/fail -- branched on `steps.run.outputs.attractor_exit` and
+        # nothing else. That one value cannot carry the truth:
+        #
+        #   * The run step's script executes under the runner's default
+        #     `bash -e`, so when the engine exits non-zero the script aborts
+        #     BEFORE `echo "attractor_exit=$?"`. The output is never written.
+        #     `attractor_exit` is therefore only ever '0' or ABSENT -- a real
+        #     non-zero code can never reach it. That run's own job annotation
+        #     is the proof: "task-runner.dot did not converge (exit=)".
+        #   * GitHub coerces a missing output to 0 in an `== '0'` comparison,
+        #     so ABSENT and CONVERGED are indistinguishable to an `if:`.
+        #
+        # The pipeline records its own verdict independently, in the logs
+        # root the run step already passes as --logs-root: checkpoint.json's
+        # `context.outcome`, written by the engine after EVERY node
+        # (loop-pipeline engine.py: `ctx.set("outcome", outcome.status.value)`).
+        # In run 31789137305 that file said `"outcome": "fail"` while this
+        # job was still deciding whether to ship a fix PR.
+        #
+        # So the done path now requires BOTH: a literal exit 0 AND a recorded
+        # outcome that is not 'fail'. Anything else routes to the
+        # non-convergence path. This is a CROSS-CHECK, not a replacement --
+        # the porcelain guard in the next step is untouched and remains the
+        # last word on whether a tree may be pushed (in that run it was the
+        # correct actor, and it is the reason nothing unproven shipped).
+        #
+        # Deliberately placed BEFORE the scrub step, so it reads the
+        # pipeline's own bytes before anything else rewrites them.
+        if: always() && steps.locate.outputs.skip != 'true'
+        env:
+          ATTRACTOR_EXIT: ${{ steps.run.outputs.attractor_exit }}
+        run: |
+          set -euo pipefail
+          CHECKPOINT="$RUNNER_TEMP/capsule-implement/logs/checkpoint.json"
+
+          RECORDED="absent"
+          if [ -f "$CHECKPOINT" ]; then
+            RECORDED="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print((d.get('context') or {}).get('outcome') or 'absent')" "$CHECKPOINT" 2>/dev/null || echo unreadable)"
+          fi
+          # The value is engine-written; keep it to a single harmless token so
+          # it can never inject extra lines into $GITHUB_OUTPUT.
+          RECORDED="$(printf '%s' "$RECORDED" | tr -cd 'A-Za-z0-9_.-' | cut -c1-32)"
+          RECORDED="${RECORDED:-absent}"
+
+          EXIT="${ATTRACTOR_EXIT:-}"
+          CONVERGED=false
+          if [ "$EXIT" = "0" ] && [ "$RECORDED" != "fail" ]; then
+            CONVERGED=true
+          fi
+
+          if [ "$EXIT" = "0" ] && [ "$RECORDED" = "fail" ]; then
+            echo "::warning::ENGINE MISREPORT (exit code vs the pipeline's own recorded outcome): the run reported exit 0 while its checkpoint.json recorded outcome='fail' ($CHECKPOINT). The exit code is NOT trusted here -- this run is classified NON-CONVERGED and routed to the work-in-progress path, so none of the converged template's gate/critique claims are made for it. Incident record for this lane's non-convergence handling: #220 (run 31789137305)."
+          fi
+
+          {
+            echo "recorded_outcome=$RECORDED"
+            echo "converged=$CONVERGED"
+          } >> "$GITHUB_OUTPUT"
+          echo "classification: attractor_exit='$EXIT' recorded_outcome='$RECORDED' converged=$CONVERGED"
 
       - name: Scrub secrets from run evidence
         # SECURITY (incident, 2026-08): a worker agent dumped its
@@ -591,20 +678,26 @@ jobs:
             GATE_NOTE="Gate files MODIFIED by this PR (measured): ${GATE_CHANGED_ONE_LINE} -- review the gate diff alongside the fix; a gate edit changes what \"passed\" means."
           fi
 
-          # EXIT distinguishes the two ways this step is reached (see this
-          # step's \`if:\`): '0' = task-runner.dot genuinely converged and
-          # shipped. '' = non-convergence whose committed work-in-progress
-          # is salvaged here: the run step's script aborts before its
-          # \`echo attractor_exit=$?\` under the runner's default \`bash -e\`
-          # when the engine exits non-zero, so the output is never written,
-          # and GitHub's expression rules coerce a missing output to 0 --
-          # making this step's \`== '0'\` condition true. The PR body must
-          # say which of the two this is: run 31335891096 shipped a salvage
-          # PR (#178) wearing the converged template's claims.
-          EXIT="${{ steps.run.outputs.attractor_exit }}"
+          # CONVERGED distinguishes the two ways this step is reached (see
+          # this step's \`if:\`), and it is deliberately NOT the exit code
+          # alone. An exit code of '0' is reachable two ways: the engine
+          # genuinely converged, or the run step aborted under the runner's
+          # default \`bash -e\` before \`echo attractor_exit=$?\` ever wrote
+          # the output, and GitHub's expression rules coerced the missing
+          # value to 0 -- which is how this step is reached on the
+          # non-convergence path at all. The "Classify the run" step above
+          # therefore cross-checks that exit code against the pipeline's OWN
+          # recorded outcome (checkpoint.json), and only 'true' here means
+          # genuinely converged. The PR body must say which of the two this
+          # is: run 31335891096 shipped a salvage PR (#178) wearing the
+          # converged template's claims, and run 31789137305 reached this
+          # step with an exit code that said nothing at all.
+          CONVERGED="${{ steps.classify.outputs.converged }}"
+          RECORDED_OUTCOME="${{ steps.classify.outputs.recorded_outcome }}"
+          EXIT_RAW="${{ steps.run.outputs.attractor_exit }}"
 
           BODY_FILE="$RUNNER_TEMP/capsule-implement/pr-body.md"
-          if [ "$EXIT" = "0" ]; then
+          if [ "$CONVERGED" = "true" ]; then
             TITLE="implement: fix for #${ISSUE} (${CAPSULE_ID})"
             {
               echo "## Implement-stage fix for #${ISSUE}"
@@ -638,6 +731,10 @@ jobs:
               echo "Do NOT read this PR as a proven fix: the gate/critique claims a converged"
               echo "run would carry do not apply here."
               echo
+              echo "Measured classification: engine exit code \`${EXIT_RAW:-<absent>}\` (absent means the"
+              echo "engine exited non-zero and the run step aborted before recording it), the"
+              echo "pipeline's own recorded outcome \`${RECORDED_OUTCOME}\` (checkpoint.json)."
+              echo
               echo "$GATE_NOTE"
               echo
               echo "This PR is opened non-draft and is NOT auto-merged -- a human reviews"
@@ -662,7 +759,11 @@ jobs:
           set -euo pipefail
           COMMENT="$RUNNER_TEMP/capsule-implement/comment.md"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          EXIT="${{ steps.run.outputs.attractor_exit }}"
+          # Same cross-checked classification the PR step used -- the exit
+          # code alone cannot tell converged from crashed (see the "Classify
+          # the run" step). Reading it here too keeps the issue comment and
+          # the PR body from ever telling two different stories.
+          CONVERGED="${{ steps.classify.outputs.converged }}"
           PR_URL="${{ steps.pr.outputs.url }}"
 
           # Three real outcomes, three honest messages. Run 31335891096
@@ -670,7 +771,7 @@ jobs:
           # just pushed a branch and opened PR #178 (non-convergence salvage
           # path) -- the old two-way template asserted a PR's absence it
           # never checked. Claim "no fix PR opened" only when none was.
-          if [ "$EXIT" = "0" ] && [ -n "$PR_URL" ]; then
+          if [ "$CONVERGED" = "true" ] && [ -n "$PR_URL" ]; then
             {
               echo "**Implement stage: fix PR opened.**"
               echo
@@ -794,9 +895,15 @@ jobs:
         if: always() && steps.locate.outputs.skip != 'true'
         run: |
           set -euo pipefail
+          # Cross-checked, not exit-code-only (see "Classify the run"). The
+          # old message printed "(exit=)" on run 31789137305 -- an empty
+          # string where the reader expected a code -- because a non-zero
+          # engine exit never reaches that output at all. Report both halves
+          # of what was actually measured.
           EXIT="${{ steps.run.outputs.attractor_exit }}"
-          if [ "$EXIT" != "0" ]; then
-            echo "::error::task-runner.dot did not converge (exit=$EXIT) -- see the postmortem comment posted on the issue and the uploaded run evidence." >&2
+          RECORDED_OUTCOME="${{ steps.classify.outputs.recorded_outcome }}"
+          if [ "${{ steps.classify.outputs.converged }}" != "true" ]; then
+            echo "::error::task-runner.dot did not converge (engine exit='${EXIT:-<absent>}', pipeline's own recorded outcome='${RECORDED_OUTCOME}') -- see the postmortem comment posted on the issue and the uploaded run evidence." >&2
             exit 1
           fi
           if [ -z "${{ steps.pr.outputs.url }}" ]; then

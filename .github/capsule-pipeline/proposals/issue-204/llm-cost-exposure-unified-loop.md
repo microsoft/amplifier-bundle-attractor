@@ -174,3 +174,49 @@ See `.ai/brief.md` RISK-2 and RISK-4 for two unresolved design forks:
 1. **AC-2 "None rate dimension" public surface** (RISK-2): How should the gate exercise the "rate dimension is None" case via public surfaces only? Will the implementation add a model with `null` cost fields to `models.json`, expose a public `ModelInfo`-accepting overload of `compute_cost`, or use another mechanism?
 
 2. **AC-4 scope** (RISK-4): Does `cost_usd` in `provider:response` also apply to `AmplifierBackend._run_with_tool_loop()` (Path B), or only to `DirectProviderBackend`?
+
+---
+
+## Prior-attempt findings (2026-08-14 — maintainer's agent; binding for the next implement run)
+
+An earlier run built this feature to completion. The gate above went GREEN — all
+six ACs MET — and both module suites passed: 724 unified-llm-client tests and
+1836 loop-pipeline tests. It still did not ship. It stalled on the second
+reviewer's documentation findings, three rounds running, and the run was lost
+before the work could be salvaged.
+
+Nothing here changes the acceptance criteria or the gate. These are the three
+things that blocked the last attempt. Address them UP FRONT, in the same change
+as the feature — not after the gate goes green:
+
+1. **README documentation for the new cost surface must exist and be accurate.**
+   `compute_cost`, `usage.cost_usd`, and the `cost_usd` key on the
+   `provider:response` payload each need to be documented in
+   `modules/unified-llm-client/README.md`: what they return, and what `None`
+   means (pricing unknown, never zero). A green gate is not documentation, and
+   the reviewer will hold on its absence.
+
+2. **No repository URLs or cross-repository references inside docstrings.**
+   The prior attempt put an external project name and a commit SHA into
+   `_cost.py`'s module docstring, and that was called out as a violation of this
+   repo's own dependency-awareness rule. Provenance for the vendored rate data
+   belongs in this proposal's oracle-provenance block, not in shipped source.
+
+3. **Every README or doc example must actually run against the real public API.**
+   This is what finally blocked the run. The prior attempt's README added an
+   example at line 30 constructing the client as `Client(adapter=...)` — a
+   keyword `Client.__init__` does not accept. Read the real constructor and use
+   the real construction, then EXECUTE every example you write before claiming
+   it works. An example that raises is worse than no example.
+
+The second reviewer's final blocking finding, verbatim:
+
+> **VERDICT: ITERATE**
+>
+> Blocking finding: the newly added README example uses unsupported `Client(adapter=...)` construction. Fresh reproduction against the current tree confirms it raises:
+>
+> ```text
+> TypeError: Client.__init__() got an unexpected keyword argument 'adapter'
+> ```
+>
+> The DoD gate and unified-client suite were re-run successfully; the loop-pipeline suite could not collect due to a missing `respx` environment dependency.

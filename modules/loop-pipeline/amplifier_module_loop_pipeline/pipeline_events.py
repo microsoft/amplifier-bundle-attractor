@@ -53,6 +53,36 @@ PIPELINE_EDGE_SELECTED: str = "pipeline:edge_selected"
 PIPELINE_CHECKPOINT: str = "pipeline:checkpoint"
 
 # ---------------------------------------------------------------------------
+# Resume (spec §5.3 "Resume behavior")
+# ---------------------------------------------------------------------------
+
+#: Emitted once by ``PipelineEngine.resume()``, after the checkpoint has passed
+#: the whole validation ladder and engine state has been restored, immediately
+#: before the walk continues.  This is the run's own durable record that a
+#: resume happened at all.
+#:
+#: Payload fields:
+#:   checkpoint_node   — the checkpoint's current_node (LAST COMPLETED node)
+#:   completed_count   — number of nodes restored as already complete
+#:   iteration_count   — restored $iteration / loop_restart cycle number
+#:   fidelity_degrade_armed — True when the next executed node will be checked
+#:                            for the one-shot §5.3 rule-6 degrade
+PIPELINE_RESUME: str = "pipeline:resume"
+
+#: Emitted when the first node executed after a resume resolves to
+#: ``fidelity=full`` and is therefore capped to ``summary:high`` for that one
+#: hop (spec §5.3 rule 6 — in-memory LLM sessions cannot be serialized, so the
+#: transcript that ``full`` would replay does not survive the process boundary).
+#: Subsequent nodes may resolve ``full`` again and emit nothing.
+#:
+#: Payload fields:
+#:   node_id — the single degraded hop
+#:   from    — always "full"
+#:   to      — always "summary:high"
+PIPELINE_RESUME_FIDELITY_DEGRADE: str = "pipeline:resume_fidelity_degrade"
+
+
+# ---------------------------------------------------------------------------
 # Goal gates
 # ---------------------------------------------------------------------------
 PIPELINE_GOAL_GATE_CHECK: str = "pipeline:goal_gate_check"

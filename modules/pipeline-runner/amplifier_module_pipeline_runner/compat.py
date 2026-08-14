@@ -26,20 +26,62 @@ Three shapes were available to close the version-skew window:
    the required version and the resolution command.  This is the lowest
    friction shape for a single-repo, actively-developed package.
 
-``amplifier-foundation`` pin (formerly an ``@main`` float)
------------------------------------------------------------
-The ``amplifier-foundation`` dep in ``pipeline-runner/pyproject.toml``
-originally floated on ``@main`` (an explicit deferral: the foundation symbols
-the runner uses -- ``Bundle``, ``load_bundle``, imported lazily inside
-functions, never at module level -- are long-stable core API, so there was no
-discriminating symbol to probe).  That deferral did not weigh the CI-hygiene
-cost: with no committed lockfile, every CI run re-resolved foundation's live
-``main``, so an upstream foundation change could redden this repo's CI with no
-local change.  As of microsoft-amplifier/amplifier-support#391 the dep is
-pinned to an immutable commit SHA.  Bumps are deliberate: update the SHA in
-``pyproject.toml`` and verify against this module's test suite.  Apply the
-compat-assert pattern here the moment the runner starts depending on a
-recently-added foundation symbol.
+``amplifier-foundation``: published float, resolver-local pin
+--------------------------------------------------------------
+The ``amplifier-foundation`` dep in ``pipeline-runner/pyproject.toml`` is
+declared in two places on purpose, and the split is the whole design:
+
+* ``[project].dependencies`` -- ``@main``.  This is what consumers resolve.
+* ``[tool.uv] override-dependencies`` -- a SHA.  This is what *we* resolve.
+
+**Why the published requirement must float.**  uv identifies a git dependency
+by its *ref string*, not by the commit that ref resolves to.  Two requirements
+for the same package whose ref strings differ are a hard resolution error --
+``Requirements contain conflicting URLs for package `amplifier-foundation``` --
+even when one ref is an ancestor of the other.  Every other
+``amplifier-foundation`` declaration in the ecosystem (this repo's bundle
+includes, ``amplifier-app-wiki-weaver``, and downstream of it ``repo-weaver``)
+names ``@main``, so any non-``@main`` ref on the published line makes
+pipeline-runner un-co-installable with all of them.  A SHA pin on that line did
+exactly that and blocked every fresh wiki-weaver install by every install verb
+(#213).  A release tag would fail identically -- ``@v2.1.2`` is just as
+different from ``@main`` as a SHA is -- and a bare version range cannot resolve
+at all, since foundation publishes no artifacts to PyPI.  So the published line
+is not a preference; it is the only ref that co-resolves.
+
+**Why the pin still exists.**  The original problem
+(microsoft-amplifier/amplifier-support#391, PR #201) is real: this repo commits
+no lockfile, so an unconstrained ``@main`` meant every CI run re-resolved
+foundation's live tip and an upstream change could redden CI with no local
+change.  ``[tool.uv] override-dependencies`` closes that window without
+touching what anybody else resolves.  uv applies an override only to the
+project it is resolving as *root* -- precisely how CI consumes this module
+(``uv sync`` with ``working-directory: modules/pipeline-runner``) -- and does
+not apply it when this package is somebody else's dependency.  CI gets a fixed
+foundation commit; consumers get plain ``@main``.
+
+**Two mechanisms that look right and are not** (both measured, so nobody has to
+re-derive them):
+
+* ``[tool.uv.sources]`` with a ``rev`` does *not* stay local.  uv reads a git
+  dependency's sources straight out of its checked-out ``pyproject.toml``, so
+  the rev reappears in the dependent's resolution and the conflict returns
+  verbatim -- even though the *built wheel's* ``Requires-Dist`` says ``@main``.
+* ``[tool.uv] constraint-dependencies`` cannot carry a git ref at all: a URL in
+  a constraint is itself a second conflicting URL for the package, so the
+  resolver rejects it before it can constrain anything.
+
+**Bump procedure.**  Update the SHA in ``[tool.uv] override-dependencies`` of
+``pipeline-runner/pyproject.toml`` -- *not* the ``[project].dependencies``
+line, which must stay ``@main`` -- then verify against this module's test suite
+(``uv run pytest -q`` in ``modules/pipeline-runner``).  Bumping is CI-hygiene
+work only; it changes nothing for installed users, who track foundation
+``main`` and are guarded by the startup assertion below.  Apply the
+compat-assert pattern to a foundation symbol the moment the runner starts
+depending on a recently-added one (today it uses only long-stable core API --
+``Bundle``, ``load_bundle``, imported lazily inside functions, and this
+module's own suite exercises them through a stand-in -- so there is no
+discriminating symbol to probe).
 """
 
 from __future__ import annotations

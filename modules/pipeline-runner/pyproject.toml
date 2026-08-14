@@ -9,11 +9,19 @@ authors = [
 ]
 dependencies = [
     "amplifier-core>=0.1.0",
-    # Pinned to an immutable SHA (re-filed from microsoft-amplifier/amplifier-support#391):
-    # an unpinned @main here let upstream foundation changes redden this repo's CI with
-    # no local change. Bump deliberately: verify the new SHA against this module's test
-    # suite, then update this line. See compat.py's module docstring for the history.
-    "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation@4490bf5f3cf9e5a7829365e84c318a7fd9db7e3d",
+    # PUBLISHED requirement -- floats on @main deliberately, and must keep floating.
+    # uv identifies a git dependency by its REF STRING, not by the commit that ref
+    # resolves to, so ANY non-`@main` ref here (SHA or tag) collides with every other
+    # `amplifier-foundation @ ...@main` declaration in the ecosystem the moment the two
+    # refs name different commits:
+    #     Requirements contain conflicting URLs for package `amplifier-foundation`
+    # A SHA pin on this line did exactly that and blocked every wiki-weaver install (#213).
+    # The CI determinism that pin bought (microsoft-amplifier/amplifier-support#391) is
+    # preserved out-of-band by the [tool.uv] override-dependencies entry below, which uv
+    # applies ONLY when this project is the resolution root and never propagates to
+    # anyone who depends on us.
+    # Bump procedure: see compat.py's module docstring.
+    "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation@main",
     "amplifier-module-loop-pipeline[remote] @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline",
 ]
 
@@ -28,6 +36,26 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 package = true
+# CI-side foundation pin (microsoft-amplifier/amplifier-support#391, PR #201), held here
+# rather than on the [project] dependency line above -- that line must stay `@main` or
+# nothing that also depends on foundation can co-install with us (#213).
+#
+# `override-dependencies` is the one uv mechanism with exactly the scope this needs: uv
+# applies it only to the project it is resolving as ROOT -- CI's `uv sync` with
+# working-directory modules/pipeline-runner -- and does NOT apply it when this package is
+# somebody else's dependency. So our CI resolves a fixed foundation commit while every
+# consumer resolves plain `@main`.
+#
+# `[tool.uv.sources]` was measured NOT to work here: uv reads a git dependency's sources
+# out of its checked-out pyproject.toml, so a rev there reintroduces the exact conflict.
+# A `constraint-dependencies` entry does not work either -- a git URL in a constraint is
+# itself a second conflicting URL.
+#
+# BUMP: change the SHA below, then `uv run pytest -q` in this directory. Nothing about a
+# bump reaches installed users; see compat.py's module docstring.
+override-dependencies = [
+    "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation@4490bf5f3cf9e5a7829365e84c318a7fd9db7e3d",
+]
 
 [tool.uv.sources]
 amplifier-module-loop-pipeline = { path = "../loop-pipeline" }

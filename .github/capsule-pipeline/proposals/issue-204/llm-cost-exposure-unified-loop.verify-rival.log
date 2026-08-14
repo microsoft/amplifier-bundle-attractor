@@ -1,0 +1,66 @@
+=== GATE INFRASTRUCTURE: verifying oracle ===
+Oracle OK: 19 models in _RATES, 4 fast-eligible
+
+=== GATE INFRASTRUCTURE: verifying repo structure ===
+Repo structure OK.
+
+--- AC-1: unified_llm.compute_cost multi-model golden parity ---
+Sampled models: ['claude-sonnet-4-5-20250929', 'claude-sonnet-4-5'] + fast-eligible: 'claude-opus-4-7'
+AC-1 PASS: 2 non-fast models + fast-eligible 'claude-opus-4-7' all passed parity
+  PASS: AC-1
+
+--- AC-2: compute_cost returns None for unknown model and None-rate-dimension model ---
+INFRA-FAIL: no model with a None cost field found via unified_llm.list_models().
+  The implementation must add a model entry with null cost fields to models.json,
+  or expose another public surface for this case.
+  This is a gate-infrastructure failure per AC-2 public-surface binding.
+  Unknown model -> None OK
+  INFRA-FAIL: AC-2 (gate infrastructure failure, exit 2)
+
+--- AC-3: Client.complete() response.usage.cost_usd oracle-consistent; streaming accumulator ---
+FAIL: Streaming accumulator: cost_usd is None for known model 'claude-sonnet-4-5-20250929' (oracle expected Decimal('0.086406'))
+  oracle_expected for 'claude-sonnet-4-5-20250929' inp=4082 out=4944: Decimal('0.086406')
+  complete() path: cost_usd=Decimal('0.086406') == oracle=Decimal('0.086406') OK
+  FAIL: AC-3
+
+--- AC-4: DirectProviderBackend provider:response carries top-level cost_usd key ---
+  Sub-case A: response.usage.cost_usd = Decimal('0.033374') (Decimal, non-None)
+  Sub-case A PASS: payload['cost_usd']=Decimal('0.033374') == response.usage.cost_usd OK
+  Sub-case B: response.usage.cost_usd = None
+  Sub-case B PASS: payload['cost_usd']=None when response.usage.cost_usd=None OK
+AC-4 PASS: provider:response carries top-level cost_usd key propagated from response.usage.cost_usd
+  PASS: AC-4
+
+--- AC-5: Usage addition: any None operand yields None cost_usd total ---
+  Decimal + None -> None OK
+  None + Decimal -> None OK
+  None + None -> None OK
+  Decimal + Decimal -> Decimal('0.03') OK
+AC-5 PASS: Usage addition with None operand yields None cost_usd; Decimal+Decimal sums correctly
+  PASS: AC-5
+
+--- AC-6: Existing Usage arithmetic and provider:response token fields unchanged ---
+  cache_read_tokens 7+9=16: OK
+  cache_write_tokens 8+10=18: OK
+  Usage token-field arithmetic: OK
+  provider:response token fields: OK (keys=['provider', 'model', 'node_id', 'usage', 'cost_usd', 'finish_reason', 'text_length', 'step_count'])
+AC-6 PASS [guard]: existing Usage arithmetic and provider:response token fields unchanged
+  PASS: AC-6
+
+
+========================================
+GATE SUMMARY
+========================================
+  PASS:       4
+  FAIL:       1
+  INFRA-FAIL: 1
+========================================
+Census:
+AC-1: MET
+AC-2: UNMET
+AC-3: UNMET
+AC-4: MET
+AC-5: MET
+AC-6: MET
+========================================
+GATE RESULT: FAIL (exit 1)

@@ -475,6 +475,9 @@ async def test_direct_backend_emits_provider_response():
     data = hooks.get_data("provider:response")[0]
     assert "usage" in data
     assert data["finish_reason"] == "stop"
+    # Cost is exposed as a top-level key (value is None for an unpriced model,
+    # but the key must always be present for consumers to read).
+    assert "cost_usd" in data
 
 
 @pytest.mark.asyncio

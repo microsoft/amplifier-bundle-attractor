@@ -286,17 +286,48 @@ class PipelineEngine:
         # Find the start node — engine always starts from Start
         current_node = self._find_start_node()
 
-        # Bound goal-gate-driven retries to prevent infinite loops
-        goal_gate_retries = 0
-        # Bound failure-routing retries (no-matching-edge fallback chain)
-        failure_routing_retries = 0
+        # Spec §5.3 rule 5 ("determine the next node to execute") is the only
+        # thing resume needs that a fresh start does not; everything else in
+        # the walk is identical.  The walk therefore lives in _run_loop(), and
+        # run()/resume() are siblings that differ only in what they hand it.
+        # run() is a flag-free fresh path by construction: nothing here reads a
+        # checkpoint, so a stale or foreign checkpoint.json is inert to it.
+        return await self._run_loop(
+            current_node,
+            pipeline_start_time=pipeline_start_time,
+        )
 
+    async def _run_loop(
+        self,
+        current_node: Node,
+        *,
+        pipeline_start_time: float,
+        goal_gate_retries: int = 0,
+        failure_routing_retries: int = 0,
+        steps: int = 0,
+    ) -> Outcome:
+        """Walk the graph from ``current_node`` until an exit or a failure.
+
+        The shared body of ``run()`` (fresh, entered at the start node with
+        zeroed counters).  Extracted verbatim so that no traversal, routing,
+        checkpoint, or loop_restart behavior can ever diverge between entry
+        points — there is exactly one implementation of the walk.
+
+        Args:
+            current_node: Node to execute next.
+            pipeline_start_time: ``time.monotonic()`` at run start; drives the
+                ``max_pipeline_duration`` budget and completion timing.
+            goal_gate_retries: Goal-gate retry budget already consumed.
+            failure_routing_retries: Failure-routing retry budget already consumed.
+            steps: Safety step counter already consumed.
+
+        Returns:
+            The final Outcome of the pipeline run.
+        """
         # Bound total pipeline steps to prevent infinite loops caused by
         # condition-routing bugs or missing edge guards. Matches the safety
         # bound used in the subgraph runner (run_subgraph).
         max_steps = len(self.graph.nodes) * self._MAX_GOAL_GATE_RETRIES
-        steps = 0
-
         while True:
             # Safety step counter — checked first so every loop iteration
             # (including resume-path continues) is counted.

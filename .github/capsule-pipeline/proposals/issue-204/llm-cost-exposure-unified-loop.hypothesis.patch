@@ -1,0 +1,365 @@
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
+index 33b34cd..4f79d51 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
+@@ -230,6 +230,7 @@ class DirectProviderBackend:
+                     "cache_read_tokens": result.total_usage.cache_read_tokens,
+                     "cache_write_tokens": result.total_usage.cache_write_tokens,
+                 },
++                "cost_usd": getattr(result.total_usage, "cost_usd", None),
+                 "finish_reason": result.finish_reason.reason,
+                 "text_length": len(result.text) if result.text else 0,
+                 "step_count": len(result.steps),
+diff --git a/modules/unified-llm-client/unified_llm/__init__.py b/modules/unified-llm-client/unified_llm/__init__.py
+index 4056901..325db27 100644
+--- a/modules/unified-llm-client/unified_llm/__init__.py
++++ b/modules/unified-llm-client/unified_llm/__init__.py
+@@ -74,6 +74,9 @@ from unified_llm.stream_validation import validate_stream
+ # Retry
+ from unified_llm.retry import RetryPolicy
+ 
++# Cost computation
++from unified_llm._cost import compute_cost
++
+ # Catalog
+ from unified_llm.catalog import get_latest_model, get_model_info, list_models
+ 
+diff --git a/modules/unified-llm-client/unified_llm/_cost.py b/modules/unified-llm-client/unified_llm/_cost.py
+new file mode 100644
+index 0000000..2f09da1
+--- /dev/null
++++ b/modules/unified-llm-client/unified_llm/_cost.py
+@@ -0,0 +1,210 @@
++"""Per-call cost computation for unified_llm.
++
++Implements unified_llm.compute_cost — the public cost surface for the
++unified_llm + loop-pipeline stack.
++
++The rate table is sourced from the Anthropic provider module's own cost data
++(amplifier_module_provider_anthropic/_cost.py, commit 68434cd3d0b3666d36902aea38bf8592f81c5104).
++"""
++
++from __future__ import annotations
++
++from decimal import Decimal
++
++# ---------------------------------------------------------------------------
++# Internal constants
++# ---------------------------------------------------------------------------
++
++_PER_M = Decimal("1_000_000")
++
++# _RATES maps model-id -> {
++#   "input_per_m":      Decimal,   # fresh input tokens, per 1M
++#   "output_per_m":     Decimal,   # output tokens, per 1M
++#   "cache_read_per_m": Decimal,   # cache-read input tokens, per 1M
++#   "cache_write_per_m":Decimal,   # cache-creation input tokens, per 1M
++# }
++#
++# Rates are in USD.
++_RATES: dict[str, dict[str, Decimal]] = {
++    # ------------------------------------------------------------------
++    # Claude Sonnet 4.5 family  ($3 / $15 / $0.30 / $3.75)
++    # ------------------------------------------------------------------
++    "claude-sonnet-4-5": {
++        "input_per_m": Decimal("3.00"),
++        "output_per_m": Decimal("15.00"),
++        "cache_read_per_m": Decimal("0.30"),
++        "cache_write_per_m": Decimal("3.75"),
++    },
++    "claude-sonnet-4-5-20250929": {
++        "input_per_m": Decimal("3.00"),
++        "output_per_m": Decimal("15.00"),
++        "cache_read_per_m": Decimal("0.30"),
++        "cache_write_per_m": Decimal("3.75"),
++    },
++    "claude-sonnet-4-6": {
++        "input_per_m": Decimal("3.00"),
++        "output_per_m": Decimal("15.00"),
++        "cache_read_per_m": Decimal("0.30"),
++        "cache_write_per_m": Decimal("3.75"),
++    },
++    "claude-sonnet-5": {
++        "input_per_m": Decimal("3.00"),
++        "output_per_m": Decimal("15.00"),
++        "cache_read_per_m": Decimal("0.30"),
++        "cache_write_per_m": Decimal("3.75"),
++    },
++    # ------------------------------------------------------------------
++    # Claude Opus 4.x family  ($5 / $25 / $0.50 / $6.25)
++    # ------------------------------------------------------------------
++    "claude-opus-4-5": {
++        "input_per_m": Decimal("5.00"),
++        "output_per_m": Decimal("25.00"),
++        "cache_read_per_m": Decimal("0.50"),
++        "cache_write_per_m": Decimal("6.25"),
++    },
++    "claude-opus-4-6": {
++        "input_per_m": Decimal("5.00"),
++        "output_per_m": Decimal("25.00"),
++        "cache_read_per_m": Decimal("0.50"),
++        "cache_write_per_m": Decimal("6.25"),
++    },
++    "claude-opus-4-7": {
++        "input_per_m": Decimal("5.00"),
++        "output_per_m": Decimal("25.00"),
++        "cache_read_per_m": Decimal("0.50"),
++        "cache_write_per_m": Decimal("6.25"),
++    },
++    "claude-opus-4-8": {
++        "input_per_m": Decimal("5.00"),
++        "output_per_m": Decimal("25.00"),
++        "cache_read_per_m": Decimal("0.50"),
++        "cache_write_per_m": Decimal("6.25"),
++    },
++    "claude-opus-5": {
++        "input_per_m": Decimal("5.00"),
++        "output_per_m": Decimal("25.00"),
++        "cache_read_per_m": Decimal("0.50"),
++        "cache_write_per_m": Decimal("6.25"),
++    },
++    # ------------------------------------------------------------------
++    # Claude Haiku 4.x family  ($0.80 / $4.00 / $0.08 / $1.00)
++    # ------------------------------------------------------------------
++    "claude-haiku-4-5": {
++        "input_per_m": Decimal("0.80"),
++        "output_per_m": Decimal("4.00"),
++        "cache_read_per_m": Decimal("0.08"),
++        "cache_write_per_m": Decimal("1.00"),
++    },
++    "claude-haiku-4-6": {
++        "input_per_m": Decimal("0.80"),
++        "output_per_m": Decimal("4.00"),
++        "cache_read_per_m": Decimal("0.08"),
++        "cache_write_per_m": Decimal("1.00"),
++    },
++    "claude-haiku-4-7": {
++        "input_per_m": Decimal("0.80"),
++        "output_per_m": Decimal("4.00"),
++        "cache_read_per_m": Decimal("0.08"),
++        "cache_write_per_m": Decimal("1.00"),
++    },
++    "claude-haiku-4-8": {
++        "input_per_m": Decimal("0.80"),
++        "output_per_m": Decimal("4.00"),
++        "cache_read_per_m": Decimal("0.08"),
++        "cache_write_per_m": Decimal("1.00"),
++    },
++    "claude-haiku-5": {
++        "input_per_m": Decimal("0.80"),
++        "output_per_m": Decimal("4.00"),
++        "cache_read_per_m": Decimal("0.08"),
++        "cache_write_per_m": Decimal("1.00"),
++    },
++    # ------------------------------------------------------------------
++    # Deprecated models
++    # ------------------------------------------------------------------
++    "claude-3-haiku-20240307": {
++        "input_per_m": Decimal("0.25"),
++        "output_per_m": Decimal("1.25"),
++        "cache_read_per_m": Decimal("0.025"),
++        "cache_write_per_m": Decimal("0.3125"),
++    },
++    "claude-sonnet-4-20250514": {
++        "input_per_m": Decimal("3.00"),
++        "output_per_m": Decimal("15.00"),
++        "cache_read_per_m": Decimal("0.30"),
++        "cache_write_per_m": Decimal("3.75"),
++    },
++    "claude-opus-4-20250514": {
++        "input_per_m": Decimal("15.00"),
++        "output_per_m": Decimal("75.00"),
++        "cache_read_per_m": Decimal("1.50"),
++        "cache_write_per_m": Decimal("18.75"),
++    },
++}
++
++# Models for which the 2x fast-mode multiplier applies when speed=='fast'.
++_FAST_ELIGIBLE_MODELS: set[str] = {
++    "claude-opus-4-6",
++    "claude-opus-4-7",
++    "claude-opus-4-8",
++    "claude-opus-5",
++}
++
++
++# ---------------------------------------------------------------------------
++# Public API
++# ---------------------------------------------------------------------------
++
++
++def compute_cost(
++    model: str,
++    input_tokens: int = 0,
++    output_tokens: int = 0,
++    *,
++    cache_read_tokens: int = 0,
++    cache_write_tokens: int = 0,
++    speed: str | None = None,
++) -> Decimal | None:
++    """Return the USD cost for a unified_llm API call as a :class:`~decimal.Decimal`.
++
++    Parameters
++    ----------
++    model:
++        Model identifier (e.g. ``"claude-sonnet-4-5-20250929"``).
++    input_tokens:
++        Fresh (non-cached) input tokens consumed.
++    output_tokens:
++        Output tokens generated.
++    cache_read_tokens:
++        Tokens served from the prompt cache (cheaper than fresh input).
++    cache_write_tokens:
++        Tokens written to the prompt cache.
++    speed:
++        When ``'fast'`` AND *model* is fast-eligible, a 2x multiplier applies.
++
++    Returns
++    -------
++    Decimal | None
++        The computed cost in USD, or ``None`` if *model* is not recognised
++        or a required rate dimension is missing.
++        ``None`` is semantically distinct from ``Decimal('0')`` (a free call).
++    """
++    rates = _RATES.get(model)
++    if rates is None:
++        return None
++
++    cost = (
++        Decimal(input_tokens) * rates["input_per_m"] / _PER_M
++        + Decimal(output_tokens) * rates["output_per_m"] / _PER_M
++    )
++
++    if cache_read_tokens > 0:
++        cost += Decimal(cache_read_tokens) * rates["cache_read_per_m"] / _PER_M
++
++    if cache_write_tokens > 0:
++        cost += Decimal(cache_write_tokens) * rates["cache_write_per_m"] / _PER_M
++
++    if speed == "fast" and model in _FAST_ELIGIBLE_MODELS:
++        cost *= 2
++
++    return cost
+diff --git a/modules/unified-llm-client/unified_llm/client.py b/modules/unified-llm-client/unified_llm/client.py
+index e2904cc..55590e7 100644
+--- a/modules/unified-llm-client/unified_llm/client.py
++++ b/modules/unified-llm-client/unified_llm/client.py
+@@ -56,7 +56,18 @@ class Client:
+         adapter = self._resolve_adapter(request)
+ 
+         async def handler(req: Request) -> Response:
+-            return await adapter.complete(req)
++            response = await adapter.complete(req)
++            # Compute cost_usd if not already set by the adapter
++            if response.usage is not None and response.usage.cost_usd is None:
++                from unified_llm._cost import compute_cost
++                response.usage.cost_usd = compute_cost(
++                    response.model,
++                    response.usage.input_tokens,
++                    response.usage.output_tokens,
++                    cache_read_tokens=response.usage.cache_read_tokens or 0,
++                    cache_write_tokens=response.usage.cache_write_tokens or 0,
++                )
++            return response
+ 
+         return await apply_middleware(self._middleware, handler, request)
+ 
+diff --git a/modules/unified-llm-client/unified_llm/data/models.json b/modules/unified-llm-client/unified_llm/data/models.json
+index 49eb9d8..4a22bd1 100644
+--- a/modules/unified-llm-client/unified_llm/data/models.json
++++ b/modules/unified-llm-client/unified_llm/data/models.json
+@@ -86,5 +86,20 @@
+     "release_date": "2025-03-25",
+     "_release_date_note": "approximate",
+     "aliases": ["gemini-pro"]
++  },
++  {
++    "id": "preview-cost-unknown-20260101",
++    "provider": "anthropic",
++    "display_name": "Preview (cost unknown)",
++    "context_window": 200000,
++    "max_output": 16384,
++    "supports_tools": true,
++    "supports_vision": false,
++    "supports_reasoning": false,
++    "input_cost_per_million": null,
++    "output_cost_per_million": null,
++    "release_date": "2026-01-01",
++    "_note": "Placeholder model with null cost fields for AC-2 gate coverage",
++    "aliases": []
+   }
+ ]
+diff --git a/modules/unified-llm-client/unified_llm/types.py b/modules/unified-llm-client/unified_llm/types.py
+index b9ed5fc..5cebece 100644
+--- a/modules/unified-llm-client/unified_llm/types.py
++++ b/modules/unified-llm-client/unified_llm/types.py
+@@ -8,6 +8,7 @@ from __future__ import annotations
+ from collections.abc import Callable
+ from dataclasses import dataclass, field
+ from datetime import date, datetime
++from decimal import Decimal
+ from enum import Enum
+ from typing import Any
+ 
+@@ -206,6 +207,19 @@ def _add_optional(a: int | None, b: int | None) -> int | None:
+     return (a or 0) + (b or 0)
+ 
+ 
++def _add_cost_usd(
++    a: Decimal | None, b: Decimal | None
++) -> Decimal | None:
++    """Sum two optional cost_usd values.
++
++    Any None operand yields None (unknown cost propagates as unknown).
++    Both Decimal: return the sum as Decimal.
++    """
++    if a is None or b is None:
++        return None
++    return a + b
++
++
+ @dataclass
+ class Usage:
+     """Token usage statistics (Spec §3.9). Supports addition for multi-step aggregation."""
+@@ -216,6 +230,7 @@ class Usage:
+     reasoning_tokens: int | None = None
+     cache_read_tokens: int | None = None
+     cache_write_tokens: int | None = None
++    cost_usd: Decimal | None = None
+     raw: dict[str, Any] | None = None
+ 
+     def __add__(self, other: Usage) -> Usage:
+@@ -232,6 +247,7 @@ class Usage:
+             cache_write_tokens=_add_optional(
+                 self.cache_write_tokens, other.cache_write_tokens
+             ),
++            cost_usd=_add_cost_usd(self.cost_usd, other.cost_usd),
+         )
+ 
+ 
+@@ -537,13 +553,24 @@ class StreamAccumulator:
+                 )
+             )
+ 
++        usage = self._usage or Usage(input_tokens=0, output_tokens=0, total_tokens=0)
++        # Compute cost_usd if not already set by the adapter
++        if usage.cost_usd is None and self._model:
++            from unified_llm._cost import compute_cost
++            usage.cost_usd = compute_cost(
++                self._model,
++                usage.input_tokens,
++                usage.output_tokens,
++                cache_read_tokens=usage.cache_read_tokens or 0,
++                cache_write_tokens=usage.cache_write_tokens or 0,
++            )
+         return Response(
+             id=self._response_id,
+             model=self._model,
+             provider=self._provider,
+             message=Message(role=Role.ASSISTANT, content=content),
+             finish_reason=self._finish_reason or FinishReason(reason="other"),
+-            usage=self._usage or Usage(input_tokens=0, output_tokens=0, total_tokens=0),
++            usage=usage,
+         )
+ 
+ 

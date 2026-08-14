@@ -20,16 +20,35 @@ def _read(rel: str) -> str:
 
 
 def test_spec_default_max_retry_table_is_zero():
-    """attractor-spec.md table rows for default_max_retry must show default 0 (D-135)."""
-    content = _read("specs/attractor-spec.md")
-    # The table row pattern: | `default_max_retry` | Integer | <default> | ...
+    """Canonical spec table rows for the retry ceiling must show default 0 (D-135).
+
+    Reads ``specs/canonical/attractor-spec-canonical.md`` -- the byte-identical
+    upstream snapshot @ ``fb57a55``, which is the normative text. The former
+    ``specs/attractor-spec.md`` working copy this used to read was retired to a
+    pointer stub (2026-08-14): it had drifted into contradicting the canonical
+    snapshot (five-phase lifecycle, ``k_of_n``/``quorum``, ``preferred_next_label``),
+    so asserting against it proved nothing about the spec we actually implement.
+
+    Attribute-name note: canonical names the graph attribute
+    ``default_max_retries`` (plural), keeping the singular ``default_max_retry``
+    only as a legacy alias (canonical ``:139``, ``:1993``; see
+    ``specs/EXTENSIONS.md`` section 2). The pattern below accepts BOTH spellings so
+    the check stays anchored on the documented default value rather than on which
+    of the two names a given table row happens to use.
+    """
+    content = _read("specs/canonical/attractor-spec-canonical.md")
+    # The table row pattern: | `default_max_retries` | Integer | <default> | ...
     matches = re.findall(
-        r"\|\s*`default_max_retry`\s*\|\s*Integer\s*\|\s*`(\d+)`", content
+        r"\|\s*`default_max_retr(?:y|ies)`\s*\|\s*Integer\s*\|\s*`(\d+)`", content
     )
-    assert matches, "default_max_retry table row not found in attractor-spec.md"
+    assert matches, (
+        "default_max_retries table row not found in "
+        "specs/canonical/attractor-spec-canonical.md"
+    )
     for val in matches:
         assert val == "0", (
-            f"attractor-spec.md: default_max_retry table default is '{val}', expected '0' (D-135)"
+            f"attractor-spec-canonical.md: default_max_retries table default is "
+            f"'{val}', expected '0' (D-135)"
         )
 
 

@@ -6,6 +6,7 @@ clear message and exit non-zero. No fallbacks, no synthetic success.
 
 Subcommands:
     run       <dot_file>   run a DOT pipeline
+    resume    <run-dir>    resume an interrupted run from its checkpoint
     doctor                 environment diagnostics
     trace     <run-dir>    print a human-readable iteration/descent summary
     lint      <dot_file>   static topological lint of a .dot pipeline file
@@ -86,6 +87,66 @@ def build_parser() -> argparse.ArgumentParser:
             "interactively in this terminal (wires the engine's "
             "ConsoleInterviewer; requires a usable stdin)."
         ),
+    )
+
+    resume = sub.add_parser(
+        "resume",
+        help="resume an interrupted run from the checkpoint in its run directory",
+        description=(
+            "Resume an interrupted pipeline run (attractor-spec §5.3). The run "
+            "continues IN PLACE in <run_dir>: nodes the checkpoint records as "
+            "completed are not re-executed, restored context is visible to the "
+            "nodes that follow, and the run's records append to the interrupted "
+            "ones. Resume from the SAME working directory the interrupted run "
+            "used -- file state written by tool/agent nodes lives there and the "
+            "engine cannot verify it. A missing, corrupted, wrong-schema, "
+            "already-completed or structurally-invalid checkpoint fails loud and "
+            "exits non-zero; it never silently restarts from the start node."
+        ),
+    )
+    resume.add_argument(
+        "run_dir",
+        help="run directory of the interrupted run (the one holding checkpoint.json)",
+    )
+    resume.add_argument(
+        "--dot-file",
+        default=None,
+        help=(
+            "optional .dot file for provenance. It must fingerprint-match the "
+            "graph embedded in the checkpoint or the resume is refused -- a "
+            "checkpoint binds to the run that wrote it. Omit it to resume "
+            "against the checkpoint's own embedded graph (the normal case)."
+        ),
+    )
+    resume.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        metavar="k=v",
+        help=(
+            "key=value param, same syntax as 'run'. On resume a param may only "
+            "ADD context keys: colliding with a key restored from the "
+            "checkpoint is an error, not a silent override."
+        ),
+    )
+    resume.add_argument(
+        "--provider",
+        default="anthropic",
+        help="provider whose API key to preflight-check (default: anthropic)",
+    )
+    resume.add_argument(
+        "--cwd",
+        default=None,
+        help=(
+            "working directory for the resumed pipeline (default: current "
+            "directory). Use the SAME directory the interrupted run used."
+        ),
+    )
+    resume.add_argument(
+        "--on-human-gate",
+        choices=("fail", "auto-approve", "console"),
+        default="fail",
+        help="as on 'run' -- a human gate the run was parked at is re-asked",
     )
 
     sub.add_parser("doctor", help="environment diagnostics")
@@ -294,6 +355,121 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0 if result.status == "success" else 1
 
 
+def cmd_resume(args: argparse.Namespace) -> int:
+    """Resume an interrupted run from its checkpoint (attractor-spec §5.3).
+
+    Fail-loud contract (AC-6 of issue #224): every way the checkpoint can be
+    unusable -- missing, corrupted, wrong schema, already completed, written by
+    a different graph, structurally invalid -- prints the named cause plus a
+    remedy and exits non-zero. There is no fallback to a fresh run: a silent
+    restart-from-scratch presented as a successful resume is exactly the
+    outcome this command must never produce.
+    """
+    from amplifier_module_loop_pipeline.checkpoint import CheckpointResumeError
+
+    run_dir = Path(args.run_dir).expanduser()
+    if not run_dir.is_dir():
+        print(
+            f"attractor resume: run directory not found: {run_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    dot_source: str | None = None
+    if args.dot_file:
+        dot_path = Path(args.dot_file).expanduser()
+        if not dot_path.is_file():
+            print(
+                f"attractor resume: DOT file not found: {dot_path}", file=sys.stderr
+            )
+            return 1
+        dot_source = dot_path.read_text(encoding="utf-8")
+
+    try:
+        params = parse_params(args.param)
+    except ValueError as e:
+        print(f"attractor resume: {e}", file=sys.stderr)
+        return 1
+
+    if args.provider not in runner.PROVIDER_KEY_ENV:
+        print(
+            f"attractor resume: unknown provider {args.provider!r}. Known providers: "
+            f"{', '.join(sorted(runner.PROVIDER_KEY_ENV))}",
+            file=sys.stderr,
+        )
+        return 1
+
+    key_env = runner.PROVIDER_KEY_ENV[args.provider]
+    if not os.environ.get(key_env):
+        print(
+            f"attractor resume: missing API key -- set {key_env} for provider "
+            f"{args.provider!r}",
+            file=sys.stderr,
+        )
+        return 1
+
+    cwd = Path(args.cwd).expanduser().resolve() if args.cwd else Path.cwd()
+
+    interviewer = None
+    if args.on_human_gate == "auto-approve":
+        from amplifier_module_loop_pipeline.interviewer import AutoApproveInterviewer
+
+        interviewer = AutoApproveInterviewer()
+    elif args.on_human_gate == "console":
+        from amplifier_module_loop_pipeline.interviewer import ConsoleInterviewer
+
+        if not _stdin_is_usable():
+            print(
+                "attractor resume: --on-human-gate console requires a usable "
+                "stdin, but stdin is closed or unavailable.",
+                file=sys.stderr,
+            )
+            return 1
+        interviewer = ConsoleInterviewer()
+
+    print(f"attractor: resuming run cwd={cwd} logs={run_dir}")
+
+    try:
+        result = asyncio.run(
+            runner.resume_pipeline(
+                run_dir,
+                dot_source=dot_source,
+                params=params or None,
+                provider=args.provider,
+                cwd=cwd,
+                interviewer=interviewer,
+            )
+        )
+    except CheckpointResumeError as e:
+        # The whole validation ladder lands here: named cause + remedy, no
+        # fallback, non-zero exit, and nothing in the run directory touched.
+        print(f"attractor resume: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:  # noqa: BLE001 -- fail loud with the real error
+        print(
+            f"attractor resume: pipeline execution failed: {type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"attractor: status={result.status}")
+    print(f"attractor: logs={result.logs_dir}")
+    if result.notes:
+        print("attractor: notes:")
+        print(result.notes)
+    print(
+        json.dumps(
+            {
+                "status": result.status,
+                "notes": result.notes,
+                "logs_dir": str(result.logs_dir),
+            }
+        )
+    )
+
+    return 0 if result.status == "success" else 1
+
+
 def cmd_trace(args: argparse.Namespace) -> int:
     """Print a human-readable iteration/descent summary from a run directory.
 
@@ -481,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dispatch = {
         "run": cmd_run,
+        "resume": cmd_resume,
         "doctor": cmd_doctor,
         "trace": cmd_trace,
         "lint": cmd_lint,

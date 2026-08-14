@@ -31,7 +31,7 @@ from .checkpoint import (
 from .context import PipelineContext
 from .edge_selection import select_edge
 from .feedback import collect_and_inject_feedback
-from .fidelity import resolve_fidelity
+from .fidelity import RESUME_FIDELITY_CAP_KEY, resolve_fidelity
 from .graph import Graph, Node, resolve_bool_attr
 from .handlers import HandlerRegistry
 from .must_write import check_must_write
@@ -99,13 +99,6 @@ def _get_engine_provenance() -> dict:
         logger.debug("engine commit provenance unavailable: %s", exc)
 
     return {"engine_version": engine_version, "engine_commit": engine_commit}
-
-
-#: Reserved one-hop context key carrying the §5.3 rule-6 fidelity cap.  Set by
-#: the engine immediately before the first node executed after a resume, and
-#: cleared unconditionally as soon as that node's handler returns, so it can
-#: never leak into a later hop or into a checkpoint's context snapshot.
-RESUME_FIDELITY_CAP_KEY: str = "resume.fidelity_cap"
 
 
 def _outcome_from_checkpoint_record(record: dict[str, Any], retries: int) -> Outcome:

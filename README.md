@@ -94,6 +94,22 @@ agent pipelines -- see
 [modules/pipeline-runner/KNOWN_ISSUES.md](modules/pipeline-runner/KNOWN_ISSUES.md)).
 See the [practical examples guide](examples/pipelines/practical/) for the full set.
 
+If a run is interrupted (a crash, a kill, a lost machine), resume it from the
+run directory it left behind — completed nodes are not re-executed and the
+restored context carries forward:
+
+```bash
+attractor resume /path/to/run-dir --cwd .
+```
+
+Resume is explicit and opt-in: `attractor run` never reads a checkpoint back,
+so a leftover `checkpoint.json` can never change what a fresh run does. Use the
+same `--cwd` the interrupted run used. A missing, corrupted, already-completed
+or foreign checkpoint fails loud and exits non-zero — it never silently
+restarts from the start node. See
+[attractor-spec §5.3](specs/canonical/attractor-spec-canonical.md) and
+[the design record](docs/designs/2026-08-14-engine-checkpoint-resume.md).
+
 ## What Can It Do?
 
 **Fix a bug systematically** -- reproduce, diagnose, fix, regression test, verify:

@@ -57,11 +57,12 @@ Maintainer ruling, 2026-08-14. The four rules that decide every disposition in t
 |------|----------------|---------------|----------|------|
 | unified-llm | ~35 | 13 | 4 (structured output, all providers) | 9 |
 | coding-agent-loop | ~17 | 9 | 2 (bugs CAL-1, CAL-2) | 7 |
-| attractor | ~30 | 8 | 2 (ATX-1, ATX-10) | 6 |
+| attractor | ~30 | 8 | 3 (ATX-1, ATX-2, ATX-10) | 5 |
 
 The engine layer (attractor) is the strongest — substantially a **superset** of the spec. The
 material weaknesses are concentrated in the LLM client's per-provider metadata and a small set
-of deliberate omissions (resume, tool-hooks, execution-environment).
+of deliberate omissions (tool-hooks, execution-environment). Resume is no longer among them:
+ATX-2 shipped per §5.3 and coexists with the graph-owned idempotency pattern.
 
 ---
 
@@ -114,7 +115,7 @@ keys. Do not mark "live" until exercised against real providers (e.g. in a DTU w
 | ID | Area | Spec | Impl | Status | Disposition |
 |----|------|------|------|--------|-------------|
 | ATX-1 | Node `timeout` unit mismatch (ms stored, consumed as seconds) | `timeout_seconds` | `engine.py:485`, `handlers/tool.py:105` | **DONE** | ALIGN |
-| ATX-2 | Checkpoint-based RESUME (restore context/completed/retry, continue after `current_node`; `full`→`summary:high` degrade) | `§5.3`, DoD `:1857` | engine always restarts from start; `load_checkpoint()` never rehydrates | **DECIDED — ALIGN (build it)**; IN-PROGRESS via issue #224 | ALIGN |
+| ATX-2 | Checkpoint-based RESUME (restore context/completed/retry, continue after `current_node`; `full`→`summary:high` degrade) | `§5.3`, DoD `:1857` | `checkpoint.py:load_checkpoint_for_resume` (validation ladder) + `engine.py:PipelineEngine.resume` + `runner.py:resume_pipeline` + `attractor resume <run_dir>`; checkpoint schema v2 is a superset keeping the six §5.3 fields at the §5.6 path. A fresh `run()` still never reads a checkpoint — no call path exists (`tests/test_no_implicit_resume.py`) | **DONE — PROVEN ON A REALLY-KILLED RUN** (`modules/pipeline-runner/tests/test_resume_e2e.py`: SIGKILLed subprocess, separate `attractor resume` invocation, equivalence vs a control run executed at gate runtime) | ALIGN |
 | ATX-3 | Tool-call hooks `tool_hooks.pre`/`.post` (shell around each LLM tool call) | `§9.7` `:1650` | grep `tool_hooks`=0 | OPEN | **DECIDE** (ALIGN vs DIVERGE) |
 | ATX-4 | HTTP server mode (REST + SSE) | `§9.5` (optional) | not present; programmatic tools instead | OPEN | DIVERGE (spec-optional) |
 | ATX-5 | `outcome=` condition resolves to `preferred_label` first | `§10.4 :1693` | `conditions.py:75` returns `preferred_label or status` | OPEN | DIVERGE (intentional; load-bearing for report_outcome routing) |
@@ -196,6 +197,31 @@ Each is currently **OPEN** with disposition pending (ALIGN vs DIVERGE).
 ---
 
 ## Changelog
+
+### 2026-08-14 — ATX-2 DONE: engine-level checkpoint resume shipped (issue #224)
+- **ATX-2 DECIDED/IN-PROGRESS → DONE — ALIGN.** Spec §5.3 "Resume behavior" rules 1–6 and DoD
+  `:1857` are implemented behind an explicit, opt-in entry point: `attractor resume <run_dir>` /
+  `resume_pipeline()` / `PipelineEngine.resume()`. Checkpoint schema v2 is a strict superset —
+  the six §5.3 fields keep their exact names and shapes at the §5.6
+  `{logs_root}/checkpoint.json` location, plus `schema_version`, `run_state`, `node_outcomes`,
+  `engine_state` and `graph` (fingerprint + embedded DOT source). `node_retries` is now actually
+  populated (it was always written as `{}`).
+  - **Bar met:** proven on a really-killed run, not a simulated interrupt — a subprocess SIGKILLed
+    mid-graph after a checkpoint write, resumed by a genuinely separate `attractor resume`
+    invocation, asserted equivalent to an uninterrupted control run executed at gate runtime
+    (`modules/pipeline-runner/tests/test_resume_e2e.py`).
+  - **The two PR #66 crash classes are designed out, not guarded against.** (1) Fresh runs cannot
+    be poisoned by a checkpoint: `engine.py` contains no reference to any checkpoint loader at all,
+    enforced by `modules/loop-pipeline/tests/test_no_implicit_resume.py`; graph identity is
+    evaluated only inside the explicit resume ladder. (2) "No matching edge from resumed node":
+    there is no fast-forward replay — the checkpoint records the last COMPLETED node and its real
+    outcome, and resume runs edge selection exactly ONCE from those recorded inputs.
+  - **Coexistence held (the ALIGN condition):** `examples/pipelines/12-graph-resume.{dot,md}` are
+    byte-unchanged and still parse, lint and execute their documented guard-skip semantics
+    (`modules/loop-pipeline/tests/test_graph_owned_resume_coexists.py`). Engine resume answers
+    "this process died mid-graph"; graph-owned skip-through answers "this work is already done on
+    disk". Neither disables the other.
+  - Design record: `docs/designs/2026-08-14-engine-checkpoint-resume.md`. Issue #224.
 
 ### 2026-08-14 — documentation/spec-alignment wave (maintainer rulings, in-session)
 - **Compatibility doctrine adopted** — added as a header section above: honor the nlspec where

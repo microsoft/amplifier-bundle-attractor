@@ -429,6 +429,22 @@ attractor trace <run-dir>
 This prints a human-readable summary of iterations, nodes, statuses, and
 durations — the empirical form of the convergence claim.
 
+To continue a run that was interrupted mid-graph (spec §5.3):
+
+```
+attractor resume <run-dir>
+```
+
+The engine restores context, completed nodes and retry counters from
+`<run-dir>/checkpoint.json`, makes ONE edge-selection decision from the last
+completed node's recorded outcome, and carries on — completed nodes are never
+re-visited. The node the interruption hit re-executes from its start, because
+it never completed. Resume is opt-in only: a plain `attractor run` never reads
+a checkpoint, so this is additive to (never a replacement for) the graph-owned
+idempotency pattern in
+[`examples/pipelines/12-graph-resume.dot`](../examples/pipelines/12-graph-resume.dot),
+which answers a different question — "is this work already done on disk?".
+
 **Difference from `max_retries`:** `max_retries` re-attempts a single node
 in place — and only for RETRY-class outcomes, retryable exceptions
 (timeouts, connection errors, HTTP 429/5xx), and `must_write=`

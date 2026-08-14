@@ -10,6 +10,23 @@ and the chosen disposition for each gap. The goal is not 100% literal conformanc
   divergence (and fold it into the spec / `specs/EXTENSIONS.md` so the spec stops lying).
 - **IMPROVE** — implementation deliberately exceeds the spec; promote the idea upstream.
 
+## Compatibility doctrine
+
+Maintainer ruling, 2026-08-14. The four rules that decide every disposition in this file:
+
+1. **Honor the nlspec design where possible.** The upstream natural-language spec is the design of
+   record; "we'd have done it differently" is not a reason to diverge.
+2. **100% support for community `.dot` files built against the nlspec.** A graph written to the
+   canonical spec must run on this engine unmodified. This is the hard constraint — an extension
+   that breaks a conforming graph is a bug, not an extension.
+3. **Extensions must be additive and non-interfering.** New attributes, shapes, and semantics may
+   only add reachable behavior; they may not change what a spec-conformant graph does.
+4. **Divergences only for safety, backed by measured evidence, and always LOUD.** A divergence must
+   name the safety property it buys, cite the evidence (an incident, a measurement, a live run) that
+   the spec-literal behavior actually failed, and fail loudly rather than silently — a divergence
+   that resolves quietly toward "success" is the failure mode this doctrine exists to prevent. Every
+   one is ledgered here and in `specs/EXTENSIONS.md`.
+
 ## How to use this file
 
 1. Each gap has a stable ID (`ULM-*`, `CAL-*`, `ATX-*`), a spec reference, an impl reference,
@@ -97,7 +114,7 @@ keys. Do not mark "live" until exercised against real providers (e.g. in a DTU w
 | ID | Area | Spec | Impl | Status | Disposition |
 |----|------|------|------|--------|-------------|
 | ATX-1 | Node `timeout` unit mismatch (ms stored, consumed as seconds) | `timeout_seconds` | `engine.py:485`, `handlers/tool.py:105` | **DONE** | ALIGN |
-| ATX-2 | Checkpoint-based RESUME (restore context/completed/retry, continue after `current_node`; `full`→`summary:high` degrade) | `§5.3`, DoD `:1857` | engine always restarts from start; `load_checkpoint()` never rehydrates | OPEN | **DECIDE** (ALIGN vs DIVERGE) |
+| ATX-2 | Checkpoint-based RESUME (restore context/completed/retry, continue after `current_node`; `full`→`summary:high` degrade) | `§5.3`, DoD `:1857` | engine always restarts from start; `load_checkpoint()` never rehydrates | **DECIDED — ALIGN (build it)**; IN-PROGRESS via issue #224 | ALIGN |
 | ATX-3 | Tool-call hooks `tool_hooks.pre`/`.post` (shell around each LLM tool call) | `§9.7` `:1650` | grep `tool_hooks`=0 | OPEN | **DECIDE** (ALIGN vs DIVERGE) |
 | ATX-4 | HTTP server mode (REST + SSE) | `§9.5` (optional) | not present; programmatic tools instead | OPEN | DIVERGE (spec-optional) |
 | ATX-5 | `outcome=` condition resolves to `preferred_label` first | `§10.4 :1693` | `conditions.py:75` returns `preferred_label or status` | OPEN | DIVERGE (intentional; load-bearing for report_outcome routing) |
@@ -105,6 +122,7 @@ keys. Do not mark "live" until exercised against real providers (e.g. in a DTU w
 | ATX-7 | `stack.child_workdir`; condition literal unquoting (`§10.5`) | `:1743` | not handled | OPEN | ALIGN (minor) |
 | ATX-10 | Multi-match fan-out: non-component nodes with ≥2 simultaneously-matching conditional edges routed to ALL targets in parallel (unledgered dialect; never in spec §3.3) | `§3.3 :421-458` (`best_by_weight_then_lexical`) | `engine.py` (retired `select_all_matching_edges` gate; now routes through `select_edge()` only) | **DONE** | ALIGN — conformance restored (T0-4) |
 | ATX-11 | Main-loop no-matching-edge hard-fail: a dead end with no matching outgoing edge always terminates the pipeline with `status=FAIL` + `PIPELINE_ERROR error_type=no_matching_edge`, regardless of the last outcome's status | `§3.2 step 6 :388-393` (dead end + non-FAIL outcome ⇒ `Outcome(status=SUCCESS)`) | `engine.py:853-867` (`terminate_pipeline()` + `PIPELINE_ERROR` emission); shipped since the engine's initial commit | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §33) |
+| ATX-12 | `loop_restart` is an **in-process reset**, not a terminate-and-relaunch: `$iteration`/`$loop_count` increment, completed nodes are cleared, the run directory is retained (gaining `iteration_N/`), and `context_updates` **survive** | `§2.7 :177` ("terminates the current run and re-launches with a fresh log directory"); `§3.2 step 7 :395-398` (`restart_run(...)` then `RETURN`) | `engine.py` `run()` loop-restart branch; design decision recorded at `docs/plans/2026-02-24-engine-enhancements-design.md:95-102` | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §24) |
 
 **Shipped extensions (IMPROVE — fold into `specs/EXTENSIONS.md`):** fail-fast edge routing with
 `runs_on`/`continue_on_fail`; skip-propagation contracts (`requires=`/`outputs=`/`failed_outputs`,
@@ -144,18 +162,25 @@ Each is currently **OPEN** with disposition pending (ALIGN vs DIVERGE).
   different layer (DTU), which may make a loop-level ExecutionEnvironment redundant.
 - **Cost if ALIGN:** new abstraction crossing the tool boundary; touches every tool's call contract.
 
-### ATX-2 — Checkpoint-based resume (attractor §5.3)
+### ATX-2 — Checkpoint-based resume (attractor §5.3) — **DECIDED 2026-08-14: ALIGN (build it)**
 - **Spec wants:** load `checkpoint.json` → restore context/completed-nodes/retry counters → continue
   from the node after `current_node`; degrade `full`→`summary:high` one hop on resume.
 - **Reality now:** engine always restarts from the start node; `checkpoint.py` is an observability
   record (explicitly "not a resume marker"); `load_checkpoint()` is never used to rehydrate.
   Idempotency is **graph-owned**: handlers skip already-done work (see `examples/pipelines/12-graph-resume`).
-- **Decision hinges on:** is true crash-resume *with in-memory context restoration* needed, or is
-  handler-level idempotency ("don't redo finished work") sufficient? If the latter → **DIVERGE**
-  (document the graph-owned-idempotency model as the intentional design). If we need resume-after-crash
-  that restores accumulated context mid-pipeline → **ALIGN**.
-- **Cost if ALIGN:** real state-serialization + rehydration surface; the `full`→`summary:high`
-  degrade rule; correctness testing across partial-completion states.
+- **Ruling (maintainer, 2026-08-14):** the missing engine-level resume is a **bug in our design**, not
+  a defensible divergence. The spec's Definition of Done mandates it outright —
+  `specs/canonical/attractor-spec-canonical.md:1857`: *"Resume from checkpoint: load checkpoint ->
+  restore state -> continue from current_node"* — so this was never a spec-silent area we were free
+  to fill differently. PR #66's premise, that *"the spec does not mandate engine-level resume,"* was
+  **false as written**; the disposition recorded on the back of it is withdrawn.
+- **Scope of the fix:** engine resume will **coexist with** graph-owned idempotency, not replace it.
+  The `examples/pipelines/12-graph-resume` pattern stays supported and documented — handler-level
+  "don't redo finished work" remains the right tool for expensive idempotent steps; engine resume
+  covers the different problem of restoring accumulated *context* after a crash mid-pipeline.
+- **Status:** implementation in flight via the repo's feature pipeline as **issue #224**.
+- **Cost:** real state-serialization + rehydration surface; the `full`→`summary:high` degrade rule;
+  correctness testing across partial-completion states. Accepted.
 
 ### ATX-3 — Tool-call hooks (attractor §9.7)
 - **Spec wants:** `tool_hooks.pre` / `tool_hooks.post` shell commands wrapping every LLM tool call;
@@ -171,6 +196,35 @@ Each is currently **OPEN** with disposition pending (ALIGN vs DIVERGE).
 ---
 
 ## Changelog
+
+### 2026-08-14 — documentation/spec-alignment wave (maintainer rulings, in-session)
+- **Compatibility doctrine adopted** — added as a header section above: honor the nlspec where
+  possible · 100% support for community `.dot` files built against the nlspec · extensions additive
+  and non-interfering · divergences only for safety, backed by measured evidence, always loud.
+- **ATX-2 OPEN/DECIDE → DECIDED — ALIGN (build it)** — the spec DoD (`:1857`) mandates resume, so the
+  gap is a bundle design bug, not a divergence; PR #66's "the spec does not mandate engine-level
+  resume" premise was false as written. Engine resume will coexist with graph-owned idempotency
+  (`examples/pipelines/12-graph-resume` stays supported). Implementation in flight via the feature
+  pipeline, **issue #224**.
+- **ATX-12 NEW — DECIDED — DIVERGE** — `loop_restart` is an in-process reset (context preserved,
+  `iteration_N/` sub-tree, `$iteration` continuity), not spec §2.7's terminate-and-relaunch with a
+  fresh log directory. Deliberate (`docs/plans/2026-02-24-engine-enhancements-design.md:95-102`
+  quotes the spec, then chooses otherwise) and load-bearing for `feedback_from=` collection,
+  `$iteration` continuity, and context survival. Refiled in `specs/EXTENSIONS.md` §24, which had
+  claimed pure additivity.
+- **EXTENSIONS §§1–7 retconned as ABSORBED UPSTREAM @ `fb57a55`** — upstream absorbed all seven
+  item-for-item; each now carries a `status:` banner citing the canonical section that supersedes it,
+  bodies retained verbatim for ledger contiguity. Entry Format amended to define the banner.
+- **EXTENSIONS §18 usage check** — upstream removed `k_of_n`/`quorum`/`error_policy` from §4.8 at
+  `fb57a55` (they are pure extensions now). Shipped-graph usage: `k_of_n` = 0, `quorum` = 0,
+  `error_policy` = 5. `k_of_n`/`quorum` recorded as a subtraction candidate; no code removed.
+- **Stale working spec copies retired** — `specs/attractor-spec.md`, `specs/coding-agent-loop-spec.md`,
+  `specs/unified-llm-spec.md` contradicted the synced `specs/canonical/*` (five-phase lifecycle,
+  `k_of_n`, `preferred_next_label`); replaced with pointer stubs and the one code reader
+  (`test_doc_consistency.py::test_spec_default_max_retry_table_is_zero`) repointed at canonical.
+- **Docs corrected to match the shipped engine** — `docs/ROUTING-REFERENCE.md` §§3–4 no longer teach
+  the "silent alphabetical fallback" (the engine hard-fails `no_matching_edge`; canonical §3.3 returns
+  NONE); `README.md` backend table no longer claims `DirectProviderBackend` runs with "no tools".
 
 ### 2026-06-24
 - **CAL-1 DONE** — `max_tool_rounds_per_input` `0 = unlimited`: loop guard now `_max_rounds <= 0 or round_count < _max_rounds` (`agent_session.py:314`); default aligned to spec `0` (`config.py:39`). Tests added; loop-agent suite 493 passed.

@@ -31,6 +31,7 @@ from .checkpoint import (
 from .context import PipelineContext
 from .edge_selection import select_edge
 from .feedback import collect_and_inject_feedback
+from .fidelity import resolve_fidelity
 from .graph import Graph, Node, resolve_bool_attr
 from .handlers import HandlerRegistry
 from .must_write import check_must_write
@@ -46,6 +47,8 @@ from .pipeline_events import (
     PIPELINE_NODE_CONTRACT_VIOLATION,
     PIPELINE_NODE_SKIPPED,
     PIPELINE_NODE_START,
+    PIPELINE_RESUME,
+    PIPELINE_RESUME_FIDELITY_DEGRADE,
     PIPELINE_START,
 )
 from .retry import RetryPolicy, execute_with_retry
@@ -98,6 +101,32 @@ def _get_engine_provenance() -> dict:
     return {"engine_version": engine_version, "engine_commit": engine_commit}
 
 
+#: Reserved one-hop context key carrying the §5.3 rule-6 fidelity cap.  Set by
+#: the engine immediately before the first node executed after a resume, and
+#: cleared unconditionally as soon as that node's handler returns, so it can
+#: never leak into a later hop or into a checkpoint's context snapshot.
+RESUME_FIDELITY_CAP_KEY: str = "resume.fidelity_cap"
+
+
+def _outcome_from_checkpoint_record(record: dict[str, Any], retries: int) -> Outcome:
+    """Rehydrate a completed node's Outcome from its checkpoint record.
+
+    Only the routing/gating subset round-trips (see
+    ``PipelineEngine._serialize_node_outcomes``).  ``attempt_count`` is
+    reconstructed from the sibling ``node_retries`` entry (spec §5.3 rule 4),
+    which is why the two are written together.
+    """
+    return Outcome(
+        status=StageStatus(record["status"]),
+        preferred_label=record.get("preferred_label"),
+        suggested_next_ids=record.get("suggested_next_ids"),
+        notes=record.get("notes"),
+        failure_reason=record.get("failure_reason"),
+        is_explicit=bool(record.get("is_explicit", False)),
+        attempt_count=int(retries) + 1,
+    )
+
+
 class PipelineEngine:
     """Graph-walking execution engine.
 
@@ -141,6 +170,10 @@ class PipelineEngine:
         # _mark_run_completed).  Never read on any fresh-run path.
         self._last_checkpoint: Checkpoint | None = None
         self._graph_identity_cache: dict[str, Any] | None = None
+        # Spec §5.3 rule 6 one-shot: armed by resume(), consumed by the
+        # first node actually executed afterwards.  Always False on a
+        # fresh run.
+        self._resume_fidelity_armed: bool = False
         self.artifact_store = ArtifactStore(base_dir=logs_root)
 
         # M1/M2 (R12): Output table + failed-outputs propagation table.
@@ -308,6 +341,242 @@ class PipelineEngine:
         self._mark_run_completed()
         return outcome
 
+    async def resume(
+        self,
+        checkpoint: Checkpoint,
+        *,
+        context_overrides: dict[str, Any] | None = None,
+    ) -> Outcome:
+        """Continue an interrupted run from its checkpoint — spec §5.3.
+
+        The sibling of :meth:`run`, not a mode of it.  ``run()`` has no call
+        path to any checkpoint loader, so a stale or foreign ``checkpoint.json``
+        cannot affect a fresh run *by construction* — that inertness is a
+        property of the call graph, not a conditional that could misfire.
+
+        The checkpoint MUST already have passed the whole validation ladder
+        (``checkpoint.load_checkpoint_for_resume`` rungs 1–5 plus
+        ``verify_checkpoint_structure`` rung 6).  By the time this runs the
+        checkpoint is proven; the engine never validates, and nothing here
+        mutates state that the ladder has not already vouched for.
+
+        Spec §5.3 "Resume behavior" mapping:
+          rule 2 — context restored verbatim from the snapshot (NOT
+                   ``_initialize_context()``, which would re-seed ``iteration``
+                   to 0 and re-mirror graph attrs the snapshot already holds).
+          rule 3 — ``completed_nodes`` restored.  "Skip already-finished work"
+                   is achieved POSITIONALLY: the walk re-enters after the last
+                   completed node, so completed nodes are never visited and
+                   trivially cannot re-execute.  No per-node skip check, no
+                   replay scan.
+          rule 4 — ``node_retries`` and the engine's own counters restored
+                   rather than reset.
+          rule 5 — the next node is DETERMINED at resume time by re-running
+                   edge selection exactly once from the recorded outcome (see
+                   the resume-hop branch in ``_run_loop``).
+          rule 6 — the one-shot ``full`` -> ``summary:high`` degrade is armed
+                   here and applied to the first node actually executed.
+
+        Args:
+            checkpoint: A ladder-validated v2 checkpoint.
+            context_overrides: Process-level wiring that cannot be serialized
+                and therefore belongs to the resuming invocation rather than
+                the crashed one (e.g. ``context.target_dir`` from ``--cwd``).
+                Applied AFTER the snapshot restore, so it wins.
+
+        Returns:
+            The final Outcome of the resumed pipeline run.
+
+        Raises:
+            RuntimeError: If called on a branch-clone engine (S5 guard) or if
+                the checkpoint's ``current_node`` is not in the graph (which
+                the ladder's structural rung must already have refused).
+        """
+        # S5: same guard as run() — branch engines never own a checkpoint.
+        if self._is_branch_clone:
+            raise RuntimeError(
+                "resume() must not be called on a branch-clone engine; "
+                "branch engines are driven by run_subgraph() only and never "
+                "checkpoint (see clone_for_branch)."
+            )
+
+        if checkpoint.current_node not in self.graph.nodes:
+            # Defence in depth: the ladder's rung 6 owns this refusal and
+            # produces the actionable message.  Reaching here means a caller
+            # skipped the ladder.
+            raise RuntimeError(
+                f"resume() called with an unvalidated checkpoint: current_node "
+                f"{checkpoint.current_node!r} is not in the graph. Callers must "
+                "use checkpoint.load_checkpoint_for_resume() + "
+                "verify_checkpoint_structure() first."
+            )
+
+        pipeline_start_time = time.monotonic()
+
+        # -- rule 2: restore context verbatim -------------------------------
+        self.context.update(dict(checkpoint.context_snapshot))
+        if context_overrides:
+            self.context.update(dict(context_overrides))
+        # Restore the run log so it accumulates across the process boundary
+        # instead of restarting (the next checkpoint's `logs` stays complete).
+        for entry in checkpoint.logs:
+            self.context.append_log(entry)
+
+        # -- rule 3: restore completed work ---------------------------------
+        self.completed_nodes = list(checkpoint.completed_nodes)
+        self.node_outcomes = {
+            node_id: _outcome_from_checkpoint_record(
+                record, checkpoint.node_retries.get(node_id, 0)
+            )
+            for node_id, record in checkpoint.node_outcomes.items()
+        }
+
+        # -- rule 4: restore retry counters and engine budgets --------------
+        engine_state = checkpoint.engine_state or {}
+        self.iteration_count = int(engine_state.get("iteration_count", 0) or 0)
+        self._node_execution_counts = {
+            str(k): int(v)
+            for k, v in (engine_state.get("node_execution_counts") or {}).items()
+        }
+        goal_gate_retries = int(engine_state.get("goal_gate_retries", 0) or 0)
+        failure_routing_retries = int(
+            engine_state.get("failure_routing_retries", 0) or 0
+        )
+        steps = int(engine_state.get("steps", 0) or 0)
+
+        # failed_outputs is DERIVED, not persisted: it is a pure function of
+        # the graph's output table and which completed nodes failed/skipped.
+        # One source of truth, smaller schema.
+        for node_id, outcome in self.node_outcomes.items():
+            if outcome.status in (StageStatus.FAIL, StageStatus.SKIPPED):
+                self._populate_failed_outputs(node_id)
+
+        # -- rule 6: arm the one-shot fidelity degrade ----------------------
+        # Armed unconditionally; whether it fires depends on what the first
+        # executed node RESOLVES to (see _apply_resume_fidelity_degrade).
+        self._resume_fidelity_armed = True
+
+        self._record_resume_in_manifest(checkpoint)
+
+        self.context.append_log(
+            f"resume: continuing from checkpoint after node "
+            f"'{checkpoint.current_node}' ({len(self.completed_nodes)} node(s) "
+            f"already complete, iteration {self.iteration_count})"
+        )
+
+        await self._emit(
+            PIPELINE_RESUME,
+            {
+                "checkpoint_node": checkpoint.current_node,
+                "completed_count": len(self.completed_nodes),
+                "iteration_count": self.iteration_count,
+                "fidelity_degrade_armed": True,
+            },
+        )
+
+        # -- rule 5: hand the walk the recorded outcome, once ---------------
+        # A terminal-node checkpoint has no recorded outcome for current_node
+        # (the terminal save happens before the goal-gate check, and exit nodes
+        # never execute a handler).  resume_outcome=None then, and the loop's
+        # terminal branch re-runs the gate check over the restored outcomes —
+        # no special case.
+        entry_node = self.graph.nodes[checkpoint.current_node]
+        resume_outcome = self.node_outcomes.get(checkpoint.current_node)
+
+        outcome = await self._run_loop(
+            entry_node,
+            pipeline_start_time=pipeline_start_time,
+            goal_gate_retries=goal_gate_retries,
+            failure_routing_retries=failure_routing_retries,
+            steps=steps,
+            resume_outcome=resume_outcome,
+        )
+        self._mark_run_completed()
+        return outcome
+
+    async def _apply_resume_fidelity_degrade(self, node: Node) -> None:
+        """Spec §5.3 rule 6 — cap the FIRST node executed after a resume.
+
+        ``fidelity=full`` continuity is an in-memory transcript replayed into a
+        fresh spawn (``AmplifierBackend._thread_transcripts``).  A killed
+        process loses it unrecoverably, so without this the first resumed
+        ``full`` hop would silently spawn with empty history — "proceeds as if
+        nothing degraded", which is precisely what must not happen.
+
+        Trigger, stated openly: we degrade when the first resumed hop itself
+        RESOLVES to ``full``.  The spec's literal trigger is "if the PREVIOUS
+        node used full"; the two readings differ only where the literal one
+        does nothing useful — if this hop resolves to any non-``full`` mode it
+        already gets a fresh session with a preamble, so substituting
+        ``summary:high`` would be a no-op or an override of an explicit author
+        choice.  Ours additionally covers the lost-transcript case the literal
+        trigger misses (previous non-full -> next full).
+
+        One hop only, exactly as written: the arm is consumed by the first
+        executed node whatever it resolves to, so later nodes "may use full
+        fidelity again" untouched.
+
+        The durable record is produced HERE, engine-side, not in the backend:
+        a stub backend supplied through the public injection seam must still
+        leave the run's own records showing the degrade.
+        """
+        if not self._resume_fidelity_armed:
+            return
+        self._resume_fidelity_armed = False  # one-shot, consumed either way
+
+        # incoming_edge is not threaded through this stack (CodergenHandler
+        # passes incoming_edge=None to the backend), so resolve exactly what
+        # the backend will resolve.
+        fidelity = resolve_fidelity(node, None, self.graph)
+        if fidelity != "full":
+            return
+
+        self.context.set(RESUME_FIDELITY_CAP_KEY, "summary:high")
+        self.context.append_log(
+            f"resume: fidelity degraded full->summary:high for node "
+            f"'{node.id}' (spec §5.3 rule 6 — in-memory LLM sessions cannot "
+            f"be serialized)"
+        )
+        await self._emit(
+            PIPELINE_RESUME_FIDELITY_DEGRADE,
+            {"node_id": node.id, "from": "full", "to": "summary:high"},
+        )
+
+    def _record_resume_in_manifest(self, checkpoint: Checkpoint) -> None:
+        """Append this resume to ``manifest.json``'s ``resumes`` list.
+
+        Additive read-modify-write: ``start_time`` and provenance survive, and
+        ``_write_manifest()`` is deliberately NOT called (it would stamp a new
+        ``start_time`` over the interrupted run's).  Spec §5.6: a resumed run
+        is the SAME execution continued, in the same run directory.
+        """
+        manifest_path = os.path.join(self.logs_root, "manifest.json")
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            if not isinstance(manifest, dict):
+                return
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.debug("resume: manifest not updatable (%s)", exc)
+            return
+
+        resumes = manifest.get("resumes")
+        if not isinstance(resumes, list):
+            resumes = []
+        resumes.append(
+            {
+                "resumed_at": datetime.now(timezone.utc).isoformat(),
+                "from_node": checkpoint.current_node,
+                "completed_count": len(checkpoint.completed_nodes),
+            }
+        )
+        manifest["resumes"] = resumes
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, indent=2)
+        except OSError as exc:  # pragma: no cover - best effort provenance
+            logger.debug("resume: manifest not writable (%s)", exc)
+
     async def _run_loop(
         self,
         current_node: Node,
@@ -316,13 +585,16 @@ class PipelineEngine:
         goal_gate_retries: int = 0,
         failure_routing_retries: int = 0,
         steps: int = 0,
+        resume_outcome: Outcome | None = None,
     ) -> Outcome:
         """Walk the graph from ``current_node`` until an exit or a failure.
 
         The shared body of ``run()`` (fresh, entered at the start node with
-        zeroed counters).  Extracted verbatim so that no traversal, routing,
-        checkpoint, or loop_restart behavior can ever diverge between entry
-        points — there is exactly one implementation of the walk.
+        zeroed counters) and ``resume()`` (entered at the checkpoint's last
+        completed node, with its recorded outcome and restored counters).
+        Extracted verbatim so that no traversal, routing, checkpoint, or
+        loop_restart behavior can ever diverge between entry points — there is
+        exactly one implementation of the walk.
 
         Args:
             current_node: Node to execute next.
@@ -331,6 +603,11 @@ class PipelineEngine:
             goal_gate_retries: Goal-gate retry budget already consumed.
             failure_routing_retries: Failure-routing retry budget already consumed.
             steps: Safety step counter already consumed.
+            resume_outcome: Spec §5.3 rule 5 — the recorded outcome of
+                ``current_node``, present ONLY on a resume.  When set, the first
+                iteration skips execution of that already-completed node and
+                goes straight to edge selection (see the resume-hop branch
+                below).  ``None`` on every fresh run.
 
         Returns:
             The final Outcome of the pipeline run.
@@ -462,38 +739,420 @@ class PipelineEngine:
                 await self._emit_complete(gate_result, pipeline_start_time)
                 return gate_result
 
-            # M2/M3/M4: Eager reference scan — skip if a predecessor failed.
-            # Must run BEFORE the handler is invoked so handlers never see
-            # missing-because-failed inputs.
-            skip_outcome = await self._check_node_skip(current_node)
-            if skip_outcome is not None:
-                # Record the skip, populate failed_outputs, and emit events.
-                self.completed_nodes.append(current_node.id)
-                self.node_outcomes[current_node.id] = skip_outcome
-                self._populate_failed_outputs(current_node.id)
+            # ---- Resume hop: spec §5.3 rule 5, taken exactly once --------
+            #
+            # The checkpoint records the LAST COMPLETED node and its real
+            # outcome; the save happens BEFORE edge selection (Step 5 below),
+            # so a resumed run's very first act is to make that one selection
+            # itself, from recorded inputs.  Everything the crashed process
+            # had already done for this node — handler execution, completion
+            # recording, context updates, its checkpoint — is restored state,
+            # not work to redo.  So this hop skips straight to Step 5 and then
+            # shares every line after it (loop_restart handling, advance).
+            #
+            # This is NOT replay: no walk from Start, no per-node
+            # re-selection, no reconstructed outcomes — one decision, once,
+            # from the same inputs the live run had.  (Those three were the
+            # ingredients of the pre-#66 "no matching edge from resumed node"
+            # crash class.)  The node the crash interrupted re-executes
+            # naturally on the NEXT iteration, because it never completed.
+            if resume_outcome is not None:
+                outcome = resume_outcome
+                resume_outcome = None
+            else:
+                # M2/M3/M4: Eager reference scan — skip if a predecessor failed.
+                # Must run BEFORE the handler is invoked so handlers never see
+                # missing-because-failed inputs.
+                skip_outcome = await self._check_node_skip(current_node)
+                if skip_outcome is not None:
+                    # Record the skip, populate failed_outputs, and emit events.
+                    self.completed_nodes.append(current_node.id)
+                    self.node_outcomes[current_node.id] = skip_outcome
+                    self._populate_failed_outputs(current_node.id)
 
-                node_duration_ms = 0.0
-                self._write_node_status(current_node.id, skip_outcome, node_duration_ms)
+                    node_duration_ms = 0.0
+                    self._write_node_status(current_node.id, skip_outcome, node_duration_ms)
+                    await self._emit(
+                        PIPELINE_NODE_COMPLETE,
+                        {
+                            "node_id": current_node.id,
+                            "status": skip_outcome.status.value,
+                            "duration_ms": node_duration_ms,
+                            "notes": skip_outcome.notes,
+                            "failure_reason": skip_outcome.failure_reason,
+                            "session_id": None,
+                            "execution_index": self._node_execution_counts.get(
+                                current_node.id, 0
+                            ),
+                        },
+                    )
+                    self._save_checkpoint(
+                    current_node.id,
+                    goal_gate_retries=goal_gate_retries,
+                    failure_routing_retries=failure_routing_retries,
+                    steps=steps,
+                )
+                    await self._emit(
+                        PIPELINE_CHECKPOINT,
+                        {
+                            "node_id": current_node.id,
+                            "checkpoint_path": self._checkpoint_path,
+                        },
+                    )
+
+                    # Route the skipped node: treat SKIPPED like FAIL for edge
+                    # selection (conditions matching "outcome=skipped" or
+                    # "outcome=fail" win; unconditional edges may still apply).
+                    # M4: For runs_on=failure nodes that were skipped because
+                    # nothing failed, use a synthetic FAIL-shaped outcome to
+                    # keep routing predictable.
+                    routing_outcome = Outcome(
+                        status=StageStatus.FAIL,
+                        failure_reason=skip_outcome.failure_reason,
+                        notes=skip_outcome.notes,
+                    )
+                    edge = select_edge(
+                        current_node.id, routing_outcome, self.context, self.graph
+                    )
+                    if edge is None:
+                        # Skip propagation: after select_edge, also try unconditional
+                        # edges for skip propagation.  Downstream nodes will be checked
+                        # by _check_node_skip and SKIPPED if their dependencies failed.
+                        # This preserves skip-chain observability even under the fail-fast
+                        # guard (which blocks unconditional edges for FAIL outcomes when
+                        # the target has runs_on=success, the default).
+                        skip_candidates = [
+                            e
+                            for e in self.graph.outgoing_edges(current_node.id)
+                            if not e.condition
+                        ]
+                        if skip_candidates:
+                            from .edge_selection import _best_by_weight_then_lexical
+
+                            edge = _best_by_weight_then_lexical(skip_candidates)
+                    if edge is None:
+                        retry_node = self._resolve_failure_retry_target(current_node)
+                        if (
+                            retry_node is not None
+                            and failure_routing_retries < self._MAX_GOAL_GATE_RETRIES
+                        ):
+                            failure_routing_retries += 1
+                            current_node = retry_node
+                            continue
+                        fail_outcome = self.terminate_pipeline(
+                            node_id=current_node.id,
+                            upstream_outcome=routing_outcome,
+                            termination_reason=(
+                                f"No matching edge from skipped node '{current_node.id}'"
+                            ),
+                        )
+                        await self._emit_complete(fail_outcome, pipeline_start_time)
+                        return fail_outcome
+                    current_node = self.graph.nodes[edge.to_node]
+                    continue
+
+                # M4: For runs_on=always or runs_on=failure nodes, resolve
+                # missing context references to empty string before the handler.
+                runs_on = self._get_runs_on(current_node)
+                if runs_on in ("always", "failure"):
+                    self._resolve_missing_as_empty(current_node)
+
+                # Step 1.9 (Bug H): Pre-execution requires= file validation.
+                # If a node declares ``requires=`` (comma-separated relative paths),
+                # every path must exist under context.target_dir (or os.getcwd() as
+                # fallback) before the handler runs.  Missing files cause an
+                # immediate FAIL with a clear error — the handler is never invoked.
+                # This prevents LLM agents from fabricating missing inputs when
+                # upstream branches didn't produce their expected artifacts.
+                _requires_fail = self._check_requires(current_node)
+
+                # Step 2: Execute node handler with retry policy
+                handler = self.handler_registry.get(current_node)
+                handler_type = current_node.type or current_node.shape
+
+                # Increment per-node execution count (monotonic across all loop iterations)
+                self._node_execution_counts[current_node.id] = (
+                    self._node_execution_counts.get(current_node.id, 0) + 1
+                )
+                execution_index = self._node_execution_counts[current_node.id]
+
+                await self._emit(
+                    PIPELINE_NODE_START,
+                    {
+                        "node_id": current_node.id,
+                        "handler_type": handler_type,
+                        "attempt": 1,  # within-handler retry counter (backward compat)
+                        "execution_index": execution_index,  # NEW — graph-level visit count
+                    },
+                )
+
+                # Spec §5.3 rule 6: one-shot fidelity cap on the FIRST node
+                # executed after a resume.  Inert on every fresh run (the arm
+                # is only ever set by resume()).
+                await self._apply_resume_fidelity_degrade(current_node)
+
+                node_start_time = time.monotonic()
+                node_start_wall = (
+                    time.time()
+                )  # wall-clock epoch for must_write= mtime comparison
+                retry_policy = RetryPolicy.from_node(current_node, self.graph)
+
+                if _requires_fail is not None:
+                    # requires= validation failed — short-circuit without calling handler
+                    outcome = _requires_fail
+                else:
+                    # Per-node timeout enforcement: wrap handler execution with
+                    # asyncio.timeout when the node declares a timeout attribute.
+                    # The DOT parser stores all node-timeout durations as
+                    # milliseconds (see dot_parser._DURATION_UNITS): suffixed values
+                    # like "300s" via _try_parse_duration, and BARE integers like
+                    # "300" via dot_parser._SECONDS_IF_BARE_DURATION_ATTRS (seconds
+                    # -> ms at parse time). Divide by 1000 to get seconds for
+                    # asyncio.timeout. (Graph-level max_pipeline_duration is also in
+                    # ms and is compared against elapsed_ms — do not change that
+                    # path.)
+                    node_timeout_raw = current_node.timeout
+                    if node_timeout_raw:
+                        timeout_s = float(node_timeout_raw) / 1000.0
+                        try:
+                            async with asyncio.timeout(timeout_s):
+                                outcome = await execute_with_retry(
+                                    handler,
+                                    current_node,
+                                    self.context,
+                                    self.graph,
+                                    self.logs_root,
+                                    retry_policy,
+                                    hooks=self.hooks,
+                                    engine=self,
+                                )
+                        except asyncio.TimeoutError:
+                            node_duration_ms = (time.monotonic() - node_start_time) * 1000
+                            _ap = current_node.attrs.get("allow_partial")
+                            _timeout_status = (
+                                StageStatus.PARTIAL_SUCCESS
+                                if resolve_bool_attr(_ap, "allow_partial")
+                                else StageStatus.FAIL
+                            )
+                            outcome = Outcome(
+                                status=_timeout_status,
+                                notes=f"Node '{current_node.id}' timed out after {timeout_s}s",
+                                failure_reason="timeout",
+                            )
+                            await self._emit(
+                                PIPELINE_NODE_COMPLETE,
+                                {
+                                    "node_id": current_node.id,
+                                    "status": "timeout",
+                                    "duration_ms": node_duration_ms,
+                                    "notes": outcome.notes,
+                                    "failure_reason": outcome.failure_reason,
+                                    "session_id": outcome.session_id,
+                                    "execution_index": execution_index,  # NEW
+                                },
+                            )
+                    else:
+                        outcome = await execute_with_retry(
+                            handler,
+                            current_node,
+                            self.context,
+                            self.graph,
+                            self.logs_root,
+                            retry_policy,
+                            hooks=self.hooks,
+                            engine=self,
+                        )
+                node_duration_ms = (time.monotonic() - node_start_time) * 1000
+
+                # Spec §5.3 rule 6 is ONE hop: clear the cap the moment the
+                # handler returns, so it can never reach a later node or a
+                # checkpoint's context snapshot (Step 4b below).
+                self.context.set(RESUME_FIDELITY_CAP_KEY, None)
+
+                # Step 2.5: Check for cancellation after node execution
+                if self._check_cancelled():
+                    cancelled_outcome = Outcome(
+                        status=StageStatus.FAIL,
+                        notes=f"Pipeline cancelled after node '{current_node.id}' completed",
+                        failure_reason="cancelled",
+                    )
+                    await self._emit(
+                        PIPELINE_COMPLETE,
+                        {
+                            "status": "cancelled",
+                            "total_nodes_executed": len(self.completed_nodes),
+                            "duration_ms": (time.monotonic() - pipeline_start_time) * 1000,
+                        },
+                    )
+                    return cancelled_outcome
+
+                # L-9: auto_status — synthesize SUCCESS only when the handler writes
+                # no status (SKIPPED).  Spec §2.6 / Appendix C: "auto-generates a
+                # SUCCESS outcome" only applies when *no* status was written.
+                # An explicit FAIL or RETRY must pass through unchanged (fail-loud).
+                # Accept both bare true and the quoted string "true" (DOT parser
+                # returns "true" for quoted attribute values).
+                if (
+                    resolve_bool_attr(current_node.auto_status, "auto_status")
+                    and outcome.status == StageStatus.SKIPPED
+                ):
+                    logger.debug(
+                        "Node '%s' has auto_status=true; promoting SKIPPED to SUCCESS",
+                        current_node.id,
+                    )
+                    # S2 field audit (Outcome has 11 fields; see outcome.py) --
+                    # auto_status override:
+                    #   status, notes  -> OVERRIDDEN (this IS the promotion)
+                    #   context_updates, preferred_label, suggested_next_ids,
+                    #   failure_reason, session_id, response_text, failed_step,
+                    #   attempt_count  -> CARRIED forward; nothing upstream lost
+                    #   is_explicit    -> RESET to default False: this SUCCESS
+                    #     was synthesized by policy, not asserted by the node,
+                    #     so it must not silently satisfy a goal_gate (which
+                    #     requires is_success AND is_explicit; see
+                    #     _check_goal_gates()).
+                    outcome = Outcome(
+                        status=StageStatus.SUCCESS,
+                        notes="auto_status override (was skipped)",
+                        context_updates=outcome.context_updates,
+                        preferred_label=outcome.preferred_label,
+                        suggested_next_ids=outcome.suggested_next_ids,
+                        failure_reason=outcome.failure_reason,
+                        session_id=outcome.session_id,
+                        response_text=outcome.response_text,
+                        failed_step=outcome.failed_step,
+                        attempt_count=outcome.attempt_count,
+                    )
+
+                # continue_on_fail: override FAIL to SUCCESS for routing, log the failure
+                #
+                # NOTE — continue_on_fail and runs_on are NOT orthogonal:
+                # - continue_on_fail (per-predecessor-node override) flips FAIL→SUCCESS
+                #   BEFORE _populate_failed_outputs runs (see the M2/R12 FAIL check
+                #   below, which tests the already-overridden outcome).
+                # - runs_on=failure (per-cleanup-node gate) checks the failed_outputs
+                #   table populated by _populate_failed_outputs.
+                # - A predecessor with continue_on_fail=true that "fails" will appear
+                #   SUCCESSFUL to a runs_on=failure cleanup node — the cleanup will NOT
+                #   trigger.
+                # - This is intentional: continue_on_fail says "treat this as success;
+                #   do not surface a failure to the rest of the graph." A cleanup that
+                #   wants to fire on the original failure should use runs_on=always
+                #   instead of runs_on=failure.
+                if (
+                    resolve_bool_attr(
+                        current_node.attrs.get("continue_on_fail"), "continue_on_fail"
+                    )
+                    and outcome.status == StageStatus.FAIL
+                ):
+                    logger.warning(
+                        "Node '%s' failed but continue_on_fail=true; overriding to SUCCESS "
+                        "(failure: %s)",
+                        current_node.id,
+                        outcome.failure_reason or outcome.notes or "no reason given",
+                    )
+                    # S2 field audit (Outcome has 11 fields; see outcome.py) --
+                    # continue_on_fail override:
+                    #   status         -> OVERRIDDEN (this IS the override)
+                    #   notes          -> OVERRIDDEN; failure_reason is folded
+                    #     into the new notes text above, so the standalone
+                    #     failure_reason field is intentionally RESET to None
+                    #     below (not carried) rather than duplicated.
+                    #   context_updates, preferred_label, suggested_next_ids,
+                    #   session_id, response_text, failed_step, attempt_count
+                    #                  -> CARRIED forward; nothing upstream lost
+                    #     (failed_step in particular: continue_on_fail
+                    #     suppresses the failure for ROUTING only -- it must
+                    #     not erase the diagnostic record of what failed).
+                    #   is_explicit    -> RESET to default False: same
+                    #     reasoning as the auto_status override above -- this
+                    #     SUCCESS was synthesized by policy, not asserted by
+                    #     the node, so it must not silently satisfy a
+                    #     goal_gate (see _check_goal_gates()).
+                    outcome = Outcome(
+                        status=StageStatus.SUCCESS,
+                        notes=(
+                            f"continue_on_fail override (was FAIL: "
+                            f"{outcome.failure_reason or outcome.notes})"
+                        ),
+                        context_updates=outcome.context_updates,
+                        preferred_label=outcome.preferred_label,
+                        suggested_next_ids=outcome.suggested_next_ids,
+                        session_id=outcome.session_id,
+                        response_text=outcome.response_text,
+                        failed_step=outcome.failed_step,
+                        attempt_count=outcome.attempt_count,
+                    )
+
+                # Step 2.7: must_write= final backstop (EXTENSIONS.md §27).
+                # The per-attempt check inside execute_with_retry() already consumed
+                # max_retries attempts for violations on completed attempts; this
+                # backstop runs AFTER the auto_status and continue_on_fail overrides
+                # so that NO override can convert an artifact-contract violation into
+                # a silent success.  Running last — not a flag on the override blocks —
+                # is what makes the must_write FAIL non-overridable by construction.
+                must_write_fail = self._check_must_write(
+                    current_node, outcome, node_start_wall
+                )
+                if must_write_fail is not None:
+                    outcome = must_write_fail
+
+                # Step 3: Record completion
+                self.completed_nodes.append(current_node.id)
+                self.node_outcomes[current_node.id] = outcome
+                logger.debug("Node %s completed: %s", current_node.id, outcome.status.value)
+
+                # Step 3b: Write per-node status.json BEFORE emitting so hook bridge can copy it
+                self._write_node_status(current_node.id, outcome, node_duration_ms)
+
                 await self._emit(
                     PIPELINE_NODE_COMPLETE,
                     {
                         "node_id": current_node.id,
-                        "status": skip_outcome.status.value,
+                        "status": outcome.status.value,
                         "duration_ms": node_duration_ms,
-                        "notes": skip_outcome.notes,
-                        "failure_reason": skip_outcome.failure_reason,
-                        "session_id": None,
-                        "execution_index": self._node_execution_counts.get(
-                            current_node.id, 0
-                        ),
+                        "notes": outcome.notes,
+                        "failure_reason": outcome.failure_reason,
+                        "session_id": outcome.session_id,
+                        "execution_index": execution_index,  # NEW — graph-level visit count
+                        # Issue 10: structured tool-invocation failure payload.
+                        # Populated by ToolHandler on failure; None on success or for
+                        # non-tool nodes.  Consumers check for None before reading.
+                        "failed_step": outcome.failed_step,
+                        # support#379: real attempt count consumed by the retry
+                        # ladder (execute_with_retry sets Outcome.attempt_count).
+                        # Falls back to 1 for outcomes that never entered the
+                        # retry ladder (e.g. the requires= backstop above).
+                        "attempt": outcome.attempt_count or 1,
                     },
                 )
+
+                # M2 (R12): If the node failed or was skipped, add its declared
+                # outputs to failed_outputs so downstream nodes can be skipped.
+                # (SKIPPED outcomes from the engine skip-check are handled inline
+                # above; this path covers genuine handler-side FAILures.)
+                if outcome.status == StageStatus.FAIL:
+                    self._populate_failed_outputs(current_node.id)
+
+                # Step 4: Apply context updates from outcome
+                if outcome.context_updates:
+                    self.context.update(outcome.context_updates)
+                self.context.set("outcome", outcome.status.value)
+                if outcome.preferred_label:
+                    self.context.set("preferred_label", outcome.preferred_label)
+
+                # M3 (R12): Post-success contract violation audit — verify that
+                # all declared outputs= keys were actually written to context.
+                if outcome.is_success:
+                    await self._check_contract_violation(current_node.id, outcome)
+
+                # Step 4b: Save checkpoint after each node
                 self._save_checkpoint(
-                current_node.id,
-                goal_gate_retries=goal_gate_retries,
-                failure_routing_retries=failure_routing_retries,
-                steps=steps,
-            )
+                    current_node.id,
+                    goal_gate_retries=goal_gate_retries,
+                    failure_routing_retries=failure_routing_retries,
+                    steps=steps,
+                )
                 await self._emit(
                     PIPELINE_CHECKPOINT,
                     {
@@ -501,357 +1160,6 @@ class PipelineEngine:
                         "checkpoint_path": self._checkpoint_path,
                     },
                 )
-
-                # Route the skipped node: treat SKIPPED like FAIL for edge
-                # selection (conditions matching "outcome=skipped" or
-                # "outcome=fail" win; unconditional edges may still apply).
-                # M4: For runs_on=failure nodes that were skipped because
-                # nothing failed, use a synthetic FAIL-shaped outcome to
-                # keep routing predictable.
-                routing_outcome = Outcome(
-                    status=StageStatus.FAIL,
-                    failure_reason=skip_outcome.failure_reason,
-                    notes=skip_outcome.notes,
-                )
-                edge = select_edge(
-                    current_node.id, routing_outcome, self.context, self.graph
-                )
-                if edge is None:
-                    # Skip propagation: after select_edge, also try unconditional
-                    # edges for skip propagation.  Downstream nodes will be checked
-                    # by _check_node_skip and SKIPPED if their dependencies failed.
-                    # This preserves skip-chain observability even under the fail-fast
-                    # guard (which blocks unconditional edges for FAIL outcomes when
-                    # the target has runs_on=success, the default).
-                    skip_candidates = [
-                        e
-                        for e in self.graph.outgoing_edges(current_node.id)
-                        if not e.condition
-                    ]
-                    if skip_candidates:
-                        from .edge_selection import _best_by_weight_then_lexical
-
-                        edge = _best_by_weight_then_lexical(skip_candidates)
-                if edge is None:
-                    retry_node = self._resolve_failure_retry_target(current_node)
-                    if (
-                        retry_node is not None
-                        and failure_routing_retries < self._MAX_GOAL_GATE_RETRIES
-                    ):
-                        failure_routing_retries += 1
-                        current_node = retry_node
-                        continue
-                    fail_outcome = self.terminate_pipeline(
-                        node_id=current_node.id,
-                        upstream_outcome=routing_outcome,
-                        termination_reason=(
-                            f"No matching edge from skipped node '{current_node.id}'"
-                        ),
-                    )
-                    await self._emit_complete(fail_outcome, pipeline_start_time)
-                    return fail_outcome
-                current_node = self.graph.nodes[edge.to_node]
-                continue
-
-            # M4: For runs_on=always or runs_on=failure nodes, resolve
-            # missing context references to empty string before the handler.
-            runs_on = self._get_runs_on(current_node)
-            if runs_on in ("always", "failure"):
-                self._resolve_missing_as_empty(current_node)
-
-            # Step 1.9 (Bug H): Pre-execution requires= file validation.
-            # If a node declares ``requires=`` (comma-separated relative paths),
-            # every path must exist under context.target_dir (or os.getcwd() as
-            # fallback) before the handler runs.  Missing files cause an
-            # immediate FAIL with a clear error — the handler is never invoked.
-            # This prevents LLM agents from fabricating missing inputs when
-            # upstream branches didn't produce their expected artifacts.
-            _requires_fail = self._check_requires(current_node)
-
-            # Step 2: Execute node handler with retry policy
-            handler = self.handler_registry.get(current_node)
-            handler_type = current_node.type or current_node.shape
-
-            # Increment per-node execution count (monotonic across all loop iterations)
-            self._node_execution_counts[current_node.id] = (
-                self._node_execution_counts.get(current_node.id, 0) + 1
-            )
-            execution_index = self._node_execution_counts[current_node.id]
-
-            await self._emit(
-                PIPELINE_NODE_START,
-                {
-                    "node_id": current_node.id,
-                    "handler_type": handler_type,
-                    "attempt": 1,  # within-handler retry counter (backward compat)
-                    "execution_index": execution_index,  # NEW — graph-level visit count
-                },
-            )
-
-            node_start_time = time.monotonic()
-            node_start_wall = (
-                time.time()
-            )  # wall-clock epoch for must_write= mtime comparison
-            retry_policy = RetryPolicy.from_node(current_node, self.graph)
-
-            if _requires_fail is not None:
-                # requires= validation failed — short-circuit without calling handler
-                outcome = _requires_fail
-            else:
-                # Per-node timeout enforcement: wrap handler execution with
-                # asyncio.timeout when the node declares a timeout attribute.
-                # The DOT parser stores all node-timeout durations as
-                # milliseconds (see dot_parser._DURATION_UNITS): suffixed values
-                # like "300s" via _try_parse_duration, and BARE integers like
-                # "300" via dot_parser._SECONDS_IF_BARE_DURATION_ATTRS (seconds
-                # -> ms at parse time). Divide by 1000 to get seconds for
-                # asyncio.timeout. (Graph-level max_pipeline_duration is also in
-                # ms and is compared against elapsed_ms — do not change that
-                # path.)
-                node_timeout_raw = current_node.timeout
-                if node_timeout_raw:
-                    timeout_s = float(node_timeout_raw) / 1000.0
-                    try:
-                        async with asyncio.timeout(timeout_s):
-                            outcome = await execute_with_retry(
-                                handler,
-                                current_node,
-                                self.context,
-                                self.graph,
-                                self.logs_root,
-                                retry_policy,
-                                hooks=self.hooks,
-                                engine=self,
-                            )
-                    except asyncio.TimeoutError:
-                        node_duration_ms = (time.monotonic() - node_start_time) * 1000
-                        _ap = current_node.attrs.get("allow_partial")
-                        _timeout_status = (
-                            StageStatus.PARTIAL_SUCCESS
-                            if resolve_bool_attr(_ap, "allow_partial")
-                            else StageStatus.FAIL
-                        )
-                        outcome = Outcome(
-                            status=_timeout_status,
-                            notes=f"Node '{current_node.id}' timed out after {timeout_s}s",
-                            failure_reason="timeout",
-                        )
-                        await self._emit(
-                            PIPELINE_NODE_COMPLETE,
-                            {
-                                "node_id": current_node.id,
-                                "status": "timeout",
-                                "duration_ms": node_duration_ms,
-                                "notes": outcome.notes,
-                                "failure_reason": outcome.failure_reason,
-                                "session_id": outcome.session_id,
-                                "execution_index": execution_index,  # NEW
-                            },
-                        )
-                else:
-                    outcome = await execute_with_retry(
-                        handler,
-                        current_node,
-                        self.context,
-                        self.graph,
-                        self.logs_root,
-                        retry_policy,
-                        hooks=self.hooks,
-                        engine=self,
-                    )
-            node_duration_ms = (time.monotonic() - node_start_time) * 1000
-
-            # Step 2.5: Check for cancellation after node execution
-            if self._check_cancelled():
-                cancelled_outcome = Outcome(
-                    status=StageStatus.FAIL,
-                    notes=f"Pipeline cancelled after node '{current_node.id}' completed",
-                    failure_reason="cancelled",
-                )
-                await self._emit(
-                    PIPELINE_COMPLETE,
-                    {
-                        "status": "cancelled",
-                        "total_nodes_executed": len(self.completed_nodes),
-                        "duration_ms": (time.monotonic() - pipeline_start_time) * 1000,
-                    },
-                )
-                return cancelled_outcome
-
-            # L-9: auto_status — synthesize SUCCESS only when the handler writes
-            # no status (SKIPPED).  Spec §2.6 / Appendix C: "auto-generates a
-            # SUCCESS outcome" only applies when *no* status was written.
-            # An explicit FAIL or RETRY must pass through unchanged (fail-loud).
-            # Accept both bare true and the quoted string "true" (DOT parser
-            # returns "true" for quoted attribute values).
-            if (
-                resolve_bool_attr(current_node.auto_status, "auto_status")
-                and outcome.status == StageStatus.SKIPPED
-            ):
-                logger.debug(
-                    "Node '%s' has auto_status=true; promoting SKIPPED to SUCCESS",
-                    current_node.id,
-                )
-                # S2 field audit (Outcome has 11 fields; see outcome.py) --
-                # auto_status override:
-                #   status, notes  -> OVERRIDDEN (this IS the promotion)
-                #   context_updates, preferred_label, suggested_next_ids,
-                #   failure_reason, session_id, response_text, failed_step,
-                #   attempt_count  -> CARRIED forward; nothing upstream lost
-                #   is_explicit    -> RESET to default False: this SUCCESS
-                #     was synthesized by policy, not asserted by the node,
-                #     so it must not silently satisfy a goal_gate (which
-                #     requires is_success AND is_explicit; see
-                #     _check_goal_gates()).
-                outcome = Outcome(
-                    status=StageStatus.SUCCESS,
-                    notes="auto_status override (was skipped)",
-                    context_updates=outcome.context_updates,
-                    preferred_label=outcome.preferred_label,
-                    suggested_next_ids=outcome.suggested_next_ids,
-                    failure_reason=outcome.failure_reason,
-                    session_id=outcome.session_id,
-                    response_text=outcome.response_text,
-                    failed_step=outcome.failed_step,
-                    attempt_count=outcome.attempt_count,
-                )
-
-            # continue_on_fail: override FAIL to SUCCESS for routing, log the failure
-            #
-            # NOTE — continue_on_fail and runs_on are NOT orthogonal:
-            # - continue_on_fail (per-predecessor-node override) flips FAIL→SUCCESS
-            #   BEFORE _populate_failed_outputs runs (see the M2/R12 FAIL check
-            #   below, which tests the already-overridden outcome).
-            # - runs_on=failure (per-cleanup-node gate) checks the failed_outputs
-            #   table populated by _populate_failed_outputs.
-            # - A predecessor with continue_on_fail=true that "fails" will appear
-            #   SUCCESSFUL to a runs_on=failure cleanup node — the cleanup will NOT
-            #   trigger.
-            # - This is intentional: continue_on_fail says "treat this as success;
-            #   do not surface a failure to the rest of the graph." A cleanup that
-            #   wants to fire on the original failure should use runs_on=always
-            #   instead of runs_on=failure.
-            if (
-                resolve_bool_attr(
-                    current_node.attrs.get("continue_on_fail"), "continue_on_fail"
-                )
-                and outcome.status == StageStatus.FAIL
-            ):
-                logger.warning(
-                    "Node '%s' failed but continue_on_fail=true; overriding to SUCCESS "
-                    "(failure: %s)",
-                    current_node.id,
-                    outcome.failure_reason or outcome.notes or "no reason given",
-                )
-                # S2 field audit (Outcome has 11 fields; see outcome.py) --
-                # continue_on_fail override:
-                #   status         -> OVERRIDDEN (this IS the override)
-                #   notes          -> OVERRIDDEN; failure_reason is folded
-                #     into the new notes text above, so the standalone
-                #     failure_reason field is intentionally RESET to None
-                #     below (not carried) rather than duplicated.
-                #   context_updates, preferred_label, suggested_next_ids,
-                #   session_id, response_text, failed_step, attempt_count
-                #                  -> CARRIED forward; nothing upstream lost
-                #     (failed_step in particular: continue_on_fail
-                #     suppresses the failure for ROUTING only -- it must
-                #     not erase the diagnostic record of what failed).
-                #   is_explicit    -> RESET to default False: same
-                #     reasoning as the auto_status override above -- this
-                #     SUCCESS was synthesized by policy, not asserted by
-                #     the node, so it must not silently satisfy a
-                #     goal_gate (see _check_goal_gates()).
-                outcome = Outcome(
-                    status=StageStatus.SUCCESS,
-                    notes=(
-                        f"continue_on_fail override (was FAIL: "
-                        f"{outcome.failure_reason or outcome.notes})"
-                    ),
-                    context_updates=outcome.context_updates,
-                    preferred_label=outcome.preferred_label,
-                    suggested_next_ids=outcome.suggested_next_ids,
-                    session_id=outcome.session_id,
-                    response_text=outcome.response_text,
-                    failed_step=outcome.failed_step,
-                    attempt_count=outcome.attempt_count,
-                )
-
-            # Step 2.7: must_write= final backstop (EXTENSIONS.md §27).
-            # The per-attempt check inside execute_with_retry() already consumed
-            # max_retries attempts for violations on completed attempts; this
-            # backstop runs AFTER the auto_status and continue_on_fail overrides
-            # so that NO override can convert an artifact-contract violation into
-            # a silent success.  Running last — not a flag on the override blocks —
-            # is what makes the must_write FAIL non-overridable by construction.
-            must_write_fail = self._check_must_write(
-                current_node, outcome, node_start_wall
-            )
-            if must_write_fail is not None:
-                outcome = must_write_fail
-
-            # Step 3: Record completion
-            self.completed_nodes.append(current_node.id)
-            self.node_outcomes[current_node.id] = outcome
-            logger.debug("Node %s completed: %s", current_node.id, outcome.status.value)
-
-            # Step 3b: Write per-node status.json BEFORE emitting so hook bridge can copy it
-            self._write_node_status(current_node.id, outcome, node_duration_ms)
-
-            await self._emit(
-                PIPELINE_NODE_COMPLETE,
-                {
-                    "node_id": current_node.id,
-                    "status": outcome.status.value,
-                    "duration_ms": node_duration_ms,
-                    "notes": outcome.notes,
-                    "failure_reason": outcome.failure_reason,
-                    "session_id": outcome.session_id,
-                    "execution_index": execution_index,  # NEW — graph-level visit count
-                    # Issue 10: structured tool-invocation failure payload.
-                    # Populated by ToolHandler on failure; None on success or for
-                    # non-tool nodes.  Consumers check for None before reading.
-                    "failed_step": outcome.failed_step,
-                    # support#379: real attempt count consumed by the retry
-                    # ladder (execute_with_retry sets Outcome.attempt_count).
-                    # Falls back to 1 for outcomes that never entered the
-                    # retry ladder (e.g. the requires= backstop above).
-                    "attempt": outcome.attempt_count or 1,
-                },
-            )
-
-            # M2 (R12): If the node failed or was skipped, add its declared
-            # outputs to failed_outputs so downstream nodes can be skipped.
-            # (SKIPPED outcomes from the engine skip-check are handled inline
-            # above; this path covers genuine handler-side FAILures.)
-            if outcome.status == StageStatus.FAIL:
-                self._populate_failed_outputs(current_node.id)
-
-            # Step 4: Apply context updates from outcome
-            if outcome.context_updates:
-                self.context.update(outcome.context_updates)
-            self.context.set("outcome", outcome.status.value)
-            if outcome.preferred_label:
-                self.context.set("preferred_label", outcome.preferred_label)
-
-            # M3 (R12): Post-success contract violation audit — verify that
-            # all declared outputs= keys were actually written to context.
-            if outcome.is_success:
-                await self._check_contract_violation(current_node.id, outcome)
-
-            # Step 4b: Save checkpoint after each node
-            self._save_checkpoint(
-                current_node.id,
-                goal_gate_retries=goal_gate_retries,
-                failure_routing_retries=failure_routing_retries,
-                steps=steps,
-            )
-            await self._emit(
-                PIPELINE_CHECKPOINT,
-                {
-                    "node_id": current_node.id,
-                    "checkpoint_path": self._checkpoint_path,
-                },
-            )
 
             # Step 5: Select next edge — spec §3.3 single-edge selection.
             #

@@ -4,8 +4,10 @@ After every node execution, a JSON checkpoint is saved so the pipeline
 can observe crash state. Tests cover serialization, deserialization,
 and engine integration.
 
-The engine always starts from the graph's start node — stale checkpoint
-files are silently ignored. Graph-level idempotency is the handler's job.
+A fresh ``run()`` always starts from the graph's start node — stale
+checkpoint files are inert to it (there is no call path from ``run()`` to
+any checkpoint loader). Resume is a separate, explicit entry point; see
+``test_resume_validation.py`` and the runner's resume e2e tests.
 
 Spec coverage: CHKP-001–006, Section 5.3.
 """
@@ -17,6 +19,7 @@ import pytest
 
 from amplifier_module_loop_pipeline.checkpoint import (
     Checkpoint,
+    fingerprint_dot_source,
     load_checkpoint,
     save_checkpoint,
 )
@@ -401,6 +404,104 @@ class TestCheckpointKeyShape:
 
         # Spec §5.3: completed_nodes is List<String>
         assert isinstance(data["completed_nodes"], list)
-        # No beyond-spec fields
-        assert "node_outcomes" not in data
+
+        # Schema v2 is a strict SUPERSET of the six §5.3 fields above: the
+        # spec keys keep their exact names and shapes; the v2 keys are
+        # additive and exist so the explicit resume entry point can restore
+        # state instead of replaying completed work (issue #224).
+        assert data["schema_version"] == 2
+        assert data["run_state"] in ("in_flight", "completed")
+        assert isinstance(data["node_outcomes"], dict)
+        assert isinstance(data["engine_state"], dict)
+        assert isinstance(data["graph"], dict)
+        # The retired pre-#66 "identity" block is NOT what v2 reintroduces:
+        # graph identity lives under graph.fingerprint and is evaluated ONLY
+        # on the explicit resume path, never inside a fresh run().
         assert "identity" not in data
+
+
+# --- Schema v2 write side (issue #224) ---
+
+
+class TestCheckpointV2Schema:
+    """Schema v2 is a strict superset of the six spec §5.3 fields."""
+
+    def test_defaults_are_v2_in_flight(self):
+        cp = Checkpoint(
+            current_node="a",
+            completed_nodes=["a"],
+            context_snapshot={},
+            timestamp="2026-08-14T00:00:00Z",
+        )
+        assert cp.schema_version == 2
+        assert cp.run_state == "in_flight"
+        assert cp.node_outcomes == {}
+        assert cp.engine_state == {}
+        assert cp.graph == {}
+
+    def test_v2_round_trip(self, tmp_path):
+        """All v2 fields survive save -> load."""
+        cp = Checkpoint(
+            current_node="b",
+            completed_nodes=["a", "b"],
+            context_snapshot={"k": "v"},
+            timestamp="2026-08-14T00:00:00Z",
+            node_retries={"b": 1},
+            logs=["l1"],
+            run_state="in_flight",
+            node_outcomes={
+                "b": {
+                    "status": "success",
+                    "preferred_label": "ship",
+                    "suggested_next_ids": None,
+                    "is_explicit": True,
+                    "failure_reason": None,
+                    "notes": "ok",
+                }
+            },
+            engine_state={
+                "iteration_count": 1,
+                "node_execution_counts": {"a": 1, "b": 2},
+                "goal_gate_retries": 0,
+                "failure_routing_retries": 0,
+                "steps": 3,
+            },
+            graph={"fingerprint": "sha256:abc", "dot_source": "digraph {}"},
+        )
+        path = str(tmp_path / "checkpoint.json")
+        save_checkpoint(cp, path)
+        loaded = load_checkpoint(path)
+
+        assert loaded.schema_version == 2
+        assert loaded.run_state == "in_flight"
+        assert loaded.node_retries == {"b": 1}
+        assert loaded.node_outcomes["b"]["is_explicit"] is True
+        assert loaded.node_outcomes["b"]["preferred_label"] == "ship"
+        assert loaded.engine_state["node_execution_counts"] == {"a": 1, "b": 2}
+        assert loaded.graph_fingerprint == "sha256:abc"
+        assert loaded.graph_dot_source == "digraph {}"
+
+    def test_v1_checkpoint_loads_as_version_1(self, tmp_path):
+        """A pre-resume checkpoint (no schema_version) reports v1, not v2."""
+        path = str(tmp_path / "checkpoint.json")
+        raw = {
+            "current_node": "step",
+            "completed_nodes": ["start", "step"],
+            "context": {},
+            "timestamp": "2025-01-01T00:00:00Z",
+            "node_retries": {},
+            "logs": [],
+        }
+        with open(path, "w") as f:
+            json.dump(raw, f)
+        loaded = load_checkpoint(path)
+        assert loaded.schema_version == 1
+        assert loaded.graph_fingerprint == ""
+        assert loaded.node_outcomes == {}
+
+    def test_fingerprint_is_stable_and_source_sensitive(self):
+        a = "digraph { start -> exit }"
+        b = "digraph { start -> other }"
+        assert fingerprint_dot_source(a) == fingerprint_dot_source(a)
+        assert fingerprint_dot_source(a) != fingerprint_dot_source(b)
+        assert fingerprint_dot_source(a).startswith("sha256:")

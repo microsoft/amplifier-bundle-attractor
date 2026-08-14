@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 
@@ -206,6 +207,18 @@ def _add_optional(a: int | None, b: int | None) -> int | None:
     return (a or 0) + (b or 0)
 
 
+def _add_cost(a: Decimal | None, b: Decimal | None) -> Decimal | None:
+    """Sum two optional Decimal costs: any None operand yields None total.
+
+    This is intentionally different from _add_optional (which treats None as 0
+    for token fields). For cost, None means "pricing unknown" -- a partial sum
+    would be misleading, so any unknown operand propagates None to the total.
+    """
+    if a is None or b is None:
+        return None
+    return a + b
+
+
 @dataclass
 class Usage:
     """Token usage statistics (Spec §3.9). Supports addition for multi-step aggregation."""
@@ -217,6 +230,7 @@ class Usage:
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
     raw: dict[str, Any] | None = None
+    cost_usd: Decimal | None = None
 
     def __add__(self, other: Usage) -> Usage:
         return Usage(
@@ -232,6 +246,7 @@ class Usage:
             cache_write_tokens=_add_optional(
                 self.cache_write_tokens, other.cache_write_tokens
             ),
+            cost_usd=_add_cost(self.cost_usd, other.cost_usd),
         )
 
 
@@ -507,6 +522,8 @@ class StreamAccumulator:
 
     def response(self) -> Response:
         """Build the accumulated Response. Call after stream ends."""
+        from unified_llm._cost import compute_cost
+
         content: list[ContentPart] = []
 
         # Assemble text
@@ -537,13 +554,36 @@ class StreamAccumulator:
                 )
             )
 
+        base_usage = self._usage or Usage(input_tokens=0, output_tokens=0, total_tokens=0)
+
+        # Inject cost_usd if not already set and model is known
+        if base_usage.cost_usd is None and self._model:
+            computed = compute_cost(
+                self._model,
+                base_usage.input_tokens,
+                base_usage.output_tokens,
+                cache_read_tokens=base_usage.cache_read_tokens or 0,
+                cache_write_tokens=base_usage.cache_write_tokens or 0,
+            )
+            if computed is not None:
+                base_usage = Usage(
+                    input_tokens=base_usage.input_tokens,
+                    output_tokens=base_usage.output_tokens,
+                    total_tokens=base_usage.total_tokens,
+                    reasoning_tokens=base_usage.reasoning_tokens,
+                    cache_read_tokens=base_usage.cache_read_tokens,
+                    cache_write_tokens=base_usage.cache_write_tokens,
+                    raw=base_usage.raw,
+                    cost_usd=computed,
+                )
+
         return Response(
             id=self._response_id,
             model=self._model,
             provider=self._provider,
             message=Message(role=Role.ASSISTANT, content=content),
             finish_reason=self._finish_reason or FinishReason(reason="other"),
-            usage=self._usage or Usage(input_tokens=0, output_tokens=0, total_tokens=0),
+            usage=base_usage,
         )
 
 

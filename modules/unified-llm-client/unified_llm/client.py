@@ -53,12 +53,39 @@ class Client:
 
     async def complete(self, request: Request) -> Response:
         """Low-level blocking call. No retry. (Spec §4.1)."""
+        from unified_llm._cost import compute_cost
+
         adapter = self._resolve_adapter(request)
 
         async def handler(req: Request) -> Response:
             return await adapter.complete(req)
 
-        return await apply_middleware(self._middleware, handler, request)
+        response = await apply_middleware(self._middleware, handler, request)
+
+        # Inject cost_usd if not already set by the adapter
+        if response.usage.cost_usd is None:
+            computed = compute_cost(
+                response.model,
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+                cache_read_tokens=response.usage.cache_read_tokens or 0,
+                cache_write_tokens=response.usage.cache_write_tokens or 0,
+            )
+            if computed is not None:
+                from unified_llm.types import Usage
+
+                response.usage = Usage(
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                    total_tokens=response.usage.total_tokens,
+                    reasoning_tokens=response.usage.reasoning_tokens,
+                    cache_read_tokens=response.usage.cache_read_tokens,
+                    cache_write_tokens=response.usage.cache_write_tokens,
+                    raw=response.usage.raw,
+                    cost_usd=computed,
+                )
+
+        return response
 
     async def stream(self, request: Request) -> AsyncIterator[StreamEvent]:
         """Low-level streaming call. No retry. (Spec §4.2)."""

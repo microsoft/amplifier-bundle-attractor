@@ -233,6 +233,7 @@ class DirectProviderBackend:
                 "finish_reason": result.finish_reason.reason,
                 "text_length": len(result.text) if result.text else 0,
                 "step_count": len(result.steps),
+                "cost_usd": result.total_usage.cost_usd,
             },
         )
 

@@ -126,6 +126,75 @@ CAPSULE_LINE_WITH_ENTROPY = (
 )
 
 
+# ---- run 31754414275: the CAPSULE-PROVENANCE false positive ----
+#
+# The pipeline CONVERGED and packaged a feature capsule; the pre-publication
+# capsule-artifacts `scan` then reported shape=high-entropy-token in SIX
+# capsule files and blocked the capsule PR -- the second consecutive
+# converged capsule destroyed at the door.
+#
+# Not one of the six was a secret. The maintainer-ratified criteria REQUIRE
+# the gate to vendor the provider-rates oracle as a plain file (a pinned copy
+# of amplifier_module_provider_anthropic/_cost.py) AND to record "its exact
+# version/commit in capsule provenance". A capsule that obeys therefore emits
+# a 40-hex commit SHA inside a long URL path in: DEFINITION.md's provenance
+# section, the vendored oracle's own header, the gate script (twice -- the two
+# ACs that consult the oracle), and the gate's header output, which the rival
+# lane copies verbatim into verify-rival.log and then quotes again into
+# rival-red-unadjudicated.md via `tail -20`.
+#
+# ENTROPY_CANDIDATE's character class contains `/` (base64 uses it as data),
+# so the regex swallows the whole URL into ONE run and the pure-hex exclusion
+# -- which correctly clears the bare SHA -- never gets to see it. Measured:
+# SHA alone 3.63 bits/char, path alone 4.14, the two merged 4.62. See the
+# STRUCTURAL_HEX_SEGMENT block in scrub_secrets.py.
+ORACLE_COMMIT = "dae6d114d7821e2081a05d6e4bcd350c88dc2a41"
+ORACLE_RAW_URL = (
+    "https://raw.githubusercontent.com/microsoft/amplifier-module-provider-anthropic/"
+    f"{ORACLE_COMMIT}/amplifier_module_provider_anthropic/_cost.py"
+)
+ORACLE_BLOB_URL = (
+    "https://github.com/microsoft/amplifier-module-provider-anthropic/blob/"
+    f"{ORACLE_COMMIT}/amplifier_module_provider_anthropic/_cost.py"
+)
+
+# One reconstructed line per incident site. None of these is a credential;
+# every one is content the capsule contract requires.
+CAPSULE_PROVENANCE_LINES = (
+    # <id>.md:39 -- DEFINITION.md provenance row
+    f"| `oracle.py` | pinned copy | {ORACLE_BLOB_URL} |",
+    # <id>.oracle.py:4 -- the vendored oracle's own vendoring header
+    f"# Vendored from {ORACLE_RAW_URL}",
+    # <id>.verify.sh:369 -- AC-1's oracle load, provenance comment
+    f"# oracle (AC-1 parity): vendored from {ORACLE_RAW_URL}",
+    # <id>.verify.sh:772 -- AC-3's oracle load, same provenance comment
+    f"#   expected values derived from {ORACLE_RAW_URL}",
+    # <id>.verify-rival.log:2 -- the gate's own header line, and (because the
+    # log is shorter than 20 lines) the same bytes again at
+    # <id>.rival-red-unadjudicated.md:10 via `tail -20 .ai/verify-rival.log`
+    f"Oracle:    .ai/capsule/oracle.py <- {ORACLE_RAW_URL}",
+    # the bare provenance shapes the same contract emits
+    f"Oracle:    .ai/capsule/oracle.py (commit {ORACLE_COMMIT})",
+    f"base_sha={ORACLE_COMMIT}",
+    f"repos/microsoft/amplifier-module-provider-anthropic/contents/_cost.py?ref={ORACLE_COMMIT}",
+)
+
+# THE EXCLUSION MUST NOT BECOME A HIDING PLACE. Each of these carries real
+# random material; a digest-length hex segment sitting next to it changes
+# nothing, and every one must still fire.
+ENTROPY_MUST_STILL_FIRE = (
+    # a genuinely random 32-char base64 token: mixed case + digits + / and +
+    "attachment=T3k9/Qm2+Wz7XbR4pLdV6sYh1NcAg8Uj",
+    # the same, parked next to a git SHA in a path -- the SHA is removed from
+    # the estimate, the random blob is not
+    f"artifacts/{ORACLE_COMMIT}/T3k9/Qm2+Wz7XbR4pLdV6sYh1NcAg8Uj",
+    # base64url random material (the `-`/`_` alphabet)
+    "resume=qm7Zt0Xb-Rk3LpW9sVh2Ye8NcAd1Gf6U",
+    # an AWS-style secret access key: base64 alphabet including `/`
+    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLEKEY9x",
+)
+
+
 def run_cli(args: list[str], env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if k not in scrub_secrets.DEFAULT_WATCH_ENV}
     env["SCRUB_WATCH_ENV"] = ""
@@ -542,6 +611,118 @@ class ScrubTests(unittest.TestCase):
         self.assertIn(b"[REDACTED:github-token]", data)
         # Non-matched bytes preserved.
         self.assertTrue(data.startswith(bytes(range(256))))
+
+    # ---- run 31754414275 capsule-provenance regression, BOTH directions ----
+
+    def test_capsule_provenance_shapes_do_not_trip_entropy(self) -> None:
+        """Every reconstructed incident line must scan CLEAN.
+
+        BEFORE this fix each URL-shaped line reported
+        shape=high-entropy-token and hard-failed the capsule-artifacts scan
+        (no quarantine arm exists for the pair -- a finding there fails the
+        whole run), destroying a converged capsule over a 40-hex commit SHA
+        the criteria REQUIRE the capsule to carry.
+        """
+        for line in CAPSULE_PROVENANCE_LINES:
+            with self.subTest(line=line[:60]):
+                self.assertEqual(
+                    scrub_secrets.scan_text(line, {}),
+                    [],
+                    f"capsule provenance must not be secret-shaped: {line}",
+                )
+
+    def test_capsule_artifacts_scan_clean_end_to_end(self) -> None:
+        """The six incident sites, as files, through the real CLI verb the
+        workflow runs on the capsule pair."""
+        cid = "per-call-cost-exposure"
+        self.write(f"out/{cid}.md", f"| `oracle.py` | pinned copy | {ORACLE_BLOB_URL} |\n")
+        self.write(
+            f"out/{cid}.oracle.py",
+            '"""Anthropic pricing rates and cost computation."""\n'
+            "#\n"
+            f"# Vendored from {ORACLE_RAW_URL}\n"
+            "from decimal import Decimal\n",
+        )
+        self.write(
+            f"out/{cid}.verify.sh",
+            "set -euo pipefail\n"
+            f"# oracle (AC-1 parity): vendored from {ORACLE_RAW_URL}\n"
+            f"#   expected values derived from {ORACLE_RAW_URL}\n",
+        )
+        self.write(
+            f"out/{cid}.verify-rival.log",
+            "=== DEFINITION.verify.sh: per-call cost exposure gate ===\n"
+            f"Oracle:    .ai/capsule/oracle.py <- {ORACLE_RAW_URL}\n"
+            f"Base SHA:  {ORACLE_COMMIT}\n",
+        )
+        self.write(
+            f"out/{cid}.rival-red-unadjudicated.md",
+            "# Finding: RIVAL RED\n\n"
+            "--- gate output under the rival patch (tail of .ai/verify-rival.log) ---\n"
+            "=== DEFINITION.verify.sh: per-call cost exposure gate ===\n"
+            f"Oracle:    .ai/capsule/oracle.py <- {ORACLE_RAW_URL}\n",
+        )
+        proc = run_cli(["scan", str(self.root)])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("no secret-shaped material", proc.stdout)
+        self.assertNotIn(scrub_secrets.ENTROPY_SHAPE, proc.stdout)
+
+    def test_structural_hex_segments_are_removed_before_the_estimate(self) -> None:
+        """The mechanism, directly: a digest-length pure-hex SEGMENT is
+        dropped exactly as `-`/`_` already are; anything else is identity."""
+        run = (
+            "com/microsoft/amplifier-module-provider-anthropic/"
+            f"{ORACLE_COMMIT}/amplifier_module_provider_anthropic/_cost"
+        )
+        reduced = scrub_secrets._without_structural_hex(run)
+        self.assertNotIn(ORACLE_COMMIT, reduced)
+        self.assertIn("amplifier-module-provider-anthropic", reduced)
+        # The whole point: the mixture scored above threshold, neither part does.
+        self.assertGreaterEqual(scrub_secrets._shannon_entropy(run), scrub_secrets.ENTROPY_THRESHOLD)
+        self.assertLess(scrub_secrets._shannon_entropy(reduced), scrub_secrets.ENTROPY_THRESHOLD)
+        self.assertLess(scrub_secrets._shannon_entropy(ORACLE_COMMIT), 4.0)
+        # Identity for a run with no digest-length hex segment.
+        for token in ("T3k9/Qm2+Wz7XbR4pLdV6sYh1NcAg8Uj", "abcdef1234/notahexsegment"):
+            self.assertEqual(scrub_secrets._without_structural_hex(token), token)
+        # A short hex span is NOT structure -- it stays in the estimate.
+        self.assertEqual(scrub_secrets._without_structural_hex("beefcafe"), "beefcafe")
+
+    def test_entropy_still_fires_on_random_material(self) -> None:
+        """The narrowing must never buy random material a pass -- including
+        random material parked right next to a git SHA."""
+        for line in ENTROPY_MUST_STILL_FIRE:
+            with self.subTest(line=line[:60]):
+                self.assertIn(
+                    scrub_secrets.ENTROPY_SHAPE,
+                    scrub_secrets.scan_text(line, {}),
+                    f"random material must still be detected: {line}",
+                )
+
+    def test_real_credential_battery_still_detected(self) -> None:
+        """End-to-end, through the CLI: every known credential shape, a
+        sensitive assignment, and a genuinely random base64 token still fail
+        the scan. Values are never echoed into the log."""
+        random_b64 = "T3k9/Qm2+Wz7XbR4pLdV6sYh1NcAg8Uj"
+        cases = {
+            "openai-key": (f"OPENAI_API_KEY={FAKE_OPENAI}", "openai-key"),
+            "github-token": (f"tok {FAKE_GHP} end", "github-token"),
+            "github-fine-grained-pat": (f"pat {FAKE_FG_PAT} end", "github-fine-grained-pat"),
+            "assignment": ("CLIENT_SECRET=hunter2-value-9931", "assignment:CLIENT_SECRET"),
+            "random-base64": (f"blob: {random_b64}", scrub_secrets.ENTROPY_SHAPE),
+            "sha-adjacent-random": (
+                f"artifacts/{ORACLE_COMMIT}/{random_b64}",
+                scrub_secrets.ENTROPY_SHAPE,
+            ),
+        }
+        for name, (content, shape) in cases.items():
+            with self.subTest(case=name):
+                sub = tempfile.TemporaryDirectory()
+                self.addCleanup(sub.cleanup)
+                Path(sub.name, "x.log").write_text(content + "\n")
+                proc = run_cli(["scan", sub.name])
+                self.assertEqual(proc.returncode, 1, f"{name}: {proc.stdout}")
+                self.assertIn(f"shape={shape}", proc.stdout)
+                self.assertIn("The upload must be blocked", proc.stdout)
 
     def test_missing_root_is_not_an_error(self) -> None:
         proc = run_cli(["scrub", str(self.root / "does-not-exist")])

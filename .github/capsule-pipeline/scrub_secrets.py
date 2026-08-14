@@ -237,6 +237,70 @@ ASSIGNMENT_PATTERN = re.compile(
 ENTROPY_CANDIDATE = re.compile(r"[A-Za-z0-9+/_\-=]{28,}")
 ENTROPY_THRESHOLD = 4.5  # bits/char; random base64-ish material sits above
 
+# THE PURE-HEX EXCLUSION IS STRUCTURAL, NOT WHOLE-RUN (incident, run
+# 31754414275 -- the second consecutive CONVERGED capsule destroyed at the
+# publication door, six findings, every one shape=high-entropy-token).
+#
+# `_entropy_suspicious` has always excluded a candidate that is ENTIRELY
+# hex, and that exclusion is not a bias -- it is arithmetic: 16 symbols
+# cannot carry more than log2(16) = 4.0 bits/char, so a git SHA or a sha256
+# digest is PROVABLY below the 4.5 threshold and can never be honest
+# evidence of randomness. But ENTROPY_CANDIDATE's character class contains
+# `/` (base64 uses it as DATA, so it cannot simply be dropped), which means
+# a SHA sitting inside a URL or a path is never a candidate BY ITSELF: the
+# regex swallows the entire path into ONE run, and the all-hex test then
+# fails on the merged string. Measured, from the incident's own shapes:
+#
+#   dae6d114d7821e2081a05d6e4bcd350c88dc2a41                     H = 3.63  clean
+#   com/microsoft/amplifier-module-provider-anthropic/
+#     amplifier_module_provider_anthropic/_cost                  H = 4.14  clean
+#   ...the same two, merged across `/` by the character class     H = 4.62  FIRES
+#
+# Neither half is random; the MIXTURE reads as random. Shannon entropy of a
+# concatenation is not a weighted mean of its parts' entropies: hex digits
+# and path words draw from near-disjoint alphabets (14 distinct symbols +
+# 20 distinct symbols -> 30), so the union histogram is FLATTER than either
+# part's and the plug-in estimator reports more bits/char than either
+# constituent (the length-weighted mean of the two parts is 3.98). Alphabet
+# heterogeneity across a separator is not evidence of randomness. It is,
+# however, exactly what a capsule looks like: the criteria REQUIRE the gate
+# to vendor its provider-rates oracle as a plain file and to record "its
+# exact version/commit in capsule provenance", so every artifact that names
+# that oracle -- DEFINITION.md, the vendored oracle's own header, the gate
+# script, and the gate's log output quoted into the rival finding -- carries
+# a 40-hex commit SHA inside a long URL path. One structural requirement,
+# six findings, one blocked capsule.
+#
+# So the exclusion this file already makes is applied where it actually
+# lives: a digest-length pure-hex SEGMENT is removed from the run before the
+# entropy estimate, exactly as `-` and `_` already are. A run containing no
+# such segment is scored BYTE-IDENTICALLY to before -- this narrows nothing
+# else, and it does not touch the threshold.
+#
+# The length floor is what keeps this from being a hiding place. A hex-only
+# span this long is a SHA/digest by construction, not a coincidence: the
+# chance that N characters of genuinely random base64 are all hex digits is
+# (16/64)**N = 4**-N, i.e. ~2.3e-10 at N=16. Random secret material cannot
+# be smuggled through this exclusion at any useful length.
+#
+# REAL HEX-SHAPED CREDENTIALS ARE UNAFFECTED, and were never this layer's
+# job: an all-hex API key is ALREADY excluded here today by the whole-run
+# test. They are covered by layer 1 (the `sk-` / `ghp_` / `github_pat_`
+# prefixes), layer 2 (end-anchored sensitive assignments -- `API_KEY=<hex>`
+# still fires, and its value is redacted), and layer 3 (the literal values
+# of this job's own secrets, matched regardless of shape). This change
+# touches ONLY the shape GUESS in layer 4, and only where that guess was
+# arithmetically wrong.
+HEX_SEGMENT_MIN = 16
+
+# A maximal alphanumeric segment of a candidate run that is entirely hex and
+# at least HEX_SEGMENT_MIN long. The lookarounds are what make it MAXIMAL:
+# inside a candidate the only non-alphanumeric characters are the structural
+# separators `/ + - _ =`, so requiring a non-alphanumeric boundary on both
+# sides means `dae6...a41` in `.../dae6...a41/...` matches whole, while the
+# leading hex of a mixed segment (`abcdef1234567890xyz`) matches nothing.
+STRUCTURAL_HEX_SEGMENT = re.compile(r"(?<![A-Za-z0-9])[0-9a-fA-F]{%d,}(?![A-Za-z0-9])" % HEX_SEGMENT_MIN)
+
 # The one shape `gate` may quarantine instead of blocking on. Named, not
 # inlined, because the whole split verdict turns on this exact string: it
 # is the shape `scan_text` reports for layer 4 and nothing else.
@@ -249,13 +313,31 @@ def _shannon_entropy(s: str) -> float:
     return -sum((c / n) * math.log2(c / n) for c in counts.values())
 
 
+def _without_structural_hex(token: str) -> str:
+    """`token` with its digest-length pure-hex segments removed.
+
+    A git SHA / sha256 digest cannot exceed 4.0 bits/char (16 symbols), so
+    it is never itself evidence of randomness -- but concatenated with
+    neighbouring path text across the `/` in ENTROPY_CANDIDATE's character
+    class it INFLATES the plug-in Shannon estimate above what either part
+    scores alone (see the STRUCTURAL_HEX_SEGMENT block above). Removing
+    those segments before the estimate is the same exclusion the whole-run
+    hex test already makes, applied to the segment it actually describes.
+
+    A token with no such segment comes back unchanged, so every other run
+    in the corpus is scored exactly as before.
+    """
+    return STRUCTURAL_HEX_SEGMENT.sub("", token)
+
+
 def _entropy_suspicious(token: str) -> bool:
     """True if `token` looks like random secret material.
 
     Exclusions (a documented false-negative bias -- each excluded shape is
     something routine evidence is full of): pure hex (git SHAs, sha256
     digests), pure digits (ids, timestamps), and letters-only runs (long
-    identifiers/words).
+    identifiers/words). The hex exclusion applies both to a whole run and
+    to a digest-length hex SEGMENT of one (a SHA inside a URL path).
     """
     core = token.strip("=").replace("-", "").replace("_", "")
     if not core:
@@ -265,7 +347,10 @@ def _entropy_suspicious(token: str) -> bool:
         return False  # hex: git SHAs / digests
     if core.isdigit() or core.isalpha():
         return False
-    return _shannon_entropy(token) >= ENTROPY_THRESHOLD
+    # Score the run with its provably-sub-threshold hex segments removed.
+    # Identity for any run that has none; for a provenance URL it is the
+    # difference between measuring the path and measuring path+SHA mixed.
+    return _shannon_entropy(_without_structural_hex(token)) >= ENTROPY_THRESHOLD
 
 
 def redact_entropy_text(text: str) -> tuple[str, int]:

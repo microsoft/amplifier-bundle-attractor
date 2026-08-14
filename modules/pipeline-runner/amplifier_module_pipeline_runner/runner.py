@@ -188,6 +188,7 @@ async def drive_engine(
     transform: bool,
     validate: bool = True,
     source_dir: str | None = None,
+    resume_checkpoint: Any = None,
 ) -> "Outcome":
     """Drive the attractor engine directly against an already-built coordinator.
 
@@ -237,6 +238,16 @@ async def drive_engine(
         validate: If True (default), run ``validate_or_raise`` on the graph
             before execution -- fails loud on graph-shape problems before
             spending an LLM call.
+        resume_checkpoint: A ``Checkpoint`` that has ALREADY passed the resume
+            validation ladder's rungs 1-5
+            (``checkpoint.load_checkpoint_for_resume``). When given, this
+            drives ``engine.resume(...)`` instead of ``engine.run()``, after
+            running the ladder's rung 6 (structural validity) against the
+            parsed+transformed graph this call is about to execute -- that
+            rung needs the real graph, which only exists at this point.
+            ``None`` (the default) is the fresh path: nothing here reads a
+            checkpoint, so a stale or foreign ``checkpoint.json`` in
+            ``logs_root`` cannot affect the run.
 
     Returns:
         The engine's ``Outcome`` (``outcome.status.value``, ``outcome.notes``).
@@ -316,6 +327,22 @@ async def drive_engine(
             logs_root=str(logs_root),
             hooks=effective_hooks,
         )
+
+        if resume_checkpoint is not None:
+            # Ladder rung 6, against the graph actually about to execute.
+            from amplifier_module_loop_pipeline.checkpoint import (
+                verify_checkpoint_structure,
+            )
+
+            verify_checkpoint_structure(resume_checkpoint, graph)
+            return await engine.resume(
+                resume_checkpoint,
+                # --cwd is process-level wiring that cannot be serialized, so
+                # the RESUMING invocation owns it (it behaves exactly as on
+                # `run`). Everything else in the context is restored verbatim
+                # from the checkpoint.
+                context_overrides={"context.target_dir": str(resolved_cwd)},
+            )
 
         return await engine.run()
     finally:
@@ -751,6 +778,149 @@ async def run_pipeline(
         # The engine creates its manifest at run start. Stamp runner-owned
         # fields even when later execution raises, so failed run directories
         # remain self-describing for incident analysis.
+        _augment_manifest_provenance(logs_dir, provider)
+
+    failure_reason = getattr(outcome, "failure_reason", None)
+    data = {
+        "status": outcome.status.value,
+        "notes": outcome.notes or "",
+    }
+    text = json.dumps(data)
+
+    return PipelineResult(
+        status=data["status"],
+        notes=str(data["notes"])[:4000],
+        logs_dir=logs_dir,
+        raw=text[:4000],
+        failure_reason=str(failure_reason) if failure_reason else None,
+    )
+
+
+async def resume_pipeline(
+    run_dir: Path | str,
+    *,
+    dot_source: str | None = None,
+    params: Mapping[str, str] | None = None,
+    cwd: Path | str | None = None,
+    provider: str = "anthropic",
+    profiles: Mapping[str, str] | None = None,
+    hooks: Any = None,
+    interviewer: Any = None,
+    transform: bool = True,
+    validate: bool = True,
+    extra_overlays: Sequence[Any] | None = None,
+    child_constraint: Callable[[Any], Any] | None = None,
+    spawn_timeout: float | None = None,
+) -> PipelineResult:
+    """Resume an interrupted pipeline run from its checkpoint (spec §5.3).
+
+    The explicit, opt-in counterpart to ``run_pipeline``.  ``run_pipeline``
+    never reads a checkpoint back — resume happens here or not at all, which
+    is what makes a stale or foreign ``checkpoint.json`` inert to a fresh run
+    by construction rather than by a guard that can misfire.
+
+    The run continues IN PLACE in ``run_dir`` (spec §5.6 / rule 1: the
+    checkpoint IS ``{logs_root}/checkpoint.json``, and a resumed run is the
+    same execution continued).  ``trace.jsonl`` appends after the interrupted
+    records, ``manifest.json`` gains a ``resumes`` entry, and the completed
+    nodes' directories are left untouched.
+
+    IMPORTANT for callers: resume from the SAME working directory the
+    interrupted run used.  File state produced by tool/agent nodes lives
+    there, and the engine cannot verify it — this is the boundary where the
+    graph-owned idempotency pattern (``examples/pipelines/12-graph-resume.dot``)
+    is the right complementary tool.
+
+    Args:
+        run_dir: The interrupted run's ``logs_root`` — the directory holding
+            ``checkpoint.json``.
+        dot_source: Optional DOT source, for provenance/auditing.  It MUST
+            fingerprint-match the checkpoint's embedded source or the resume
+            is refused (a checkpoint binds to the run that wrote it; there is
+            deliberately no override flag).  When omitted, the checkpoint's
+            own embedded source is used — resume is self-contained.
+        params: Additional flat context params.  A param may only ADD keys:
+            colliding with a key the checkpoint restores is a loud error, not
+            a silent shadow of restored state.
+        cwd: Working directory for the resumed run.  Behaves exactly as on
+            ``run_pipeline`` (process-level wiring cannot be serialized).
+        provider, profiles, hooks, interviewer, transform, validate,
+        extra_overlays, child_constraint, spawn_timeout: as ``run_pipeline``.
+
+    Returns:
+        A ``PipelineResult`` whose ``logs_dir`` is ``run_dir``.
+
+    Raises:
+        CheckpointResumeError: any rung of the validation ladder — missing,
+            corrupted, wrong schema, already completed, graph mismatch, or
+            structurally invalid.  Never a silent fresh start.
+        ValueError: a ``--param`` collides with restored context state.
+    """
+    from amplifier_module_loop_pipeline.checkpoint import load_checkpoint_for_resume
+
+    logs_dir = Path(run_dir).expanduser().resolve()
+
+    # Ladder rungs 1-5.  Nothing below runs until these pass; rung 6 runs
+    # inside drive_engine, against the parsed+transformed graph.
+    checkpoint = load_checkpoint_for_resume(
+        str(logs_dir / "checkpoint.json"),
+        dot_source=dot_source,
+    )
+    resolved_dot_source = checkpoint.graph_dot_source
+
+    # A resume-time param may only ADD keys.  Restored context wins by
+    # construction (engine.resume applies the snapshot over the seeded
+    # context), so a collision would silently discard what the caller asked
+    # for — refuse instead.
+    if params:
+        collisions = sorted(set(params) & set(checkpoint.context_snapshot))
+        if collisions:
+            raise ValueError(
+                f"--param key(s) {collisions!r} collide with context restored "
+                "from the checkpoint. Restored state wins on resume, so the "
+                "param would be silently discarded. Remove the param, or start "
+                "a new run with 'attractor run' if you need a different value."
+            )
+
+    cwd_path = Path(cwd).expanduser().resolve() if cwd is not None else Path.cwd()
+    cwd_path.mkdir(parents=True, exist_ok=True)
+
+    resolved_profiles = dict(profiles) if profiles else dict(DEFAULT_PROFILES)
+
+    prepared = await _build_prepared(
+        resolved_dot_source,
+        logs_dir,
+        params=dict(params) if params else None,
+        profiles=resolved_profiles,
+        extra_overlays=extra_overlays,
+    )
+    session = await prepared.create_session(session_cwd=cwd_path)
+    session.coordinator.register_capability(
+        "session.spawn",
+        make_spawn_fn(
+            prepared,
+            cwd=cwd_path,
+            child_constraint=child_constraint,
+            spawn_timeout=spawn_timeout,
+        ),
+    )
+
+    try:
+        async with session:
+            outcome = await drive_engine(
+                resolved_dot_source,
+                session.coordinator,
+                params=params,
+                cwd=cwd_path,
+                logs_root=logs_dir,
+                hooks=hooks,
+                profiles=resolved_profiles,
+                interviewer=interviewer,
+                transform=transform,
+                validate=validate,
+                resume_checkpoint=checkpoint,
+            )
+    finally:
         _augment_manifest_provenance(logs_dir, provider)
 
     failure_reason = getattr(outcome, "failure_reason", None)

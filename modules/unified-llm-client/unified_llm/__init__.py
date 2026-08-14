@@ -9,6 +9,9 @@ Usage:
 # Core client
 from unified_llm.client import Client, get_default_client, set_default_client
 
+# Cost computation
+from unified_llm._cost import compute_cost
+
 # High-level API
 from unified_llm.generate import generate, generate_object, stream, stream_object
 
@@ -88,6 +91,8 @@ __all__ = [
     "Client",
     "set_default_client",
     "get_default_client",
+    # Cost
+    "compute_cost",
     # High-level API
     "generate",
     "stream",

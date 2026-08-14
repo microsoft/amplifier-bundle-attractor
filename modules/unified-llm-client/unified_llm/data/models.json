@@ -86,5 +86,19 @@
     "release_date": "2025-03-25",
     "_release_date_note": "approximate",
     "aliases": ["gemini-pro"]
+  },
+  {
+    "id": "preview-model-cost-unknown",
+    "provider": "anthropic",
+    "display_name": "Preview Model (cost unknown)",
+    "context_window": 200000,
+    "max_output": 16384,
+    "supports_tools": true,
+    "supports_vision": false,
+    "supports_reasoning": false,
+    "input_cost_per_million": null,
+    "output_cost_per_million": null,
+    "release_date": "2026-01-01",
+    "aliases": []
   }
 ]

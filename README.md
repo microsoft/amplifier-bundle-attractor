@@ -472,7 +472,7 @@ amplifier-bundle-attractor/
 The pipeline orchestrator auto-selects the execution backend:
 
 1. If `session.spawn` capability is registered --> `AmplifierBackend` (full sub-sessions per node, tools included)
-2. Else if a provider is available --> `DirectProviderBackend` (direct LLM calls via `unified_llm`, no tools)
+2. Else if a provider is available --> `DirectProviderBackend` (per-node **agentic tool loop** via `unified_llm` -- whatever tools are mounted are passed through, and `unified-llm-client` drives the call -> tool -> call rounds internally. Node tools are only absent when the host mounts none, e.g. the bare programmatic path above. Requires an explicit `llm_model` on every node; there is no default)
 3. Otherwise --> simulation mode (for testing)
 
 </details>

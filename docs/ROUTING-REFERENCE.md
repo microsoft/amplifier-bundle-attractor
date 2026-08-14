@@ -102,12 +102,13 @@ If `preferred_label` is omitted, `outcome` resolves to the `status` value
 
 ## 3. Condition Expression Language
 
-Conditions are boolean expressions placed on edges. The engine evaluates each
-condition against the most recent node's outcome and the current pipeline
-context. An edge whose condition evaluates to `true` is eligible for
-selection.
+**Canonical source of truth:** `specs/canonical/attractor-spec-canonical.md` §10 — grammar (§10.2),
+semantics (§10.3), variable resolution (§10.4), evaluation (§10.5). That snapshot is byte-identical
+to upstream `strongdm/attractor` @ `fb57a55` and is normative. This section does not restate it; it
+records the **quick reference** plus the places this engine deliberately behaves differently, which
+is the part you cannot get from the spec.
 
-### Operators
+### Operators (matches canonical §10.2)
 
 | Operator | Syntax | Meaning |
 |----------|--------|---------|
@@ -116,20 +117,64 @@ selection.
 | Conjunction | `clause1 && clause2` | True when all clauses are true |
 
 Values are compared as strings. Whitespace around operators and values is
-stripped before comparison.
+stripped before comparison. An empty condition is always eligible.
 
 ### Resolution keys
 
-| Key | Resolves to |
-|-----|-------------|
-| `outcome` | `preferred_label` if set; otherwise `status.value`. This is the primary routing key. |
-| `preferred_label` | The raw `preferred_label` field; empty string if not set. |
-| `status` | The `StageStatus` enum value (`"success"`, `"fail"`, etc.). Resolves via context lookup; use `outcome` in most cases. |
-| `context.<key>` | A pipeline context variable set via `context_updates` in `report_outcome` or by earlier nodes. |
+| Key | Resolves to | Status |
+|-----|-------------|--------|
+| `outcome` | `preferred_label` if set; **otherwise** `status.value`. The primary routing key. | ⚠️ **ENGINE DELTA** — see below |
+| `preferred_label` | The raw `preferred_label` field; empty string if not set. | canonical §10.4 |
+| `status` | The `StageStatus` enum value (`"success"`, `"fail"`, …). Resolves via context lookup; use `outcome` in most cases. | canonical §10.4 |
+| `context.<key>` | A pipeline context variable set via `context_updates` in `report_outcome` or by earlier nodes. Missing keys resolve to the empty string. | canonical §10.4 |
+| `context.tool.last_line` | Last line of a `parallelogram` (tool) node's stdout. | ⚠️ **ENGINE EXTENSION** — `specs/EXTENSIONS.md` §20 |
 
-**The `outcome` key is the correct choice for almost all conditions.** Using
-`preferred_label` or `status` directly is rarely necessary and can produce
-unexpected results when one is set and the other is not.
+### ⚠️ Engine delta: `outcome` resolves `preferred_label` **first**
+
+Canonical §10.4 defines `outcome` as `outcome.status` **only**, with `preferred_label` as a separate
+key. This engine resolves `outcome` to `preferred_label` when one is set, falling back to
+`status.value` — `conditions.py`, ledgered as `specs/EXTENSIONS.md` §22 / `SPEC_CONFORMANCE.md`
+ATX-5. It is load-bearing: it is how a node steers its own routing through `report_outcome`.
+
+It is also **not behavior-neutral**, and that is the trap: one key, two meanings.
+
+```python
+# The agent wants to route to a "pass" edge
+report_outcome(status="success", preferred_label="pass")
+#                      ^                    ^
+#                      |                    |
+#         records SUCCESS state    "outcome" resolves to "pass"
+#         for goal gates           edges see: outcome=pass
+```
+
+A node that emits `preferred_label="retry"` alongside `status="success"` will match
+`condition="outcome=retry"` — the label wins. If you need to branch on the *status* regardless of
+any label, say so explicitly with `status=…` rather than `outcome=…`.
+
+### ⚠️ Engine extension: `tool.last_line` routing, and the stale-label discipline
+
+`ToolHandler` publishes the last line of the command's stdout as `context.tool.last_line`, which is
+the idiom for routing on **observed evidence** rather than on a model's self-assessment — a shell
+command prints a routing token and the edge matches it.
+
+`tool.last_line` is set **only on success**. On failure the handler returns `FAIL` before setting
+it, so on a second visit the key still holds the *stale* value from the prior success. A bare
+`context.tool.last_line=X` edge and an `outcome=fail` edge on the same node can then both match at
+once, and the engine deterministically picks one (weight, then lexical) which may not be the one you
+meant. `attractor lint`'s **TOPO-002** flags exactly this shape.
+
+**Discipline: conjoin `&& outcome=success` onto every `last_line` edge that shares a source node
+with a failure edge**, so the label edge only fires when the label is fresh:
+
+```dot
+// AMBIGUOUS — on a second visit, stale last_line + FAIL both match
+tool -> done [condition="context.tool.last_line=green"]
+tool -> fix  [condition="outcome=fail"]
+
+// EXPLICIT — the conjunction ensures the label edge only fires on fresh success
+tool -> done [condition="context.tool.last_line=green && outcome=success"]
+tool -> fix  [condition="outcome=fail"]
+```
 
 ### Examples
 
@@ -150,8 +195,13 @@ A -> C [condition="outcome=retry"];
 A -> B [condition="context.has_tests=true && outcome=pass"];
 A -> C [condition="context.has_tests=false"];
 
+// Evidence routing off a tool node, with the stale-label conjunction
+test_gate -> done      [condition="context.tool.last_line=gate_pass && outcome=success"];
+test_gate -> implement [condition="context.tool.last_line=gate_fail && outcome=success"];
+test_gate -> escalate  [condition="outcome=fail"];
+
 // Routing on raw status value (less common)
-// Only appropriate when preferred_label is never set by this node
+// Appropriate exactly when you must ignore any preferred_label this node emits
 A -> B [condition="status=success"];
 ```
 
@@ -159,70 +209,75 @@ A -> B [condition="status=success"];
 
 ## 4. Edge Selection Algorithm
 
-After a node completes, the engine runs the following five-step
-priority-ordered algorithm to select the edge to follow. The algorithm is
-implemented in `edge_selection.py`.
+**Canonical source of truth:** `specs/canonical/attractor-spec-canonical.md` §3.3 (prose at `:410-418`,
+pseudocode at `:421-458`). Read it there. The five-step priority order — condition match, preferred
+label, suggested next IDs, highest weight, lexical tiebreak — is implemented as specified in
+`edge_selection.py`, and is not restated at length here.
 
-### Step 1: Condition match
+Two properties of the canonical algorithm are worth stating plainly because they are routinely
+misremembered:
 
-Evaluate the `condition` attribute on every outgoing edge. All edges whose
-condition returns `true` are collected as candidates.
-
-- If exactly one candidate matches, that edge is selected immediately.
-- If multiple candidates match, they are passed to the weight + lexical
-  tiebreak described in Step 5.
-- If no candidates match, proceed to Step 2.
-
-### Step 2: Preferred label match
-
-If `preferred_label` is set in the outcome, scan the outgoing edges for an
-edge whose `label` attribute matches it. Matching is case-insensitive.
-Accelerator key prefixes are stripped before comparison: `[Y]`, `Y)`, and
-`Y -` patterns at the start of a label are removed.
-
-```dot
-// These all match preferred_label="approve"
-A -> B [label="[A] Approve"];
-A -> B [label="A) Approve"];
-A -> B [label="approve"];
-```
-
-If a match is found, that edge is selected. If no match, proceed to Step 3.
-
-### Step 3: Suggested next IDs
-
-If `suggested_next_ids` is set in the outcome, scan the outgoing edges for an
-edge whose target node ID appears in the list. The list is checked in order;
-the first matching edge is selected.
-
-If no match, proceed to Step 4.
-
-### Step 4: Unconditional edges
-
-Collect edges that have no `condition` attribute at all. If exactly one exists,
-select it. If multiple unconditional edges exist, they are passed to the weight
-+ lexical tiebreak in Step 5. If none exist, proceed to Step 5 using all edges.
-
-### Step 5: Weight and lexical tiebreak
-
-When multiple candidate edges remain from an earlier step (or from the
-fallback), select the edge with the highest `weight` attribute. If weights are
-equal, select the edge with the lexically smallest target node ID (ascending
-alphabetical order).
-
-This is the **silent fallback**. When no condition matched and no unconditional
-edge was found, the engine picks from all edges by weight then lexical order
-with no warning or error. See [Pitfall: Silent Alphabetical Fallback](#pitfall-silent-alphabetical-fallback).
+- **Steps 2–5 draw from UNCONDITIONAL edges only.** An edge whose `condition` was evaluated and
+  returned `false` in Step 1 is *out*. It cannot be revived by a label match, by
+  `suggested_next_ids`, or by the weight/lexical tiebreak. Canonical `:438`, `:445`, `:449` all say
+  "condition is empty"; `edge_selection.py` enforces the same.
+- **Nothing eligible ⇒ `RETURN NONE`** (canonical `:453`). Selection does not fall back to "pick
+  something from all the edges."
 
 ### Algorithm summary
 
-| Step | Trigger | Candidates |
-|------|---------|------------|
-| 1 | `condition` evaluates to `true` | Condition-matching edges |
-| 2 | `preferred_label` is set | Edges with matching `label` |
-| 3 | `suggested_next_ids` is set | Edges pointing to listed node IDs |
-| 4 | None of the above | Edges with no `condition` |
-| 5 | Multiple candidates remain | Highest `weight`; then lexical on target ID |
+| Step | Trigger | Candidate pool |
+|------|---------|----------------|
+| 1 | `condition` evaluates to `true` | Condition-matching edges (weight, then lexical, if several) |
+| 2 | `preferred_label` is set | **Unconditional** edges with a matching `label` (normalized: lowercased, trimmed, accelerator prefixes `[Y] `, `Y) `, `Y - ` stripped) |
+| 3 | `suggested_next_ids` is set | **Unconditional** edges whose target ID appears in the list |
+| 4–5 | None of the above | **Unconditional** edges: highest `weight`, then lexically smallest target ID |
+| — | Nothing eligible | `None` → the engine hard-fails (see below) |
+
+### Where this engine differs from canonical §3.3
+
+These deltas are the real content of this section — everything above is the spec.
+
+#### ⚠️ Delta 1 — no-matching-edge is a LOUD hard failure, not a quiet success
+
+Canonical §3.2 step 6 (`:390-393`) treats a dead end as normal completion: return the last outcome
+if it was `FAIL`, otherwise `Outcome(status=SUCCESS, notes="Pipeline completed")`. **This engine
+does not.** When `select_edge()` returns `None`, the engine terminates the pipeline with
+`status=FAIL` and emits a `PIPELINE_ERROR` event carrying `error_type=no_matching_edge`, whatever
+the last outcome was. A routing hole is reported as a routing hole.
+
+Ledgered: `specs/EXTENSIONS.md` §33, `SPEC_CONFORMANCE.md` ATX-11.
+
+#### ⚠️ Delta 2 — a `FAIL` outcome is fail-fast and does not traverse plain edges
+
+On a `FAIL` outcome the engine does **not** hand unconditional edges to Step 4–5. A failed node does
+not drift into the next node in line just because an unlabelled arrow points there. Three explicit
+opt-ins remain fully supported, and they are the only ways forward from a `FAIL`:
+
+| Opt-in | Where it goes | Effect |
+|--------|---------------|--------|
+| `condition="outcome=fail"` on an edge | the edge | Matched normally in Step 1 |
+| `runs_on="always"` / `runs_on="failure"` on the **target** node | downstream node | That unconditional edge becomes eligible under `FAIL` |
+| `continue_on_fail="true"` on the **failing** node | the failing node | Engine converts `FAIL`→`SUCCESS` before selection, so unconditional edges work normally |
+
+If none of the three is present, selection yields `None` and Delta 1 fires. Ledgered:
+`specs/EXTENSIONS.md` §16.
+
+#### ⚠️ Delta 3 — `outcome=` resolves `preferred_label` before `status`
+
+Step 1 evaluates conditions through the engine's resolver, so every `outcome=` condition inherits
+the §3 delta above. Ledgered: `specs/EXTENSIONS.md` §22, `SPEC_CONFORMANCE.md` ATX-5.
+
+### What the lexical tiebreak can still decide
+
+The tiebreak is real, but its scope is narrow. It only runs when a genuine tie survives:
+
+- **several conditional edges match simultaneously** in Step 1 (e.g. the stale-`last_line` shape in
+  §3), or
+- **several unconditional edges of equal `weight`** reach Step 4–5.
+
+It can no longer choose among edges whose conditions all *failed* — that case is `None`, and
+`None` is a hard failure. See [Pitfall: the lexical tiebreak](#pitfall-the-lexical-tiebreak-historical-shape-and-current-scope).
 
 ---
 
@@ -310,8 +365,8 @@ review -> fix  [condition="outcome=retry",  label="retry", weight=5]
 - `"success" != "retry"` is `true` — the forward edge matches, pipeline
   continues correctly.
 - `"success" = "pass"` is `false` — with the non-defensive pattern,
-  neither edge matches, and the engine falls through to Step 5 (silent
-  alphabetical fallback).
+  neither edge matches, nothing is eligible, and the engine hard-fails the
+  run with `error_type=no_matching_edge` (§4, Delta 1).
 
 Use `condition="outcome=pass"` only when you can guarantee the agent will
 always set `preferred_label="pass"` explicitly and you want an explicit
@@ -360,12 +415,14 @@ and context.
 
 ---
 
-### Pitfall: Silent alphabetical fallback
+### Pitfall: the lexical tiebreak (historical shape, and current scope)
 
-If no condition matches and no unconditional edge exists, the engine selects
-an edge by lexical order of the target node ID. No warning is logged.
+**Historical — this is no longer what happens.** An earlier engine, when *no*
+condition matched and *no* unconditional edge existed, fell back to picking
+among the condition-failed edges by weight then lexical order, silently. That
+behavior is gone, and this doc taught it for longer than the engine did.
 
-**Production example:** A review loop with two outgoing edges:
+**The incident, as it happened:** a review loop with two outgoing edges:
 
 ```dot
 ReviewConsensus -> Fix  [condition="outcome=retry"]
@@ -373,22 +430,43 @@ ReviewConsensus -> Test [condition="outcome=pass"]
 ```
 
 The agent on `ReviewConsensus` called `report_outcome(status="success")`
-without setting `preferred_label`. `outcome` resolved to `"success"`.
+without setting `preferred_label`, so `outcome` resolved to `"success"`.
 
 - `"success" = "retry"` is false — first edge eliminated.
 - `"success" = "pass"` is false — second edge eliminated.
 - No unconditional edges exist.
-- Step 5 fallback: pick by lexical order. `"Fix"` < `"Test"` alphabetically.
-- Engine routed to `Fix` silently, causing an infinite loop.
+- The old fallback picked by lexical order: `"Fix"` < `"Test"`.
+- The engine routed to `Fix` silently, causing an infinite loop.
 
-**Fix:** Use defensive inequality routing or ensure the agent always sets
-`preferred_label` explicitly.
+**On today's engine, that same graph hard-fails immediately.** Steps 2–5 draw
+from unconditional edges only, so both condition-failed edges stay eliminated;
+`select_edge()` returns `None`; the engine terminates with `status=FAIL` and a
+`PIPELINE_ERROR` carrying `error_type=no_matching_edge`. This matches canonical
+§3.3 (`:453`, `RETURN NONE`) on the selection side and diverges from canonical
+§3.2 step 6 on the termination side — loudly, on purpose (Delta 1 in §4).
+
+The infinite loop is now a stopped pipeline naming the node it could not route
+out of. That is better, and it is still a graph you have to fix.
+
+**What the lexical tiebreak can still decide.** It has not been removed — its
+scope is narrower than this doc used to imply. It runs only on a genuine tie:
+
+- several **conditional** edges matching simultaneously (Step 1), or
+- several **unconditional** edges of equal `weight` (Steps 4–5).
+
+**The fix is unchanged: defensive inequality routing.** It was the right advice
+when the failure was a silent misroute and it is the right advice now that the
+failure is a hard stop — because it makes routing *total*, so neither failure
+mode can occur. Some value always matches:
 
 ```dot
 // Defensive: catches "success", "pass", and anything other than "retry"
 ReviewConsensus -> Test [condition="outcome!=retry", weight=10]
 ReviewConsensus -> Fix  [condition="outcome=retry",  weight=5]
 ```
+
+Ensuring the agent always sets `preferred_label` explicitly also works, but it
+depends on a model remembering to do something; the inequality edge does not.
 
 ---
 

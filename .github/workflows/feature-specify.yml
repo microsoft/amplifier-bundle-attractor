@@ -943,6 +943,59 @@ jobs:
             [ -f "$f" ] && cp "$f" "$DEST/"
           done
 
+          # VENDORED GATE FIXTURES (incident, 2026-08-14, run 31775541024 ->
+          # PR #218). The evidence list above is a FIXED enumeration of
+          # suffixes and it has no `.py`/`.json` entries -- so when a capsule
+          # ships a plain sibling file its gate loads BY PATH, that file was
+          # silently not copied into the commit. #218's gate hard-requires
+          # `$GATE_DIR/oracle.py` and exits 2 (FATAL) without it. The run DID
+          # produce `<id>.oracle.py`; the shipped-gate check above staged and
+          # ran against it and PASSed; then this step dropped it. The capsule
+          # that shipped was a strict SUBSET of the capsule that was verified.
+          #
+          # This glob is deliberately verify_shipped_gate.sh's OWN fixture
+          # glob (`<id>.*.py` / `<id>.*.json`) -- one definition of "fixture"
+          # on both sides of the fence, so the verifier and the publisher
+          # cannot disagree about what travels with the pair. Any other suffix
+          # stays with the enumeration above rather than being guessed at.
+          for f in "$OUT/$ID".*.py "$OUT/$ID".*.json; do
+            [ -f "$f" ] && cp "$f" "$DEST/"
+          done
+
+          # -----------------------------------------------------------------
+          # SHIP WHAT YOU VERIFIED -- the authoritative shipped-gate check.
+          # -----------------------------------------------------------------
+          # The structural half of the same incident, and the half that makes
+          # the class un-repeatable rather than just fixing today's instance.
+          #
+          # The `gate_exec` step above verifies $RUNNER_TEMP/capsule-run/out.
+          # This verifies $DEST -- the set that is about to be `git add`ed.
+          # Those two sets were only ever equal by the good behaviour of the
+          # copy commands between them, and they were NOT equal: a fixed
+          # suffix list cannot express "everything that was proven". Verifying
+          # the SOURCE of a copy proves nothing about a LOSSY copy. The only
+          # honest place to run the check is the committed set itself.
+          #
+          # The earlier capsule-out invocation is KEPT deliberately: it fails
+          # before `git checkout -b`, so a bad capsule stays cheap to reject --
+          # but THIS invocation is the authoritative one, because it runs the
+          # bytes that become the PR.
+          #
+          # Same lane/id/repo/base-sha as `gate_exec`; a separate --log-dir so
+          # both runs' evidence survives in the uploaded artifact. Failure
+          # aborts this step under `set -e`, before any add/commit/push --
+          # loud, and no PR.
+          echo "ship-what-you-verified: re-running the shipped-gate check against the COMMITTED set ($DEST)"
+          bash .github/capsule-pipeline/verify_shipped_gate.sh \
+            --lane feature \
+            --capsule-dir "$GITHUB_WORKSPACE/$DEST" \
+            --id "$ID" \
+            --repo "$GITHUB_WORKSPACE" \
+            --base-sha "${{ steps.base.outputs.sha }}" \
+            --log-dir "$RUNNER_TEMP/capsule-run/logs/shipped-gate-committed" \
+            --timeout 300
+          echo "ship-what-you-verified: the committed set reproduces the verified capsule. Proceeding to commit."
+
           COMMIT_MSG_FILE="$RUNNER_TEMP/capsule-run/commit-msg.txt"
           {
             echo "specify(feature): work capsule for issue #${ISSUE} (${ID})"

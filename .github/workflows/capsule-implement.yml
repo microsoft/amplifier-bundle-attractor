@@ -357,6 +357,113 @@ jobs:
           fi
           echo "OPENAI_API_KEY is present -- dual-family critique (Anthropic + OpenAI) can be honored. Proceeding."
 
+      - name: "Stage the capsule's vendored gate fixtures beside the gate"
+        id: fixtures
+        if: steps.locate.outputs.skip != 'true'
+        # SHIP WHAT YOU VERIFIED, implement-side half (incident, 2026-08-14,
+        # run 31775541024 -> PR #218). Restoring the dropped fixture on that
+        # branch is necessary but NOT sufficient: as traced below, nothing in
+        # this job or in the vendored task-runner.dot ever puts a capsule's
+        # vendored fixture where its gate looks for it, so a fixture-bearing
+        # capsule would still exit 2 (FATAL) here after a clean merge.
+        #
+        # THE TRACED PATH, end to end:
+        #
+        #   1. This workflow's "Locate and validate the capsule" step resolves
+        #      the pair and exports the .md path:
+        #        CAPSULE_ID="$(basename "$CAPSULE_MD" .md)"
+        #        VERIFY_SH="$(dirname "$CAPSULE_MD")/$CAPSULE_ID.verify.sh"
+        #        echo "capsule_md=$CAPSULE_MD"
+        #
+        #   2. The "Run task-runner.dot" step below passes that path straight
+        #      through as an engine parameter -- it copies nothing:
+        #        --param task_file="$GITHUB_WORKSPACE/${{ steps.locate.outputs.capsule_md }}"
+        #
+        #   3. task-runner.dot's `setup` node does NOT stage a
+        #      .ai/capsule/DEFINITION.{md,verify.sh} pair. It wipes .ai/ and
+        #      only RESOLVES the sibling gate path:
+        #        rm -rf .ai && mkdir -p .ai/feedback .ai/postmortem
+        #        ... VF="$task_file"; VF="${VF%.md}.verify.sh"; ...
+        #        [ -f "$task_file" ] && [ -f "$VF" ] && printf ok || printf missing
+        #
+        #   4. task-runner.dot's `verify` node then runs the gate IN PLACE, at
+        #      its proposals/ path -- there is no .ai/capsule/ copy anywhere:
+        #        VF="$task_file"; VF="${VF%.md}.verify.sh"; ...
+        #        timeout 1800 bash "$VF" > .ai/verify.log 2>&1
+        #
+        #   5. So a gate that resolves its own directory, as #218's does --
+        #        GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        #        ORACLE_PY="$GATE_DIR/oracle.py"
+        #      resolves GATE_DIR to the PROPOSALS dir, and looks for
+        #      `oracle.py` there. The fixture ships prefix-qualified, as
+        #      `<id>.oracle.py`, because that is how the specify stage's
+        #      `package` step names plain files copied out of .ai/capsule/.
+        #      Nothing strips the prefix back off. Result: FATAL, exit 2,
+        #      every iteration, until the budget is gone.
+        #
+        # THE FIX, and why it is HERE and not in the .dot: steps 3 and 4 are
+        # the vendored task-runner.dot, which this repo deliberately keeps
+        # pristine (see that file's own header). Staging is a workflow-layer
+        # concern anyway -- put the files where the engine's contract already
+        # expects to find them, before the engine starts. The alternative,
+        # noted and NOT taken: teach task-runner.dot's `setup` node to
+        # prefix-strip fixtures itself, which would make the .dot capsule-
+        # aware and diverge it from upstream for a problem the caller can
+        # solve without it.
+        #
+        # Prefix-strip idiom and glob (`<id>.*.py` / `<id>.*.json`) are
+        # verify_shipped_gate.sh's, verbatim -- so the fence that PROVES a
+        # capsule and the stage that RUNS it agree on what a fixture is.
+        #
+        # The staged copies are untracked build inputs, not capsule content:
+        # they are added to the repo's exclude file so neither
+        # task-runner.dot's own `ship_check` gate nor this job's pre-push
+        # porcelain check (both `git status --porcelain | grep -v -E '^\?\? \.ai'`)
+        # sees them, and so no maker's `git add -A` can sweep a duplicate into
+        # the fix PR.
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          CAPSULE_MD="${{ steps.locate.outputs.capsule_md }}"
+          ID="${{ steps.locate.outputs.capsule_id }}"
+          DIR="$(dirname "$CAPSULE_MD")"
+
+          EXCLUDE="$(git rev-parse --git-common-dir)/info/exclude"
+          mkdir -p "$(dirname "$EXCLUDE")"
+          touch "$EXCLUDE"
+
+          staged=0
+          for fixture in "$DIR/$ID."*.py "$DIR/$ID."*.json; do
+            [ -f "$fixture" ] || continue
+            base="$(basename "$fixture")"
+            staged_name="${base#"$ID."}"
+            dest="$DIR/$staged_name"
+
+            # Never clobber repository content. A capsule fixture whose
+            # stripped name collides with a TRACKED file is a capsule that
+            # cannot be staged safely -- say so and stop, rather than
+            # overwriting a real file and running the gate against a tree
+            # that no longer matches the base SHA it pins.
+            if git ls-files --error-unmatch "$dest" >/dev/null 2>&1; then
+              echo "::error::capsule-implement: staging the vendored fixture $base would overwrite the TRACKED file $dest. Refusing -- the gate would then run against a mutated tree. Rename the fixture in the capsule (it is copied out of .ai/capsule/ as <id>.<original-name>) so its stripped name does not collide." >&2
+              exit 1
+            fi
+
+            cp "$fixture" "$dest"
+            grep -qxF "/$dest" "$EXCLUDE" || echo "/$dest" >> "$EXCLUDE"
+            echo "staged vendored fixture $base -> $dest (sha256 $(sha256sum < "$dest" | awk '{print $1}'))"
+            staged=$((staged + 1))
+          done
+
+          if [ "$staged" -eq 0 ]; then
+            echo "no vendored gate fixtures (<id>.*.py / <id>.*.json) ship with this capsule -- the gate runs with the pair alone."
+          else
+            echo "staged $staged vendored gate fixture(s) beside $DIR/$ID.verify.sh"
+          fi
+          # Prove the staging is invisible to the tree checks that follow.
+          echo "--- git status --porcelain (fixtures must not appear) ---"
+          git status --porcelain || true
+
       - name: Run task-runner.dot (implement stage)
         id: run
         if: steps.locate.outputs.skip != 'true'

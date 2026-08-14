@@ -505,3 +505,22 @@ class TestCheckpointV2Schema:
         assert fingerprint_dot_source(a) == fingerprint_dot_source(a)
         assert fingerprint_dot_source(a) != fingerprint_dot_source(b)
         assert fingerprint_dot_source(a).startswith("sha256:")
+class TestEngineWritesV2:
+    """Spec §5.3 rule 4 / DoD :1856 — node_retries is actually populated now."""
+
+    @pytest.mark.asyncio
+    async def test_engine_checkpoint_carries_v2_block(self, tmp_path):
+        engine = _make_engine(_SIMPLE_DOT, backend=MockBackend("done"), logs_root=str(tmp_path))
+        await engine.run()
+        data = json.loads((tmp_path / "checkpoint.json").read_text())
+
+        assert data["schema_version"] == 2
+        # A finished run flips run_state so a resume of it is refused loudly.
+        assert data["run_state"] == "completed"
+        assert data["graph"]["fingerprint"].startswith("sha256:")
+        assert "digraph" in data["graph"]["dot_source"]
+        assert data["node_outcomes"]["step"]["status"] == "success"
+        assert data["engine_state"]["node_execution_counts"]["step"] == 1
+        # node_retries used to be written as {} unconditionally; a node that
+        # consumed no retries now records 0 rather than being absent.
+        assert data["node_retries"]["step"] == 0

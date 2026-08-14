@@ -22,7 +22,10 @@ from typing import Any
 
 from .artifacts import ArtifactStore
 from .checkpoint import (
+    RUN_STATE_COMPLETED,
+    RUN_STATE_IN_FLIGHT,
     Checkpoint,
+    fingerprint_dot_source,
     save_checkpoint,
 )
 from .context import PipelineContext
@@ -133,6 +136,11 @@ class PipelineEngine:
             str, int
         ] = {}  # per-node execution count (graph-level visits)
         self._checkpoint_path: str | None = os.path.join(logs_root, "checkpoint.json")
+        # Last checkpoint payload written, retained so the terminal run_state
+        # flip can rewrite it without reading the file back (see
+        # _mark_run_completed).  Never read on any fresh-run path.
+        self._last_checkpoint: Checkpoint | None = None
+        self._graph_identity_cache: dict[str, Any] | None = None
         self.artifact_store = ArtifactStore(base_dir=logs_root)
 
         # M1/M2 (R12): Output table + failed-outputs propagation table.
@@ -292,10 +300,13 @@ class PipelineEngine:
         # run()/resume() are siblings that differ only in what they hand it.
         # run() is a flag-free fresh path by construction: nothing here reads a
         # checkpoint, so a stale or foreign checkpoint.json is inert to it.
-        return await self._run_loop(
+        outcome = await self._run_loop(
             current_node,
             pipeline_start_time=pipeline_start_time,
         )
+        # Terminal state write: a finished run is not resumable (ladder rung 4).
+        self._mark_run_completed()
+        return outcome
 
     async def _run_loop(
         self,
@@ -383,7 +394,12 @@ class PipelineEngine:
 
             # Step 1: Check for terminal node (exit)
             if current_node.is_exit_node():
-                self._save_checkpoint(current_node.id)
+                self._save_checkpoint(
+                current_node.id,
+                goal_gate_retries=goal_gate_retries,
+                failure_routing_retries=failure_routing_retries,
+                steps=steps,
+            )
                 await self._emit(
                     PIPELINE_CHECKPOINT,
                     {
@@ -472,7 +488,12 @@ class PipelineEngine:
                         ),
                     },
                 )
-                self._save_checkpoint(current_node.id)
+                self._save_checkpoint(
+                current_node.id,
+                goal_gate_retries=goal_gate_retries,
+                failure_routing_retries=failure_routing_retries,
+                steps=steps,
+            )
                 await self._emit(
                     PIPELINE_CHECKPOINT,
                     {
@@ -818,7 +839,12 @@ class PipelineEngine:
                 await self._check_contract_violation(current_node.id, outcome)
 
             # Step 4b: Save checkpoint after each node
-            self._save_checkpoint(current_node.id)
+            self._save_checkpoint(
+                current_node.id,
+                goal_gate_retries=goal_gate_retries,
+                failure_routing_retries=failure_routing_retries,
+                steps=steps,
+            )
             await self._emit(
                 PIPELINE_CHECKPOINT,
                 {
@@ -1325,12 +1351,84 @@ class PipelineEngine:
             failure_reason=failure_reason,
         )
 
-    def _save_checkpoint(self, current_node_id: str) -> None:
+    def _graph_identity(self) -> dict[str, Any]:
+        """Return the checkpoint's ``graph`` block: fingerprint + DOT source.
+
+        Computed once per engine (the DOT source is immutable post-load) and
+        embedded in every checkpoint so a resume is self-contained —
+        ``manifest.json`` does not carry the source.  The fingerprint is what
+        ladder rung 5 compares; it is evaluated ONLY on the explicit resume
+        path (see checkpoint.py's module docstring), never here.
+        """
+        if self._graph_identity_cache is None:
+            dot_source = self.graph.dot_source or ""
+            self._graph_identity_cache = {
+                "fingerprint": fingerprint_dot_source(dot_source),
+                "dot_source": dot_source,
+            }
+        return self._graph_identity_cache
+
+    def _serialize_node_outcomes(self) -> dict[str, dict[str, Any]]:
+        """Routing/gating subset of every completed node's Outcome.
+
+        Spec §5.3 rule 5 needs the last completed node's REAL outcome to make
+        the single resume-hop edge-selection decision (a reconstructed
+        ``SUCCESS`` was an ingredient of the pre-#66 "no matching edge from
+        resumed node" crash class).  ``is_explicit`` rides along because
+        EXTENSIONS §25's fail-closed goal-gate contract must survive the
+        round trip: without it a resumed run of a gated graph would find every
+        gate unsatisfied and re-execute via ``retry_target``.
+
+        Deliberately NOT stored: ``context_updates`` (already merged into the
+        context snapshot — one source of truth), ``response_text`` /
+        ``failed_step`` / ``session_id`` (not routing-relevant; sessions are
+        dead by definition once the process is gone).
+        """
+        return {
+            node_id: {
+                "status": outcome.status.value,
+                "preferred_label": outcome.preferred_label,
+                "suggested_next_ids": outcome.suggested_next_ids,
+                "is_explicit": outcome.is_explicit,
+                "failure_reason": outcome.failure_reason,
+                "notes": outcome.notes,
+            }
+            for node_id, outcome in self.node_outcomes.items()
+        }
+
+    def _serialize_node_retries(self) -> dict[str, int]:
+        """Retries consumed per completed node — spec §5.3 rule 4 / DoD :1856.
+
+        ``execute_with_retry`` records the 1-indexed ``attempt_count`` on every
+        outcome that passes through the retry ladder, so retries consumed is
+        ``attempt_count - 1``.  This field existed in the schema before but was
+        written as ``{}`` unconditionally; the spec asks for it, so it is now
+        actually populated.
+        """
+        return {
+            node_id: max(0, (outcome.attempt_count or 1) - 1)
+            for node_id, outcome in self.node_outcomes.items()
+        }
+
+    def _save_checkpoint(
+        self,
+        current_node_id: str,
+        *,
+        goal_gate_retries: int = 0,
+        failure_routing_retries: int = 0,
+        steps: int = 0,
+    ) -> None:
         """Save a checkpoint after a node execution.
 
-        Spec Section 5.3: Checkpoint.save.
-        The engine always runs from Start; this checkpoint is a crash-observability
-        record, not a resume marker. Graph-level idempotency is the handler's job.
+        Spec Section 5.3: Checkpoint.save.  ``current_node`` is the LAST
+        COMPLETED node (spec's own definition) and the save happens BEFORE
+        edge selection — which is why a resume re-runs that one selection
+        itself rather than restoring a pre-picked next node.
+
+        The checkpoint IS a resume marker, but only through the explicit
+        resume entry point; a fresh ``run()`` never reads one back.
+        Graph-level idempotency (``examples/pipelines/12-graph-resume.dot``)
+        remains an independent, fully supported pattern.
         """
         if self._checkpoint_path is None:
             return  # S5: branch clones never checkpoint
@@ -1342,9 +1440,42 @@ class PipelineEngine:
             completed_nodes=list(self.completed_nodes),
             context_snapshot=self.context.snapshot(),
             timestamp=datetime.now(timezone.utc).isoformat(),
+            node_retries=self._serialize_node_retries(),
             logs=self.context.get_logs(),  # L-7: include logs in checkpoint
+            run_state=RUN_STATE_IN_FLIGHT,
+            node_outcomes=self._serialize_node_outcomes(),
+            engine_state={
+                "iteration_count": self.iteration_count,
+                "node_execution_counts": dict(self._node_execution_counts),
+                "goal_gate_retries": goal_gate_retries,
+                "failure_routing_retries": failure_routing_retries,
+                "steps": steps,
+            },
+            graph=self._graph_identity(),
         )
         save_checkpoint(cp, self._checkpoint_path)
+        # Retained so the terminal run_state flip can rewrite the SAME payload
+        # without ever reading a checkpoint back (AC-4: no checkpoint read on
+        # any non-resume path, enforced by construction).
+        self._last_checkpoint = cp
+
+    def _mark_run_completed(self) -> None:
+        """Flip the final checkpoint's ``run_state`` to ``completed``.
+
+        Called once, when an entry point is about to return its final Outcome.
+        Resuming a finished run is refused at ladder rung 4 rather than
+        re-running terminal/gate logic against ambiguous state.
+
+        Rewrites the last checkpoint payload held in memory — it does NOT read
+        the file back, so no entry point (fresh or resumed) ever loads a
+        checkpoint outside the explicit resume path.  A run that dies before
+        any checkpoint exists leaves nothing to mark, which is correct: there
+        is nothing to resume either.
+        """
+        if self._checkpoint_path is None or self._last_checkpoint is None:
+            return
+        self._last_checkpoint.run_state = RUN_STATE_COMPLETED
+        save_checkpoint(self._last_checkpoint, self._checkpoint_path)
 
     # -- Run directory helpers -----------------------------------------------
 

@@ -221,6 +221,96 @@ jobs:
             echo "skip=$SKIP"
           } >> "$GITHUB_OUTPUT"
 
+      - name: "Detach the engine: snapshot pipeline-runner out of the workspace"
+        if: steps.locate.outputs.skip != 'true'
+        # FIRES 9 (run 31760312250) AND 10 (run 31766094504) -- one mechanism.
+        # This job used to drive the engine as `uv run --project
+        # modules/pipeline-runner`, which puts the ENGINE's own venv, and every
+        # path dependency uv installs into it (loop-pipeline, remote-source,
+        # unified-llm-client), INSIDE the very workspace this pipeline's maker
+        # agents are instructed to rewrite. The engine was standing on its own
+        # subject.
+        #   - Fire 9: a maker cp'd patched unified_llm files into the in-tree
+        #     venv's site-packages; the engine's next glob-model spawn raised
+        #     `No module named 'unified_llm._cost'` and an already-PROVEN round
+        #     was abandoned.
+        #   - Fire 10, quoting its own postmortem: "the engine that spawns the
+        #     critique node uses the pipeline-runner module's venv
+        #     (modules/pipeline-runner/.venv)... stale, incomplete unified_llm
+        #     namespace package... cannot import name 'resolve_latest_for'".
+        #     The gate had CONVERGED. The judge could never run.
+        # The .dot-side guards (maker env-contract, ambient-install reset guard)
+        # shrink the blast radius but cannot close it: a guard that lives inside
+        # the run can be out-argued by the run. This step closes it
+        # STRUCTURALLY -- the engine's source is copied to $RUNNER_TEMP before
+        # anything can touch the workspace, and nothing the pipeline does to the
+        # workspace afterwards can reach it.
+        #
+        # WHY modules/ WHOLESALE: the engine's path dependencies are RELATIVE
+        # siblings -- modules/pipeline-runner's [tool.uv.sources] points at
+        # ../loop-pipeline and ../remote-source, and loop-pipeline's at
+        # ../unified-llm-client. Copying modules/ verbatim preserves that
+        # structure, so `--project $RUNNER_TEMP/engine-src/modules/pipeline-runner`
+        # resolves exactly what `--project modules/pipeline-runner` used to. No
+        # root pyproject.toml is needed: the repo-root one declares no
+        # [tool.uv.workspace], so uv resolves modules/pipeline-runner standalone
+        # (verified locally -- a snapshot of modules/ alone builds and runs).
+        #
+        # WHY bundles/ TOO: runner.py's `_local_bundle_path()` resolves the
+        # engine's default base bundle RELATIVE TO ITS OWN __file__
+        # (`Path(__file__).resolve().parents[3] / "bundles" /
+        # "attractor-pipeline.yaml"`). Moving the engine without that directory
+        # would silently turn a local-sibling hit into a miss and push the
+        # engine onto its git fallback. These workflows all set
+        # ATTRACTOR_PIPELINE_BUNDLE explicitly, so that default is unreachable
+        # here -- but 20K of YAML is a cheap price for a snapshot that behaves
+        # identically to the in-tree layout it replaces, and bundles/ is
+        # engine-side content by the same rule as modules/.
+        #
+        # NOT DETACHED, deliberately: the .dot itself, --cwd, target_dir and
+        # uplift_dir all still point at the WORKSPACE. The subject tree is
+        # supposed to be the live one; only the engine's own code and venv move.
+        #
+        # PLACEMENT: immediately after "Locate and validate the capsule", which
+        # is read-only (gh api + git ls-remote + file-existence checks) and is
+        # the step that decides whether this run happens at all. Strictly before
+        # every step that can write into the workspace, and it carries the same
+        # `if:` guard as the rest of the job.
+        run: |
+          set -euo pipefail
+          ENGINE_SRC="$RUNNER_TEMP/engine-src"
+          rm -rf "$ENGINE_SRC"
+          mkdir -p "$ENGINE_SRC"
+          # tar, not `cp -a`: the exclusions apply at ARCHIVE time, so a
+          # .venv/.git/__pycache__ that somehow already exists in the tree never
+          # enters the snapshot at all rather than being copied in and then
+          # deleted afterwards.
+          tar -cf - \
+            --exclude='.venv' \
+            --exclude='.git' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            modules bundles \
+          | tar -xf - -C "$ENGINE_SRC"
+          echo "engine snapshot: $GITHUB_WORKSPACE/{modules,bundles} -> $ENGINE_SRC/"
+          echo "engine snapshot provenance: base SHA $(git rev-parse HEAD)"
+          for required in \
+            "modules/pipeline-runner/pyproject.toml" \
+            "modules/loop-pipeline/pyproject.toml" \
+            "modules/unified-llm-client/pyproject.toml" \
+            "modules/remote-source/pyproject.toml" \
+            "bundles/attractor-pipeline.yaml"; do
+            if [ ! -f "$ENGINE_SRC/$required" ]; then
+              echo "::error::Engine snapshot at $ENGINE_SRC is missing $required -- the detached engine would be unusable and the run step would fail later with a confusing uv error. Refusing to start." >&2
+              exit 1
+            fi
+          done
+          if [ -n "$(find "$ENGINE_SRC" -name .venv -print -quit)" ]; then
+            echo "::error::Engine snapshot at $ENGINE_SRC contains a .venv -- the tar exclusion did not hold, so the engine is not actually detached from the workspace. Refusing to start." >&2
+            exit 1
+          fi
+          echo "engine snapshot verified: pipeline-runner project present, no .venv carried in"
+
       - uses: actions/setup-python@v5
         if: steps.locate.outputs.skip != 'true'
         with:
@@ -291,7 +381,13 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-implement/logs"
-          uv run --project modules/pipeline-runner attractor run \
+          # DETACHED ENGINE (fires 9 + 10): --project points at the
+          # $RUNNER_TEMP snapshot taken before any maker touched the tree, so
+          # the engine's venv and its editable path deps live where workspace
+          # churn cannot reach them. --cwd, target_dir and the .dot path below
+          # deliberately still point at the WORKSPACE: the subject tree is
+          # supposed to be the live one.
+          uv run --project "$RUNNER_TEMP/engine-src/modules/pipeline-runner" attractor run \
             .github/capsule-pipeline/task-runner.dot \
             --cwd "$GITHUB_WORKSPACE" \
             --logs-root "$RUNNER_TEMP/capsule-implement/logs" \

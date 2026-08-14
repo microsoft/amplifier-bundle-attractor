@@ -54,6 +54,17 @@ VALID_FIDELITY_MODES: frozenset[str] = frozenset(
 
 _DEFAULT_FIDELITY = "compact"
 
+#: Reserved ONE-HOP context key carrying the spec §5.3 rule-6 resume fidelity
+#: cap.  The engine sets it immediately before the first node executed after a
+#: resume (and only when that node resolves to ``full``), and clears it as soon
+#: as that node's handler returns — so it can never leak into a later hop or
+#: into a checkpoint's context snapshot.  Backends honor it by substituting the
+#: capped mode for ``full``; see ``backend.py`` step 3b.
+#:
+#: It lives here rather than in ``engine.py`` so both the engine and the
+#: backends can import it without a cycle (engine -> handlers -> backend).
+RESUME_FIDELITY_CAP_KEY: str = "resume.fidelity_cap"
+
 
 def resolve_fidelity(
     node: Node,

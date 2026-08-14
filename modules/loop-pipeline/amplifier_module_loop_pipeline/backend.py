@@ -51,7 +51,12 @@ except ImportError:
 
 
 from .context import PipelineContext
-from .fidelity import build_preamble, resolve_fidelity, resolve_thread_key
+from .fidelity import (
+    RESUME_FIDELITY_CAP_KEY,
+    build_preamble,
+    resolve_fidelity,
+    resolve_thread_key,
+)
 from .graph import Edge, Graph, Node, resolve_bool_attr
 from .hook_bridge import _current_node_context, set_node_context
 from .outcome import Outcome, StageStatus
@@ -257,6 +262,25 @@ class AmplifierBackend:
         else:
             # Fallback when graph not provided (backward compat)
             fidelity = node.attrs.get("fidelity", "compact")
+
+        # 3b. Spec §5.3 rule 6 — one-hop resume fidelity cap.
+        # `full` continuity here is _thread_transcripts: an in-memory dict of
+        # node exchanges replayed as parent_messages into a fresh spawn.  A
+        # killed process loses it unrecoverably, so the first node executed
+        # after a resume would otherwise spawn with EMPTY history and no sign
+        # that anything degraded.  The engine sets this reserved key on exactly
+        # that hop and clears it the moment the handler returns; honoring it
+        # here substitutes the ~3000-token summary preamble, which is built
+        # from restored context + completed-node history — precisely the
+        # serializable state the spec says survives.
+        resume_cap = context.get(RESUME_FIDELITY_CAP_KEY)
+        if resume_cap and fidelity == "full":
+            logger.info(
+                "Node %s: resume fidelity cap full->%s (spec §5.3 rule 6)",
+                node.id,
+                resume_cap,
+            )
+            fidelity = resume_cap
 
         # CR-1 loud guard (silent-continuity-loss class): a fidelity=full node
         # needs `graph` to resolve its thread key and drive the transcript

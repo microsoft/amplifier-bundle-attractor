@@ -10,6 +10,7 @@ import pytest
 
 from amplifier_module_loop_pipeline.backend import AmplifierBackend
 from amplifier_module_loop_pipeline.context import PipelineContext
+from amplifier_module_loop_pipeline.fidelity import RESUME_FIDELITY_CAP_KEY
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 
 
@@ -393,3 +394,85 @@ async def test_backend_session_id_none_when_not_in_result():
     outcome = await backend.run(node, "Do the work", _make_context())
 
     assert outcome.session_id is None
+
+
+# ---------------------------------------------------------------------------
+# Spec §5.3 rule 6 — the one-hop resume fidelity cap (issue #224)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resume_cap_substitutes_summary_high_for_full():
+    """A `full` node executed on the resume hop gets the summary:high preamble.
+
+    Without this, the first resumed `full` node spawns with EMPTY history —
+    the in-memory transcript `full` replays did not survive the process
+    boundary — and nothing in the run would show that anything changed.
+    """
+    coordinator = MockCoordinator(spawn_result={"output": "done", "session_id": "c-1"})
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+
+    node = _make_node(attrs={"llm_provider": "anthropic", "fidelity": "full"})
+    _, edge, graph = _make_graph_with_fidelity(node_fidelity="full")
+    context = _make_context("Build feature X")
+    context.set(RESUME_FIDELITY_CAP_KEY, "summary:high")
+
+    await backend.run(node, "Do the work", context, incoming_edge=edge, graph=graph)
+
+    instruction = coordinator.last_spawn_kwargs.get("instruction", "")
+    # Not the bare prompt any more: a preamble was built and prepended.
+    assert instruction != "Do the work"
+    assert "Do the work" in instruction
+    assert "Goal:" in instruction
+    # `full`'s continuity channel is not used on a capped hop.
+    assert "parent_messages" not in coordinator.last_spawn_kwargs
+
+
+@pytest.mark.asyncio
+async def test_resume_cap_is_inert_for_a_non_full_node():
+    """The cap only ever substitutes for `full` — it never overrides an author."""
+    coordinator = MockCoordinator(spawn_result={"output": "done", "session_id": "c-1"})
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+
+    node = _make_node(attrs={"llm_provider": "anthropic", "fidelity": "truncate"})
+    _, edge, graph = _make_graph_with_fidelity(node_fidelity="truncate")
+    context = _make_context("Build feature X")
+    context.set(RESUME_FIDELITY_CAP_KEY, "summary:high")
+
+    await backend.run(node, "Do the work", context, incoming_edge=edge, graph=graph)
+
+    capped = coordinator.last_spawn_kwargs.get("instruction", "")
+
+    coordinator2 = MockCoordinator(spawn_result={"output": "done", "session_id": "c-2"})
+    backend2 = AmplifierBackend(
+        coordinator=coordinator2,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+    await backend2.run(
+        node, "Do the work", _make_context("Build feature X"), incoming_edge=edge, graph=graph
+    )
+    assert capped == coordinator2.last_spawn_kwargs.get("instruction", "")
+
+
+@pytest.mark.asyncio
+async def test_absent_cap_leaves_full_untouched():
+    """No cap set (every fresh run, every later hop) — `full` stays `full`."""
+    coordinator = MockCoordinator(spawn_result={"output": "done", "session_id": "c-1"})
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+
+    node = _make_node(attrs={"llm_provider": "anthropic", "fidelity": "full"})
+    _, edge, graph = _make_graph_with_fidelity(node_fidelity="full")
+    context = _make_context()
+    context.set(RESUME_FIDELITY_CAP_KEY, None)
+
+    await backend.run(node, "Do the work", context, incoming_edge=edge, graph=graph)
+    assert coordinator.last_spawn_kwargs.get("instruction", "") == "Do the work"

@@ -18,6 +18,16 @@ includes:
   - bundle: git+https://github.com/microsoft/amplifier-foundation@main
   - bundle: attractor:behaviors/attractor-core
 
+# Always-on guidance for sessions composed from this bundle -- the thin awareness
+# only (objective-first trigger, three-question test, the never-clause, the
+# authoring tripwire, pointers).  Deliberately ROOT-ONLY: attractor-core flows into
+# every pipeline LLM node, and interactive steering does not belong there.
+# The heavy surfaces (context/pipeline-awareness.md, context/dot-reference.md) stay
+# on-demand from here and always-on only in bundles/attractor-interactive.yaml.
+context:
+  include:
+    - attractor:context/attractor-awareness.md
+
 tools:
   # Registers the bundle's skills with the Agent Skills system (slash-command
   # registration comes from each skill's `user-invocable: true` frontmatter).
@@ -26,11 +36,19 @@ tools:
     source: git+https://github.com/microsoft/amplifier-bundle-skills@main#subdirectory=modules/tool-skills
     config:
       skills:
-        # Resolves post-merge (skills/ lands on main with this PR); local installs may
-        # also place the skill in ~/.amplifier/skills/ (standard skills discovery).
-        - "git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=skills"
+        # Namespaced + ref-free ON PURPOSE.  A `git+...@main#subdirectory=skills` pin
+        # would serve MAIN's attractorify SKILL.md to a branch install, which is the
+        # same defect this PR fixes for context and agents.  "@attractor:skills"
+        # resolves inside THIS snapshot at whatever ref was installed.
+        - "@attractor:skills"
 
 agents:
+  # attractor-expert is defined ENTIRELY by agents/attractor-expert.md (metadata,
+  # mount plan, and the knowledge body).  One expert, one registration -- behaviors/
+  # attractor-core.yaml registers the same file for every composition that includes it.
+  include:
+    - attractor:attractor-expert
+
   # IMPORTANT: each child agent MUST declare an inline session.orchestrator running a
   # non-pipeline loop (e.g. loop-agent).  The spawn capability merges this agent's session:
   # key onto the parent config; without an explicit orchestrator the child would inherit the
@@ -40,7 +58,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        source: ./modules/loop-agent
         config:
           default_command_timeout_ms: 120000
   attractor-profile-openai:
@@ -48,7 +66,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        source: ./modules/loop-agent
         config:
           default_command_timeout_ms: 10000
   attractor-profile-gemini:
@@ -56,7 +74,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        source: ./modules/loop-agent
         config:
           default_command_timeout_ms: 10000
   attractor-pipeline-runner:
@@ -64,7 +82,7 @@ agents:
     session:
       orchestrator:
         module: loop-pipeline
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline
+        source: ./modules/loop-pipeline
         config:
           profiles:
             anthropic: attractor-agent-anthropic

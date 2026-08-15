@@ -25,6 +25,12 @@ providers:
 session:
   orchestrator:
     module: loop-agent
+    # NOTE: the same-repo `@main` pin is DELIBERATE here.  Unlike tools:/hooks:/providers:
+    # (resolved at parse time against this file's own directory), a session.orchestrator
+    # `source:` is resolved late, against the COMPOSED ROOT's base_path -- so a relative
+    # source here breaks the documented `includes: - bundle: git+...#subdirectory=...`
+    # path, where the user's own bundle is the root.  Probe-verified; see
+    # docs/designs/2026-08-15-composition-fix.md, "Two resolution classes".
     source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
     config:
       default_command_timeout_ms: 120000

@@ -385,6 +385,10 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
 - `examples/patterns/task-runner.dot` — canonical control-plane skeleton
 - `examples/pipelines/practical/bug-fix.dot` — shipped exemplar for "use the
   existing attractor" recommendations
+- <https://microsoft.github.io/amplifier-bundle-attractor/attractor-explained.html>
+  — the visual explainer; if the person is trying to LEARN how attractors work
+  rather than convert this session into a pipeline, offer them that link (share
+  it, don't open it)
 
 ---
 

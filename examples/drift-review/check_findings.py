@@ -117,70 +117,114 @@ def normalize(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def resolve_in_tree(repo_root: Path, rel: str) -> tuple[Path | None, str | None]:
-    """Resolve a repo-relative path, refusing anything that escapes the tree."""
+def resolve_in_tree(repo_root: Path, rel: str) -> tuple[Path | None, str | None, str | None]:
+    """Resolve a repo-relative path, refusing anything that escapes the tree.
+
+    Returns ``(path, resolved_rel, why)``. ``resolved_rel`` is the citation's
+    repo-relative posix form *after* resolution; ``why`` is the rejection
+    reason, and is set exactly when the other two are ``None``.
+
+    Handing back the resolved form is load-bearing rather than a convenience.
+    Every rule downstream that reasons about *which file* a citation names has
+    to judge the file, and the raw citation string is not the file:
+
+      * ``specs/canonical/../../docs/QUALITY_PROTOCOL.md`` satisfies a
+        ``startswith("specs/canonical/")`` test on its raw form while pointing
+        clean out of the closed normative set.
+      * ``specs/canonical/../../README.md`` is a different *string* from
+        ``README.md`` while being the same *file*, which is enough to walk a
+        finding past the rule that the drifting surface and the passage it
+        contradicts must be two different files.
+
+    Both were admissions while the callers tested the raw string. A closed set
+    is only as closed as the path it is closed over.
+    """
     if not isinstance(rel, str) or not rel.strip():
-        return None, "path is empty"
+        return None, None, "path is empty"
     if rel.startswith("/"):
-        return None, f"'{rel}' is absolute; citations must be repo-relative"
+        return None, None, f"'{rel}' is absolute; citations must be repo-relative"
     candidate = (repo_root / rel).resolve()
     try:
-        candidate.relative_to(repo_root.resolve())
+        resolved_rel = candidate.relative_to(repo_root.resolve()).as_posix()
     except ValueError:
-        return None, f"'{rel}' resolves outside the repository root"
+        return None, None, f"'{rel}' resolves outside the repository root"
     if not candidate.exists():
-        return None, f"'{rel}' does not exist in the tree"
+        return None, None, f"'{rel}' does not exist in the tree"
     if not candidate.is_file():
-        return None, f"'{rel}' is not a regular file"
-    return candidate, None
+        return None, None, f"'{rel}' is not a regular file"
+    return candidate, resolved_rel, None
 
 
-def check_citation(repo_root: Path, cite: Any, side: str) -> list[str]:
-    """Validate one side of a finding: file exists, line is in range, quote resolves."""
+def name_path(raw: Any, resolved: str) -> str:
+    """Render a citation path, making the traversal visible when one was used."""
+    return f"'{raw}'" if raw == resolved else f"'{raw}' (which resolves to '{resolved}')"
+
+
+def check_citation(repo_root: Path, cite: Any, side: str) -> tuple[list[str], str | None]:
+    """Validate one side of a finding: file exists, line is in range, quote resolves.
+
+    Returns ``(errors, resolved_rel)``. ``resolved_rel`` is populated whenever
+    the cited path itself resolved inside the tree -- deliberately including the
+    cases where a *later* check (line, quote) then failed, because the
+    closed-normative-set and different-files rules in ``check_finding`` are
+    about the FILE, and they must still judge the file the citation names.
+    """
     if not isinstance(cite, dict):
-        return [f"{side}: expected an object with file/line/quote, got {type(cite).__name__}"]
+        return (
+            [f"{side}: expected an object with file/line/quote, got {type(cite).__name__}"],
+            None,
+        )
 
     missing = [key for key in ("file", "line", "quote") if key not in cite]
     if missing:
-        return [f"{side}: missing required field '{key}'" for key in missing]
+        return ([f"{side}: missing required field '{key}'" for key in missing], None)
 
     rel = cite["file"]
-    path, why = resolve_in_tree(repo_root, rel if isinstance(rel, str) else "")
-    if path is None:
-        return [f"{side}.file: {why}"]
+    path, resolved_rel, why = resolve_in_tree(repo_root, rel if isinstance(rel, str) else "")
+    if path is None or resolved_rel is None:
+        return ([f"{side}.file: {why}"], None)
 
     line = cite["line"]
     if isinstance(line, bool) or not isinstance(line, int):
-        return [f"{side}.line: expected an integer line number, got {line!r}"]
+        return ([f"{side}.line: expected an integer line number, got {line!r}"], resolved_rel)
 
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as exc:  # pragma: no cover - unreadable file inside the tree
-        return [f"{side}.file: '{rel}' could not be read: {exc}"]
+        return ([f"{side}.file: '{rel}' could not be read: {exc}"], resolved_rel)
 
     if line < 1 or line > len(lines):
-        return [f"{side}.line: {rel} has {len(lines)} lines; cited line {line} is out of range"]
+        return (
+            [f"{side}.line: {rel} has {len(lines)} lines; cited line {line} is out of range"],
+            resolved_rel,
+        )
 
     quote = cite["quote"]
     if not isinstance(quote, str):
-        return [f"{side}.quote: expected a string, got {type(quote).__name__}"]
+        return ([f"{side}.quote: expected a string, got {type(quote).__name__}"], resolved_rel)
     needle = normalize(quote)
     if len(needle) < MIN_QUOTE_CHARS:
-        return [
-            f"{side}.quote: {len(needle)} characters after whitespace normalization; "
-            f"at least {MIN_QUOTE_CHARS} are required for the quote to anchor the citation"
-        ]
+        return (
+            [
+                f"{side}.quote: {len(needle)} characters after whitespace normalization; "
+                f"at least {MIN_QUOTE_CHARS} are required for the quote to anchor the citation"
+            ],
+            resolved_rel,
+        )
 
     lo = max(0, line - 1 - WINDOW_BEFORE)
     hi = min(len(lines), line + WINDOW_AFTER)
     window = normalize(" ".join(lines[lo:hi]))
     if needle not in window:
-        return [
-            f"{side}: the quote does not appear at {rel}:{line} "
-            f"(searched lines {lo + 1}-{hi}). Quote the text that is actually there, "
-            "or cite the line where the text you quoted lives."
-        ]
-    return []
+        return (
+            [
+                f"{side}: the quote does not appear at {rel}:{line} "
+                f"(searched lines {lo + 1}-{hi}). Quote the text that is actually there, "
+                "or cite the line where the text you quoted lives."
+            ],
+            resolved_rel,
+        )
+    return ([], resolved_rel)
 
 
 # ---------------------------------------------------------------------------
@@ -232,25 +276,36 @@ def check_finding(
             "contradiction IS -- a citation pair with no argument is not a finding"
         )
 
-    errors.extend(check_citation(repo_root, finding["drift"], "drift"))
-    errors.extend(check_citation(repo_root, finding["contradicts"], "contradicts"))
+    drift_errors, drift_rel = check_citation(repo_root, finding["drift"], "drift")
+    contradicts_errors, contradicts_rel = check_citation(
+        repo_root, finding["contradicts"], "contradicts"
+    )
+    errors.extend(drift_errors)
+    errors.extend(contradicts_errors)
 
+    # BOTH rules below judge the RESOLVED repo-relative path, never the raw
+    # citation string. A citation that did not resolve has already been rejected
+    # by check_citation above, so declining to guess at its intent here costs
+    # nothing; testing the raw string, by contrast, cost two admissions
+    # (see resolve_in_tree).
     drift = finding["drift"]
     contradicts = finding["contradicts"]
-    if isinstance(drift, dict) and isinstance(contradicts, dict):
-        normative = contradicts.get("file")
-        if isinstance(normative, str) and not normative.startswith(NORMATIVE_PREFIXES):
-            errors.append(
-                f"contradicts.file: '{normative}' is not a normative source. Layer 3 measures "
-                f"drift against {list(NORMATIVE_PREFIXES)}; a disagreement between two "
-                "non-normative surfaces is a proofreading note, not drift. Cite the spec, "
-                "vision or ledger passage the surface actually contradicts."
-            )
-        if drift.get("file") == contradicts.get("file"):
-            errors.append(
-                "drift.file and contradicts.file are the same file; a finding must name the "
-                "drifting surface AND the separate normative passage it contradicts"
-            )
+    if contradicts_rel is not None and not contradicts_rel.startswith(NORMATIVE_PREFIXES):
+        raw = contradicts.get("file") if isinstance(contradicts, dict) else contradicts_rel
+        errors.append(
+            f"contradicts.file: {name_path(raw, contradicts_rel)} is not a normative source. "
+            f"Layer 3 measures drift against {list(NORMATIVE_PREFIXES)}; a disagreement between "
+            "two non-normative surfaces is a proofreading note, not drift. Cite the spec, "
+            "vision or ledger passage the surface actually contradicts."
+        )
+    if drift_rel is not None and drift_rel == contradicts_rel:
+        raw_drift = drift.get("file") if isinstance(drift, dict) else drift_rel
+        raw_contradicts = contradicts.get("file") if isinstance(contradicts, dict) else drift_rel
+        errors.append(
+            f"drift.file {name_path(raw_drift, drift_rel)} and contradicts.file "
+            f"{name_path(raw_contradicts, drift_rel)} are the same file; a finding must name "
+            "the drifting surface AND the separate normative passage it contradicts"
+        )
 
     return errors
 
@@ -298,7 +353,8 @@ def check_class_file(
         swept = []
     else:
         for entry in swept:
-            resolved, why = resolve_in_tree(repo_root, entry if isinstance(entry, str) else "")
+            entry_rel = entry if isinstance(entry, str) else ""
+            resolved, _resolved_rel, why = resolve_in_tree(repo_root, entry_rel)
             if resolved is None:
                 errors.append(f"{path.name}: swept entry {entry!r}: {why}")
 

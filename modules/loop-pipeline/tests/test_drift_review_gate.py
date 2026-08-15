@@ -30,6 +30,9 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -94,6 +97,20 @@ _VISION = """# Vision
 Fail loud; never fall back silently.
 """
 
+#: NOT in NORMATIVE_PREFIXES -- this is where the traversal cases try to land.
+_QUALITY_PROTOCOL = """# Quality Protocol
+
+## 5. Drift layers
+Layer 3 is the periodic holistic semantic review of the whole repository.
+Filler line.
+"""
+
+#: README carries a real sentence so a traversal case can quote it at file:line.
+_README = """# Readme
+
+The repository ships a convergence loop exemplar for new authors.
+"""
+
 
 @pytest.fixture()
 def repo(tmp_path: Path) -> Path:
@@ -103,8 +120,9 @@ def repo(tmp_path: Path) -> Path:
     (root / "specs" / "canonical").mkdir(parents=True)
     (root / "docs" / "SOME-GUIDE.md").write_text(_DRIFTING_DOC, encoding="utf-8")
     (root / "docs" / "VISION.md").write_text(_VISION, encoding="utf-8")
+    (root / "docs" / "QUALITY_PROTOCOL.md").write_text(_QUALITY_PROTOCOL, encoding="utf-8")
     (root / "specs" / "canonical" / "spec.md").write_text(_NORMATIVE_SPEC, encoding="utf-8")
-    (root / "README.md").write_text("# Readme\n\nfiller\n", encoding="utf-8")
+    (root / "README.md").write_text(_README, encoding="utf-8")
     return root
 
 
@@ -308,6 +326,92 @@ def test_rejects_a_finding_that_cites_the_same_file_on_both_sides(checker, repo,
     assert "are the same file" in _report(repo)
 
 
+# ---------------------------------------------------------------------------
+# Path traversal -- the closed set is only as closed as the path it tests
+# ---------------------------------------------------------------------------
+#
+# Both cases below were REPRODUCED as admissions by an adversarial review while
+# `check_finding` tested the raw citation STRING. `resolve_in_tree` now hands
+# back the resolved repo-relative path and both rules judge that instead.
+
+
+_QP_QUOTE = "Layer 3 is the periodic holistic semantic review of the whole repository."
+_README_QUOTE = "The repository ships a convergence loop exemplar for new authors."
+
+
+def test_rejects_a_contradicts_citation_that_traverses_out_of_the_normative_set(
+    checker, repo, capsys
+):
+    """`specs/canonical/../../docs/QUALITY_PROTOCOL.md` satisfies startswith(), lands outside.
+
+    Pre-fix this was ADMITTED: the raw string begins with `specs/canonical/`, so
+    the closed-set test passed while the citation pointed at a doc that is not
+    normative at all -- which would let a Layer-3 finding measure drift against
+    a surface that is itself drifting.
+    """
+    corpus = _corpus()
+    corpus["core-docs"]["findings"][0]["contradicts"] = {
+        "file": "specs/canonical/../../docs/QUALITY_PROTOCOL.md",
+        "line": 4,
+        "quote": _QP_QUOTE,
+    }
+    _write(repo, corpus)
+    assert _run(checker, repo) == 0
+    assert capsys.readouterr().out == "findings_bad"
+    report = _report(repo)
+    assert "is not a normative source" in report
+    # And it names the traversal, so the human triaging the report sees the dodge
+    # rather than a confusing complaint about a path that looks compliant.
+    assert "which resolves to 'docs/QUALITY_PROTOCOL.md'" in report
+
+
+def test_rejects_the_same_file_dodged_through_a_traversal(checker, repo, capsys):
+    """`README.md` vs `specs/canonical/../../README.md`: two strings, one file.
+
+    Pre-fix this was ADMITTED twice over -- the raw strings differ, so the
+    different-files rule passed, and the second one begins with
+    `specs/canonical/`, so the closed-set rule passed too. A finding could
+    therefore cite one file against itself and call it drift.
+    """
+    corpus = _corpus()
+    finding = corpus["core-docs"]["findings"][0]
+    finding["drift"] = {"file": "README.md", "line": 3, "quote": _README_QUOTE}
+    finding["contradicts"] = {
+        "file": "specs/canonical/../../README.md",
+        "line": 3,
+        "quote": _README_QUOTE,
+    }
+    _write(repo, corpus)
+    assert _run(checker, repo) == 0
+    assert capsys.readouterr().out == "findings_bad"
+    assert "are the same file" in _report(repo)
+
+
+def test_the_different_files_rule_holds_inside_the_normative_set_too(checker, repo, capsys):
+    """A traversal that lands back on the same *normative* file: only one rule can fire.
+
+    Both sides resolve to `specs/canonical/spec.md`, so the closed-set rule is
+    satisfied and cannot be what rejects this. That isolates the different-files
+    half of the fix from the closed-set half.
+    """
+    corpus = _corpus()
+    finding = corpus["core-docs"]["findings"][0]
+    spec_cite = {
+        "file": "specs/canonical/spec.md",
+        "line": 12,
+        "quote": "No matching edge is a hard failure and the run stops loudly.",
+    }
+    finding["drift"] = copy.deepcopy(spec_cite)
+    finding["contradicts"] = copy.deepcopy(spec_cite)
+    finding["contradicts"]["file"] = "specs/canonical/../canonical/spec.md"
+    _write(repo, corpus)
+    assert _run(checker, repo) == 0
+    assert capsys.readouterr().out == "findings_bad"
+    report = _report(repo)
+    assert "are the same file" in report
+    assert "is not a normative source" not in report
+
+
 def test_rejects_duplicate_finding_ids_across_classes(checker, repo, capsys):
     """Ids are the handle a human triages by; a collision silently merges two."""
     corpus = _corpus()
@@ -410,6 +514,85 @@ def test_a_gate_that_cannot_run_exits_nonzero_with_no_token(checker, repo, capsy
     argv[index] = str(repo / "no-such-directory")
     assert checker.main(argv) != 0
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
+# The report-repair budget, executed through the shell the pipeline really runs
+# ---------------------------------------------------------------------------
+
+_SHELL_GATE = pytest.mark.skipif(
+    not shutil.which("sh"), reason="the shipped report_gate command needs a POSIX shell"
+)
+
+
+def _report_gate_command() -> str:
+    """The verbatim tool_command of `report_gate`, read through the engine's parser."""
+    from amplifier_module_loop_pipeline.dot_parser import parse_dot
+
+    graph = parse_dot(_DOT_PATH.read_text(encoding="utf-8"))
+    return str(graph.nodes["report_gate"].attrs["tool_command"])
+
+
+def _report_gate_workspace(tmp_path: Path) -> Path:
+    """A workspace holding an admitted corpus and a report that drops its finding."""
+    state = tmp_path / ".drift-review"
+    state.mkdir()
+    (state / "findings.json").write_text(
+        '{"finding_count": 1, "findings": [{"id": "DR-001"}]}\n', encoding="utf-8"
+    )
+    (state / "report.md").write_text(
+        "a report naming neither the admitted finding nor the swept classes\n", encoding="utf-8"
+    )
+    return tmp_path
+
+
+def _run_report_gate(workspace: Path, max_reports: str = "2") -> str:
+    result = subprocess.run(
+        _report_gate_command(),
+        shell=True,
+        cwd=workspace,
+        env={**os.environ, "max_reports": max_reports},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def _complete_report(workspace: Path) -> None:
+    (workspace / ".drift-review" / "report.md").write_text(
+        "DR-001 across core-docs, examples, guidance, ledgers\n", encoding="utf-8"
+    )
+
+
+@_SHELL_GATE
+def test_the_report_repair_budget_is_the_one_the_header_documents(tmp_path):
+    """`max_reports=2` buys 2 repairs across at most 3 gate passes -- as documented.
+
+    The header and README both say "default 2 -> at most 3 gate passes", and
+    `check_findings.py` spends `--max-revisions` exactly that way. This gate
+    tested its budget BEFORE judging (`n -gt B+1`), which granted a third repair
+    and landed exhaustion on pass 4.
+    """
+    workspace = _report_gate_workspace(tmp_path)
+    verdicts = [_run_report_gate(workspace) for _ in range(3)]
+    assert verdicts == ["report_bad", "report_bad", "report_exhausted"]
+
+
+@_SHELL_GATE
+def test_the_last_permitted_repair_is_still_judged(tmp_path):
+    """The budget is spent on the verdict, never instead of it.
+
+    A wall that fires before reading `report.md` throws away the work of the
+    repair it just paid for. The final permitted pass must still be able to say
+    `report_ok`.
+    """
+    workspace = _report_gate_workspace(tmp_path)
+    assert _run_report_gate(workspace) == "report_bad"
+    assert _run_report_gate(workspace) == "report_bad"
+    _complete_report(workspace)
+    assert _run_report_gate(workspace) == "report_ok"
 
 
 # ---------------------------------------------------------------------------

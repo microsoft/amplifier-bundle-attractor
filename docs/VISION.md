@@ -36,9 +36,9 @@ skeleton -- gates, budgets, walls, feedback channels. The model owns the domain 
 because the model is the part that can adapt when the domain surprises it (section 0).
 **Orchestrator RUNS, graph DEFINES, model ADAPTS.**
 
-**The long horizon: objectives in, evidence-converged outcomes out.** *"The user might never pick an
-attractor explicitly. The system infers it from the objective"* (maintainer, recorded design
-conversation). The layering that implies: objective -> composition -> attractors -> execution
+**Objectives in, evidence-converged outcomes out.** *"The user might never pick an attractor
+explicitly. The system infers it from the objective"* (maintainer, recorded design conversation).
+The layering that implies: objective -> composition -> attractors -> execution
 ([`designs/2026-08-15-objective-layer.md`](designs/2026-08-15-objective-layer.md)).
 
 ---
@@ -47,17 +47,17 @@ conversation). The layering that implies: objective -> composition -> attractors
 
 The governing rule for every change here is the **decision matrix** (maintainer ruling, 2026-08-15):
 
-> any changes in behavior/philosophy/decision-making/design-thinking (all the things) should
-> consider the strongdm/attractor nlspec -- it should be EASY/SUPPORTED to go the desired direction
-> if it means bringing us more aligned to it; it should be REALLY HARD/readily pushed back on if it
-> were to drift us from it; and RELATIVELY RESISTED if it takes us into uncharted
-> (non-specified/absent from the nlspec) territory.
+Every change here is weighed against the `strongdm/attractor` nlspec -- not code alone, but
+behavior, philosophy, decision-making, design-thinking, process and documentation alike. Movement
+that brings this project **more aligned** with the spec is the easy path: supported by default,
+carrying the presumption of yes. Movement that would **drift** us away from the spec is made
+genuinely hard and is readily pushed back on -- permitted only on measured evidence, and only as a
+loud, ledgered divergence. Movement into territory the spec **does not address** meets real
+resistance, though less of it: the silence has to be argued rather than assumed, and what ships
+there stays additive and non-interfering. That gradient is the steering rule of this project.
 
-Three postures, not two. Toward the spec: the presumption is yes. Away from it: readily pushed back
-on. Spec-silent territory: *relatively* resisted -- resisted, not forbidden, because the spec's
-silence is not automatically a signal, and saying why it isn't is part of the price of going there.
-The matrix governs **all the things** -- code, docs, examples, philosophy, design-thinking, process
--- not only conformance-bearing code.
+Three postures, not two -- and resisted is not forbidden. The uncharted tier is a toll, not a wall:
+every extension this repo carries passed through it, paying that toll on the way.
 
 It is the general form of the four-rule **Compatibility doctrine** at the top of
 [`SPEC_CONFORMANCE.md`](../SPEC_CONFORMANCE.md) (maintainer ruling, 2026-08-14), which decides every
@@ -73,28 +73,32 @@ direction" (`QUALITY_PROTOCOL.md`, Layer 2). What each tier owes before it merge
 
 ---
 
-## The layers we are building
+## The layers we converge on
 
-**Shipped.**
+A ladder, in the order the rungs rest on each other. Each is stated as the outcome it produces, not
+as a step in a build order.
 
-- **The intent-and-evidence node doctrine.** A node publishes its objective, constraints, available
-  tools, required evidence, and exit condition; an edge can mean *"objective not satisfied"* rather
-  than *"next step"* -- realized as the per-node contract table behind
+- **Node contracts carry intent and evidence.** A node publishes its objective, constraints,
+  available tools, required evidence, and exit condition; an edge can mean *"objective not
+  satisfied"* rather than *"next step"* -- the per-node contract shape behind
   `examples/objective/objective-runner.dot`.
-- **The evidence-gated engine.** Fail-closed goal gates (`specs/EXTENSIONS.md` section 25), the
-  `must_write=` artifact contract (27), the no-matching-edge hard fail (33), and `attractor lint` as
-  a gate an author can put *inside* a graph (32).
-- **The objective layer.** `examples/objective/` -- an objective in; verified satisfaction, an
-  honest redirect, or a loud escalation out.
+- **The engine is evidence-gated end to end.** Goal gates fail closed (`specs/EXTENSIONS.md`
+  section 25); a `must_write=` artifact contract cannot be satisfied by declaring success (27); no
+  matching edge is a hard failure rather than an alphabetical guess (33); and `attractor lint` is a
+  gate an author can put *inside* a graph (32).
+- **An objective goes in; a verified outcome comes out.** Verified satisfaction, an honest
+  redirect, or a loud escalation -- never a plausible report of success. The user need never pick an
+  attractor; the system infers it from the objective (`examples/objective/`,
+  [`designs/2026-08-15-objective-layer.md`](designs/2026-08-15-objective-layer.md)).
+- **The operator steers a portfolio, not a run.** Orchestrator-as-a-service, an event-driven
+  resident system, schedulers, dashboards, a portfolio layer -- the surface on which a person steers
+  many convergences at once instead of babysitting one. From the vision conversation, recorded in
+  the objective-layer design (section 8).
 
-**Horizon -- deliberately parked.** Parked is a stated posture, not an omission.
-
-- **The operator / portfolio surface** -- orchestrator-as-a-service, an event-driven resident
-  system, schedulers, dashboards, a portfolio layer. Named in the vision conversation, ruled out of
-  scope for now (objective-layer design, section 8).
-- **Cross-platform execution-contract convergence** -- the spec's swappable `ExecutionEnvironment`
-  seam (Local / Docker / K8s / WASM / SSH). `CAL-3` in `SPEC_CONFORMANCE.md`: deferred by the owner,
-  context captured "so the future call is well-informed."
+The ladder tops out there, honestly. Past the operator surface the sources record open *questions*
+rather than a destination -- the spec's swappable `ExecutionEnvironment` seam (Local / Docker / K8s
+/ WASM / SSH) is `CAL-3` in `SPEC_CONFORMANCE.md`, a call nobody has made yet. An undecided call is
+a ledger row, not a vision. This page does not forge decisions the maintainer has not made.
 
 ---
 
@@ -161,6 +165,12 @@ command could decide.
 
 The vision refines over time, so this page is held to the bar of the protocol that enforces it:
 
+- **This page states the desired state, never the current one.** It is the basin this project
+  converges toward, written as though already true. What exists today, what is in flight, and what
+  comes next are status and sequencing: they live in the ledgers
+  ([`SPEC_CONFORMANCE.md`](../SPEC_CONFORMANCE.md), [`specs/EXTENSIONS.md`](../specs/EXTENSIONS.md)),
+  in [`QUALITY_PROTOCOL.md`](QUALITY_PROTOCOL.md), and in the issue queue. A page that has to be
+  edited when a layer ships is a status report wearing a vision's name.
 - **Amendments require the maintainer's explicit word.** This is his vision, captured -- not a
   consensus document, and not an agent's inference.
 - **Amendments carry evidence** -- a failure this framing would have caught, or a cost it retires.
@@ -179,6 +189,33 @@ The vision refines over time, so this page is held to the bar of the protocol th
 
 Amendments to this vision, newest first. Each entry names the evidence that justified it.
 
+### 2026-08-15 -- desired state only, and the matrix in authored prose (entry 2)
+
+- **Changed, first.** This page states the **desired state** and never the current one. "The layers
+  we are building," with its *shipped* / *deliberately parked* split, is now "The layers we converge
+  on" -- the same ladder stated as the outcomes it produces, with no marker anywhere of what exists
+  today. *"The long horizon"* came off the fourth north-star commitment for the same reason.
+  "Maintaining this document" now says outright where status and sequencing live instead: the
+  ledgers, the quality protocol, and the issue queue.
+- **Changed, second.** The maintainer's raw ruling, previously blockquoted verbatim in "Our
+  relationship to the nlspec," is replaced by one authored articulation of the same rule. The
+  identical paragraph is the canonical statement in [`QUALITY_PROTOCOL.md`](QUALITY_PROTOCOL.md)
+  section 3, and `test_quality_protocol_guard.py`'s Q-307 still pins the two copies to each other,
+  re-anchored on the new text.
+- **Evidence that justified both: the maintainer read the shipped page and ruled** (2026-08-15).
+  On the first -- a vision that records what shipped has to be edited every time something ships,
+  which makes it a status report competing with the ledgers rather than the thing they are measured
+  against; the goal is the attractor basin this project converges toward, an eventual consistency,
+  stated as the achieved outcome. On the second -- a quote reproduces the phrasing of a
+  conversation, including its shorthand, and this page is read by people who were not in it.
+- **What the honesty rule cost, and why that is the right price.** Cross-platform execution-contract
+  convergence (`CAL-3`) left the ladder entirely: it is an *open* call, not a chosen destination,
+  and promoting an undecided ledger row into the vision would have been this page forging a decision
+  the maintainer has not made. The ladder now says where it tops out, and says why.
+- **Scope: documentation only.** No engine, handler, example or ledger *behavior* changed. Every
+  Q-300..Q-307 assertion was re-proved red by mutation and restored byte-identically.
+- **Retirement condition.** Unchanged: none.
+
 ### 2026-08-15 -- vision captured (entry 1)
 
 - **Established.** Maintainer ruling: capture the vision this project is being steered toward in one
@@ -194,6 +231,7 @@ Amendments to this vision, newest first. Each entry names the evidence that just
   page closes; nothing here is invented, and every claim traces to one of those sources or to the
   ruling.
 - **Scope: documentation only.** No engine, handler, example or ledger *behavior* changed. The
-  parked layers are recorded as parked -- a stated posture, not a silent omission.
+  parked layers are recorded as parked -- a stated posture, not a silent omission. *(Superseded by
+  entry 2: this page no longer marks layers as shipped or parked at all.)*
 - **Retirement condition.** None. This is the document other documents are measured against; it
   narrows or grows by amendment, and retires only if the project does.

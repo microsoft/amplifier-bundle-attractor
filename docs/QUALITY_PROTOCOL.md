@@ -99,16 +99,18 @@ the same rule, applied past conformance to everything else.
 Maintainer ruling, 2026-08-15. The rule that decides which direction a change is allowed to move,
 and what it owes for moving there:
 
-> any changes in behavior/philosophy/decision-making/design-thinking (all the things) should
-> consider the strongdm/attractor nlspec -- it should be EASY/SUPPORTED to go the desired direction
-> if it means bringing us more aligned to it; it should be REALLY HARD/readily pushed back on if it
-> were to drift us from it; and RELATIVELY RESISTED if it takes us into uncharted
-> (non-specified/absent from the nlspec) territory.
+Every change here is weighed against the `strongdm/attractor` nlspec -- not code alone, but
+behavior, philosophy, decision-making, design-thinking, process and documentation alike. Movement
+that brings this project **more aligned** with the spec is the easy path: supported by default,
+carrying the presumption of yes. Movement that would **drift** us away from the spec is made
+genuinely hard and is readily pushed back on -- permitted only on measured evidence, and only as a
+loud, ledgered divergence. Movement into territory the spec **does not address** meets real
+resistance, though less of it: the silence has to be argued rather than assumed, and what ships
+there stays additive and non-interfering. That gradient is the steering rule of this project.
 
-It applies to **all the things** -- code, docs, examples, philosophy, decision-making,
-design-thinking, process -- not only to the conformance-bearing code the ledger tracks.
-[`docs/VISION.md`](VISION.md) states it as the governing rule of the project; this section states
-what each tier costs before it merges.
+The gradient reaches past the conformance-bearing code the ledger tracks: examples, guidance
+surfaces and process changes are classified by it too. [`docs/VISION.md`](VISION.md) states it as
+the governing rule of the project; this section states what each tier costs before it merges.
 
 | Tier | Direction relative to the nlspec | Posture | Toll |
 |---|---|---|---|
@@ -210,7 +212,7 @@ claim to something that fails when the *code* moves:
 | `test_engine_semantics_doc_guard.py` | `context/engine-semantics.md`, the bundle's declared source of truth for shipped-engine behavior -- both text-anchored claims (the no-matching-edge and stale-label rules) and behavior-anchored ones (a real engine run asserting the main loop hard-fails on no matching edge) |
 | `test_explainer_doc_guard.py` | The published explainer page, `docs/attractor-explained.html`: feedback-critique caps, the parallel-branch default, `last_response` truncation, the summary budgets, the fidelity vocabulary and its default, the lifecycle phases, and the shape-to-execution-tier vocabulary -- each read from its source module, never from the page |
 | `test_examples_lint_clean.py` | Every `.dot` under `examples/` lints with zero ERROR diagnostics. Written because the dead-corrective-edge class shipped in eight examples for months, because nothing could see topology |
-| `test_quality_protocol_guard.py` | This document's own external references: every guard-test filename it names exists; the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records; the Changelog exists with a dated entry. Also the vision wiring (Q-304..Q-307): `docs/VISION.md` exists with its own dated Changelog and names the decision matrix; this page carries the decision-matrix section and the literal `vision-observation` label; and the maintainer's ruling reads identically in both pages. Written because section 7 set its own adoption condition and this file has to keep it (section 7) |
+| `test_quality_protocol_guard.py` | This document's own external references: every guard-test filename it names exists; the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records; the Changelog exists with a dated entry. Also the vision wiring (Q-304..Q-307): `docs/VISION.md` exists with its own dated Changelog and names the decision matrix; this page carries the decision-matrix section and the literal `vision-observation` label; and the decision matrix's canonical articulation reads identically in both pages. Written because section 7 set its own adoption condition and this file has to keep it (section 7) |
 
 **The rule this layer imposes: a new claim-bearing doc ships with its guard.** The explainer guard
 states the reason plainly -- a page nobody re-reads rots silently and keeps being shared, which is
@@ -342,13 +344,13 @@ exists and the upstream SHA recorded in Layer 0 is the SHA `SPEC_CONFORMANCE.md`
 records; the Changelog this section mandates exists carrying at least one dated entry; and, since
 the vision wave, that [`docs/VISION.md`](VISION.md) exists with its own dated Changelog and names
 the decision matrix, that this page names the `vision-observation` label section 4 depends on, and
-that the maintainer's decision-matrix ruling reads identically on both pages. It skips wholesale in
-a checkout without this file, and fails loud otherwise.
+that the decision matrix's canonical articulation reads identically on both pages. It skips
+wholesale in a checkout without this file, and fails loud otherwise.
 
 **What is deliberately not guarded: the vision prose itself.** `docs/VISION.md` is judgment, not a
 set of fact claims about code, and a guard over its wording would pin taste rather than truth. The
 guards hold its *structure* (it exists, it has an amendment history, it states the governing rule)
-and the one thing that can silently rot -- the ruling being quoted in two places.
+and the one thing that can silently rot -- the decision matrix's articulation living on two pages.
 
 **One reference remains unpinned, deliberately: the issue numbers.** The nine issue and PR numbers
 cited on this page (#144, #146, #156, #172, #175, #182, #204, #223, #234) resolve only over the
@@ -430,16 +432,37 @@ This repo's maintainers will help seed a customized version on request -- open a
 
 Amendments to this protocol, newest first. Each entry names the evidence that justified it.
 
+### 2026-08-15 -- the decision matrix stated in authored prose (entry 5)
+
+- **Changed.** Section 3's blockquote -- the maintainer's raw 2026-08-15 ruling, reproduced
+  verbatim -- is replaced by a single authored articulation of the same rule. The attribution line,
+  the three-tier toll table and every piece of wiring around it are untouched; only the quotation
+  is. The identical paragraph is now the canonical statement in [`docs/VISION.md`](VISION.md), and
+  `test_quality_protocol_guard.py`'s Q-307 pins the two copies to each other as before,
+  re-anchored on the new text.
+- **Evidence that justified it: the maintainer read the shipped page and ruled** (2026-08-15) that
+  his verbatim words be replaced with an accurate representation of what he was communicating. A
+  quote reproduces the phrasing of a conversation, including its shorthand; this page is read by
+  contributors and agents who were not in that conversation, and the rule has to survive without
+  it. The articulation is what the ruling *says*, stated once, in prose that stands alone.
+- **Scope of this change: documentation only.** No engine, handler, example or ledger *behavior*
+  changed. Q-307's anchors moved with the text; every Q-300..Q-307 assertion was re-proved red by
+  mutation and restored byte-identically.
+- **Retirement condition.** Unchanged: none. Section 3 is the project's steering rule, not
+  scaffolding around a bug class.
+
 ### 2026-08-15 -- the decision matrix and the observation duty (entry 4)
 
 - **Changed.** Two new sections, both maintainer rulings of 2026-08-15. **Section 3, "The decision
-  matrix"** states the three postures toward the `strongdm/attractor` nlspec verbatim and gives each
-  tier its toll (toward-spec: presumption of yes, no ledger entry; uncharted: justify the silence,
-  prove additive and non-interfering, `specs/EXTENSIONS.md` entry; drift: measured safety evidence,
-  loud behavior, ledger entry **plus** a conformance-matrix row in the same PR). **Section 4, "If
-  you see something, do something"** establishes the standing observation duty against
-  [`docs/VISION.md`](VISION.md) -- a `vision-observation` issue plus an `## Observations` heading in
-  the PR body, non-blocking, triaged into the Layer-3 reviews, with three recorded resolution paths.
+  matrix"** states the three postures toward the `strongdm/attractor` nlspec verbatim *(superseded
+  by entry 5: the verbatim quote was replaced by an authored articulation of the same ruling)* and
+  gives each tier its toll (toward-spec: presumption of yes, no ledger entry; uncharted: justify
+  the silence, prove additive and non-interfering, `specs/EXTENSIONS.md` entry; drift: measured
+  safety evidence, loud behavior, ledger entry **plus** a conformance-matrix row in the same PR).
+  **Section 4, "If you see something, do something"** establishes the standing observation duty
+  against [`docs/VISION.md`](VISION.md) -- a `vision-observation` issue plus an `## Observations`
+  heading in the PR body, non-blocking, triaged into the Layer-3 reviews, with three recorded
+  resolution paths.
   Wired in: section 1's adversarial-review duties now include classifying the tier and verifying its
   toll; section 2's table names the tier as a second, composing obligation; Layer 3 names
   `docs/VISION.md` as the vision it reads against and `vision-observation` issues as an input;
@@ -463,8 +486,8 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
   naming the specific stale reference, then restored byte-identically. A guard never seen red is an
   unproven guard.
 - **Deliberately unguarded: the vision prose.** `docs/VISION.md` is judgment, not fact claims about
-  code. The guards hold its structure and the one thing that can silently rot -- the maintainer's
-  ruling being quoted on two pages -- and nothing about its wording.
+  code. The guards hold its structure and the one thing that can silently rot -- the decision
+  matrix's articulation living on two pages -- and nothing about its wording.
 - **Retirement conditions.** The decision matrix has none: it is the project's steering rule, not
   scaffolding around a bug class. The observation duty's label and PR heading retire if the
   observation stream proves empty across several Layer-3 cycles, which would itself be a finding.

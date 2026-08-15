@@ -36,8 +36,8 @@ Claims guarded, and what each is resolved against:
   Q-306  the protocol carries the decision-matrix section and names the
          ``vision-observation`` label the observation convention depends on
          -> both are present in the page
-  Q-307  the maintainer's decision-matrix ruling is quoted on two pages
-         -> the two quotes are byte-identical once whitespace-normalized
+  Q-307  the decision matrix's canonical articulation lives on two pages
+         -> the two copies are byte-identical once whitespace-normalized
 
 Honest limits:
   - Q-300 extracts filenames by regex over backticked prose.  A guard file
@@ -56,9 +56,9 @@ Honest limits:
     wording would pin taste rather than truth, and would fail exactly when
     someone improved it.  What they guard is its *structure* (it exists, it
     has an amendment history, it states its governing rule, its citations
-    resolve) and the one thing that can silently rot -- a maintainer ruling
-    duplicated across two pages, where editing one copy leaves the other
-    quietly misquoting him.
+    resolve) and the one thing that can silently rot -- the decision
+    matrix's articulation duplicated across two pages, where editing one
+    copy leaves the other stating a different rule under the same name.
   - The ``vision-observation`` label itself is repo-external state (GitHub),
     which these suites cannot and should not reach.  Q-306 asserts the doc
     *states the label name*, which is the part that can drift in-tree.
@@ -481,55 +481,67 @@ def test_q306c_vision_points_at_the_observation_convention():
 
 
 # ---------------------------------------------------------------------------
-# Q-307: the maintainer's ruling is quoted identically on both pages
+# Q-307: the decision matrix reads identically on both pages
 # ---------------------------------------------------------------------------
 
-_RULING_START = "any changes in behavior/philosophy/decision-making/design-thinking"
-_RULING_END = "(non-specified/absent from the nlspec) territory."
+# The canonical articulation of the maintainer's 2026-08-15 decision-matrix
+# ruling.  It is authored prose, not a quotation -- the maintainer ruled the
+# same day that his raw words be replaced with an accurate representation of
+# what he was communicating (QUALITY_PROTOCOL.md Changelog entry 5,
+# VISION.md Changelog entry 2).  One paragraph, two homes; these anchors are
+# its first and last sentences.
+_MATRIX_START = "Every change here is weighed against the `strongdm/attractor` nlspec"
+_MATRIX_END = "That gradient is the steering rule of this project."
 
 
 def _flatten_quote(text: str) -> str:
     """Strip blockquote markers and collapse whitespace.
 
-    The same ruling is hard-wrapped differently on the two pages, so a raw
-    substring compare would fail on formatting rather than on meaning.
+    Kept blockquote-tolerant so the check survives either page choosing to
+    set the paragraph as a quote block again, and so a re-wrap at a different
+    column fails on meaning rather than on formatting.
     """
     unquoted = [re.sub(r"^\s*>\s?", "", line) for line in text.splitlines()]
     return re.sub(r"\s+", " ", " ".join(unquoted)).strip()
 
 
-def _extract_ruling(text: str, rel: str) -> str:
+def _extract_articulation(text: str, rel: str) -> str:
     flat = _flatten_quote(text)
-    start = flat.find(_RULING_START)
+    start = flat.find(_MATRIX_START)
     assert start != -1, (
-        f"{rel}: the maintainer's decision-matrix ruling (2026-08-15) is not "
-        f"quoted here -- could not find {_RULING_START!r}.\n"
-        "  Both pages quote it verbatim on purpose: the vision states it as the "
-        "governing rule, the protocol prices each tier of it. A paraphrase on "
-        "either page is the ruling drifting from the maintainer's own words."
+        f"{rel}: the decision matrix's canonical articulation (maintainer "
+        f"ruling, 2026-08-15) is not stated here -- could not find "
+        f"{_MATRIX_START!r}.\n"
+        "  Both pages carry the identical paragraph on purpose: the vision "
+        "states it as the governing rule, the protocol prices each tier of it. "
+        "A second, differently-worded statement of the same rule is exactly "
+        "the drift this check exists to catch."
     )
-    end = flat.find(_RULING_END, start)
+    end = flat.find(_MATRIX_END, start)
     assert end != -1, (
-        f"{rel}: the ruling quote starts but does not end with "
-        f"{_RULING_END!r}. The third posture -- 'RELATIVELY RESISTED ... "
-        "uncharted' -- is the one most easily dropped, and it is the one that "
+        f"{rel}: the articulation starts but does not end with "
+        f"{_MATRIX_END!r}. That closing sentence is what makes the paragraph a "
+        "steering rule rather than a description; the third posture -- real "
+        "but lesser resistance in spec-silent territory -- sits just above it "
+        "and is the one most easily dropped, and it is the one that "
         "distinguishes this matrix from a two-way conform/diverge rule."
     )
-    return flat[start : end + len(_RULING_END)]
+    return flat[start : end + len(_MATRIX_END)]
 
 
-def test_q307_ruling_is_quoted_identically_on_both_pages():
-    """One maintainer ruling, two homes -- they must not drift apart."""
-    from_protocol = _extract_ruling(_doc(), DOC_REL)
-    from_vision = _extract_ruling(_vision(), VISION_REL)
+def test_q307_decision_matrix_reads_identically_on_both_pages():
+    """One rule, two homes -- they must not drift apart."""
+    from_protocol = _extract_articulation(_doc(), DOC_REL)
+    from_vision = _extract_articulation(_vision(), VISION_REL)
     assert from_protocol == from_vision, (
-        "DECISION-MATRIX RULING DRIFT: the maintainer's 2026-08-15 ruling reads "
-        "differently on the two pages that quote it.\n"
+        "DECISION-MATRIX DRIFT: the decision matrix reads differently on the "
+        "two pages that state it.\n"
         f"  {DOC_REL}:\n    {from_protocol}\n"
         f"  {VISION_REL}:\n    {from_vision}\n"
-        "  This is the cost of quoting one ruling in two places, and the reason\n"
-        "  this check exists: editing one copy leaves the other misquoting him.\n"
+        "  This is the cost of stating one rule in two places, and the reason\n"
+        "  this check exists: editing one copy leaves the other stating a\n"
+        "  different rule under the same name.\n"
         "  Fix the copy that drifted -- do not 'meet in the middle'. If the\n"
-        "  ruling itself changed, that is an amendment: the maintainer's\n"
+        "  rule itself changed, that is an amendment: the maintainer's\n"
         "  explicit word, both pages updated, both Changelogs entered."
     )

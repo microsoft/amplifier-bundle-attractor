@@ -189,7 +189,7 @@ Check   -> Done    [condition="context.tool.last_line=done"];
 node behavior.
 
 ```dot
-graph [default_max_retry=4]
+graph [default_max_retries=4]
 
 Iterate [shape=box, goal_gate=true, retry_target=Iterate,
          prompt="Attempt to complete $goal. Signal success when done."]
@@ -322,7 +322,7 @@ value. This allows experimentation and tuning without forking the pipeline.
 
 **What to surface as parameters:**
 
-- Iteration counts and retry ceilings (`default_max_retry`, per-node `max_retries`)
+- Iteration counts and retry ceilings (`default_max_retries`, per-node `max_retries`)
 - Sample sizes or batch limits for pipelines that process sets of items
 - Quality thresholds for verdict or gate nodes
 - Model selection per node class when the pipeline is intended to run across providers
@@ -338,7 +338,7 @@ digraph {
     graph [
         goal="$goal",
         params="goal, max_rounds, quality_threshold",
-        default_max_retry=3
+        default_max_retries=3
     ]
 
     start    [shape=Mdiamond]
@@ -355,7 +355,7 @@ digraph {
 ```
 
 Operators pass `max_rounds` and `quality_threshold` to tune behavior; the pipeline
-handles the common case without them via `default_max_retry`.
+handles the common case without them via `default_max_retries`.
 
 ---
 

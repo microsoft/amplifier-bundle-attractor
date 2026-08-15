@@ -33,7 +33,7 @@ cited as prior-art inspiration where useful.
 | [DOT Syntax Reference](docs/DOT-SYNTAX.md) | Quick reference tables and copy-paste patterns |
 | [Routing Reference](docs/ROUTING-REFERENCE.md) | Edge selection algorithm, `report_outcome` tool, condition expressions, common pitfalls |
 | [App Integration Guide](docs/APP-INTEGRATION-GUIDE.md) | Using pipelines from Python applications (DirectProvider vs AmplifierSession) |
-| [Pipeline Design Principles](docs/PIPELINE_DESIGN_PRINCIPLES.md) | Six framework-agnostic design principles: tier discipline, validation patterns, loop convergence, LLM output protocols, parameterization, verdict-bearing nodes |
+| [Pipeline Design Principles](docs/PIPELINE_DESIGN_PRINCIPLES.md) | Eight framework-agnostic design principles, opening with **the control-plane vs recipe-plane line** -- the three-question test for whether the work wants a pipeline at all -- then tier discipline, validation patterns, loop convergence, LLM output protocols, parameterization, verdict-bearing nodes, and delta-assertion / shared-checkout discipline |
 | [Issue Pipeline](docs/ISSUE_PIPELINE.md) | What happens after a maintainer labels an issue `ready:spec` (defects) or `ready:feature-spec` (features) -- the autonomous specify/implement pipelines, their human review gates, what makes a good defect report, and how a maintainer supplies binding acceptance criteria for a feature |
 | [Quality Protocol](docs/QUALITY_PROTOCOL.md) | How work gets proven here -- the design -> build -> live-proof -> adversarial-review -> maintainer's-word arc, the evidence each class of change owes before merge, the five-layer drift defense against the upstream nlspec, and the meta-protocol for amending and retiring all of it |
 | [Guidance Eval](evals/guidance/README.md) | The standing instrument behind the Quality Protocol's **Guidance surfaces** row -- six scenarios that install this bundle the way a user does, drive real sessions against `agents/`, `skills/`, `context/` and the teaching docs, and grade them blind against criteria anchored in the canonical spec and the vision |
@@ -418,7 +418,12 @@ asyncio.run(main())
 
 The key difference: with `session.spawn` registered, the `AmplifierBackend` kicks
 in and each pipeline node gets a full child session with tools (filesystem, bash,
-search). Without it, you get `DirectProviderBackend` (LLM-only, no tools).
+search). Without it, you get `DirectProviderBackend`, which runs a per-node agentic
+tool loop and passes through whatever tools the host has mounted -- so a node is
+tool-free only when the host mounts none, which is the case in the bare
+programmatic path above. See [Backend Selection](#backend-selection) for the full
+contract (`DirectProviderBackend` also requires an explicit `llm_model` on every
+node; there is no default).
 
 See [`amplifier-foundation/examples/07_full_workflow.py`](https://github.com/microsoft/amplifier-foundation/blob/main/examples/07_full_workflow.py) for the reference
 `register_spawn_capability()` implementation. For a comprehensive guide,
@@ -447,12 +452,16 @@ default; see `SPEC_CONFORMANCE.md` ATX-11 for the rationale).
 Development velocity is high and behavior can change between commits. If you depend on this
 engine, **pin a commit SHA** rather than tracking `@main`.
 
-**Known caveat:** `Outcome.suggested_next_ids` entries must be strings that exactly match a
-target node's `id`. Non-string or mismatched entries currently fail to match during edge
-selection (`edge_selection.py`), silently falling through to the next selection step rather
-than the intended target. If an outcome report seems to route unexpectedly, check the types
-and exact spelling of `suggested_next_ids` first. This is a known issue being addressed; no
-version cutover is implied by that work landing.
+**`suggested_next_ids` typing:** node IDs are strings, and an `Outcome.suggested_next_ids`
+entry must match a target node's `id` exactly. Edge selection coerces the one type slip an
+LLM actually makes -- a bare number, `[3]` instead of `["3"]` -- to its string form before
+comparing (`edge_selection._coerce_suggested_id()`); any other shape (`bool`, `float`,
+`dict`, `list`, `None`) is rejected as malformed, logged with the value and its type, and
+skipped so one bad entry does not sink the rest of the list. A suggestion that survives
+coercion but names no real node falls through to the next selection step, and the resulting
+`no_matching_edge` failure names both the suggested IDs and the outgoing edge targets that
+existed. So if an outcome report routes unexpectedly, check the exact spelling first --
+the types are handled. See [`specs/EXTENSIONS.md`](specs/EXTENSIONS.md) §34.
 
 ## Architecture
 

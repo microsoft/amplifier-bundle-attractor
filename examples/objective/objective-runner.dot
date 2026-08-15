@@ -41,12 +41,13 @@
 //     triage-schema.json and prints the routing token. The first routing
 //     decision of the run is therefore evidence outside the worker's context --
 //     the same rule every gate in this repo obeys.
-//   - THE PARENT NEVER TRUSTS THE CHILD'S SELF-REPORT. A child pipeline's
-//     terminal outcome is used for LOUD FAIL ROUTING ONLY. Satisfaction is
-//     decided by `evidence_gate`, which RE-RUNS the definition-of-done command
-//     itself and additionally asserts a durable workspace delta since the
-//     anchor recorded at `preflight`. A no-op child cannot pass on a stale
-//     green.
+//   - THE PARENT NEVER TRUSTS THE CHILD'S SELF-REPORT -- IN EITHER DIRECTION.
+//     Satisfaction is decided by `evidence_gate`, which RE-RUNS the
+//     definition-of-done command itself and additionally asserts a durable
+//     workspace delta since the anchor recorded at `preflight`. A no-op child
+//     cannot pass on a stale green -- and a child that gave up cannot fail the
+//     objective on its own say-so either: a child's terminal FAIL routes INTO
+//     `evidence_gate`, never around it (see the lane fail edges below).
 //   - THE COMPOSER'S OUTPUT IS GATED BEFORE IT RUNS. `compose` writes a child
 //     graph; `lint_gate` (the engine's own linter -- ERRORs block, warnings are
 //     recorded) and `contract_gate` (check_child_contract.py) both sit OUTSIDE
@@ -54,11 +55,25 @@
 //   - BUDGET AS A DECISION POINT. evidence_gate spends an iteration on EVERY
 //     entry (green and red alike) and routes exhaustion to postmortem ->
 //     escalated, never to a bare FAIL.
-//   - ONE GREEN EXIT. `validate_or_raise` requires exactly one exit node, so the
-//     two honest terminals are expressed as: `done` (Msquare, reached only
-//     through `finalize`, which refuses to open without a disposition artifact)
-//     and `escalated` (a tool node that exits 1 with max_retries=0 and no
-//     fail-route -- the bug-fix.dot idiom, a LOUD red).
+//   - ONE EXIT NODE, TWO HONEST TERMINALS. `validate_or_raise` requires
+//     exactly one exit node, so both terminals reach it: `done` opens GREEN
+//     only through `finalize` (which refuses to open without a disposition
+//     artifact), and RED only through `escalated`, whose own nonzero exit
+//     becomes the run's status. That is the convergence-factory.dot idiom --
+//     "a budget-exhaustion exit that deliberately ends at the single exit node
+//     with a genuine FAIL outcome" (docs/DOT-AUTHORING-GUIDE.md, TOPO-006) --
+//     and it is why this file consciously carries ONE TOPO-006 WARNING, for
+//     the same reason and in the same way examples/patterns/
+//     convergence-factory.dot does. Letting `escalated` dead-end instead does
+//     NOT work: see the engine semantics below.
+//   - TWO LINT WARNINGS, BOTH DELIBERATE (`attractor lint` reports zero
+//     ERRORs): `fail_routed_to_exit` on `escalated -> done` (above), and
+//     `goal_gate_has_retry` on `evidence_gate`. The second is a true
+//     observation about the wrong hop: this graph's corrective loop for a red
+//     gate is `evidence_gate -> feedback -> triage_gate [loop_restart]`, one
+//     hop further downstream than the rule can see. A `retry_target` on the
+//     gate itself is not merely redundant here, it is a hazard -- see the
+//     goal-gate corollary in the engine-semantics list below.
 //
 // VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON:
 //   - STALE-LABEL RULE: a tool node that exits nonzero does NOT refresh
@@ -73,10 +88,29 @@
 //   - A sub-pipeline is a fresh session boundary (section 11): each lane and the
 //     generated child run with their own context. Files are the only channel
 //     this graph trusts across that boundary.
+//   - THE MAIN LOOP HAS NO DESIGNED-TERMINUS CONCEPT. `run_subgraph()`
+//     distinguishes "no outgoing edges at all" (a designed terminus) from a
+//     conditional-mismatch dead end; `run()` does NOT (specs/EXTENSIONS.md
+//     section 33; context/engine-semantics.md section 3). Any node the main
+//     loop finishes with no matching outgoing edge -- WHATEVER its exit
+//     status -- terminates through `terminate_pipeline()` and emits
+//     PIPELINE_ERROR `error_type=no_matching_edge`. Probed on the shipped
+//     CLI: a dead-ended tool node reports `no_matching_edge` on `exit 1` AND
+//     on `exit 0`. A deliberate loud terminal must therefore ROUTE somewhere;
+//     it cannot dead-end.
+//   - AT THE EXIT NODE, WITH EVERY GOAL GATE SATISFIED, THE RUN'S STATUS IS
+//     THE LAST COMPLETED NODE'S OUTCOME (`engine.py::_check_goal_gates` ->
+//     `node_outcomes[completed_nodes[-1]]`). That is the whole mechanism
+//     behind `escalated -> done [outcome=fail]`: `escalated`'s own nonzero
+//     exit becomes the run's status=fail / CLI exit 1, with no routing error.
+//     Corollary, and the reason `evidence_gate` carries NO `retry_target`:
+//     an UNSATISFIED goal gate at that moment is retried from its
+//     `retry_target` instead, which on the escalation path would buy a run
+//     that refused to evaluate (`tampered`) another whole lane iteration.
 //   - PARAM NAMESPACE: substitution rewrites $name/${name} for any context key.
-//     The shell variables here (rd, mi, mc, mf, n, B, w, ev, rc, res, now, base,
-//     delta) are safe only because no param shares their name. Never add a param
-//     named like a shell var.
+//     The shell variables here (rd, mi, mc, mf, n, B, w, ev, evsha, rc, res,
+//     now, base, delta) are safe only because no param shares their name.
+//     Never add a param named like a shell var.
 // ============================================================================
 
 digraph ObjectiveRunner {
@@ -106,7 +140,7 @@ digraph ObjectiveRunner {
     // works in a workspace whose child pipelines do not commit.
     preflight [
         shape=parallelogram, label="Preflight", max_retries=0,
-        tool_command="mkdir -p .objective/postmortem .objective/gen .objective/feedback || { printf blocked; exit 1; }; rd=\"$runner_dir\"; for f in sha256sum md5sum find; do command -v \"$f\" >/dev/null 2>&1 || { echo \"FATAL: '$f' is not on PATH; the anchor digest and the DoD sha-pin both need it\" >&2; printf blocked; exit 1; }; done; for f in validate_triage.py check_child_contract.py triage-schema.json compose-contract.md; do [ -f \"$rd/$f\" ] || { echo \"FATAL: --param runner_dir must name the examples/objective directory; missing $f under '$rd'\" >&2; printf blocked; exit 1; }; done; case \"$target_dir\" in /*) ;; *) echo \"FATAL: --param target_dir must be an absolute path (got '$target_dir')\" >&2; printf blocked; exit 1;; esac; find . -name .git -prune -o -name .objective -prune -o -name .ai -prune -o -name __pycache__ -prune -o -name .pytest_cache -prune -o -name .ruff_cache -prune -o -name node_modules -prune -o -name .venv -prune -o -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1 > .objective/anchor; [ -s .objective/anchor ] && printf ready || { printf blocked; exit 1; }"
+        tool_command="mkdir -p .objective/postmortem .objective/gen .objective/feedback || { printf blocked; exit 1; }; rd=\"$runner_dir\"; for f in bash sha256sum md5sum find; do command -v \"$f\" >/dev/null 2>&1 || { echo \"FATAL: '$f' is not on PATH; the anchor digest, the DoD sha-pin, and evidence_gate's 'bash -c' re-run of the admitted evidence command all need it\" >&2; printf blocked; exit 1; }; done; for f in validate_triage.py check_child_contract.py triage-schema.json compose-contract.md; do [ -f \"$rd/$f\" ] || { echo \"FATAL: --param runner_dir must name the examples/objective directory; missing $f under '$rd'\" >&2; printf blocked; exit 1; }; done; case \"$target_dir\" in /*) ;; *) echo \"FATAL: --param target_dir must be an absolute path (got '$target_dir')\" >&2; printf blocked; exit 1;; esac; find . -name .git -prune -o -name .objective -prune -o -name .ai -prune -o -name __pycache__ -prune -o -name .pytest_cache -prune -o -name .ruff_cache -prune -o -name node_modules -prune -o -name .venv -prune -o -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1 > .objective/anchor; [ -s .objective/anchor ] && printf ready || { printf blocked; exit 1; }"
     ]
 
     // ---------- frame: diagnose the objective; do NOT do the work ------------
@@ -254,6 +288,15 @@ digraph ObjectiveRunner {
     // CAPABILITIES the admitted evidence_command; the workspace digest.
     // EVIDENCE     .objective/evidence-N.log, .objective/convergence.jsonl,
     //              .objective/evidence-pass
+    // THE COMMAND IS RUN AS ADMITTED, AND THE RECORD SAYS SO. `bash -c "$ev"`
+    // hands the admitted string to a shell verbatim, so a compound command --
+    // `cd <subdir> && ...`, an env prefix, an `&&` chain -- runs exactly as
+    // triage_gate admitted it (regression-tested against this node's real
+    // command text). What was missing was the receipt: the log now opens with
+    // `RAN AS ADMITTED: <command>` and convergence.jsonl carries
+    // `evidence_command_sha`, so "the gate tested something other than what
+    // was admitted" is visible on iteration 1 instead of being reconstructed
+    // from a postmortem at budget exhaustion (issue #243, defect b).
     // EXIT         evidence_ok | evidence_bad | exhausted
     // The delta assertion is the second half of the gate: a green DoD with an
     // UNCHANGED workspace means nothing happened and the check was already
@@ -265,6 +308,19 @@ digraph ObjectiveRunner {
     // and exits 1. Nonzero means tool.last_line is NOT refreshed, so every
     // `&& outcome=success` edge below is dead and only outcome=fail can match:
     // postmortem -> escalated, CLI exit 1.
+    // ON THE ABSENCE OF retry_target, HONESTLY: `retry_target` on a goal gate
+    // is consulted in exactly one place -- `_check_goal_gates()` at the exit
+    // node -- and it means "if this gate is unsatisfied when the run tries to
+    // leave, go back to X instead." Before `escalated -> done` existed the
+    // exit was unreachable with this gate unsatisfied, so the attribute was
+    // dead. It is now reachable, which turns it live and wrong: the only way
+    // this gate is unsatisfied at the exit is the `tampered` refusal, whose
+    // cause (an altered, pinned check) survives any number of retries.
+    // Measured on the shipped engine with a faithful 5-node reduction of this
+    // graph: with retry_target="feedback" the tampered path executed
+    // evidence_gate 51 times and feedback 50 times before the step cap; with
+    // the attribute removed, once each. `tampered` means terminal, and the
+    // file already said so.
     // ON goal_gate=true, HONESTLY: this node uses Idiom A (always exit 0), and a
     // tool node's exit 0 is an explicit SUCCESS verdict (handlers/tool.py), so
     // the engine's exit-time gate check can never actually fail here -- even an
@@ -275,8 +331,8 @@ digraph ObjectiveRunner {
     // `finalize`, which refuses to open without a disposition artifact.
     evidence_gate [
         shape=parallelogram, label="Objective Satisfied?", max_retries=0,
-        goal_gate=true, retry_target="feedback",
-        tool_command="if [ -f .objective/evidence-command.sha256 ] && [ \"$(sha256sum .objective/evidence-command 2>/dev/null | cut -d' ' -f1)\" != \"$(cat .objective/evidence-command.sha256)\" ]; then echo 'FATAL: .objective/evidence-command was altered after triage_gate admitted it -- refusing to re-run a definition of done this run never approved' >&2; printf tampered; exit 1; fi; if [ -f .objective/dod.sha256 ] && [ \"$(sha256sum .objective/gen/dod.sh 2>/dev/null | cut -d' ' -f1)\" != \"$(cat .objective/dod.sha256)\" ]; then echo 'FATAL: .objective/gen/dod.sh was altered after contract_gate admitted it -- refusing to re-run a definition of done this run never approved' >&2; printf tampered; exit 1; fi; mi=$max_iterations; B=${mi:-3}; n=$(($(cat .objective/iter 2>/dev/null || echo 0)+1)); echo $n > .objective/iter; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"evidence\", \"budget\": \"exhausted\"}\n' \"$n\" >> .objective/convergence.jsonl; printf exhausted; else ev=$(cat .objective/evidence-command 2>/dev/null); now=$(find . -name .git -prune -o -name .objective -prune -o -name .ai -prune -o -name __pycache__ -prune -o -name .pytest_cache -prune -o -name .ruff_cache -prune -o -name node_modules -prune -o -name .venv -prune -o -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1); base=$(cat .objective/anchor 2>/dev/null); [ \"$now\" != \"$base\" ] && delta=changed || delta=unchanged; if [ -z \"$ev\" ]; then rc=99; else bash -c \"$ev\" > .objective/evidence-$n.log 2>&1; rc=$?; fi; printf '{\"iteration\": %s, \"gate\": \"evidence\", \"dod_exit\": %s, \"delta\": \"%s\"}\n' \"$n\" \"$rc\" \"$delta\" >> .objective/convergence.jsonl; if [ $rc -eq 0 ] && [ \"$delta\" = changed ]; then : > .objective/evidence-pass; printf evidence_ok; else rm -f .objective/evidence-pass; printf evidence_bad; fi; fi"
+        goal_gate=true,
+        tool_command="if [ -f .objective/evidence-command.sha256 ] && [ \"$(sha256sum .objective/evidence-command 2>/dev/null | cut -d' ' -f1)\" != \"$(cat .objective/evidence-command.sha256)\" ]; then echo 'FATAL: .objective/evidence-command was altered after triage_gate admitted it -- refusing to re-run a definition of done this run never approved' >&2; printf tampered; exit 1; fi; if [ -f .objective/dod.sha256 ] && [ \"$(sha256sum .objective/gen/dod.sh 2>/dev/null | cut -d' ' -f1)\" != \"$(cat .objective/dod.sha256)\" ]; then echo 'FATAL: .objective/gen/dod.sh was altered after contract_gate admitted it -- refusing to re-run a definition of done this run never approved' >&2; printf tampered; exit 1; fi; mi=$max_iterations; B=${mi:-3}; n=$(($(cat .objective/iter 2>/dev/null || echo 0)+1)); echo $n > .objective/iter; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"evidence\", \"budget\": \"exhausted\"}\n' \"$n\" >> .objective/convergence.jsonl; printf exhausted; else ev=$(cat .objective/evidence-command 2>/dev/null); now=$(find . -name .git -prune -o -name .objective -prune -o -name .ai -prune -o -name __pycache__ -prune -o -name .pytest_cache -prune -o -name .ruff_cache -prune -o -name node_modules -prune -o -name .venv -prune -o -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1); base=$(cat .objective/anchor 2>/dev/null); [ \"$now\" != \"$base\" ] && delta=changed || delta=unchanged; if [ -z \"$ev\" ]; then rc=99; evsha=none; else evsha=$(printf %s \"$ev\" | sha256sum | cut -c1-12); { printf 'RAN AS ADMITTED: %s\n\n' \"$ev\"; bash -c \"$ev\"; } > .objective/evidence-$n.log 2>&1; rc=$?; fi; printf '{\"iteration\": %s, \"gate\": \"evidence\", \"dod_exit\": %s, \"delta\": \"%s\", \"evidence_command_sha\": \"%s\"}\n' \"$n\" \"$rc\" \"$delta\" \"$evsha\" >> .objective/convergence.jsonl; if [ $rc -eq 0 ] && [ \"$delta\" = changed ]; then : > .objective/evidence-pass; printf evidence_ok; else rm -f .objective/evidence-pass; printf evidence_bad; fi; fi"
     ]
 
     // ---------- feedback: teach the NEXT attempt ----------------------------
@@ -360,11 +416,27 @@ digraph ObjectiveRunner {
     lane_refactor -> evidence_gate
     lane_testgen  -> evidence_gate
     lane_review   -> evidence_gate
-    lane_bugfix   -> postmortem [condition="outcome=fail", label="child could not converge"]
-    lane_feature  -> postmortem [condition="outcome=fail", label="child could not converge"]
-    lane_refactor -> postmortem [condition="outcome=fail", label="child could not converge"]
-    lane_testgen  -> postmortem [condition="outcome=fail", label="child could not converge"]
-    lane_review   -> postmortem [condition="outcome=fail", label="child could not converge"]
+    // A CHILD'S RED IS A SELF-REPORT TOO. These edges used to run straight to
+    // `postmortem`, which made a lane's own terminal outcome the parent's
+    // verdict -- the exact trust this graph refuses to extend to a child's
+    // GREEN. The 2026-08-15 exemplar-01 run is what that costs: the shipped
+    // bug-fix lane's `test_gate` runs a hardcoded `pytest -q` from the
+    // workspace root, which can never pass for a package nested one level
+    // down; it oscillated to its own budget wall (.ai/iter=6, a byte-stable
+    // .ai/last-fail-sig) and reported FAIL. The objective was ALREADY
+    // satisfied -- the admitted `cd <pkg> && python3 -m pytest tests/ -v`
+    // exits 0 -- but `evidence_gate` never ran even once (the salvaged run
+    // wrote no .objective/evidence-*.log and no .objective/convergence.jsonl),
+    // so the parent escalated an objective it had never checked. A child's
+    // FAIL now enters `evidence_gate` like every other route: the parent's own
+    // re-run of the ADMITTED command decides, and `postmortem` is reached
+    // through the budget wall (`exhausted`), which is where the decision to
+    // give up belongs.
+    lane_bugfix   -> evidence_gate [condition="outcome=fail", label="child gave up -- the parent still runs its own check"]
+    lane_feature  -> evidence_gate [condition="outcome=fail", label="child gave up -- the parent still runs its own check"]
+    lane_refactor -> evidence_gate [condition="outcome=fail", label="child gave up -- the parent still runs its own check"]
+    lane_testgen  -> evidence_gate [condition="outcome=fail", label="child gave up -- the parent still runs its own check"]
+    lane_review   -> evidence_gate [condition="outcome=fail", label="child gave up -- the parent still runs its own check"]
 
     // Compose path: write -> lint -> contract -> run. Both gates can send it back.
     compose -> lint_gate
@@ -380,7 +452,7 @@ digraph ObjectiveRunner {
     contract_gate -> postmortem [condition="outcome=fail", label="contract gate could not run"]
 
     run_child -> evidence_gate
-    run_child -> postmortem [condition="outcome=fail", label="generated child could not converge"]
+    run_child -> evidence_gate [condition="outcome=fail", label="generated child gave up -- the parent still runs its own check"]
 
     // The honest no reaches the single green exit through finalize.
     redirect_report -> finalize
@@ -406,10 +478,32 @@ digraph ObjectiveRunner {
     finalize -> done       [condition="context.tool.last_line=finalized && outcome=success", label="disposition recorded"]
     finalize -> postmortem [condition="outcome=fail",                                        label="no disposition -- refuse to exit green"]
 
-    // Escalation is a deterministic non-terminal handoff, not a second
-    // successful exit. It writes a fallback handoff even if the postmortem LLM
-    // itself failed, then exits 1 DELIBERATELY: max_retries=0 and no fail-route,
-    // so the engine hard-fails LOUD (run status=fail, CLI exit 1).
+    // Escalation is a deterministic handoff, not a second successful exit. It
+    // writes a fallback handoff even if the postmortem LLM itself failed, then
+    // exits 1 DELIBERATELY (max_retries=0).
     postmortem -> escalated [condition="outcome=fail", label="postmortem failed"]
     postmortem -> escalated [label="escalate"]
+
+    // ...and then it ROUTES to the single exit node carrying that nonzero exit.
+    // This edge is the whole of issue #243 defect (a). Without it `escalated`
+    // dead-ends, and the main loop -- which has no designed-terminus concept --
+    // reports the graph's most important honest outcome in the vocabulary of an
+    // authoring bug: `[PIPELINE] X Error at escalated (no_matching_edge)`, with
+    // the run's machine-readable `notes` field reading "No matching edge from
+    // node 'escalated'". With it, `_check_goal_gates` finds every goal gate
+    // satisfied and returns the LAST COMPLETED node's outcome -- `escalated`'s
+    // own FAIL -- so the run ends status=fail / CLI exit 1 with no routing
+    // error, and `.objective/disposition` = escalated says which terminal it
+    // was. `escalated` exits nonzero on EVERY path, so the `outcome=fail`
+    // condition is the total case, not a partial one.
+    // THE ONE TOPO-006 WARNING THIS FILE CARRIES IS THIS EDGE, ON PURPOSE:
+    // "a budget-exhaustion exit that deliberately ends at the single exit node
+    // with a genuine FAIL outcome" is the named, sanctioned deliberate design
+    // (docs/DOT-AUTHORING-GUIDE.md, TOPO-006), and
+    // examples/patterns/convergence-factory.dot carries the identical
+    // diagnostic for the identical reason. The hazard the rule guards -- a
+    // failure leaving through the success door as `status: success`, exit 0 --
+    // cannot happen here: `escalated` is the last node to complete and its
+    // FAIL is what the exit returns.
+    escalated -> done [condition="outcome=fail", label="loud exit -- status is escalated's own nonzero exit"]
 }

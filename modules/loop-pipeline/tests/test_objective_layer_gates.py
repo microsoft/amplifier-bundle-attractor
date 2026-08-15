@@ -710,3 +710,266 @@ def test_triage_cannot_run_is_distinct_from_a_bad_record(triage, tmp_path, capsy
     )
     assert rc != 0
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
+# Issue #243 -- the two defects two independent live runs found
+#
+# (a) The designed loud terminal dead-ended, so the engine reported the run's
+#     most important honest outcome as an authoring bug:
+#     `[PIPELINE] X Error at escalated (no_matching_edge)`.
+# (b) The objective was ALREADY satisfied and the run escalated anyway: the
+#     lane's own hardcoded gate could not pass, and its self-reported FAIL
+#     routed straight past `evidence_gate` -- so the admitted evidence command
+#     was never re-run by the parent even once.
+#
+# These read the shipped graph through the engine's own parser and drive the
+# engine and the real command text, not a paraphrase of either.
+# ---------------------------------------------------------------------------
+
+
+def _graph():
+    from amplifier_module_loop_pipeline.dot_parser import parse_dot
+
+    return parse_dot((_OBJECTIVE_DIR / "objective-runner.dot").read_text(encoding="utf-8"))
+
+
+def test_escalated_routes_to_the_exit_instead_of_dead_ending():
+    """243(a): a loud terminal must ROUTE; the main loop has no designed terminus.
+
+    `run_subgraph()` distinguishes "no outgoing edges at all" from a
+    conditional-mismatch dead end; `run()` does not.  A dead-ended `escalated`
+    therefore terminates through `terminate_pipeline()` with
+    `error_type=no_matching_edge` -- the same class a genuinely mis-authored
+    graph produces -- whatever its exit status.
+    """
+    graph = _graph()
+    exits = [n.id for n in graph.nodes.values() if n.is_exit_node()]
+    assert exits == ["done"], exits
+
+    outgoing = graph.outgoing_edges("escalated")
+    assert outgoing, (
+        "`escalated` has no outgoing edge, so the engine reports the designed "
+        "escalation as PIPELINE_ERROR error_type=no_matching_edge (issue #243a)"
+    )
+    assert [e.to_node for e in outgoing] == ["done"]
+    assert "outcome=fail" in (outgoing[0].condition or ""), outgoing[0].condition
+
+
+def test_escalated_still_exits_nonzero_so_the_exit_it_reaches_is_red():
+    """The routing fix must not turn the loud terminal into a quiet one.
+
+    `escalated -> done` is only honest because `escalated`'s own FAIL is what
+    `_check_goal_gates` returns from the exit.  An `escalated` that exited 0
+    would convert the escalation into a green run -- the exact hazard TOPO-006
+    names.
+    """
+    command = _graph().nodes["escalated"].attrs["tool_command"]
+    assert command.rstrip().endswith("exit 1"), command
+    assert "> .objective/disposition" in command or "echo escalated > .objective/disposition" in command
+
+
+def test_the_goal_gate_carries_no_retry_target():
+    """243(a), corollary: a retry_target on the goal gate is now reachable.
+
+    `retry_target` on a goal gate is consulted in exactly one place --
+    `_check_goal_gates()` at the exit node.  Before `escalated -> done` the
+    exit was unreachable with the gate unsatisfied, so the attribute was dead;
+    with it, the only way the gate is unsatisfied there is the `tampered`
+    refusal, whose cause survives every retry.  Measured on the shipped engine
+    with a faithful reduction of this graph: 51 gate executions before the step
+    cap, versus one with the attribute gone.
+    """
+    graph = _graph()
+    gate = graph.nodes["evidence_gate"]
+    assert gate.attrs.get("goal_gate") in (True, "true"), gate.attrs.get("goal_gate")
+    assert not gate.attrs.get("retry_target"), gate.attrs.get("retry_target")
+    assert not gate.attrs.get("fallback_retry_target")
+    assert not graph.graph_attrs.get("retry_target")
+    assert not graph.graph_attrs.get("fallback_retry_target")
+
+
+@pytest.mark.parametrize(
+    "child",
+    ["lane_bugfix", "lane_feature", "lane_refactor", "lane_testgen", "lane_review", "run_child"],
+)
+def test_a_childs_terminal_fail_is_re_verified_not_believed(child):
+    """243(b): the parent does not trust a child's self-report in EITHER direction.
+
+    These edges used to run straight to `postmortem`, which made a lane's own
+    terminal outcome the parent's verdict.  In the 2026-08-15 exemplar-01 runs
+    the shipped bug-fix lane's `test_gate` runs a hardcoded `pytest -q` from the
+    workspace root, which cannot pass for a package nested one level down; it
+    exhausted its own budget and reported FAIL.  The objective was satisfied --
+    the admitted `cd <pkg> && python3 -m pytest tests/ -v` exits 0 -- but
+    `evidence_gate` never ran once, so the parent escalated an objective it had
+    never checked.
+    """
+    graph = _graph()
+    fail_edges = [
+        e
+        for e in graph.outgoing_edges(child)
+        if e.condition and "outcome=fail" in e.condition
+    ]
+    assert fail_edges, f"{child} has no failure route at all"
+    assert [e.to_node for e in fail_edges] == ["evidence_gate"], (
+        f"{child}'s FAIL must enter the parent's own gate, not bypass it; "
+        f"got {[e.to_node for e in fail_edges]}"
+    )
+    # postmortem stays reachable -- through the budget wall, where giving up belongs.
+    assert any(
+        e.to_node == "postmortem" and "exhausted" in (e.condition or "")
+        for e in graph.outgoing_edges("evidence_gate")
+    )
+
+
+def test_escalation_terminates_the_run_without_a_routing_error(tmp_path):
+    """243(a), end to end on the SHIPPED graph, with no LLM node executed.
+
+    `preflight -> escalated [outcome=fail]` is a tool-to-tool route, so a bad
+    `runner_dir` walks the real file from `start` to the real `escalated` and
+    out through the real exit.  Pre-fix this returned FAIL carrying
+    `PIPELINE_ERROR error_type=no_matching_edge` and notes "No matching edge
+    from node 'escalated'"; post-fix the FAIL is `escalated`'s own exit code.
+    """
+    import asyncio
+
+    from amplifier_module_loop_pipeline.context import PipelineContext
+    from amplifier_module_loop_pipeline.engine import PipelineEngine
+    from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+    from amplifier_module_loop_pipeline.handlers.context import HandlerContext
+    from amplifier_module_loop_pipeline.outcome import StageStatus
+    from amplifier_module_loop_pipeline.pipeline_events import PIPELINE_ERROR
+
+    class _Hooks:
+        def __init__(self):
+            self.events = []
+
+        async def emit(self, name, data):
+            self.events.append((name, data))
+
+    context = PipelineContext()
+    context.set("context.target_dir", str(tmp_path))
+    context.set("runner_dir", str(tmp_path / "not-the-objective-dir"))
+    context.set("target_dir", str(tmp_path))
+
+    hooks = _Hooks()
+    engine = PipelineEngine(
+        graph=_graph(),
+        context=context,
+        handler_registry=HandlerRegistry(HandlerContext(backend=None)),
+        logs_root=str(tmp_path / "logs"),
+        hooks=hooks,
+    )
+    outcome = asyncio.run(engine.run())
+
+    routing_errors = [
+        d for n, d in hooks.events
+        if n == PIPELINE_ERROR and d.get("error_type") == "no_matching_edge"
+    ]
+    assert not routing_errors, (
+        "the designed escalation is being reported as an authoring bug: "
+        f"{routing_errors}"
+    )
+    assert outcome.status is StageStatus.FAIL, "escalation must stay LOUD (CLI exit 1)"
+    assert "No matching edge" not in ((outcome.notes or "") + (outcome.failure_reason or ""))
+    assert (tmp_path / ".objective" / "disposition").read_text(encoding="utf-8").strip() == "escalated"
+    assert (tmp_path / ".objective" / "postmortem" / "escalation.md").is_file()
+
+
+@_SHELL_GATES
+def test_evidence_gate_runs_a_cd_carrying_command_exactly_as_admitted(tmp_path):
+    """243(b): the shipped gate command, on the exemplar-01 workspace shape.
+
+    The run's postmortem reconstructed this as "the pipeline evaluated the
+    evidence command from the wrong working directory... rather than
+    `cd /workspace/notesvc && python3 -m pytest tests/ -v`".  Driven against the
+    real `tool_command`, that reconstruction does not hold: `bash -c "$ev"`
+    hands the admitted string to a shell verbatim and the `cd` is honoured.
+    What was missing is the receipt -- nothing recorded WHAT the gate ran, so a
+    divergence could only ever be inferred from a postmortem at budget
+    exhaustion.  This pins both halves.
+    """
+    workspace = tmp_path
+    state = workspace / ".objective"
+    state.mkdir()
+    pkg = workspace / "notesvc" / "notesvc"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "users.py").write_text("def user_slug(u):\n    return u.lower()\n", encoding="utf-8")
+    tests = workspace / "notesvc" / "tests"
+    tests.mkdir()
+    (tests / "test_users.py").write_text(
+        "from notesvc.users import user_slug\n\n\ndef test_slug():\n    assert user_slug('AB') == 'ab'\n",
+        encoding="utf-8",
+    )
+    # A stale anchor stands in for preflight's pre-work digest, so delta=changed.
+    (state / "anchor").write_text("0" * 32 + "\n", encoding="utf-8")
+
+    admitted = f"cd {workspace}/notesvc && python3 -m pytest tests/ -q"
+    (state / "evidence-command").write_text(admitted + "\n", encoding="utf-8")
+    (state / "evidence-command.sha256").write_text(
+        hashlib.sha256((state / "evidence-command").read_bytes()).hexdigest() + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run_gate("evidence_gate", workspace)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "evidence_ok", (
+        "a cd-carrying admitted command must run as admitted: "
+        f"{(state / 'evidence-1.log').read_text(encoding='utf-8')}"
+    )
+    record = json.loads((state / "convergence.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert record["dod_exit"] == 0 and record["delta"] == "changed", record
+
+    # The receipt: what ran, recorded next to what was admitted.
+    log = (state / "evidence-1.log").read_text(encoding="utf-8")
+    assert log.splitlines()[0] == f"RAN AS ADMITTED: {admitted}", log.splitlines()[:1]
+    assert record["evidence_command_sha"] == hashlib.sha256(
+        admitted.encode()
+    ).hexdigest()[:12], record
+
+
+@_SHELL_GATES
+def test_preflight_refuses_when_the_shell_the_gate_uses_is_absent(tmp_path):
+    """243(b), the same class one layer earlier.
+
+    `evidence_gate` executes the admitted command with `bash -c`.  Preflight
+    verified `sha256sum`, `md5sum` and `find` but not `bash`, so a workspace
+    without bash would have returned `ready` and then failed EVERY evidence
+    iteration for a reason no code change could affect -- a gate that could
+    never go green, which is exactly the shape #243(b) reports.
+    """
+    stub_bin = tmp_path / "bin"
+    stub_bin.mkdir()
+    # Everything preflight itself needs, and deliberately NOT bash.
+    for tool in ("mkdir", "sha256sum", "md5sum", "find", "sort", "cut"):
+        real = shutil.which(tool)
+        if real is None:
+            pytest.skip(f"{tool} is not available to build a bash-free PATH")
+        (stub_bin / tool).symlink_to(real)
+    assert shutil.which("bash", path=str(stub_bin)) is None
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    result = subprocess.run(
+        _tool_command("preflight"),
+        shell=True,
+        cwd=workspace,
+        env={
+            "PATH": str(stub_bin),
+            "runner_dir": str(_OBJECTIVE_DIR),
+            "target_dir": str(workspace),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.stdout == "blocked", (
+        "preflight admitted a workspace whose shell the evidence gate cannot use; "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert result.returncode != 0
+    assert "bash" in result.stderr, result.stderr

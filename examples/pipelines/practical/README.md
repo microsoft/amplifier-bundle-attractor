@@ -16,6 +16,15 @@ start there). The links below point at the guides.
 | Feature Build | [feature-build.md](feature-build.md) | Parse spec → parallel implement → integration test → human review gate | bring-your-own repo |
 | Multi-Lens Review | [multi-lens-review.md](multi-lens-review.md) | Same code reviewed by 3 providers wearing 3 lenses → synthesized verdict | self-contained |
 
+These five task pipelines (`bug-fix`, `feature-build`, `refactor`, `test-gen`,
+`pr-review`) are also the **lanes** of
+[`examples/objective/`](../../objective/README.md)'s objective runner: state an
+objective, and it triages which of these fits and runs it unmodified as a
+sub-pipeline. What makes them selectable is their walk-up contract — each takes
+`goal` and nothing else, and each carries its own gates, budget, and escalation.
+Keep that contract stable; a lane that starts requiring bespoke params stops
+being routable.
+
 ## Run one walk-up
 
 `bug-fix`, `refactor`, and `test-gen` ship a runnable target in [`sample/`](sample/)

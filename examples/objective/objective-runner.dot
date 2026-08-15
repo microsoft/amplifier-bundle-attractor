@@ -1,0 +1,376 @@
+// ============================================================================
+// Objective Runner -- one layer up from an attractor
+// ============================================================================
+// You do not pick a pipeline. You state an OBJECTIVE, and this graph diagnoses
+// it, routes it, converges on it against machine evidence, and -- when there is
+// no machine evidence to be had -- says so honestly instead of pretending.
+//
+//   objective  ->  composition  ->  attractors  ->  execution
+//   (this graph)   (compose path)  (the lanes)     (their own gates)
+//
+// The basin: "the stated objective is satisfied with machine evidence, or is
+// honestly redirected." Both are green exits. A run that can do neither
+// escalates LOUDLY (nonzero) rather than leaving through the success door.
+//
+// Invocation (per KNOWN_ISSUES: process cwd MUST equal --cwd for box nodes):
+//   OBJ=/abs/path/to/examples/objective
+//   cd <workspace>
+//   attractor run "$OBJ/objective-runner.dot" \
+//       --param goal="users report a crash when saving a file whose name has unicode" \
+//       --param runner_dir="$OBJ" \
+//       --param target_dir="$PWD" \
+//       --cwd .
+//
+// Parameters:
+//   goal            THE OBJECTIVE. It travels as the canonical `goal` param, so
+//                   every shipped lane consumes it natively -- no adapter layer,
+//                   no new param vocabulary.
+//   runner_dir      Absolute path to this file's directory (the gates run
+//                   validate_triage.py / check_child_contract.py from here).
+//   target_dir      Absolute path to the workspace. Used for the generated
+//                   child's dot_file, which must be absolute because a relative
+//                   dot_file resolves against THIS file's directory first
+//                   (specs/EXTENSIONS.md section 10 precedence chain).
+//   max_iterations  Evidence-loop budget (default 3).
+//   max_compose     Compose-fix budget (default 2 -> at most 3 lint attempts).
+//   max_frames      Malformed-triage budget (default 2 re-frames).
+//
+// SHAPE (the doctrine, made visible):
+//   - INTAKE ROUTES ON A MACHINE ARTIFACT, NOT ON A SELF-REPORT. `frame` (LLM)
+//     writes .objective/triage.json; `triage_gate` (code) validates it against
+//     triage-schema.json and prints the routing token. The first routing
+//     decision of the run is therefore evidence outside the worker's context --
+//     the same rule every gate in this repo obeys.
+//   - THE PARENT NEVER TRUSTS THE CHILD'S SELF-REPORT. A child pipeline's
+//     terminal outcome is used for LOUD FAIL ROUTING ONLY. Satisfaction is
+//     decided by `evidence_gate`, which RE-RUNS the definition-of-done command
+//     itself and additionally asserts a durable workspace delta since the
+//     anchor recorded at `preflight`. A no-op child cannot pass on a stale
+//     green.
+//   - THE COMPOSER'S OUTPUT IS GATED BEFORE IT RUNS. `compose` writes a child
+//     graph; `lint_gate` (the engine's own linter -- ERRORs block, warnings are
+//     recorded) and `contract_gate` (check_child_contract.py) both sit OUTSIDE
+//     the composer's context and can send it back.
+//   - BUDGET AS A DECISION POINT. evidence_gate spends an iteration on EVERY
+//     entry (green and red alike) and routes exhaustion to postmortem ->
+//     escalated, never to a bare FAIL.
+//   - ONE GREEN EXIT. `validate_or_raise` requires exactly one exit node, so the
+//     two honest terminals are expressed as: `done` (Msquare, reached only
+//     through `finalize`, which refuses to open without a disposition artifact)
+//     and `escalated` (a tool node that exits 1 with max_retries=0 and no
+//     fail-route -- the bug-fix.dot idiom, a LOUD red).
+//
+// VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON:
+//   - STALE-LABEL RULE: a tool node that exits nonzero does NOT refresh
+//     tool.last_line, so a stale label can match at the same time as an
+//     outcome=fail edge. Every last_line edge below whose source also carries a
+//     failure edge conjoins `&& outcome=success` (docs/ROUTING-REFERENCE.md
+//     section 3).
+//   - dot_file= is resolved lazily, at node execution, with NO existence check
+//     (specs/EXTENSIONS.md section 10). That is what makes the compose path's
+//     write-then-run possible: .objective/gen/child.dot does not exist at parse
+//     or validate time. A never-written target fails late and LOUD.
+//   - A sub-pipeline is a fresh session boundary (section 11): each lane and the
+//     generated child run with their own context. Files are the only channel
+//     this graph trusts across that boundary.
+//   - PARAM NAMESPACE: substitution rewrites $name/${name} for any context key.
+//     The shell variables here (rd, mi, mc, mf, n, B, w, ev, rc, res, now, base,
+//     delta) are safe only because no param shares their name. Never add a param
+//     named like a shell var.
+// ============================================================================
+
+digraph ObjectiveRunner {
+    graph [
+        goal="$goal",
+        label="Objective Runner",
+        params="goal, runner_dir, target_dir, max_iterations, max_compose, max_frames",
+        default_max_retries=2,
+        default_fidelity="compact",
+        max_pipeline_duration="14400s"
+    ]
+
+    start [shape=Mdiamond, label="Start"]
+    done  [shape=Msquare,  label="Done"]
+
+    // ---------- preflight: deterministic admission + the delta anchor --------
+    // OBJECTIVE   Make the run's own preconditions true, or refuse before an
+    //             LLM is ever paid.
+    // CONSTRAINTS code-tier only; no judgement.
+    // EVIDENCE    .objective/anchor -- a digest of the workspace as it was
+    //             BEFORE any work, excluding .git and .objective themselves.
+    // EXIT        ready (all preconditions hold) | blocked (exit 1, LOUD)
+    // WHY THE ANCHOR: green evidence certifies the tree's state, not that new
+    // work exists in it. Without a recorded base, "did work happen?" is
+    // structurally unanswerable (see examples/gates/base-sha-anchor.dot and the
+    // 2026-07-28 incident). This is the commit-free form of that anchor, so it
+    // works in a workspace whose child pipelines do not commit.
+    preflight [
+        shape=parallelogram, label="Preflight", max_retries=0,
+        tool_command="mkdir -p .objective/postmortem .objective/gen .objective/feedback || { printf blocked; exit 1; }; rd=\"$runner_dir\"; for f in validate_triage.py check_child_contract.py triage-schema.json compose-contract.md; do [ -f \"$rd/$f\" ] || { echo \"FATAL: --param runner_dir must name the examples/objective directory; missing $f under '$rd'\" >&2; printf blocked; exit 1; }; done; case \"$target_dir\" in /*) ;; *) echo \"FATAL: --param target_dir must be an absolute path (got '$target_dir')\" >&2; printf blocked; exit 1;; esac; find . -name .git -prune -o -name .objective -prune -o -name .ai -prune -o -name __pycache__ -prune -o -name .pytest_cache -prune -o -name .ruff_cache -prune -o -name node_modules -prune -o -name .venv -prune -o -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1 > .objective/anchor; [ -s .objective/anchor ] && printf ready || { printf blocked; exit 1; }"
+    ]
+
+    // ---------- frame: diagnose the objective; do NOT do the work ------------
+    // OBJECTIVE    Classify $goal with this repo's own three-question test and
+    //              propose a shape plus a machine definition of done.
+    // CONSTRAINTS  Do not do the work. Do not self-route (the token comes from
+    //              the gate, not from you). The vocabulary is fixed.
+    // CAPABILITIES read the workspace, read $goal.
+    // EVIDENCE     .objective/triage.json (schema-valid) and
+    //              .objective/objective.md (the objective restated).
+    // EXIT         triage.json exists and parses (must_write + triage_gate).
+    frame [
+        shape=box, label="Frame the Objective",
+        must_write=".objective/triage.json",
+        prompt="An objective has been stated: $goal\n\nYour job is to DIAGNOSE it, not to do it. Survey the workspace at $target_dir enough to answer honestly, then apply this repo's three-question test (docs/PIPELINE_DESIGN_PRINCIPLES.md section 0): (1) Is there a cycle -- work that can be attempted, checked by machine, and re-attempted? (2) Is the exit gated on machine-checkable evidence EXTERNAL to the worker? (3) Would it still land if any one LLM node had a bad day -- a single plausible-but-wrong response?\n\nWrite .objective/objective.md: the objective restated as an end-state of the world, the constraints you can see, and what evidence would prove it satisfied.\n\nThen write .objective/triage.json with exactly these fields:\n  shape             one of: bugfix, feature, refactor, testgen, review, compose, redirect\n  three_question    {cycle, evidence_gate, bad_day} -- each answer MUST begin with 'yes' or 'no', then say why\n  evidence_command  a shell command that exits 0 if and only if the objective is satisfied, run from $target_dir -- or the literal string NONE\n  rationale         why this shape\n\nChoosing the shape:\n  bugfix|feature|refactor|testgen|review -- the objective maps onto ONE shipped practical pipeline (examples/pipelines/practical/) whose gate form fits your evidence_command. Prefer a lane when one fits: they are battle-tested and carry their own gates, budgets, and escalation.\n  compose  -- machine-checkable but not lane-shaped (novel artifact, bespoke definition of done). Choosing this means a purpose-built child pipeline will be WRITTEN for this objective. If you choose compose, evidence_command MUST be exactly: bash .objective/gen/dod.sh\n  redirect -- there is no machine-checkable definition of done. Set evidence_command to NONE. This is a legitimate, useful answer, not a failure: some work wants a recipe, a conversation, or a one-shot, and saying so is the deliverable.\n\nDo not invent a hollow evidence_command to avoid choosing redirect. A gate that cannot fail is worse than no gate: it converts an honest 'this is not an attractor' into a false green. If .objective/triage-report.txt exists, a previous record of yours was REJECTED -- read it and fix exactly what it names."
+    ]
+
+    // ---------- triage_gate: admit the triage; print the routing token -------
+    // OBJECTIVE    Admit only a well-formed triage record, and be the thing that
+    //              decides the route.
+    // CONSTRAINTS  code-tier only; vocabulary equality is exact lowercase.
+    // EVIDENCE     .objective/triage-report.txt, .objective/shape,
+    //              .objective/evidence-command
+    // EXIT         one of the 7 shape tokens | triage_bad | triage_exhausted
+    // Idiom A (always exit 0) so tool.last_line is always fresh. A nonzero exit
+    // here means the gate itself could not run, which is a different thing from
+    // a bad record -- and it routes differently, to the postmortem path.
+    // This node is also the loop's re-entry point: `feedback` routes back here,
+    // so a corrective iteration re-enters the SAME lane the record named.
+    triage_gate [
+        shape=parallelogram, label="Admit Triage / Route", max_retries=0,
+        tool_command="mf=$max_frames; python3 \"$runner_dir/validate_triage.py\" --triage .objective/triage.json --schema \"$runner_dir/triage-schema.json\" --state-dir .objective --max-frames \"${mf:-2}\""
+    ]
+
+    // ---------- the five lanes: shipped practical pipelines, unmodified ------
+    // OBJECTIVE    Satisfy the objective through a battle-tested attractor.
+    // CONSTRAINTS  The child is used AS SHIPPED. It carries its own gates,
+    //              budgets, and escalation; this graph adds a second, external
+    //              verification pass rather than reaching inside.
+    // CAPABILITIES the child graph's own.
+    // EVIDENCE     the child's own evidence files in the shared workspace.
+    // EXIT         the child's terminal outcome (fail-routing only).
+    // $goal is cloned into the child's context, and every shipped practical
+    // pipeline already consumes $goal -- which is exactly why the objective
+    // travels as `goal` and needs no adapter.
+    lane_bugfix   [shape=folder, label="Lane: Bug Fix",     dot_file="../pipelines/practical/bug-fix.dot"]
+    lane_feature  [shape=folder, label="Lane: Feature",     dot_file="../pipelines/practical/feature-build.dot"]
+    lane_refactor [shape=folder, label="Lane: Refactor",    dot_file="../pipelines/practical/refactor.dot"]
+    lane_testgen  [shape=folder, label="Lane: Test Gen",    dot_file="../pipelines/practical/test-gen.dot"]
+    lane_review   [shape=folder, label="Lane: PR Review",   dot_file="../pipelines/practical/pr-review.dot"]
+
+    // ---------- compose: WRITE a purpose-built child -------------------------
+    // OBJECTIVE    Write a child pipeline and its definition-of-done script for
+    //              an objective that is machine-checkable but not lane-shaped.
+    // CONSTRAINTS  Gates OUTSIDE workers. One exit. A cycle and a budget wall
+    //              are mandatory. Build only from bundle-shipped patterns.
+    // CAPABILITIES write files; read examples/patterns/, examples/gates/, and
+    //              compose-contract.md.
+    // EVIDENCE     .objective/gen/child.dot and .objective/gen/dod.sh
+    // EXIT         both files exist AND pass lint_gate AND contract_gate.
+    compose [
+        shape=box, label="Compose a Child Pipeline",
+        must_write=".objective/gen/child.dot",
+        prompt="No shipped lane fits this objective, but it IS machine-checkable. Write a purpose-built child pipeline for it.\n\nObjective: $goal\n\nRead $runner_dir/compose-contract.md IN FULL first -- it is the contract your output must satisfy, and two gates outside your context will check it mechanically before your graph is allowed to run. Also read $runner_dir/../patterns/task-runner.dot (the convergence skeleton), $runner_dir/../gates/README.md (the gate idioms and the stale-label rule), and .objective/objective.md.\n\nWrite exactly two files:\n  .objective/gen/dod.sh    the definition of done. A shell script, run from $target_dir, that exits 0 if and only if the objective is satisfied and nonzero otherwise. It must be able to FAIL -- write it so that it is red right now, before the work exists, and confirm that by running it.\n  .objective/gen/child.dot the child pipeline. Its gate must RUN .objective/gen/dod.sh; its exit must be unreachable except through that gate.\n\nIf .objective/lint-report.txt or .objective/contract-report.txt exists, a previous attempt of yours was BLOCKED -- read both and fix exactly what they name. Do not weaken dod.sh to get past a gate: the parent re-runs it after your child finishes, and a hollow DoD only buys a louder failure later."
+    ]
+
+    // ---------- lint_gate: the engine's own linter, as an in-graph gate ------
+    // OBJECTIVE    Machine-reject a broken generated graph BEFORE executing it.
+    // CONSTRAINTS  ERRORs block; WARNINGs pass but are recorded (no --strict).
+    //              contract_gate owns the design-shape checks.
+    // CAPABILITIES `attractor lint` (exit 1 on errors, 0 on warnings).
+    // EVIDENCE     .objective/lint-report.txt, warning count in convergence.jsonl
+    // EXIT         lint_pass | lint_fail | compose_exhausted | lint_unavailable(exit 1)
+    // This node also carries the compose-fix budget: every re-entry from either
+    // gate passes through here, so every compose attempt spends budget.
+    lint_gate [
+        shape=parallelogram, label="Lint Generated Child", max_retries=0,
+        tool_command="mc=$max_compose; B=${mc:-2}; n=$(($(cat .objective/compose-iter 2>/dev/null || echo 0)+1)); echo $n > .objective/compose-iter; if [ \"$n\" -gt $((B+1)) ]; then printf compose_exhausted; else command -v attractor >/dev/null 2>&1 || { echo 'FATAL: the attractor CLI is not on PATH; the generated child cannot be lint-gated' >&2; printf lint_unavailable; exit 1; }; if attractor lint .objective/gen/child.dot > .objective/lint-report.txt 2>&1; then res=lint_pass; else res=lint_fail; fi; w=$(grep -c '^WARNING' .objective/lint-report.txt 2>/dev/null); printf '{\"iteration\": %s, \"gate\": \"lint\", \"result\": \"%s\", \"warnings\": %s}\n' \"$n\" \"$res\" \"${w:-0}\" >> .objective/convergence.jsonl; printf %s \"$res\"; fi"
+    ]
+
+    // ---------- contract_gate: the composed-child contract, structurally -----
+    // OBJECTIVE    Enforce the shape checks lint deliberately does not own:
+    //              is this actually an attractor, and is its gate really
+    //              outside its workers?
+    // CONSTRAINTS  deterministic checks only.
+    // EVIDENCE     .objective/contract-report.txt (per-check PASS/FAIL)
+    // EXIT         contract_ok | contract_bad
+    contract_gate [
+        shape=parallelogram, label="Composed-Child Contract", max_retries=0,
+        tool_command="python3 \"$runner_dir/check_child_contract.py\" --child .objective/gen/child.dot --dod .objective/gen/dod.sh --report .objective/contract-report.txt"
+    ]
+
+    // ---------- run_child: execute the generated pipeline --------------------
+    // The dot_file is absolute (via $target_dir) on purpose: a relative value
+    // would resolve against THIS file's directory first, not the workspace.
+    // It is written at run time and read at node entry -- lazy resolution is
+    // what makes write-then-run composition possible at all.
+    run_child [
+        shape=folder, label="Run Generated Child",
+        dot_file="$target_dir/.objective/gen/child.dot"
+    ]
+
+    // ---------- redirect_report: the honest no, with receipts ----------------
+    // OBJECTIVE    Deliver the diagnosis as the work product.
+    // CONSTRAINTS  Must quote the failing three-question answers verbatim and
+    //              name the better home for this work.
+    // EVIDENCE     .objective/redirect.md
+    // EXIT         the file exists and is non-trivial (must_write + finalize).
+    // This path exits GREEN. The diagnosis IS the deliverable; the disposition
+    // artifact is what distinguishes it from "objective satisfied" for an
+    // unattended caller.
+    redirect_report [
+        shape=box, label="Honest Redirect",
+        must_write=".objective/redirect.md",
+        prompt="The triage concluded that this objective is NOT an attractor: $goal\n\nRead .objective/triage.json and .objective/objective.md. Write .objective/redirect.md -- the deliverable of this run. It must contain:\n  1. The objective, restated.\n  2. The three-question test, with your three answers QUOTED VERBATIM from triage.json, and a sentence on which question failed and why.\n  3. Where this work actually belongs: a recipe (staged, sequential, human approval gates), a conversation (judgement all the way down, no stable definition of done), or a one-shot (small enough that a loop buys nothing). Name one, and say what the first step there looks like.\n  4. What WOULD make it an attractor: the specific machine-checkable definition of done that does not exist today. If someone later writes that check, this objective becomes routable -- say exactly what it would have to assert.\n\nBe direct. A wrong 'yes, let us build a pipeline' costs hours and produces nothing; an accurate 'no, and here is why' is worth more than a run."
+    ]
+
+    // ---------- evidence_gate: the load-bearing gate -------------------------
+    // OBJECTIVE    Decide whether the objective is SATISFIED -- by re-running
+    //              the definition of done here, in the parent, outside every
+    //              child's context.
+    // CONSTRAINTS  Files and exit codes only. Never the child's self-report.
+    //              Owns the iteration fuse, checked FIRST so every entry
+    //              (green, red, or transient) spends budget.
+    // CAPABILITIES the admitted evidence_command; the workspace digest.
+    // EVIDENCE     .objective/evidence-N.log, .objective/convergence.jsonl,
+    //              .objective/evidence-pass
+    // EXIT         evidence_ok | evidence_bad | exhausted
+    // The delta assertion is the second half of the gate: a green DoD with an
+    // UNCHANGED workspace means nothing happened and the check was already
+    // passing -- the shape of the 2.4h/zero-work-product incident. Both halves
+    // must hold.
+    evidence_gate [
+        shape=parallelogram, label="Objective Satisfied?", max_retries=0,
+        goal_gate=true, retry_target="feedback",
+        tool_command="mi=$max_iterations; B=${mi:-3}; n=$(($(cat .objective/iter 2>/dev/null || echo 0)+1)); echo $n > .objective/iter; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"evidence\", \"budget\": \"exhausted\"}\n' \"$n\" >> .objective/convergence.jsonl; printf exhausted; else ev=$(cat .objective/evidence-command 2>/dev/null); now=$(find . -name .git -prune -o -name .objective -prune -o -name .ai -prune -o -name __pycache__ -prune -o -name .pytest_cache -prune -o -name .ruff_cache -prune -o -name node_modules -prune -o -name .venv -prune -o -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1); base=$(cat .objective/anchor 2>/dev/null); [ \"$now\" != \"$base\" ] && delta=changed || delta=unchanged; if [ -z \"$ev\" ]; then rc=99; else bash -c \"$ev\" > .objective/evidence-$n.log 2>&1; rc=$?; fi; printf '{\"iteration\": %s, \"gate\": \"evidence\", \"dod_exit\": %s, \"delta\": \"%s\"}\n' \"$n\" \"$rc\" \"$delta\" >> .objective/convergence.jsonl; if [ $rc -eq 0 ] && [ \"$delta\" = changed ]; then : > .objective/evidence-pass; printf evidence_ok; else rm -f .objective/evidence-pass; printf evidence_bad; fi; fi"
+    ]
+
+    // ---------- feedback: teach the NEXT attempt ----------------------------
+    // The next iteration re-enters through triage_gate, which re-emits the same
+    // shape token -- so the same lane runs again, in a FRESH context. This file
+    // is the only thing that crosses; that is the point.
+    feedback [
+        shape=box, label="Write Feedback",
+        must_write=".objective/feedback",
+        prompt="The objective is not yet satisfied: $goal\n\nRead .objective/convergence.jsonl (the descent record -- is this loop DESCENDING, OSCILLATING, or WANDERING?), the most recent .objective/evidence-*.log (the actual failing output of the definition-of-done command), and .objective/objective.md. Note that a 'delta: unchanged' record means the last attempt produced NO durable change to the workspace at all -- that is a different failure from a red check, and it needs a different response.\n\nRead .objective/iter for the current iteration number N, then write .objective/feedback/N-next.md: Key finding (one sentence) / What to change (3-5 bullets, specific, citing the failing output) / Why it matters. Then curate: consolidate or delete earlier feedback files that are stale or addressed.\n\nThe next attempt runs in a FRESH context and will not remember anything you do not write down. This file is the entire descent signal."
+    ]
+
+    // ---------- approve: the consequential human checkpoint ------------------
+    // OBJECTIVE    Let a human accept or reject a machine-verified result.
+    // Choice ORDER matters: an unattended run driven with
+    // `--on-human-gate auto-approve` selects the FIRST edge. Approve is first
+    // because the gate BELOW this one already passed on machine evidence -- a
+    // reject-first ordering would make every unattended run burn its budget and
+    // then report a false red. The CLI default (`--on-human-gate fail`) still
+    // refuses to guess: an unattended caller must opt in explicitly.
+    approve [
+        shape=hexagon, label="Ship this result?",
+        prompt="The objective's definition-of-done command passed in the parent context, and the workspace changed since the run began. Review .objective/evidence-*.log, .objective/convergence.jsonl, and the actual changes before choosing."
+    ]
+
+    // ---------- finalize: refuse a green exit without a disposition ----------
+    // OBJECTIVE    Make "the run ended" and "the run produced a disposition"
+    //              the same event.
+    // EVIDENCE     .objective/disposition = satisfied | redirected
+    // EXIT         finalized | no_disposition (exit 1, LOUD)
+    // This is what lets an unattended caller tell the two green outcomes apart:
+    // read .objective/disposition, then read the artifact it implies.
+    finalize [
+        shape=parallelogram, label="Finalize", max_retries=0,
+        tool_command="if [ -f .objective/evidence-pass ]; then echo satisfied > .objective/disposition; elif [ -s .objective/redirect.md ]; then echo redirected > .objective/disposition; else echo 'FATAL: no disposition artifact -- neither verified evidence nor an honest redirect' >&2; printf no_disposition; exit 1; fi; printf finalized"
+    ]
+
+    // ---------- postmortem -> escalated: salvage, then fail LOUD -------------
+    postmortem [
+        shape=box, label="Postmortem",
+        must_write=".objective/postmortem/report.md",
+        prompt="This run reached a decision point without converging on the objective: $goal\n\nRead .objective/convergence.jsonl, .objective/triage.json, .objective/triage-report.txt, .objective/lint-report.txt and .objective/contract-report.txt (if they exist), the .objective/evidence-*.log files, and .objective/feedback/. Write .objective/postmortem/report.md: what each iteration attempted, whether the loop was DESCENDING / OSCILLATING / WANDERING (cite the record), your best hypothesis for why it did not converge, and -- specifically -- whether the failure was in the OBJECTIVE (ambiguous, too large), the TRIAGE (wrong shape chosen; say which shape you would choose now), the DEFINITION OF DONE (wrong or unachievable check), or the WORK itself. Then state the options: change the objective, change the shape, raise the budget, or take it to a human.\n\nThis report is the value salvaged from a non-converging run. Be honest; a run that fails and explains itself is worth more than one that fails quietly."
+    ]
+
+    escalated [
+        shape=parallelogram, label="Escalated", max_retries=0,
+        tool_command="mkdir -p .objective/postmortem; if [ -s .objective/postmortem/report.md ]; then echo 'Read .objective/postmortem/report.md and .objective/convergence.jsonl, then choose: change the objective, change the shape, raise the budget, or take it to a human.' > .objective/postmortem/escalation.md; else echo 'Postmortem could not be produced. Preserve the run logs and escalate to a human.' > .objective/postmortem/escalation.md; fi; echo escalated > .objective/disposition; printf escalated; exit 1"
+    ]
+
+    // ========================= edges =========================
+    start -> preflight
+
+    preflight -> frame     [condition="context.tool.last_line=ready && outcome=success", label="preconditions hold"]
+    preflight -> escalated [condition="outcome=fail",                                    label="blocked -- refuse before spending an LLM"]
+
+    frame -> triage_gate
+
+    // Intake routing. Every token edge carries the stale-label conjunction
+    // because triage_gate also has an outcome=fail edge.
+    triage_gate -> lane_bugfix      [condition="context.tool.last_line=bugfix && outcome=success",   label="bugfix"]
+    triage_gate -> lane_feature     [condition="context.tool.last_line=feature && outcome=success",  label="feature"]
+    triage_gate -> lane_refactor    [condition="context.tool.last_line=refactor && outcome=success", label="refactor"]
+    triage_gate -> lane_testgen     [condition="context.tool.last_line=testgen && outcome=success",  label="testgen"]
+    triage_gate -> lane_review      [condition="context.tool.last_line=review && outcome=success",   label="review"]
+    triage_gate -> compose          [condition="context.tool.last_line=compose && outcome=success",  label="compose"]
+    triage_gate -> redirect_report  [condition="context.tool.last_line=redirect && outcome=success", label="redirect -- the honest no"]
+    // Corrective: a malformed record is a judgement, and it is fuse-bounded.
+    triage_gate -> frame            [condition="context.tool.last_line=triage_bad && outcome=success",       label="malformed -- re-frame"]
+    triage_gate -> postmortem       [condition="context.tool.last_line=triage_exhausted && outcome=success", label="cannot produce a valid triage"]
+    // A nonzero exit here means the GATE could not run, not that the record was bad.
+    triage_gate -> postmortem       [condition="outcome=fail", label="gate could not run"]
+
+    // Lanes: the child's own gates decide the child; this graph re-verifies.
+    lane_bugfix   -> evidence_gate
+    lane_feature  -> evidence_gate
+    lane_refactor -> evidence_gate
+    lane_testgen  -> evidence_gate
+    lane_review   -> evidence_gate
+    lane_bugfix   -> postmortem [condition="outcome=fail", label="child could not converge"]
+    lane_feature  -> postmortem [condition="outcome=fail", label="child could not converge"]
+    lane_refactor -> postmortem [condition="outcome=fail", label="child could not converge"]
+    lane_testgen  -> postmortem [condition="outcome=fail", label="child could not converge"]
+    lane_review   -> postmortem [condition="outcome=fail", label="child could not converge"]
+
+    // Compose path: write -> lint -> contract -> run. Both gates can send it back.
+    compose -> lint_gate
+    compose -> postmortem [condition="outcome=fail", label="hard failure"]
+
+    lint_gate -> contract_gate [condition="context.tool.last_line=lint_pass && outcome=success", label="no lint errors"]
+    lint_gate -> compose       [condition="context.tool.last_line=lint_fail && outcome=success", label="lint errors -- rewrite"]
+    lint_gate -> postmortem    [condition="context.tool.last_line=compose_exhausted && outcome=success", label="compose budget spent"]
+    lint_gate -> postmortem    [condition="outcome=fail", label="linter unavailable"]
+
+    contract_gate -> run_child  [condition="context.tool.last_line=contract_ok && outcome=success",  label="contract satisfied"]
+    contract_gate -> compose    [condition="context.tool.last_line=contract_bad && outcome=success", label="contract violated -- rewrite"]
+    contract_gate -> postmortem [condition="outcome=fail", label="contract gate could not run"]
+
+    run_child -> evidence_gate
+    run_child -> postmortem [condition="outcome=fail", label="generated child could not converge"]
+
+    // The honest no reaches the single green exit through finalize.
+    redirect_report -> finalize
+    redirect_report -> postmortem [condition="outcome=fail", label="hard failure"]
+
+    // The load-bearing decision.
+    evidence_gate -> approve    [condition="context.tool.last_line=evidence_ok && outcome=success",   label="evidence holds"]
+    evidence_gate -> feedback   [condition="context.tool.last_line=evidence_bad && outcome=success",  label="not satisfied -- iterate"]
+    evidence_gate -> postmortem [condition="context.tool.last_line=exhausted && outcome=success",     label="budget spent -- decision point"]
+    evidence_gate -> postmortem [condition="outcome=fail",                                            label="gate could not run"]
+
+    // Corrective re-entry: back through the gate that owns the route, so the
+    // same shape runs again in a fresh context with the feedback file as its
+    // only inheritance. loop_restart increments $iteration and resets completed
+    // nodes; the budget counters are files and survive on purpose.
+    feedback -> triage_gate [loop_restart="true", label="fresh iteration, kept learning"]
+    feedback -> postmortem  [condition="outcome=fail", label="hard failure"]
+
+    // Human checkpoint. Approve FIRST -- see the node comment.
+    approve -> finalize [label="[A] Approve -- accept the verified result"]
+    approve -> feedback [label="[R] Reject -- another iteration with my notes"]
+
+    finalize -> done       [condition="context.tool.last_line=finalized && outcome=success", label="disposition recorded"]
+    finalize -> postmortem [condition="outcome=fail",                                        label="no disposition -- refuse to exit green"]
+
+    // Escalation is a deterministic non-terminal handoff, not a second
+    // successful exit. It writes a fallback handoff even if the postmortem LLM
+    // itself failed, then exits 1 DELIBERATELY: max_retries=0 and no fail-route,
+    // so the engine hard-fails LOUD (run status=fail, CLI exit 1).
+    postmortem -> escalated [condition="outcome=fail", label="postmortem failed"]
+    postmortem -> escalated [label="escalate"]
+}

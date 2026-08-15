@@ -153,6 +153,12 @@ The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 s
 
 ## Pipeline Gallery
 
+### Objective-first — state the objective, not the pipeline
+
+| Pipeline | What it does |
+|----------|--------------|
+| [Objective Runner](examples/objective/README.md) | You state an **objective**; it diagnoses, then **selects** a shipped lane, **composes** a purpose-built child pipeline, or **redirects** with an honest written no |
+
 ### Canonical attractor exemplars — teach the shape
 
 | Pipeline | What it teaches |
@@ -198,6 +204,25 @@ task (or control node like fork/join/gate), and edges define the flow between th
 For each LLM node, the orchestrator spawns a **loop-agent** sub-session that runs
 an agentic tool loop -- call LLM, execute tools, feed results back -- until the
 node's task completes. Results flow forward along edges to the next node.
+
+### The objective layer
+
+The graph is the program — but choosing *which* graph is still a decision, and
+it is usually the one a user cannot make. `examples/objective/objective-runner.dot`
+takes that decision as its input: you pass an **objective**, and the runner
+diagnoses it with the three-question test, then **selects** one of the shipped
+practical pipelines, **composes** a purpose-built child graph (which must clear
+`attractor lint` and a structural contract check before it is allowed to run), or
+**redirects** — exiting green with a written diagnosis when the honest answer is
+that the work wants a recipe, a conversation, or a one-shot.
+
+It stacks the same doctrine one level up rather than relaxing it. The first
+routing decision runs on a schema-validated artifact written by a worker and
+admitted by a *code* gate, not on the worker's self-report. A child pipeline's
+own success is used for loud fail-routing only — satisfaction is decided by the
+parent re-running the definition-of-done command itself, plus a delta assertion
+against an anchor recorded before any work began. It is author-level content
+only: one `.dot`, two stdlib scripts, no engine surface.
 
 ## Provider Profiles
 

@@ -338,6 +338,56 @@ verbatim.
 
 ---
 
+### Pattern: schema-validated artifact as the routing signal
+
+The strongest form of the middle row is worth naming on its own, because it is what
+you reach for when the decision being routed is *consequential* — which pipeline
+runs, whether the work ships, whether the run exits at all.
+
+Instead of `agent → keyword → edge`, use:
+
+1. The agent writes a **structured artifact** to a declared path (JSON, not prose),
+   with `must_write=` making the absence of that artifact a fail-closed contract
+   violation rather than a silent pass.
+2. A `parallelogram` node validates the artifact against a **schema kept in a
+   separate file** and prints ONE token from a closed vocabulary.
+3. Edges route on `context.tool.last_line`, with the `&& outcome=success`
+   conjunction (§7 above, and `examples/gates/README.md`).
+
+```dot
+propose [shape=box, must_write=".objective/triage.json",
+         prompt="Write .objective/triage.json with fields: shape (one of ...), rationale."]
+admit   [shape=parallelogram, max_retries=0,
+         tool_command="python3 \"$runner_dir/validate_triage.py\" --triage .objective/triage.json --schema \"$runner_dir/triage-schema.json\""]
+
+propose -> admit
+admit -> lane_a  [condition="context.tool.last_line=alpha && outcome=success"]
+admit -> lane_b  [condition="context.tool.last_line=beta && outcome=success"]
+admit -> propose [condition="context.tool.last_line=rejected && outcome=success"]
+admit -> halt    [condition="outcome=fail"]
+```
+
+What this buys over routing on `preferred_label`:
+
+- **The vocabulary is enforced, not hoped for.** An off-vocabulary value is a
+  rejection with a report the proposer can read, not an unmatched edge.
+- **Cross-field rules become checks.** "A non-redirect shape must name a real
+  evidence command" is a schema rule; as a prompt instruction it is a suggestion.
+- **The rejection is bounded and distinct from a tool failure.** A bad *record*
+  is a judgement token that loops (fuse-bounded); a validator that cannot *run*
+  exits nonzero and routes through `outcome=fail` to a different place entirely.
+- **The decision is auditable after the fact.** The artifact and the validation
+  report are both on disk.
+
+The cost is one more node and one more file, so reserve it for decisions that
+deserve it. A worker steering its own next step within a loop is fine on
+`preferred_label`; a worker choosing which pipeline runs is not.
+
+Shipped instance: `examples/objective/objective-runner.dot` (`frame` →
+`triage_gate`), with the schema at `examples/objective/triage-schema.json`.
+
+---
+
 ## 8. Cross-References
 
 | Topic | Where to look |

@@ -100,6 +100,39 @@ The bundle includes 16 example pipelines you can reference:
   `feature-build.dot`, `pr-review.dot`, `refactor.dot`, `test-gen.dot`
 - Programmatic usage: `@attractor:examples/programmatic_usage.py`
 
+## Objective-first entry
+
+When a user arrives with an **objective** rather than a pipeline choice -- "the
+save path crashes on unicode filenames", "operators have no runbook" -- do not
+open by asking which `.dot` they want. They usually do not know, and the answer
+is often "none of them."
+
+Point them at `@attractor:examples/objective/objective-runner.dot`: state the
+objective as `--param goal=...`, and the runner diagnoses and routes it. It
+applies the three-question test to the objective itself, writes a schema-validated
+triage record, and then either **selects** one of the five shipped practical
+lanes, **composes** a purpose-built child pipeline (gated by `attractor lint` plus
+a structural contract check before it is allowed to run), or **redirects** --
+exiting green with a written diagnosis when the honest answer is that this wants
+a recipe, a conversation, or a one-shot. Read
+`@attractor:examples/objective/README.md` before recommending it.
+
+Two things to teach along with it, because they are the transferable part:
+
+- **The first routing decision runs on a machine artifact, not a self-report.**
+  The intake worker writes `.objective/triage.json`; a code-tier gate validates
+  it and prints the routing token. Routing on the worker's own
+  `preferred_label` would put the run's first decision inside the context that
+  produced it.
+- **The parent re-runs the definition of done itself.** A child pipeline's
+  terminal outcome is used for loud fail-routing only. Files and exit codes
+  decide satisfaction -- plus a delta assertion against an anchor recorded
+  before any work, so a green check on an unchanged workspace cannot pass.
+
+Still recommend a specific `.dot` when the user already knows the shape they
+want. The objective layer earns its keep when they know the objective and not
+the shape.
+
 ## Session entry point
 
 If a user is deciding whether to build a pipeline at all, or needs a guided

@@ -46,6 +46,16 @@ When the user asks you to do a complex task, decide:
    a full pipeline with conditional routing, retries, or parallel fan-out.
    Example: "Build a comprehensive test suite for 3 modules" uses parallel fan-out.
 
+4. **Complex task where you do not know which shape fits** — don't guess: target
+   `@attractor:examples/objective/objective-runner.dot` with the objective as
+   `goal` and let it triage. You don't pick the pipeline; the runner diagnoses
+   the objective and either selects a shipped lane, composes a purpose-built
+   child, or redirects. Read `.objective/disposition` when it returns:
+   `satisfied` (evidence in `.objective/evidence-*.log`), `redirected` (the
+   honest no, written up in `.objective/redirect.md` — relay it, do not retry),
+   or `escalated` (nonzero exit; the analysis is in
+   `.objective/postmortem/report.md`).
+
 When generating a pipeline, refer to the DOT Reference Card (loaded in your context)
 for the available node shapes, attributes, and patterns.
 

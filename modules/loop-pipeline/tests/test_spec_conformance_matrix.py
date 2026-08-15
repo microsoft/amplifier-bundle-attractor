@@ -1227,7 +1227,7 @@ def test_row_atx_m_007o():
 
 
 def test_row_atx_m_f01():
-    """F1 (issue #237): an unknown shape hard-errors; it does NOT fall through."""
+    """F1 (issue #234): an unknown shape hard-errors; it does NOT fall through."""
     r = row("ATX-M-F01")
     registry = HandlerRegistry(HandlerContext())
 
@@ -1256,7 +1256,7 @@ def test_row_atx_m_f01():
 
 
 def test_row_atx_m_f04():
-    """F4 (issue #237): `reasoning_effort` has no built-in default."""
+    """F4 (issue #234): `reasoning_effort` has no built-in default."""
     r = row("ATX-M-F04")
     graph = parse_dot(
         """

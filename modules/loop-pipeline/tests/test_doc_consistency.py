@@ -1,6 +1,30 @@
-"""Tests for doc/spec internal consistency — D-135, D-137.
+"""Tests for doc/spec internal consistency — D-135, D-137, D-240..D-242.
 
 These are regression guards against documentation contradictions.
+
+D-240..D-242 were added closing the 2026-08-15 Layer-3 drift review (issue
+#240). Each pins a claim that had already drifted once, against the thing the
+claim is *about* rather than against itself:
+
+  D-240  ``README.md``'s ``suggested_next_ids`` note
+         <- ``edge_selection._coerce_suggested_id``'s real behavior.
+         The README taught the pre-fix bug as current for the life of
+         ``specs/EXTENSIONS.md`` §34 (DR-CORE-001). Two-sided: revert the
+         coercion in code and this fails, naming the README paragraph that
+         would need its caveat back.
+  D-241  ``README.md``'s section count for ``docs/PIPELINE_DESIGN_PRINCIPLES.md``
+         <- that file's actual numbered ``## N.`` headings.
+         The row said "Six" while the file carried eight sections; §0 and §7
+         shipped and the summary was never revisited (issue #236).
+  D-242  ``SPEC_CONFORMANCE.md``'s Summary row for the attractor spec
+         <- the §3 attractor table it summarizes.
+         The summary claimed 3 resolved / 3 open while four more rows had been
+         decided (DR-LEDGER-002). Recomputes the arithmetic from the table.
+
+Honest limit shared by all three: extracting a claim from prose is
+regex-over-prose. Rewording the sentence a claim lives in fails the guard with
+"claim not found" — the intended failure, not a false alarm. A reworded claim
+needs a re-anchored guard.
 """
 
 import re
@@ -153,4 +177,257 @@ def test_house_llm_classification_is_indirect():
     )
     assert "Indirect" in syntax_val, (
         f"DOT-SYNTAX.md house LLM field should contain 'Indirect', got: '{syntax_val}' (D-137)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-240: README's suggested_next_ids note vs the shipped coercion (DR-CORE-001)
+# ---------------------------------------------------------------------------
+
+# The exact phrases the README used while it still taught the pre-§34 bug as
+# current. Kept verbatim so the guard fails loudly if that paragraph is ever
+# restored without the code regressing to match it.
+_RETIRED_SUGGESTED_ID_CAVEAT_PHRASES = (
+    "This is a known issue being addressed",
+    "Non-string or mismatched entries currently fail to match",
+)
+
+
+def test_readme_suggested_next_ids_note_matches_the_shipped_coercion():
+    """README's `suggested_next_ids` note must describe the code as it is (D-240).
+
+    Source of truth: ``edge_selection._coerce_suggested_id``. The README carried
+    a "Known caveat" teaching the pre-fix behavior (non-string entries silently
+    fail to match, "known issue being addressed") for the whole life of the
+    shipped fix -- ``specs/EXTENSIONS.md`` §34, drift finding DR-CORE-001.
+
+    This asserts the *code's* behavior first, so reverting the coercion fails
+    here and names the README paragraph that would then need its caveat back.
+    """
+    from amplifier_module_loop_pipeline import edge_selection
+
+    coerce = getattr(edge_selection, "_coerce_suggested_id", None)
+    assert coerce is not None, (
+        "edge_selection._coerce_suggested_id is gone. README.md's "
+        "'`suggested_next_ids` typing' paragraph (Stability & Compatibility) "
+        "documents that int entries are coerced and malformed shapes are "
+        "skipped, and specs/EXTENSIONS.md §34 records that as shipped. If the "
+        "coercion was deliberately removed, restore the README's caveat and "
+        "re-anchor this guard in the same PR."
+    )
+
+    # The contract §34 records, and the README now describes.
+    assert coerce("review") == "review", "str entries must pass through unchanged"
+    assert coerce(3) == "3", (
+        'int entries must coerce to their string form (§34: `[3]` -> `["3"]`). '
+        "README.md now tells readers the type slip is handled; if this stops "
+        "being true the README is lying again (DR-CORE-001)."
+    )
+    for malformed in (True, 3.0, {"a": 1}, ["x"], None):
+        assert coerce(malformed) is None, (
+            f"{malformed!r} must be rejected, not coerced -- README.md and "
+            "specs/EXTENSIONS.md §34 both say only int is coerced and every "
+            "other shape is skipped."
+        )
+
+    readme = _read("README.md")
+    for phrase in _RETIRED_SUGGESTED_ID_CAVEAT_PHRASES:
+        assert phrase not in readme, (
+            f"README.md still carries the retired pre-§34 caveat phrase "
+            f"{phrase!r}, but the coercion above is shipped and passing. That "
+            "combination teaches readers to work around a closed bug (DR-CORE-001)."
+        )
+
+
+# ---------------------------------------------------------------------------
+# D-241: README's principle count vs PIPELINE_DESIGN_PRINCIPLES.md (issue #236)
+# ---------------------------------------------------------------------------
+
+_PRINCIPLES_REL = "docs/PIPELINE_DESIGN_PRINCIPLES.md"
+_NUMBER_WORDS = {
+    "One": 1,
+    "Two": 2,
+    "Three": 3,
+    "Four": 4,
+    "Five": 5,
+    "Six": 6,
+    "Seven": 7,
+    "Eight": 8,
+    "Nine": 9,
+    "Ten": 10,
+    "Eleven": 11,
+    "Twelve": 12,
+}
+
+
+def test_readme_principle_count_matches_the_principles_file():
+    """README's doc-table row must count the sections the file actually has (D-241).
+
+    The row said "Six framework-agnostic design principles" while the file
+    carried eight numbered sections: §0 (the control-plane vs recipe-plane line,
+    the most vision-load-bearing section in the repo) and §7 shipped later and
+    the summary was never revisited -- issue #236.
+
+    Source of truth: the ``## N.`` headings in the principles file itself. Add a
+    ``## 8.`` and this fails, which is the recurrence this guard exists to stop.
+    """
+    principles = _read(_PRINCIPLES_REL)
+    sections = re.findall(r"^##\s+(\d+)\.", principles, re.MULTILINE)
+    assert sections, (
+        f"{_PRINCIPLES_REL}: no numbered `## N.` section headings found. Either "
+        "the file's heading style changed -- re-anchor this pattern -- or the "
+        "numbered sections are gone, which would make README.md's count "
+        "meaningless rather than merely wrong."
+    )
+    actual = len(sections)
+
+    readme = _read("README.md")
+    match = re.search(
+        r"\|\s*\[Pipeline Design Principles\]\([^)]*\)\s*\|\s*(\w+)\s+framework-agnostic",
+        readme,
+    )
+    assert match is not None, (
+        "README.md: could not find the Pipeline Design Principles row's "
+        "'<count> framework-agnostic design principles' claim. If the row was "
+        "reworded, re-anchor this guard in the same PR (issue #236)."
+    )
+    word = match.group(1)
+    claimed = _NUMBER_WORDS.get(word)
+    assert claimed is not None, (
+        f"README.md claims '{word} framework-agnostic design principles', which "
+        f"is not a number word this guard knows. Known: {sorted(_NUMBER_WORDS)}."
+    )
+    assert claimed == actual, (
+        f"README.md's documentation table claims {word} ({claimed}) principles in "
+        f"{_PRINCIPLES_REL}, but that file carries {actual} numbered sections "
+        f"(§{', §'.join(sections)}). A section shipped and the summary was not "
+        "revisited -- exactly the drift issue #236 recorded. Update the README "
+        "row (and name the new section in it) in the PR that adds the section."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-242: SPEC_CONFORMANCE's Summary row vs the table it summarizes (DR-LEDGER-002)
+# ---------------------------------------------------------------------------
+
+_LEDGER_REL = "SPEC_CONFORMANCE.md"
+
+
+def _attractor_table_rows(ledger: str) -> dict[str, str]:
+    """Map ``ATX-n`` -> its Status cell, read from the section-3 table."""
+    section = re.split(r"^##\s+3\.\s+attractor-spec", ledger, flags=re.MULTILINE)
+    assert len(section) == 2, (
+        f"{_LEDGER_REL}: the '## 3. attractor-spec ...' heading this guard "
+        "anchors on was not found exactly once. Re-anchor if the heading was "
+        "reworded (DR-LEDGER-002)."
+    )
+    body = re.split(r"^##\s+", section[1], flags=re.MULTILINE)[0]
+
+    rows: dict[str, str] = {}
+    for line in body.splitlines():
+        if not re.match(r"^\|\s*ATX-\d+\s*\|", line):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        assert len(cells) == 6, (
+            f"{_LEDGER_REL}: attractor table row has {len(cells)} cells, "
+            f"expected 6 (ID|Area|Spec|Impl|Status|Disposition):\n    {line}\n"
+            "  Re-anchor this guard if the table's shape changed."
+        )
+        rows[cells[0]] = cells[4]
+    assert rows, f"{_LEDGER_REL}: no ATX-* rows found in the section-3 table."
+    return rows
+
+
+def _summary_attractor_cells(ledger: str) -> list[str]:
+    matches = [
+        line for line in ledger.splitlines() if re.match(r"^\|\s*attractor\s*\|", line)
+    ]
+    assert len(matches) == 1, (
+        f"{_LEDGER_REL}: expected exactly one Summary row starting `| attractor |`, "
+        f"found {len(matches)}. Re-anchor this guard if the Summary table changed."
+    )
+    return [c.strip() for c in matches[0].strip().strip("|").split("|")]
+
+
+def _ids_in(cell: str) -> set[str]:
+    return set(re.findall(r"ATX-\d+", cell))
+
+
+def _count_in(cell: str) -> int:
+    match = re.match(r"^(\d+)", cell)
+    assert match is not None, (
+        f"{_LEDGER_REL}: Summary cell {cell!r} does not start with a count."
+    )
+    return int(match.group(1))
+
+
+def test_ledger_summary_row_matches_the_attractor_table():
+    """The Summary row's arithmetic must be re-derivable from the table (D-242).
+
+    The summary read "8 gaps | 3 resolved (ATX-1, ATX-2, ATX-10) | 3 open" while
+    ATX-4, ATX-5, ATX-11 and ATX-12 had all been decided in the table below it --
+    drift finding DR-LEDGER-002. The summary is a derived view; this recomputes
+    it, so deciding a row without updating the summary fails here.
+
+    Classification rule, matching the Status legend: a Status cell containing
+    ``OPEN`` is open; everything else (DONE / WONTFIX, decided either way) is
+    resolved.
+    """
+    ledger = _read(_LEDGER_REL)
+    rows = _attractor_table_rows(ledger)
+
+    open_ids = {rid for rid, status in rows.items() if "OPEN" in status.upper()}
+    resolved_ids = set(rows) - open_ids
+
+    cells = _summary_attractor_cells(ledger)
+    assert len(cells) == 5, (
+        f"{_LEDGER_REL}: Summary row has {len(cells)} cells, expected 5 "
+        f"(Spec|Areas reviewed|Off-spec gaps|Resolved|Open):\n    {cells}"
+    )
+    _, _, gaps_cell, resolved_cell, open_cell = cells
+
+    def _sorted(ids: set[str]) -> list[str]:
+        return sorted(ids, key=lambda i: int(i.split("-")[1]))
+
+    assert _count_in(gaps_cell) == len(rows), (
+        f"{_LEDGER_REL} Summary: attractor 'Off-spec gaps' says "
+        f"{_count_in(gaps_cell)}, but the section-3 table carries {len(rows)} "
+        f"ATX rows ({', '.join(_sorted(set(rows)))}). Adding a row to the table "
+        "means updating the summary in the same PR (DR-LEDGER-002)."
+    )
+    assert _ids_in(resolved_cell) == resolved_ids, (
+        f"{_LEDGER_REL} Summary: 'Resolved' names {_sorted(_ids_in(resolved_cell))}, "
+        f"but the table's non-OPEN rows are {_sorted(resolved_ids)}. The summary "
+        "is a derived view of the table; re-derive it."
+    )
+    assert _count_in(resolved_cell) == len(resolved_ids), (
+        f"{_LEDGER_REL} Summary: 'Resolved' count is {_count_in(resolved_cell)} "
+        f"but names/derives {len(resolved_ids)} rows ({_sorted(resolved_ids)})."
+    )
+    assert _ids_in(open_cell) == open_ids, (
+        f"{_LEDGER_REL} Summary: 'Open' names {_sorted(_ids_in(open_cell))}, but "
+        f"the table's OPEN rows are {_sorted(open_ids)}."
+    )
+    assert _count_in(open_cell) == len(open_ids), (
+        f"{_LEDGER_REL} Summary: 'Open' count is {_count_in(open_cell)} but "
+        f"names/derives {len(open_ids)} rows ({_sorted(open_ids)})."
+    )
+
+
+def test_selfcheck_summary_recount_rejects_the_drifted_row():
+    """The D-242 checker must actually fail on the shape DR-LEDGER-002 found."""
+    drifted = (
+        "| attractor | ~30 | 8 | 3 (ATX-1, ATX-2, ATX-10) | 3 (ATX-3, ATX-6, ATX-7) |"
+    )
+    cells = [c.strip() for c in drifted.strip().strip("|").split("|")]
+    assert _count_in(cells[2]) == 8
+    assert _ids_in(cells[3]) == {"ATX-1", "ATX-2", "ATX-10"}
+    # The real table resolves seven; the drifted row named three.
+    real_resolved = _attractor_table_rows(_read(_LEDGER_REL))
+    real_resolved_ids = {
+        rid for rid, status in real_resolved.items() if "OPEN" not in status.upper()
+    }
+    assert _ids_in(cells[3]) != real_resolved_ids, (
+        "The drifted summary row would now pass the D-242 check, which means the "
+        "check cannot detect the drift it was written for."
     )

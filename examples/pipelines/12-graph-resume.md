@@ -8,8 +8,10 @@
 
 ## What This Exercises
 
-- **Graph-level resume**: The correct way to make a pipeline resumable. The engine always
-  runs from Start; resume happens at the graph level via file-state self-skip.
+- **Graph-level resume**: Making a pipeline resumable from the graph itself, with no engine
+  resume involved. The engine always runs from Start; resume happens at the graph level via
+  file-state self-skip. (Engine-level `attractor resume` is a separate, complementary
+  mechanism -- see the closing section for when to reach for which.)
 - **`shape=parallelogram` guard nodes**: Each check_* node runs a shell command that tests
   for an artifact file and prints a routing token (`done` or `todo`).
 - **`context.tool.last_line` routing**: Guard nodes route via
@@ -197,19 +199,35 @@ The resume artifacts (`.ai/`) are written under `--cwd`.
 - **`STATE.json` evolution**: starts as `{"tests_passed": false}` after `implement_refactor`,
   updates to `{"tests_passed": true}` after a passing `run_tests`.
 
-## Key Insight: Why This Is Better Than Engine-Level Resume
+## Key Insight: This and Engine-Level Resume Answer Different Questions
 
-Engine-level resume (fast-forward replay from a checkpoint) has two failure modes:
+Graph-level resume is not a substitute for `attractor resume`, and `attractor resume` did
+not retire this pattern. They coexist by design -- that is the ratified ruling, not a
+compromise (`docs/designs/2026-08-14-engine-checkpoint-resume.md` §0: *"Engine resume must
+be built per §5.3 and must **coexist** with the graph-owned file-guard idempotency
+pattern. Neither disables the other."*). They answer different questions:
 
-1. **Edge-structure mismatch**: If the graph's edge conditions do not match the saved routing
-   path (e.g. after editing the graph, or when resuming a different graph at the same
-   checkpoint path), the engine fails with "No matching edge from resumed node."
+| | Answers | Reach for it when |
+|---|---|---|
+| **Graph-owned file guards** (this example) | "is this work already done *on disk*?" | Stages are expensive and idempotent, the graph may be edited between runs, or you want per-artifact rewind |
+| **Engine `resume`** (§5.3) | "did this *process* die mid-graph?" | A crash, kill or lost machine left in-flight engine state -- retry counters, `$iteration`, accumulated context -- that no filesystem artifact can reconstruct |
 
-2. **Graph drift**: Engine resume bakes in routing decisions from the previous run. If the
-   graph changed between runs, the engine blindly replays stale decisions.
+What this pattern buys you, and the engine cannot:
 
-Graph-level resume has neither problem:
-- The engine always evaluates edges fresh from Start.
-- Guard nodes re-evaluate the real filesystem state on every run.
-- Editing the graph and re-running works correctly -- guards adapt to the current graph.
-- Deleting an artifact file is a surgical rewind; no engine state to reset.
+- Guards re-evaluate the real filesystem on every run, so the state they read is the truth
+  on disk rather than a record of what a previous run believed.
+- Editing the graph and re-running works: the engine evaluates edges fresh from Start, and
+  guards adapt to whatever graph is in front of them.
+- Deleting one artifact file is a surgical rewind of exactly one stage, with no engine
+  state to reset and no run directory to find.
+- It needs no engine support at all, so it works identically on any conformant runtime.
+
+What engine resume buys you, and this pattern cannot: the accumulated in-memory state of a
+run that died. A file guard can tell you `implement_refactor` finished; it cannot tell you
+how many retries `run_tests` had already spent, or restore the context the earlier nodes
+accumulated. Resume is explicit opt-in -- a plain `attractor run` never reads a checkpoint
+-- so adding it changes nothing about how this graph behaves.
+
+For the mechanism and its guarantees see the design record above and
+[`docs/DOT-AUTHORING-GUIDE.md`](../../docs/DOT-AUTHORING-GUIDE.md); the conformance
+position is `SPEC_CONFORMANCE.md` ATX-2.

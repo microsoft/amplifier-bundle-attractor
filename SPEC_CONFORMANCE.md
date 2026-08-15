@@ -57,7 +57,7 @@ Maintainer ruling, 2026-08-14. The four rules that decide every disposition in t
 |------|----------------|---------------|----------|------|
 | unified-llm | ~35 | 13 | 4 (structured output, all providers) | 9 |
 | coding-agent-loop | ~17 | 9 | 2 (bugs CAL-1, CAL-2) | 7 |
-| attractor | ~30 | 8 | 3 (ATX-1, ATX-2, ATX-10) | 3 (ATX-3, ATX-6, ATX-7) |
+| attractor | ~30 | 10 | 7 (ATX-1, ATX-2, ATX-4, ATX-5, ATX-10, ATX-11, ATX-12) | 3 (ATX-3, ATX-6, ATX-7) |
 
 The engine layer (attractor) is the strongest — substantially a **superset** of the spec. The
 material weaknesses are concentrated in the LLM client's per-provider metadata and a small set
@@ -147,7 +147,10 @@ substitution beyond `$goal`.
 ## DECIDE items — context for a future decision
 
 Deferred by owner; not decided yet. Captured context so the future call is well-informed.
-Each is currently **OPEN** with disposition pending (ALIGN vs DIVERGE).
+Each is **OPEN** with disposition pending (ALIGN vs DIVERGE) unless its heading says otherwise:
+an item that has since been decided keeps its subsection here as the record of *why* the call
+went the way it did, with its heading and **Status** line carrying the outcome. The tables above
+are the current state; these are the reasoning behind it.
 
 ### CAL-3 — ExecutionEnvironment abstraction (coding-agent-loop §4)
 - **Spec wants:** a swappable `read_file/write_file/exec_command/grep/glob/list_directory` seam with
@@ -163,12 +166,13 @@ Each is currently **OPEN** with disposition pending (ALIGN vs DIVERGE).
   different layer (DTU), which may make a loop-level ExecutionEnvironment redundant.
 - **Cost if ALIGN:** new abstraction crossing the tool boundary; touches every tool's call contract.
 
-### ATX-2 — Checkpoint-based resume (attractor §5.3) — **DECIDED 2026-08-14: ALIGN (build it)**
+### ATX-2 — Checkpoint-based resume (attractor §5.3) — **DECIDED 2026-08-14: ALIGN (build it) — SHIPPED**
 - **Spec wants:** load `checkpoint.json` → restore context/completed-nodes/retry counters → continue
   from the node after `current_node`; degrade `full`→`summary:high` one hop on resume.
-- **Reality now:** engine always restarts from the start node; `checkpoint.py` is an observability
-  record (explicitly "not a resume marker"); `load_checkpoint()` is never used to rehydrate.
-  Idempotency is **graph-owned**: handlers skip already-done work (see `examples/pipelines/12-graph-resume`).
+- **Reality when this was written (pre-ship, superseded):** engine always restarted from the start
+  node; `checkpoint.py` was an observability record (explicitly "not a resume marker");
+  `load_checkpoint()` was never used to rehydrate. Idempotency was **graph-owned** only: handlers
+  skip already-done work (see `examples/pipelines/12-graph-resume`).
 - **Ruling (maintainer, 2026-08-14):** the missing engine-level resume is a **bug in our design**, not
   a defensible divergence. The spec's Definition of Done mandates it outright —
   `specs/canonical/attractor-spec-canonical.md:1857`: *"Resume from checkpoint: load checkpoint ->
@@ -179,9 +183,16 @@ Each is currently **OPEN** with disposition pending (ALIGN vs DIVERGE).
   The `examples/pipelines/12-graph-resume` pattern stays supported and documented — handler-level
   "don't redo finished work" remains the right tool for expensive idempotent steps; engine resume
   covers the different problem of restoring accumulated *context* after a crash mid-pipeline.
-- **Status:** implementation in flight via the repo's feature pipeline as **issue #224**.
+- **Status: SHIPPED** (issue #224). Engine resume landed per §5.3 and the ATX-2 row above is
+  **DONE — PROVEN ON A REALLY-KILLED RUN**: `attractor resume <run_dir>` /
+  `resume_pipeline()` / `PipelineEngine.resume()`, opt-in only — a fresh `run()` has no code
+  path to a checkpoint loader (`modules/loop-pipeline/tests/test_no_implicit_resume.py`).
+  The coexistence condition held: the graph-owned pattern still parses, lints and executes its
+  documented guard-skip semantics (`modules/loop-pipeline/tests/test_graph_owned_resume_coexists.py`).
+  Design record: `docs/designs/2026-08-14-engine-checkpoint-resume.md`. See the 2026-08-14
+  Changelog entry below for the full evidence.
 - **Cost:** real state-serialization + rehydration surface; the `full`→`summary:high` degrade rule;
-  correctness testing across partial-completion states. Accepted.
+  correctness testing across partial-completion states. Accepted, and paid.
 
 ### ATX-3 — Tool-call hooks (attractor §9.7)
 - **Spec wants:** `tool_hooks.pre` / `tool_hooks.post` shell commands wrapping every LLM tool call;
@@ -244,9 +255,11 @@ Each is currently **OPEN** with disposition pending (ALIGN vs DIVERGE).
     evaluated only inside the explicit resume ladder. (2) "No matching edge from resumed node":
     there is no fast-forward replay — the checkpoint records the last COMPLETED node and its real
     outcome, and resume runs edge selection exactly ONCE from those recorded inputs.
-  - **Coexistence held (the ALIGN condition):** `examples/pipelines/12-graph-resume.{dot,md}` are
-    byte-unchanged and still parse, lint and execute their documented guard-skip semantics
-    (`modules/loop-pipeline/tests/test_graph_owned_resume_coexists.py`). Engine resume answers
+  - **Coexistence held (the ALIGN condition):** `examples/pipelines/12-graph-resume.{dot,md}` were
+    left byte-unchanged by this PR and still parse, lint and execute their documented guard-skip
+    semantics (`modules/loop-pipeline/tests/test_graph_owned_resume_coexists.py`). *(Later: the
+    `.md`'s closing prose was reconciled to this coexistence ruling on 2026-08-15 — issue #229 —
+    which the byte-pin had deliberately deferred. The `.dot` remains untouched.)* Engine resume answers
     "this process died mid-graph"; graph-owned skip-through answers "this work is already done on
     disk". Neither disables the other.
   - Design record: `docs/designs/2026-08-14-engine-checkpoint-resume.md`. Issue #224.

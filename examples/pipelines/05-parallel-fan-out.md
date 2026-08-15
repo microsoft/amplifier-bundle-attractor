@@ -59,14 +59,30 @@ start -> plan -> parallel +--> test_trig --------+--> collect_results -> summari
 
 ### Join Policy Variations
 
+The canonical spec defines exactly two join policies (§4.8,
+[`specs/canonical/attractor-spec-canonical.md`](../../specs/canonical/attractor-spec-canonical.md)):
+
 | Policy | Behavior |
 |--------|----------|
 | `wait_all` | All branches complete. SUCCESS if none failed, PARTIAL_SUCCESS otherwise |
 | `first_success` | Returns as soon as one branch succeeds. Others may be cancelled |
+
+This engine also accepts two **non-canonical extensions**. Upstream removed both from
+the spec at `fb57a55`, and no shipped graph in this repo uses either -- they are recorded
+as subtraction candidates in [`specs/EXTENSIONS.md`](../../specs/EXTENSIONS.md) §18. They
+still work; reach for them only when the two canonical policies genuinely cannot express
+the join, and expect a `.dot` that uses them to be non-portable to a spec-only runtime:
+
+| Policy (extension) | Behavior |
+|--------|----------|
 | `k_of_n` | At least `min_success` branches must succeed (set via node attribute) |
 | `quorum` | At least `quorum_fraction` (e.g., 0.5) of branches must succeed |
 
 ### Error Policy Variations
+
+`error_policy` is likewise a non-canonical extension (removed upstream at `fb57a55`;
+`specs/EXTENSIONS.md` §18) -- but unlike `k_of_n`/`quorum` it is in live use across this
+repo's own graphs, including the one above:
 
 | Policy | Behavior |
 |--------|----------|

@@ -128,6 +128,12 @@ you have found something else — and Layer 3 is not the place to file it.
 **`drift.file` and `contradicts.file` are different files.** A finding names a
 drifting surface *and* the separate passage it moved away from.
 
+**Both rules above judge the path your citation *resolves to*.** Write plain
+repo-relative paths. `specs/canonical/../../docs/SOME-DOC.md` is not a citation
+of `specs/canonical/`, and `specs/canonical/../../README.md` is not a different
+file from `README.md` — the gate resolves both before it decides, so a traversal
+buys exactly nothing except a rejection that names it.
+
 **`severity` is one of `critical`, `high`, `medium`, `low`.** The human triaging
 this sorts by that field, so an invented value costs them the sort.
 

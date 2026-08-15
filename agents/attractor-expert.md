@@ -61,19 +61,19 @@ meta:
 session:
   orchestrator:
     module: loop-agent
-    # Snapshot-relative and REF-FREE on purpose.  loop-agent resolves a relative
-    # `system_prompt_file` against its OWN installed location (bundle root =
-    # parents[3] of its __init__.py), so whoever serves the loop-agent bytes serves
-    # the Layer-1 persona file next to them.  A `git+...@main` pin here served MAIN's
-    # persona to every branch install, which is exactly what made branch guidance
-    # untestable.  Resolves against the composed bundle root, so it lands on
-    # <this snapshot>/modules/loop-agent whenever the attractor bundle is the composed
-    # root (the documented `bundle add` + `bundle use` path).  In a composition where
-    # some OTHER bundle is the root, this activation is skipped with a logged warning
-    # and loop-agent resolves by name from that composition's own declaration --
-    # every shipped profile/bundle here declares it.  See
-    # docs/designs/2026-08-15-composition-fix.md, "As built".
-    source: ./modules/loop-agent
+    # The `@main` self-pin here is DELIBERATE, and is the ONE self-pin this PR could not
+    # remove.  A session.orchestrator `source:` is resolved LATE, against the COMPOSED
+    # ROOT's base_path -- which in a real amplifier session is the APP's own bundle
+    # directory, not this bundle's -- so no relative path can reach this snapshot.
+    # Measured, from a DTU install of this branch with `./modules/loop-agent` here:
+    #   loop-agent: File not found:
+    #   .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent
+    # and the session refused to start (strict mode).  Consequence, stated plainly: a
+    # branch install serves the BRANCH's expert knowledge (this file's body, resolved
+    # through the attractor namespace) but MAIN's Layer-1 persona, because loop-agent
+    # anchors a relative `system_prompt_file` on its own installed location.
+    # See docs/designs/2026-08-15-composition-fix.md, "Two resolution classes".
+    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
     config:
       # Layer-1 base prompt.  attractor-expert is provider-agnostic (a consultant,
       # not a coding agent), so it gets its OWN persona base rather than a provider

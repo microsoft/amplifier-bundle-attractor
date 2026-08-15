@@ -2165,13 +2165,17 @@ doctrine on the documented install path, where measurement showed it served none
    `context/system-attractor-expert.md`) and is registered as `attractor:attractor-expert` by
    both `behaviors/attractor-core.yaml` and root `bundle.md`. The inline expert dict in
    `behaviors/attractor-core.yaml` is gone: one expert, one definition.
-3. **Same-repo `git+…@main` self-pins became ref-free** where foundation's resolution semantics
-   allow it (15 of 44): `tools:`/`hooks:` module sources → relative (`../modules/X`), the root
-   bundle's own orchestrators → `./modules/X`, and the skills registration →
-   `"@attractor:skills"`. A self-pin at `@main` makes a **branch install serve main's bytes** —
-   including, for loop-agent, main's `context/` files, since loop-agent anchors a relative
-   `system_prompt_file` on its own installed location. That made branch regression-testing of
-   guidance structurally impossible.
+3. **Same-repo `git+…@main` self-pins became ref-free** wherever foundation's resolution
+   semantics allow it (10 of 44): `tools:`/`hooks:` module sources → relative (`../modules/X`),
+   and the skills registration → `"@attractor:skills"`. A self-pin at `@main` makes a **branch
+   install serve main's bytes**, which is what made branch regression-testing of guidance
+   impossible. The remaining 34 are all `session.orchestrator` sources and are **kept
+   deliberately**: foundation resolves those against the *composed root's* base_path — the app's
+   own bundle directory in a real session — so no relative path written here can reach this
+   snapshot, and there is no namespaced module-source form. Measured, not assumed: a build that
+   made them relative failed to start in a clean DTU install (`loop-agent: File not found:
+   .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent`). Each kept pin carries a comment
+   with that measurement so it is not "fixed" later.
 
 ### Additive and non-interfering: a spec-conformant graph behaves identically
 

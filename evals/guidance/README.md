@@ -174,6 +174,20 @@ written outside the repo. No stage of the harness remains unexercised.
 
 **Three of six passed.** The instrument's first product is a finding, not a clean bill of health.
 
+**Disclosed: two mechanical-check commands were repaired mid-baseline.** Rule 1 above calls an
+undisclosed scenario edit "the single most suspicious diff this directory can contain", so this one
+is stated here rather than left to be found. `MC-E2` and `MC-F6` — the two exemplar scenarios' re-run
+of the shipped admission gate — invoked `examples/objective/validate_triage.py` with a bare
+positional path, but that script requires `--triage` and `--schema`; the check died in argparse with
+exit 2 and could not have exited 0 for **any** bundle, good or bad. The repair changed how the gate
+is called, not what it demands — harness plumbing, not tuning — and the bar moved up rather than
+down, since the corrected check also fails on a `triage_bad` or `triage_exhausted` token where the
+original could only ever error out. The rubric, the personas, the opening asks and every other
+scenario input were byte-identical either side of the repair, and the YAMLs committed here are the
+fixed version. **No verdict in the table turns on it:** on the failing first pass both exemplars'
+grader scores were already at the passing values recorded below — the broken invocation was the only
+thing failing, and it was failing on its own usage error.
+
 ### Baseline 2026-08-15
 
 | # | Scenario | Verdict | Finding |

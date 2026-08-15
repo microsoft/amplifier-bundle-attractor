@@ -70,7 +70,7 @@ may ask for more, never less.
 | **Engine / handler code** | `engine.py`, `handlers/*`, dispatch, routing, retry, checkpoint | Full module suites green **and** a live pipeline run exercising the changed path (paste the `events.jsonl` slice) **and** independent adversarial review **and** a ledger entry if the change is spec-relevant (last row) |
 | **Exemplar / example graphs** | `examples/pipelines/*.dot`, `examples/patterns/*.dot`, `examples/objective/*` | `attractor lint` with **zero ERROR** diagnostics -- warnings are informational, which is exactly the line `modules/loop-pipeline/tests/test_examples_lint_clean.py` enforces -- **and** at least one live convergence run **and** the graph's own gates demonstrated **RED and GREEN**: a negative control proving the gate can fail, a positive control proving it can pass. A gate only ever seen green is an unproven gate |
 | **Guidance surfaces** | `agents/`, `skills/`, `context/`, teaching content in `README.md` and `docs/` | Guidance-eval evidence **once the eval instrument ships**. *That instrument does not exist in this repo today: it is in flight, and a pilot is planned.* Until it lands, the floor is a **fresh-session walk-through** proving the guidance steers as written -- a session with no prior context follows only the changed text and arrives at the intended behavior. Paste the walk-through |
-| **Docs making factual claims** | any doc asserting a number, default, vocabulary, or behavior | A guard test pinning each load-bearing claim to **its source of truth in code**, following the five existing guards (section 3, Layer 1). A page-only assertion ("the page says 500") is tautological: it passes forever and fails only when someone edits the page, which is the one case needing no guard. The assertion must read the value from the code and fail when the **code** moves |
+| **Docs making factual claims** | any doc asserting a number, default, vocabulary, or behavior | A guard test pinning each load-bearing claim to **its source of truth in code**, following the existing guards (section 3, Layer 1). A page-only assertion ("the page says 500") is tautological: it passes forever and fails only when someone edits the page, which is the one case needing no guard. The assertion must read the value from the code and fail when the **code** moves |
 | **Spec-relevant behavior** | anything that conforms to, diverges from, or extends the nlspec | A `specs/EXTENSIONS.md` entry and/or a `SPEC_CONFORMANCE.md` row, **in the same PR**, per the Compatibility doctrine. Entries obey the Entry Format: `depends-on:`, plus `upstream action:` in one of its legal forms whenever the banner states a divergence |
 
 Two of these already have machinery behind them: the `EXTENSIONS.md` requirement is on the PR
@@ -107,7 +107,7 @@ not a property of the repo.
 
 ### Layer 1 -- deterministic guards
 
-Five test files in `modules/loop-pipeline/tests/`, run in CI on every PR. Each pins a documented
+Six test files in `modules/loop-pipeline/tests/`, run in CI on every PR. Each pins a documented
 claim to something that fails when the *code* moves:
 
 | Guard file | What it pins |
@@ -117,6 +117,7 @@ claim to something that fails when the *code* moves:
 | `test_engine_semantics_doc_guard.py` | `context/engine-semantics.md`, the bundle's declared source of truth for shipped-engine behavior -- both text-anchored claims (the no-matching-edge and stale-label rules) and behavior-anchored ones (a real engine run asserting the main loop hard-fails on no matching edge) |
 | `test_explainer_doc_guard.py` | The published explainer page, `docs/attractor-explained.html`: feedback-critique caps, the parallel-branch default, `last_response` truncation, the summary budgets, the fidelity vocabulary and its default, the lifecycle phases, and the shape-to-execution-tier vocabulary -- each read from its source module, never from the page |
 | `test_examples_lint_clean.py` | Every `.dot` under `examples/` lints with zero ERROR diagnostics. Written because the dead-corrective-edge class shipped in eight examples for months, because nothing could see topology |
+| `test_quality_protocol_guard.py` | This document's own external references: every guard-test filename it names exists; the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records; the Changelog exists with a dated entry. Written because section 5 set its own adoption condition and this file has to keep it (section 5) |
 
 **The rule this layer imposes: a new claim-bearing doc ships with its guard.** The explainer guard
 states the reason plainly -- a page nobody re-reads rots silently and keeps being shared, which is
@@ -232,13 +233,27 @@ Machinery whose retirement condition has fired is **removed in the same wave** -
 not left in place "just in case." This is the self-ablation discipline, and it is the half of process
 design that usually goes undone: yesterday's scaffolding is today's tax.
 
-**This document's own guard.** It ships without one. Its load-bearing external references -- the five
-guard filenames, the canonical SHA, the four issue numbers -- are not machine-pinned today, and by
-section 2's own rule that is a gap, named here rather than left for a reader to find. Adoption
-condition: the first time one of those references is found stale, or the Layer-2 matrix lands
-(whichever comes first), this file gets the guard it asks of everything else. **That condition has
-now fired** -- the matrix landed 2026-08-15 -- so this file's own guard is owed next, and is
-recorded as such in the Changelog below rather than left for a reader to discover.
+**This document's own guard.** It has one:
+`modules/loop-pipeline/tests/test_quality_protocol_guard.py`. The stated adoption condition -- *the
+first time one of those references is found stale, or the Layer-2 matrix lands, whichever comes
+first* -- **fired with the matrix**, and the guard shipped in the same PR rather than in the next
+one. A protocol that defers its own rule while enforcing it on others is not a protocol; that is the
+whole reason the condition was written with a trigger instead of an intention.
+
+What it pins, each claim read from this page and resolved against the repository rather than against
+the page itself: every guard-test filename named here resolves to a real file; the two Layer-2 files
+exist and Layer 2's status still reads *shipped*; `specs/canonical/attractor-spec-canonical.md`
+exists and the upstream SHA recorded in Layer 0 is the SHA `SPEC_CONFORMANCE.md`'s `SYNC-1` row
+records; and the Changelog this section mandates exists carrying at least one dated entry. It skips
+wholesale in a checkout without this file, and fails loud otherwise.
+
+**One reference remains unpinned, deliberately: the issue numbers.** The nine issue and PR numbers
+cited on this page (#144, #146, #156, #172, #175, #182, #204, #223, #234) resolve only over the
+network, and these suites do not reach it. That is a real remaining gap, named here in those words
+rather than left for a reader to find; it belongs to the Layer-3 pass, not to CI.
+
+Retirement condition: none while this page names external references. The guard narrows as the page
+stops naming things, and retires only with the page.
 
 ---
 
@@ -284,7 +299,7 @@ evidence-gated amendments, named retirement conditions, a periodic retirement re
 the structure of a quality system, not about DOT graphs.
 
 **This-repo-specific.** `attractor lint` and its rule IDs; the particular ledgers
-(`SPEC_CONFORMANCE.md`, `specs/EXTENSIONS.md`) and their entry formats; the five named guard files;
+(`SPEC_CONFORMANCE.md`, `specs/EXTENSIONS.md`) and their entry formats; the six named guard files;
 the pinned upstream SHA; the issue-pipeline lanes. Every one of those is the local answer to a
 general question -- *what is your normative source, what pins your claims to it, what is the record
 of deliberate deviation* -- and each repo's answer will look different.
@@ -299,6 +314,37 @@ This repo's maintainers will help seed a customized version on request -- open a
 ## Changelog
 
 Amendments to this protocol, newest first. Each entry names the evidence that justified it.
+
+### 2026-08-15 -- this document's own guard shipped (entry 3)
+
+- **Changed.** Section 5's "**This document's own guard**" passage flipped from *owed next* to
+  shipped, naming `modules/loop-pipeline/tests/test_quality_protocol_guard.py`. Layer 1 goes from
+  five guard files to six and the new guard gets its table row. Section 2's and section 7's
+  pointers at "the five existing guards" / "the five named guard files" were updated with it.
+- **Evidence that justified it: the protocol's own rule fired, and the deferral was the finding.**
+  Entry 2 recorded the adoption condition as met ("the matrix landed") and then deferred the guard
+  to a later PR. Independent adversarial review of that same PR read section 2's "Docs making
+  factual claims" row strictly and called the deferral what it was -- this page shipping a claim
+  with no guard, in the PR whose whole subject is making records load-bearing. The condition was
+  written with a trigger precisely so it could not be deferred by intention; honoring it in the
+  triggering PR is the only reading that leaves the rule meaning anything.
+- **What the guard asserts, and why none of it is tautological.** Four claim classes, each read
+  from this page and resolved against the *repository*: the guard-test filenames it names exist;
+  the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists
+  and the SHA recorded in Layer 0 matches `SPEC_CONFORMANCE.md`'s `SYNC-1` row; the Changelog
+  exists with a dated entry. A page-only check ("the page says six") would pass forever and fail
+  only on an edit to the page -- the one case needing no guard. These fail when the **repo** moves:
+  a guard renamed, the matrix relocated, the canonical spec re-vendored to a new upstream SHA.
+- **Proven red before green.** Each assertion was mutated in a scratch copy and observed to fail
+  naming the specific stale reference, then restored. A guard never seen red is an unproven guard
+  -- the same bar entry 2 held the matrix to.
+- **Scope of this change: additive.** One new test module and this page. No engine, handler,
+  example or ledger *behavior* changed.
+- **Honest gap, named not hidden.** The nine issue/PR numbers on this page stay unpinned: they
+  resolve only over the network and these suites do not reach it. Recorded in section 5 in those
+  words, and assigned to the Layer-3 pass rather than to CI.
+- **Retirement condition.** None while this page names external references. The guard narrows as
+  the page stops naming things, and retires only with the page.
 
 ### 2026-08-15 -- Layer 2 shipped (entry 2)
 
@@ -329,7 +375,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
   that is itself permanent. Individual rows retire by changing disposition: when upstream absorbs a
   divergence, or when a decision closes an `OPEN-PINNED` row. **This document's own missing guard
   (section 5) is now due**: its stated adoption condition -- "or the Layer-2 matrix lands" -- fired
-  with this entry.
+  with this entry. *(Discharged by entry 3, same PR: the guard shipped rather than being deferred.)*
 
 ### 2026-08-15 -- protocol captured (entry 1)
 

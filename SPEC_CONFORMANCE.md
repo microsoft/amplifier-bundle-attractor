@@ -57,7 +57,7 @@ Maintainer ruling, 2026-08-14. The four rules that decide every disposition in t
 |------|----------------|---------------|----------|------|
 | unified-llm | ~35 | 13 | 4 (structured output, all providers) | 9 |
 | coding-agent-loop | ~17 | 9 | 2 (bugs CAL-1, CAL-2) | 7 |
-| attractor | ~30 | 8 | 3 (ATX-1, ATX-2, ATX-10) | 5 |
+| attractor | ~30 | 8 | 3 (ATX-1, ATX-2, ATX-10) | 3 (ATX-3, ATX-6, ATX-7) |
 
 The engine layer (attractor) is the strongest — substantially a **superset** of the spec. The
 material weaknesses are concentrated in the LLM client's per-provider metadata and a small set
@@ -117,8 +117,8 @@ keys. Do not mark "live" until exercised against real providers (e.g. in a DTU w
 | ATX-1 | Node `timeout` unit mismatch (ms stored, consumed as seconds) | `timeout_seconds` | `engine.py:485`, `handlers/tool.py:105` | **DONE** | ALIGN |
 | ATX-2 | Checkpoint-based RESUME (restore context/completed/retry, continue after `current_node`; `full`→`summary:high` degrade) | `§5.3`, DoD `:1857` | `checkpoint.py:load_checkpoint_for_resume` (validation ladder) + `engine.py:PipelineEngine.resume` + `runner.py:resume_pipeline` + `attractor resume <run_dir>`; checkpoint schema v2 is a superset keeping the six §5.3 fields at the §5.6 path. A fresh `run()` still never reads a checkpoint — no call path exists (`tests/test_no_implicit_resume.py`) | **DONE — PROVEN ON A REALLY-KILLED RUN** (`modules/pipeline-runner/tests/test_resume_e2e.py`: SIGKILLed subprocess, separate `attractor resume` invocation, equivalence vs a control run executed at gate runtime) | ALIGN |
 | ATX-3 | Tool-call hooks `tool_hooks.pre`/`.post` (shell around each LLM tool call) | `§9.7` `:1650` | grep `tool_hooks`=0 | OPEN | **DECIDE** (ALIGN vs DIVERGE) |
-| ATX-4 | HTTP server mode (REST + SSE) | `§9.5` (optional) | not present; programmatic tools instead | OPEN | DIVERGE (spec-optional) |
-| ATX-5 | `outcome=` condition resolves to `preferred_label` first | `§10.4 :1693` | `conditions.py:75` returns `preferred_label or status` | OPEN | DIVERGE (intentional; load-bearing for report_outcome routing) |
+| ATX-4 | HTTP server mode (REST + SSE) | `§9.5` (optional) | not present; programmatic tools + CLI instead. The absence is now asserted rather than merely described: matrix row `ATX-M-004n` (`specs/conformance/attractor-matrix.yaml`) fails if an HTTP surface appears | **WONTFIX — DECIDED (NOT-IMPLEMENTED)** | DIVERGE (spec-optional) |
+| ATX-5 | `outcome=` condition resolves to `preferred_label` first | `§10.4 :1693` | `conditions.py:75` returns `preferred_label or status`; both halves asserted by matrix row `ATX-M-022` (`specs/conformance/attractor-matrix.yaml`) | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §22) |
 | ATX-6 | Retry on FAIL | spec self-contradicts: `§3.5 :519` (no) vs DoD `:1833` (yes) | retries RETRY only (`retry.py:238`) | OPEN | ALIGN-spec-first (reconcile the spec) |
 | ATX-7 | `stack.child_workdir`; condition literal unquoting (`§10.5`) | `:1743` | not handled | OPEN | ALIGN (minor) |
 | ATX-10 | Multi-match fan-out: non-component nodes with ≥2 simultaneously-matching conditional edges routed to ALL targets in parallel (unledgered dialect; never in spec §3.3) | `§3.3 :421-458` (`best_by_weight_then_lexical`) | `engine.py` (retired `select_all_matching_edges` gate; now routes through `select_edge()` only) | **DONE** | ALIGN — conformance restored (T0-4) |
@@ -197,6 +197,34 @@ Each is currently **OPEN** with disposition pending (ALIGN vs DIVERGE).
 ---
 
 ## Changelog
+
+### 2026-08-15 — ATX-4 / ATX-5 status cells reconciled with the conformance matrix (PR #235)
+
+- **ATX-5 OPEN → DONE — DECIDED — DIVERGE.** The status cell said OPEN while the decision had in
+  fact been made and ledgered: `specs/EXTENSIONS.md` §22 is the divergence record, it is explicit
+  that the behavior is **not** behavior-neutral (a canonical graph matching `outcome=<status>`
+  changes meaning once a node sets a `preferred_label`), and `conditions.py:75` has shipped
+  `preferred_label or status` deliberately for months. Nothing about the behavior changed here —
+  only the cell that had been mis-reporting a made decision as an unmade one. §22 is now cited as
+  the decision record in the Disposition cell, matching the ATX-11 / ATX-12 convention.
+- **ATX-4 OPEN → WONTFIX — DECIDED (NOT-IMPLEMENTED).** Canonical §9.5 is permissive ("*may* expose
+  the pipeline engine as an HTTP service"), so not building it is conformant rather than divergent.
+  The decision is: **not building it absent demand** — the bundle exposes programmatic tools and a
+  CLI instead. Recorded as WONTFIX per this file's own status legend ("recorded divergence, no
+  further action").
+- **Evidence that these were stale cells and not new decisions.** PR #235's conformance matrix
+  independently classified both rows from the spec text and the shipped code: `ATX-M-022` carries
+  `disposition: DIVERGE-DECIDED` citing ATX-5 + EXTENSIONS §22, and `ATX-M-004n` carries
+  `disposition: NOT-IMPLEMENTED-DECIDED` citing ATX-4. Two records of the same decision disagreed;
+  the matrix was right and the ledger cells were behind. Surfaced by independent adversarial review
+  of PR #235.
+- **Both rows are now asserted, not merely described.** `ATX-M-022` pins both halves of the
+  divergence (`outcome=` resolves to the label when set; to the status when not);  `ATX-M-004n` pins
+  the *absence* of an HTTP surface, so shipping one becomes a ledger event rather than a quiet
+  feature. The Impl cells cite the matrix rows, making the ledger↔matrix link bidirectional.
+- **Dispositions unchanged.** Both cells keep their `DIVERGE` disposition, which is what the matrix
+  coverage tripwire (`test_tripwire_every_diverge_atx_row_is_asserted`) reads — a DIVERGE-disposition
+  `ATX-*` row must be cited by at least one matrix row. Verified green after this edit.
 
 ### 2026-08-14 — ATX-2 DONE: engine-level checkpoint resume shipped (issue #224)
 - **ATX-2 DECIDED/IN-PROGRESS → DONE — ALIGN.** Spec §5.3 "Resume behavior" rules 1–6 and DoD

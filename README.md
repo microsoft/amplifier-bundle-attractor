@@ -34,6 +34,7 @@ cited as prior-art inspiration where useful.
 | [App Integration Guide](docs/APP-INTEGRATION-GUIDE.md) | Using pipelines from Python applications (DirectProvider vs AmplifierSession) |
 | [Pipeline Design Principles](docs/PIPELINE_DESIGN_PRINCIPLES.md) | Six framework-agnostic design principles: tier discipline, validation patterns, loop convergence, LLM output protocols, parameterization, verdict-bearing nodes |
 | [Issue Pipeline](docs/ISSUE_PIPELINE.md) | What happens after a maintainer labels an issue `ready:spec` (defects) or `ready:feature-spec` (features) -- the autonomous specify/implement pipelines, their human review gates, what makes a good defect report, and how a maintainer supplies binding acceptance criteria for a feature |
+| [Quality Protocol](docs/QUALITY_PROTOCOL.md) | How work gets proven here -- the design -> build -> live-proof -> adversarial-review -> maintainer's-word arc, the evidence each class of change owes before merge, the five-layer drift defense against the upstream nlspec, and the meta-protocol for amending and retiring all of it |
 
 ## Quick Start
 

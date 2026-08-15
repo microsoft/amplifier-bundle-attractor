@@ -10,6 +10,14 @@ DOT-graph pipeline engine and handler bundle. Implements the **attractor nlspec*
 
 Before designing changes, read [`PRINCIPLES.md`](PRINCIPLES.md) — upstream-spec linkage to `strongdm/attractor`, intentional deltas, and the "walk upstream first" discipline.
 
+## Quality protocol
+
+[`docs/QUALITY_PROTOCOL.md`](docs/QUALITY_PROTOCOL.md) is binding for contributors and for agents working here. The arc every non-trivial change follows: **design** (with empirical probes where the engine's behavior is load-bearing) → **build** → **live proof** (real runs, real environments — "the test passes" is not "it works") → **independent adversarial review** (a fresh session that re-executes the evidence and tries to break it) → **the maintainer's explicit word**.
+
+**No merge without the maintainer's explicit word.** The gate mechanics are unchanged — see "Merge discipline" below.
+
+That document also carries the per-change-class evidence table, the five-layer drift defense against the upstream nlspec, and the meta-protocol governing how those rules are themselves amended and retired.
+
 ## Key directories
 
 - `modules/loop-pipeline/amplifier_module_loop_pipeline/` — engine and handlers. `engine.py` is the dispatch core; handlers/ contains node-type implementations.

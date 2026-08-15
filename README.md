@@ -160,6 +160,7 @@ The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 s
 | Pipeline | What it does |
 |----------|--------------|
 | [Objective Runner](examples/objective/README.md) | You state an **objective**; it diagnoses, then **selects** a shipped lane, **composes** a purpose-built child pipeline, or **redirects** with an honest written no |
+| [Authoring Attractor](examples/authoring/README.md) | You state a design **brief**; it diagnoses, **authors** a new reusable pipeline, converges it under `attractor lint` + a structural contract + an independent critique, and publishes it with provenance — or **redirects** with an honest written no |
 
 ### Canonical attractor exemplars — teach the shape
 

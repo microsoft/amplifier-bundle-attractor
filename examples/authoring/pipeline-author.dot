@@ -1,0 +1,359 @@
+// ============================================================================
+// Pipeline Author -- an attractor that authors attractors
+// ============================================================================
+// You state a DESIGN BRIEF for work you want a reusable pipeline to do. This
+// graph diagnoses the brief, writes a new pipeline, hardens it under executed
+// machine gates plus an independent doctrine critique, and publishes it with
+// provenance -- or tells you honestly that the work described does not want an
+// attractor at all.
+//
+//   brief  ->  triage  ->  draft  ->  machine gates  ->  critique  ->  published
+//                  \                      ^                  |
+//                   \                     +------------------+
+//                    +-> honest redirect (green exit, no pipeline)
+//
+// The basin: **a new pipeline exists that lints clean, satisfies the authoring
+// contract, and survives an independent doctrine critique -- or the brief is
+// honestly redirected.** Both are green exits, told apart by a disposition
+// artifact. A run that can do neither escalates LOUDLY (nonzero) rather than
+// leaving through the success door.
+//
+// WHY THIS EXISTS. `/attractorify` DESIGNS a pipeline conversationally with a
+// human in the loop; `examples/objective/objective-runner.dot` COMPOSES a
+// single-purpose child at run time for one objective. Neither one converges a
+// *reusable* pipeline under executed gates. This does: authoring a pipeline is
+// itself convergence-shaped work -- draft, machine-check, independent critique,
+// revise -- and the repo's own evidence is that prompt text alone does not
+// deliver authoring discipline. Executed gates moved what prose could not.
+//
+// Invocation (per KNOWN_ISSUES: process cwd MUST equal --cwd for box nodes):
+//   AUTH="$PWD/examples/authoring"      # capture BEFORE cd
+//   cd <workspace>
+//   attractor run "$AUTH/pipeline-author.dot" \
+//       --param brief="Objective: ... Evidence: ... Budget: ..." \
+//       --param authoring_dir="$AUTH" \
+//       --param target_dir="$PWD" \
+//       --param pipeline_name="doc-claims-verified" \
+//       --cwd .
+//
+// Parameters:
+//   brief           THE DESIGN BRIEF. What the pipeline should converge on, what
+//                   evidence sources exist, what budget it should carry.
+//   authoring_dir   Absolute path to this file's directory (the doctrine gate
+//                   runs check_authored_pipeline.py from here, and the author
+//                   reads the repo's doctrine docs relative to it).
+//   target_dir      Absolute path to the workspace. Prompt text for box nodes.
+//   pipeline_name   Published basename under out/ (default: authored-pipeline).
+//                   Validated at preflight against [A-Za-z0-9._-]+.
+//   max_iterations  Author-attempt budget (default 4).
+//   max_frames      Malformed-triage budget (default 2 re-frames).
+//
+// SHAPE (the doctrine, made visible):
+//   - THE BRIEF NEVER TOUCHES A SHELL. `$brief` is expanded into PROMPTS only,
+//     never into a tool_command. A design brief is untrusted text; engine
+//     substitution happens before /bin/sh sees the string, so a brief in a
+//     tool_command is a command-injection hole. `triage` restates it into
+//     .authoring/triage.md, and every deterministic node reads the FILE.
+//   - TRIAGE PROPOSES; THE GATE ROUTES. `triage` (LLM) applies the repo's
+//     three-question test to the brief and writes an anchored verdict line;
+//     `triage_gate` (code) reads the last line and decides. The first routing
+//     decision of the run is evidence outside the worker's context.
+//   - THE HONEST NO IS A DELIVERABLE. A brief describing recipe-shaped or
+//     gateless work exits GREEN through `redirect_report`, with a written
+//     recommendation. Refusing to author a pipeline is the useful answer.
+//   - NOTHING LANDS IN out/ UNTIL EVERY GATE IS GREEN. The author works on
+//     .authoring/draft/*; `package` publishes to out/ only after lint, the
+//     doctrine gate, and the critique have all passed. Draft and published are
+//     different words on purpose.
+//   - ONE COUNTER SPANS THE WHOLE CORRECTIVE PATH. Every corrective leg
+//     (lint_fail, doctrine_bad, critique ITERATE, critique transient FAIL)
+//     re-enters through `lint_gate`, which increments and walls the budget on
+//     ENTRY. "Individually-bounded legs do not compose"
+//     (PIPELINE_DESIGN_PRINCIPLES section 3): a persistent failure bouncing
+//     between two separately-counted gates never exhausts either. Here there is
+//     one ledger and every leg pays into it.
+//   - CHEAP GATE BEFORE EXPENSIVE GATE. `attractor lint` and the structural
+//     contract run before an LLM is paid to critique. Do not buy judgment on a
+//     graph that does not parse.
+//   - THE CRITIC INHERITS NOTHING. `critique` runs at fidelity="truncate" --
+//     goal and run id only. It never sees the author's reasoning about why the
+//     graph was right; it sees the artifact and the two gate reports. That
+//     isolation is the property being purchased, not an optimisation.
+//   - ONE GREEN EXIT. `validate_or_raise` requires exactly one exit node, so the
+//     two honest terminals are `done` (Msquare, reachable only through
+//     `finalize`, which refuses to open without a disposition artifact) and
+//     `escalated` (a tool node that exits 1 with max_retries=0 and no
+//     fail-route -- the bug-fix.dot idiom, a LOUD red).
+//
+// VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON:
+//   - STALE-LABEL RULE: a tool node that exits nonzero does NOT refresh
+//     tool.last_line, so a stale label can match at the same time as an
+//     outcome=fail edge. Every last_line edge below whose source also carries a
+//     failure edge conjoins `&& outcome=success` (docs/ROUTING-REFERENCE.md
+//     section 3). The doctrine gate enforces the same rule on what this graph
+//     authors (check A7) -- the exemplar obeys the contract it hands out.
+//   - must_write= is NOT context-substituted (must_write.py reads the raw
+//     attribute). Every must_write path here is therefore a literal; the
+//     $pipeline_name knob is spent at `package`, in a shell, where the
+//     `pn=$pipeline_name; N=${pn:-default}` idiom actually works.
+//   - PARAM NAMESPACE: substitution rewrites $name/${name} for any context key.
+//     The shell variables here (mi, mf, pn, B, F, N, n, v, r, w, res) are safe
+//     only because no param shares their name. Never add a param named like a
+//     shell var.
+//   - A codergen node's FAIL does not traverse plain edges, which is why every
+//     box node below carries an explicit outcome=fail route.
+//
+// MODEL DOCTRINE: the expensive model belongs in the gates (critique) -- gate
+// quality determines basin depth; maker quality only affects iteration count.
+// Map via model_stylesheet in your deployment, e.g.:
+//   model_stylesheet=".gate { llm_model: <strong-reasoning-model> } .maker { llm_model: <standard-coding-model> }"
+// ============================================================================
+
+digraph PipelineAuthor {
+    graph [
+        goal="Author a new, reusable attractor pipeline for the stated design brief -- one that lints clean, satisfies the authoring contract under check_authored_pipeline.py, and survives an independent doctrine critique -- or redirect the brief honestly when the work it describes does not want an attractor.",
+        label="Pipeline Author",
+        params="brief, authoring_dir, target_dir, pipeline_name, max_iterations, max_frames",
+        default_max_retries=2,
+        default_fidelity="compact",
+        max_pipeline_duration="14400s"
+    ]
+
+    start [shape=Mdiamond, label="Start"]
+    done  [shape=Msquare,  label="Done"]
+
+    // ---------- preflight: deterministic admission -------------------------
+    // OBJECTIVE    Make the run's preconditions true, or refuse before an LLM
+    //              is ever paid.
+    // CONSTRAINTS  code-tier only; no judgement; never reads $brief.
+    // EVIDENCE     .authoring/ state dirs exist; the checker is present; the
+    //              publish name is safe.
+    // EXIT         ready | blocked (exit 1, LOUD)
+    preflight [
+        shape=parallelogram, class="glue", label="Preflight", max_retries=0,
+        tool_command="mkdir -p .authoring/draft .authoring/postmortem out || { printf blocked; exit 1; }; for f in attractor python3 sha256sum; do command -v \"$f\" >/dev/null 2>&1 || { echo \"FATAL: '$f' is not on PATH; the lint gate, the doctrine gate and the provenance record all need it\" >&2; printf blocked; exit 1; }; done; [ -f \"$authoring_dir/check_authored_pipeline.py\" ] || { echo \"FATAL: --param authoring_dir must name the examples/authoring directory; check_authored_pipeline.py is not under '$authoring_dir'\" >&2; printf blocked; exit 1; }; pn=$pipeline_name; N=${pn:-authored-pipeline}; case \"$N\" in *[!A-Za-z0-9._-]*) echo \"FATAL: --param pipeline_name must match [A-Za-z0-9._-]+ (got '$N'); it becomes a published filename\" >&2; printf blocked; exit 1;; esac; printf '%s\\n' \"$N\" > .authoring/name; printf ready"
+    ]
+
+    // ---------- triage: diagnose the BRIEF; do not author yet ---------------
+    // OBJECTIVE    Decide whether the work the brief describes wants an
+    //              attractor at all, and restate the brief durably.
+    // CONSTRAINTS  Do not write any pipeline. Do not self-route -- the token
+    //              comes from the gate. The verdict vocabulary is fixed and the
+    //              verdict must be the FINAL line of the file.
+    // CAPABILITIES read the repo's doctrine docs and the workspace.
+    // EVIDENCE     .authoring/triage.md (must_write + triage_gate).
+    // EXIT         an anchored TRIAGE: line the gate can read.
+    triage [
+        shape=box, class="maker", label="Triage the Brief",
+        must_write=".authoring/triage.md",
+        prompt="A design brief has been stated for a pipeline that does not exist yet:\n\n--- BRIEF ---\n$brief\n--- END BRIEF ---\n\nYour job is to DIAGNOSE the brief, not to author anything. Read $authoring_dir/../../docs/PIPELINE_DESIGN_PRINCIPLES.md section 0 in full, and survey the workspace at $target_dir enough to answer honestly.\n\nIf .authoring/triage.md already exists, a previous attempt of yours was rejected for not ending in a readable verdict line -- fix exactly that.\n\nWrite .authoring/triage.md, in this order:\n  1. THE BRIEF, restated verbatim under a '## Brief' heading. Downstream gates and the provenance record read this file rather than the raw parameter, so the restatement is the durable copy.\n  2. '## Three-question test' -- the repo's own test, applied to the WORK THE BRIEF DESCRIBES (not to this authoring run):\n       Q1 Is there a cycle -- work that can be attempted, machine-checked, and re-attempted?\n       Q2 Is the exit gated on machine-checkable evidence EXTERNAL to the worker?\n       Q3 Would it still land if any one LLM node had a bad day -- a single plausible-but-wrong response?\n     Answer each with 'yes' or 'no' first, then why, quoting the brief where it decides the answer.\n  3. '## Sink' -- if the answers are yes, name the concrete machine check that would gate the exit: an actual command that exits 0 only when the work is done. If you cannot name one, that is a 'no' on Q2, however appealing a pipeline sounds.\n  4. '## Budget' -- the iteration cap and wall-clock bound the brief implies.\n\nThen end the file with EXACTLY ONE final line, nothing after it:\n  VERDICT: ATTRACTOR   -- all three answers are yes and you named a real machine check\n  VERDICT: REDIRECT    -- any answer is no; the work wants a recipe, a conversation, or a one-shot\n\nBe willing to say REDIRECT. An accurate 'no, and here is where this work belongs' is worth more than a pipeline nobody should run. Do not fish for a cycle that is not in the brief, and do not invent a hollow check to avoid choosing REDIRECT: the check you name here becomes the authored pipeline's gate, and a gate that cannot fail gates nothing."
+    ]
+
+    // ---------- triage_gate: admit the diagnosis; print the routing token ----
+    // Idiom A (always exit 0) so tool.last_line is always fresh. A nonzero exit
+    // means the gate itself could not run, which routes differently -- to the
+    // postmortem path -- from a record it read and rejected.
+    // EXIT  attractor | redirect | triage_bad | triage_exhausted
+    triage_gate [
+        shape=parallelogram, class="gate", label="Admit Triage / Route", max_retries=0,
+        tool_command="mf=$max_frames; F=${mf:-2}; n=$(($(cat .authoring/frame-iter 2>/dev/null || echo 0)+1)); echo $n > .authoring/frame-iter; v=none; if [ -s .authoring/triage.md ]; then tail -n 1 .authoring/triage.md > .authoring/triage-line.txt; if grep -qix 'VERDICT: ATTRACTOR' .authoring/triage-line.txt; then v=attractor; elif grep -qix 'VERDICT: REDIRECT' .authoring/triage-line.txt; then v=redirect; fi; fi; if [ \"$v\" = none ]; then if [ \"$n\" -gt \"$F\" ]; then v=triage_exhausted; else v=triage_bad; fi; fi; printf '{\"frame\": %s, \"gate\": \"triage\", \"verdict\": \"%s\"}\\n' \"$n\" \"$v\" >> .authoring/convergence.jsonl; printf %s \"$v\""
+    ]
+
+    // ---------- redirect_report: the honest no, with receipts ----------------
+    // OBJECTIVE    Deliver the diagnosis as the work product.
+    // CONSTRAINTS  Quote the failing answers from triage.md verbatim; name the
+    //              better home for the work; author no pipeline.
+    // EVIDENCE     .authoring/redirect.md
+    // EXIT         green, through finalize. The diagnosis IS the deliverable.
+    redirect_report [
+        shape=box, class="maker", label="Honest Redirect",
+        must_write=".authoring/redirect.md",
+        prompt="The triage concluded that the work described in this brief does NOT want an attractor pipeline.\n\nRead .authoring/triage.md. Write .authoring/redirect.md -- the deliverable of this run:\n  1. The brief's objective, restated in one paragraph.\n  2. The three-question test with the failing answer(s) QUOTED VERBATIM from .authoring/triage.md, and one sentence on which question failed and why.\n  3. Where this work actually belongs. Name ONE: a recipe (staged, sequential, human approval gates -- see $authoring_dir/../../docs/PIPELINE_DESIGN_PRINCIPLES.md section 0), a conversation (judgement all the way down, no stable definition of done), or a one-shot (small enough that a loop buys nothing). Say what the first step there looks like, concretely.\n  4. What WOULD make it an attractor: the specific machine-checkable check that does not exist today. If someone later writes that check, this brief becomes authorable -- say exactly what it would have to assert, and what it would exit nonzero on.\n\nBe direct. A wrong 'yes, let us build a pipeline' costs hours and produces machinery nobody trusts; an accurate 'no, and here is why' is the more valuable run."
+    ]
+
+    // ---------- author: write the pipeline ----------------------------------
+    // OBJECTIVE    Write a NEW reusable attractor pipeline for the brief, plus
+    //              the companion guide that explains its shape.
+    // CONSTRAINTS  Control plane only -- no plan/implement/test as graph nodes.
+    //              Gates outside workers. One exit. A cycle. A budget wall.
+    //              Never weaken a gate to get past a gate.
+    // CAPABILITIES write files; read the repo's doctrine docs, its shipped
+    //              exemplars, and the gate reports from prior attempts.
+    // EVIDENCE     .authoring/draft/pipeline.dot (must_write) and
+    //              .authoring/draft/pipeline.md
+    // EXIT         both files exist AND pass lint_gate AND doctrine_gate AND
+    //              survive critique.
+    author [
+        shape=box, class="maker", label="Author the Pipeline",
+        must_write=".authoring/draft/pipeline.dot",
+        prompt="Write a NEW, reusable attractor pipeline for the brief recorded in .authoring/triage.md (read that file first -- it holds the brief restated, the three-question analysis, the sink, and the budget).\n\nBEFORE YOU WRITE, READ, in this order:\n  $authoring_dir/README.md -- the authoring contract, including EXACTLY what the doctrine gate checks (A1-A9). It is a stated contract, not a guessing game.\n  $authoring_dir/../../docs/PIPELINE_DESIGN_PRINCIPLES.md -- especially section 0 (control plane vs recipe plane), section 3 (loop convergence and budget walls) and section 4 (LLM output protocol; use last-line anchored verdicts).\n  $authoring_dir/../../docs/DOT-AUTHORING-GUIDE.md -- the node contract, node shapes, the lint rules.\n  $authoring_dir/../../docs/ROUTING-REFERENCE.md -- edge selection and the stale-label rule.\n  $authoring_dir/../patterns/task-runner.dot -- the canonical convergence skeleton. Copy its shape discipline, not its domain.\n  $authoring_dir/../gates/README.md -- the gate idioms (Idiom A vs Idiom B, the token contract).\n\nIF .authoring/lint-report.txt, .authoring/doctrine-report.txt OR .authoring/critique.md EXISTS, a previous attempt was BLOCKED. Read all that exist and fix exactly what they name, then rewrite. Do NOT weaken a gate, delete a check, or relax the pipeline's own definition of done to get past a gate -- the same gates run again, and the critique reads the reports too.\n\nWRITE EXACTLY TWO FILES:\n\n  .authoring/draft/pipeline.dot -- the pipeline. Requirements, all machine-checked:\n    * exactly one exit node (shape=Msquare); express a second honest terminal as a LOUD nonzero tool node, never a second Msquare\n    * at least one corrective cycle\n    * at least one evidence gate: shape=parallelogram, running a REAL command (a test, a build, a linter, a grep, a file predicate) whose result routes the graph. A node that only printfs a constant is not a gate\n    * the exit must be structurally unreachable except through such a gate\n    * a budget wall: a tool node that counts iterations and routes exhaustion to a salvage path -- not a bare FAIL\n    * every LLM (box) node carries an outcome=fail route or a retry_target\n    * every label-routing edge whose source can also fail conjoins '&& outcome=success'\n    * no failure outcome routed into the exit node\n    * every box node's prompt states the node contract: objective, constraints, available capabilities, required evidence -- the contract, never the algorithm\n    * parameters carry sensible defaults; the pipeline must run unchanged on the common case\n\n  .authoring/draft/pipeline.md -- the companion guide. It must NAME EVERY box node id in the graph and, for each, state its contract in prose. Also: what the pipeline converges on, how to invoke it, what each gate proves, and what the honest failure exits look like.\n\nDESIGN ORDER, from the doctrine: name the sink first, build the gate, build the loop, and only then add work nodes. Keep the control plane LEAN -- gates, budgets, walls, feedback channels. Delete domain decomposition: if you find yourself adding plan -> implement -> test as graph nodes, stop; that is the model's job, not the graph's.\n\nThe pipeline you write is for the brief's work, not for this run. Someone else will run it, later, on a task you will never see."
+    ]
+
+    // ---------- lint_gate: the engine's own linter, plus the budget wall -----
+    // OBJECTIVE    Machine-reject a broken draft BEFORE anything expensive
+    //              reads it, and own the one counter that spans every leg.
+    // CONSTRAINTS  ERRORs block; WARNINGs pass but are recorded (no --strict).
+    //              doctrine_gate owns the design-shape checks.
+    // EVIDENCE     .authoring/lint-report.txt, .authoring/convergence.jsonl
+    // EXIT         lint_pass | lint_fail | exhausted | lint_unavailable(exit 1)
+    // THE WALL LIVES HERE because every corrective leg re-enters through this
+    // node: lint_fail, doctrine_bad, critique ITERATE, and a transient critique
+    // FAIL all pass back through `author` -> `lint_gate` or straight here. One
+    // ledger, every leg pays. The budget is checked on ENTRY, so a persistent
+    // provider outage drains it and escalates through the postmortem path
+    // instead of cycling until the engine's step cap kills the run.
+    lint_gate [
+        shape=parallelogram, class="gate", label="Lint the Draft", max_retries=0,
+        tool_command="mi=$max_iterations; B=${mi:-4}; n=$(($(cat .authoring/iter 2>/dev/null || echo 0)+1)); echo $n > .authoring/iter; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"lint\", \"budget\": \"exhausted\"}\\n' \"$n\" >> .authoring/convergence.jsonl; printf exhausted; else command -v attractor >/dev/null 2>&1 || { echo 'FATAL: the attractor CLI left PATH mid-run; the draft cannot be lint-gated' >&2; printf lint_unavailable; exit 1; }; if attractor lint .authoring/draft/pipeline.dot > .authoring/lint-report.txt 2>&1; then res=lint_pass; else res=lint_fail; fi; w=$(grep -c '^WARNING' .authoring/lint-report.txt 2>/dev/null); printf '{\"iteration\": %s, \"gate\": \"lint\", \"result\": \"%s\", \"warnings\": %s}\\n' \"$n\" \"$res\" \"${w:-0}\" >> .authoring/convergence.jsonl; printf %s \"$res\"; fi"
+    ]
+
+    // ---------- doctrine_gate: the authoring contract, structurally ----------
+    // OBJECTIVE    Enforce the shape checks lint deliberately does not own, or
+    //              owns only as advice: is the draft actually an attractor, is
+    //              its exit really unreachable without machine evidence, does it
+    //              carry a budget wall, does every worker have somewhere to fail
+    //              to, and is its companion guide real?
+    // CONSTRAINTS  deterministic checks only; no judgement of fitness.
+    // EVIDENCE     .authoring/doctrine-report.txt (per-check PASS/FAIL)
+    // EXIT         doctrine_ok | doctrine_bad | (exit 1: gate could not run)
+    // The load-bearing check is A4: delete every evidence gate from the drafted
+    // graph and ask whether its exit is still reachable. A graph can carry a
+    // cycle and a gate and still hang `done` off a worker -- A1-A3 all pass and
+    // the exit was never gated on anything.
+    doctrine_gate [
+        shape=parallelogram, class="gate", label="Authoring Contract", max_retries=0,
+        tool_command="n=$(cat .authoring/iter 2>/dev/null || echo 0); r=$(python3 \"$authoring_dir/check_authored_pipeline.py\" --pipeline .authoring/draft/pipeline.dot --companion .authoring/draft/pipeline.md --report .authoring/doctrine-report.txt) || { echo 'FATAL: check_authored_pipeline.py could not run' >&2; printf gate_error; exit 1; }; printf '{\"iteration\": %s, \"gate\": \"doctrine\", \"result\": \"%s\"}\\n' \"$n\" \"$r\" >> .authoring/convergence.jsonl; printf %s \"$r\""
+    ]
+
+    // ---------- critique: the independent, doctrine-armed judgment -----------
+    // OBJECTIVE    Judge what the machine gates cannot: is this pipeline the
+    //              right shape FOR THIS BRIEF, and are its gates real?
+    // CONSTRAINTS  fidelity=truncate -- this node inherits nothing from the
+    //              author's context. Every finding cites executed evidence or a
+    //              gate report. The verdict is the FINAL line, anchored.
+    // CAPABILITIES read the draft, both gate reports, the triage record, and the
+    //              doctrine docs; run commands to check claims.
+    // EVIDENCE     .authoring/critique.md (must_write + verdict_gate)
+    // EXIT         VERDICT: SHIP or VERDICT: ITERATE as the last line.
+    // Verification inside the context that produced the evidence is not
+    // verification -- a live run in this repo's history had a worker author its
+    // own convergence record, and only critics outside its context caught it.
+    critique [
+        shape=box, class="gate", label="Independent Doctrine Critique", fidelity="truncate",
+        must_write=".authoring/critique.md",
+        prompt="You are reviewing a pipeline you did not write, for a brief you have not seen argued. Do not trust the author's reasoning; you do not have it, and that is deliberate.\n\nREAD, in this order:\n  .authoring/triage.md          -- the brief, restated, and the three-question analysis\n  .authoring/draft/pipeline.dot -- the pipeline under review\n  .authoring/draft/pipeline.md  -- its companion guide\n  .authoring/lint-report.txt    -- what the engine's linter said\n  .authoring/doctrine-report.txt-- what the structural contract said, check by check\n  $authoring_dir/../../docs/PIPELINE_DESIGN_PRINCIPLES.md and $authoring_dir/../../docs/VISION.md -- the doctrine you are judging against\n\nThe two gate reports already prove the STRUCTURE. Do not re-litigate what they checked. Judge what they cannot:\n\n  1. DOES THE GATE ACTUALLY PROVE THE BRIEF'S GOAL? A gate can be structurally perfect and assert the wrong thing, or assert something that is already true. Read the gate's command. Would it be RED today, before the work exists, and GREEN only when the brief's objective is satisfied? If you can run it, run it and quote what happened.\n  2. RECIPE PLANE IN THE CONTROL PLANE. Are any nodes domain phases (plan / implement / test / write / review-as-a-stage) rather than control-plane responsibilities? 'When you find yourself adding plan -> implement -> test as graph nodes, stop.'\n  3. CAN THE LOOP DESCEND? Does a failing iteration carry its failure forward as evidence the next attempt can read, or does it re-flip the same coin? Name the channel.\n  4. THE BAD DAY. Pick the single node most likely to return a plausible-but-wrong answer. Trace what happens. If one such response can reach the exit, say so and name the edge.\n  5. NODE CONTRACTS. Do the box prompts state objective / constraints / capabilities / required evidence, or do they enumerate an algorithm the model cannot deviate from when the domain surprises it?\n  6. THE COMPANION. Does .authoring/draft/pipeline.md explain WHY the graph is shaped this way, or only restate what it does?\n\nWrite .authoring/critique.md: specific findings, each citing a file and a node or edge by name, and each grounded in a quoted gate report line or a command you actually ran. A finding with no citation is an opinion; drop it.\n\nThen end the file with EXACTLY ONE final line, nothing after it:\n  VERDICT: SHIP      -- you would run this pipeline on real work as it stands\n  VERDICT: ITERATE   -- name, in the findings above, exactly what must change\n\nBe strict, and be specific. A wrong-but-plausible pipeline that ships is worse than another iteration -- it teaches the anti-pattern by example to everyone who copies it. But do not refuse over taste: if the shape is sound and the gates are real, SHIP is the honest verdict."
+    ]
+
+    // ---------- verdict_gate: deterministic routing on an anchored verdict ---
+    // OBJECTIVE    Turn the critique into a route, without an LLM in the router.
+    // CONSTRAINTS  Last-line anchored, case-insensitive EXACT match. A critique
+    //              that merely QUOTES 'VERDICT: SHIP' mid-prose cannot false-ship,
+    //              because the instruction text is never the last line and -qix
+    //              rejects partial matches.
+    // EVIDENCE     .authoring/verdict-line.txt, .authoring/convergence.jsonl
+    // EXIT         ship (exit 0) | iterate / noverdict (exit 1, LOUD)
+    // FAIL CLOSED: a missing, empty, or unparseable critique is `noverdict`,
+    // which routes to another iteration -- never to the exit. Ambiguity resolves
+    // against shipping, which is the same rule specs/EXTENSIONS.md section 25
+    // applies to goal-gate outcomes. Idiom B (nonzero on the red path) is used
+    // deliberately so goal_gate=true has real teeth here rather than being a
+    // declaration: a red verdict is a genuine FAIL the engine's exit-time check
+    // can see.
+    verdict_gate [
+        shape=parallelogram, class="gate", label="Ship or Iterate?", max_retries=0,
+        goal_gate=true, retry_target="author",
+        tool_command="n=$(cat .authoring/iter 2>/dev/null || echo 0); v=noverdict; if [ -s .authoring/critique.md ]; then tail -n 1 .authoring/critique.md > .authoring/verdict-line.txt; if grep -qix 'VERDICT: SHIP' .authoring/verdict-line.txt; then v=ship; elif grep -qix 'VERDICT: ITERATE' .authoring/verdict-line.txt; then v=iterate; fi; fi; printf '{\"iteration\": %s, \"gate\": \"critique\", \"verdict\": \"%s\"}\\n' \"$n\" \"$v\" >> .authoring/convergence.jsonl; if [ \"$v\" = ship ]; then printf ship; else echo \"critique verdict: $v -- another iteration\" >&2; printf %s \"$v\"; exit 1; fi"
+    ]
+
+    // ---------- package: publish the accepted draft, with provenance ---------
+    // OBJECTIVE    Make the accepted draft a named, traceable deliverable.
+    // CONSTRAINTS  code-tier only. A provenance record assembled by a model is
+    //              a summary; assembled by a shell from the real artifacts, it
+    //              is a record. Nothing reaches out/ before this node runs.
+    // EVIDENCE     out/<name>.dot, out/<name>.md, .authoring/PROVENANCE.md,
+    //              .authoring/published
+    // EXIT         published | publish_failed (exit 1)
+    package [
+        shape=parallelogram, class="glue", label="Publish + Provenance", max_retries=0,
+        tool_command="N=$(cat .authoring/name 2>/dev/null || echo authored-pipeline); mkdir -p out; cp .authoring/draft/pipeline.dot \"out/$N.dot\" || { printf publish_failed; exit 1; }; cp .authoring/draft/pipeline.md \"out/$N.md\" || { printf publish_failed; exit 1; }; { echo \"# Provenance -- $N\"; echo; echo \"Authored by examples/authoring/pipeline-author.dot. Every gate below was executed, in this run, outside the authoring node's context.\"; echo; echo \"## Artifacts\"; echo; sha256sum \"out/$N.dot\" \"out/$N.md\"; echo; echo \"## Iterations\"; echo; echo \"author attempts spent: $(cat .authoring/iter 2>/dev/null || echo 0)\"; echo; echo \"## Convergence record\"; echo; sed 's/^/    /' .authoring/convergence.jsonl 2>/dev/null; echo; echo \"## Triage (the brief, restated, and the three-question test)\"; echo; sed 's/^/    /' .authoring/triage.md 2>/dev/null; echo; echo \"## attractor lint\"; echo; sed 's/^/    /' .authoring/lint-report.txt 2>/dev/null; echo; echo \"## Authoring contract (check_authored_pipeline.py)\"; echo; sed 's/^/    /' .authoring/doctrine-report.txt 2>/dev/null; echo; echo \"## Independent critique\"; echo; sed 's/^/    /' .authoring/critique.md 2>/dev/null; } > .authoring/PROVENANCE.md || { printf publish_failed; exit 1; }; printf '%s\\n' \"out/$N.dot out/$N.md\" > .authoring/published; printf published"
+    ]
+
+    // ---------- finalize: refuse a green exit without a disposition ----------
+    // OBJECTIVE    Make 'the run ended' and 'the run produced a disposition'
+    //              the same event, so an unattended caller can tell the two
+    //              green outcomes apart by reading one file.
+    // EVIDENCE     .authoring/disposition = authored | redirected
+    // EXIT         finalized | no_disposition (exit 1, LOUD)
+    finalize [
+        shape=parallelogram, class="glue", label="Finalize", max_retries=0,
+        tool_command="if [ -s .authoring/published ]; then echo authored > .authoring/disposition; elif [ -s .authoring/redirect.md ]; then echo redirected > .authoring/disposition; else echo 'FATAL: no disposition artifact -- neither a published pipeline nor an honest redirect' >&2; printf no_disposition; exit 1; fi; printf finalized"
+    ]
+
+    // ---------- postmortem -> escalated: salvage, then fail LOUD -------------
+    postmortem [
+        shape=box, class="gate", label="Postmortem",
+        must_write=".authoring/postmortem/report.md",
+        prompt="This authoring run reached a decision point without converging.\n\nRead .authoring/convergence.jsonl (the descent record), .authoring/triage.md, and whichever of .authoring/lint-report.txt, .authoring/doctrine-report.txt and .authoring/critique.md exist. Write .authoring/postmortem/report.md:\n  * what each iteration attempted, and whether the loop was DESCENDING, OSCILLATING or WANDERING -- cite the record\n  * your best hypothesis for why it did not converge, and specifically whether the failure was in the BRIEF (ambiguous, or describing work with no machine check), the TRIAGE (wrong verdict; say which you would give now), the DRAFT (the pipeline shape itself), or the CRITIQUE (a bar no draft could clear)\n  * the options: change the brief, raise the budget, redirect instead, or take it to a human\n\nThis report is the value salvaged from a non-converging run. Be honest -- a run that fails and explains itself is worth more than one that fails quietly."
+    ]
+
+    // Deterministic salvage terminal. Writes a handoff even when the postmortem
+    // node itself failed, then exits 1 DELIBERATELY: max_retries=0 and no
+    // fail-route, so the engine hard-fails LOUD (run status=fail, CLI exit 1).
+    escalated [
+        shape=parallelogram, class="glue", label="Escalated", max_retries=0,
+        tool_command="mkdir -p .authoring/postmortem; if [ -s .authoring/postmortem/report.md ]; then echo 'Read .authoring/postmortem/report.md and .authoring/convergence.jsonl, then choose: change the brief, raise the budget, redirect instead, or take it to a human.' > .authoring/postmortem/escalation.md; else echo 'Postmortem could not be produced. Preserve the run logs and escalate to a human.' > .authoring/postmortem/escalation.md; fi; echo escalated > .authoring/disposition; printf escalated; exit 1"
+    ]
+
+    // ========================= edges =========================
+    start -> preflight
+
+    preflight -> triage    [condition="context.tool.last_line=ready && outcome=success", label="preconditions hold"]
+    preflight -> escalated [condition="outcome=fail",                                    label="blocked -- refuse before spending an LLM"]
+
+    triage -> triage_gate
+    triage -> postmortem [condition="outcome=fail", label="hard failure"]
+
+    triage_gate -> author          [condition="context.tool.last_line=attractor && outcome=success",        label="attractor -- author it"]
+    triage_gate -> redirect_report [condition="context.tool.last_line=redirect && outcome=success",         label="redirect -- the honest no"]
+    triage_gate -> triage          [condition="context.tool.last_line=triage_bad && outcome=success",       label="no readable verdict -- re-frame"]
+    triage_gate -> postmortem      [condition="context.tool.last_line=triage_exhausted && outcome=success", label="cannot produce a readable triage"]
+    triage_gate -> postmortem      [condition="outcome=fail",                                               label="gate could not run"]
+
+    redirect_report -> finalize
+    redirect_report -> postmortem [condition="outcome=fail", label="hard failure"]
+
+    author -> lint_gate
+    author -> postmortem [condition="outcome=fail", label="hard failure"]
+
+    lint_gate -> doctrine_gate [condition="context.tool.last_line=lint_pass && outcome=success", label="no lint errors"]
+    lint_gate -> author        [condition="context.tool.last_line=lint_fail && outcome=success", label="lint errors -- rewrite"]
+    lint_gate -> postmortem    [condition="context.tool.last_line=exhausted && outcome=success", label="budget spent -- decision point"]
+    lint_gate -> postmortem    [condition="outcome=fail",                                        label="linter unavailable"]
+
+    doctrine_gate -> critique   [condition="context.tool.last_line=doctrine_ok && outcome=success",  label="contract satisfied"]
+    doctrine_gate -> author     [condition="context.tool.last_line=doctrine_bad && outcome=success", label="contract violated -- rewrite"]
+    doctrine_gate -> postmortem [condition="outcome=fail",                                           label="contract gate could not run"]
+
+    critique -> verdict_gate
+    // Transient recovery: a provider error at the ship-path critique node used
+    // to be able to kill a run whose draft was already green. Re-enter through
+    // the cheap gate, which re-lints in seconds AND spends an iteration -- so a
+    // persistent outage drains the budget and escalates honestly.
+    critique -> lint_gate [condition="outcome=fail", label="transient -- re-enter via the cheap gate"]
+
+    verdict_gate -> package [condition="context.tool.last_line=ship && outcome=success", label="ship"]
+    // ITERATE and NOVERDICT both exit nonzero, so tool.last_line is NOT
+    // refreshed and only this edge can match. The distinction is preserved
+    // where it belongs -- in .authoring/convergence.jsonl -- rather than in a
+    // route that would have to read a stale label to tell them apart.
+    verdict_gate -> author  [condition="outcome=fail", loop_restart="true", label="iterate (or no parseable verdict) -- fresh attempt, kept reports"]
+
+    package -> finalize
+    package -> postmortem [condition="outcome=fail", label="could not publish"]
+
+    finalize -> done       [condition="context.tool.last_line=finalized && outcome=success", label="disposition recorded"]
+    finalize -> postmortem [condition="outcome=fail",                                        label="no disposition -- refuse to exit green"]
+
+    postmortem -> escalated [condition="outcome=fail", label="postmortem failed"]
+    postmortem -> escalated [label="escalate"]
+}

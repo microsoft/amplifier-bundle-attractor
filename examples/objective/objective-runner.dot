@@ -106,7 +106,7 @@ digraph ObjectiveRunner {
     // works in a workspace whose child pipelines do not commit.
     preflight [
         shape=parallelogram, label="Preflight", max_retries=0,
-        tool_command="mkdir -p .objective/postmortem .objective/gen .objective/feedback || { printf blocked; exit 1; }; rd=\"$runner_dir\"; for f in validate_triage.py check_child_contract.py triage-schema.json compose-contract.md; do [ -f \"$rd/$f\" ] || { echo \"FATAL: --param runner_dir must name the examples/objective directory; missing $f under '$rd'\" >&2; printf blocked; exit 1; }; done; case \"$target_dir\" in /*) ;; *) echo \"FATAL: --param target_dir must be an absolute path (got '$target_dir')\" >&2; printf blocked; exit 1;; esac; find . -name .git -prune -o -name .objective -prune -o -name .ai -prune -o -name __pycache__ -prune -o -name .pytest_cache -prune -o -name .ruff_cache -prune -o -name node_modules -prune -o -name .venv -prune -o -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1 > .objective/anchor; [ -s .objective/anchor ] && printf ready || { printf blocked; exit 1; }"
+        tool_command="mkdir -p .objective/postmortem .objective/gen .objective/feedback || { printf blocked; exit 1; }; rd=\"$runner_dir\"; for f in sha256sum md5sum find; do command -v \"$f\" >/dev/null 2>&1 || { echo \"FATAL: '$f' is not on PATH; the anchor digest and the DoD sha-pin both need it\" >&2; printf blocked; exit 1; }; done; for f in validate_triage.py check_child_contract.py triage-schema.json compose-contract.md; do [ -f \"$rd/$f\" ] || { echo \"FATAL: --param runner_dir must name the examples/objective directory; missing $f under '$rd'\" >&2; printf blocked; exit 1; }; done; case \"$target_dir\" in /*) ;; *) echo \"FATAL: --param target_dir must be an absolute path (got '$target_dir')\" >&2; printf blocked; exit 1;; esac; find . -name .git -prune -o -name .objective -prune -o -name .ai -prune -o -name __pycache__ -prune -o -name .pytest_cache -prune -o -name .ruff_cache -prune -o -name node_modules -prune -o -name .venv -prune -o -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1 > .objective/anchor; [ -s .objective/anchor ] && printf ready || { printf blocked; exit 1; }"
     ]
 
     // ---------- frame: diagnose the objective; do NOT do the work ------------
@@ -170,7 +170,7 @@ digraph ObjectiveRunner {
     compose [
         shape=box, label="Compose a Child Pipeline",
         must_write=".objective/gen/child.dot",
-        prompt="No shipped lane fits this objective, but it IS machine-checkable. Write a purpose-built child pipeline for it.\n\nObjective: $goal\n\nRead $runner_dir/compose-contract.md IN FULL first -- it is the contract your output must satisfy, and two gates outside your context will check it mechanically before your graph is allowed to run. Also read $runner_dir/../patterns/task-runner.dot (the convergence skeleton), $runner_dir/../gates/README.md (the gate idioms and the stale-label rule), and .objective/objective.md.\n\nWrite exactly two files:\n  .objective/gen/dod.sh    the definition of done. A shell script, run from $target_dir, that exits 0 if and only if the objective is satisfied and nonzero otherwise. It must be able to FAIL -- write it so that it is red right now, before the work exists, and confirm that by running it.\n  .objective/gen/child.dot the child pipeline. Its gate must RUN .objective/gen/dod.sh; its exit must be unreachable except through that gate.\n\nIf .objective/lint-report.txt or .objective/contract-report.txt exists, a previous attempt of yours was BLOCKED -- read both and fix exactly what they name. Do not weaken dod.sh to get past a gate: the parent re-runs it after your child finishes, and a hollow DoD only buys a louder failure later."
+        prompt="No shipped lane fits this objective, but it IS machine-checkable. Write a purpose-built child pipeline for it.\n\nObjective: $goal\n\nRead $runner_dir/compose-contract.md IN FULL first -- it is the contract your output must satisfy, and two gates outside your context will check it mechanically before your graph is allowed to run. Also read $runner_dir/../patterns/task-runner.dot (the convergence skeleton), $runner_dir/../gates/README.md (the gate idioms and the stale-label rule), and .objective/objective.md.\n\nWrite exactly two files:\n  .objective/gen/dod.sh    the definition of done. A shell script, run from $target_dir, that exits 0 if and only if the objective is satisfied and nonzero otherwise. It MUST be red right now, before the work exists, and it must say so with EXIT CODE 1 -- not 0 (already satisfied), and not 2+ (a broken script). Run it yourself and check the exit status before you finish: the contract gate runs it too, once, before your child is allowed to run, and rejects it on C9 if it does not exit 1.\n  .objective/gen/child.dot the child pipeline. Its gate must RUN .objective/gen/dod.sh; its exit must be unreachable except through that gate.\n\nIf .objective/lint-report.txt or .objective/contract-report.txt exists, a previous attempt of yours was BLOCKED -- read both and fix exactly what they name. Do not weaken dod.sh to get past a gate. A hollow DoD does not buy a louder failure later -- it is caught at admission: contract_gate executes dod.sh before your child runs and returns contract_bad on C9 if it exits 0. It also pins sha256(dod.sh) at that moment, and the parent re-hashes before re-running, so rewriting the file after it was admitted makes the run refuse outright."
     ]
 
     // ---------- lint_gate: the engine's own linter, as an in-graph gate ------
@@ -182,6 +182,14 @@ digraph ObjectiveRunner {
     // EXIT         lint_pass | lint_fail | compose_exhausted | lint_unavailable(exit 1)
     // This node also carries the compose-fix budget: every re-entry from either
     // gate passes through here, so every compose attempt spends budget.
+    // KNOWN, BOUNDED WASTE (measured, not hidden): the wall is checked on ENTRY,
+    // so with the default $max_compose=2 the run executes `compose` a FOURTH
+    // time and only then reads compose_exhausted -- one LLM node execution whose
+    // output is never linted. Closing it fully means making the OTHER re-entry
+    // point (contract_gate's contract_bad -> compose edge) budget-aware too,
+    // which puts a copy of the counter in a second gate. The trade taken here is
+    // one wasted call on the exhaustion path -- a path already headed to
+    // postmortem -- over a budget split across two gates that can disagree.
     lint_gate [
         shape=parallelogram, label="Lint Generated Child", max_retries=0,
         tool_command="mc=$max_compose; B=${mc:-2}; n=$(($(cat .objective/compose-iter 2>/dev/null || echo 0)+1)); echo $n > .objective/compose-iter; if [ \"$n\" -gt $((B+1)) ]; then printf compose_exhausted; else command -v attractor >/dev/null 2>&1 || { echo 'FATAL: the attractor CLI is not on PATH; the generated child cannot be lint-gated' >&2; printf lint_unavailable; exit 1; }; if attractor lint .objective/gen/child.dot > .objective/lint-report.txt 2>&1; then res=lint_pass; else res=lint_fail; fi; w=$(grep -c '^WARNING' .objective/lint-report.txt 2>/dev/null); printf '{\"iteration\": %s, \"gate\": \"lint\", \"result\": \"%s\", \"warnings\": %s}\n' \"$n\" \"$res\" \"${w:-0}\" >> .objective/convergence.jsonl; printf %s \"$res\"; fi"
@@ -189,14 +197,26 @@ digraph ObjectiveRunner {
 
     // ---------- contract_gate: the composed-child contract, structurally -----
     // OBJECTIVE    Enforce the shape checks lint deliberately does not own:
-    //              is this actually an attractor, and is its gate really
-    //              outside its workers?
+    //              is this actually an attractor, is its gate really outside
+    //              its workers, and (C9) can its definition of done FAIL?
     // CONSTRAINTS  deterministic checks only.
-    // EVIDENCE     .objective/contract-report.txt (per-check PASS/FAIL)
+    // EVIDENCE     .objective/contract-report.txt (per-check PASS/FAIL),
+    //              .objective/dod.sha256 (the admitted DoD's sha-pin)
     // EXIT         contract_ok | contract_bad
+    // C9 IS THE ONE CHECK THAT EXECUTES SOMETHING. It runs dod.sh once, here,
+    // before the child runs, and requires exit 1. "The DoD must be red before
+    // the work exists" used to live only in the composer's prompt -- and a
+    // prompt instruction is a suggestion. A composer that wrote `exit 0` passed
+    // every structural check, its child converged instantly, and this graph's
+    // own evidence gate re-ran the same vacuous script and agreed: rc=0 with a
+    // changed workspace is `evidence_ok`. C9 is what makes the rule a check.
+    // THE SHA-PIN: on admission the gate records sha256(dod.sh). evidence_gate
+    // re-hashes before re-running, so rewriting the DoD after it was admitted is
+    // caught rather than believed. Anti-accident, not anti-adversary -- see
+    // compose-contract.md, "The pin, and what it is not".
     contract_gate [
         shape=parallelogram, label="Composed-Child Contract", max_retries=0,
-        tool_command="python3 \"$runner_dir/check_child_contract.py\" --child .objective/gen/child.dot --dod .objective/gen/dod.sh --report .objective/contract-report.txt"
+        tool_command="python3 \"$runner_dir/check_child_contract.py\" --child .objective/gen/child.dot --dod .objective/gen/dod.sh --report .objective/contract-report.txt --pin .objective/dod.sha256"
     ]
 
     // ---------- run_child: execute the generated pipeline --------------------
@@ -239,10 +259,24 @@ digraph ObjectiveRunner {
     // UNCHANGED workspace means nothing happened and the check was already
     // passing -- the shape of the 2.4h/zero-work-product incident. Both halves
     // must hold.
+    // THE PIN IS CHECKED FIRST, BEFORE THE BUDGET. A definition of done that was
+    // altered after admission is not a red iteration -- it is a refusal to
+    // evaluate at all, so it does not spend an iteration; it prints `tampered`
+    // and exits 1. Nonzero means tool.last_line is NOT refreshed, so every
+    // `&& outcome=success` edge below is dead and only outcome=fail can match:
+    // postmortem -> escalated, CLI exit 1.
+    // ON goal_gate=true, HONESTLY: this node uses Idiom A (always exit 0), and a
+    // tool node's exit 0 is an explicit SUCCESS verdict (handlers/tool.py), so
+    // the engine's exit-time gate check can never actually fail here -- even an
+    // `evidence_bad` run satisfies it. It is kept as a DECLARATION of which node
+    // owns the verdict (the same thing C3 enforces on generated children: the
+    // goal gate belongs on the parallelogram, never on a box). The enforcement
+    // that really holds is structural: `done` is reachable only through
+    // `finalize`, which refuses to open without a disposition artifact.
     evidence_gate [
         shape=parallelogram, label="Objective Satisfied?", max_retries=0,
         goal_gate=true, retry_target="feedback",
-        tool_command="mi=$max_iterations; B=${mi:-3}; n=$(($(cat .objective/iter 2>/dev/null || echo 0)+1)); echo $n > .objective/iter; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"evidence\", \"budget\": \"exhausted\"}\n' \"$n\" >> .objective/convergence.jsonl; printf exhausted; else ev=$(cat .objective/evidence-command 2>/dev/null); now=$(find . -name .git -prune -o -name .objective -prune -o -name .ai -prune -o -name __pycache__ -prune -o -name .pytest_cache -prune -o -name .ruff_cache -prune -o -name node_modules -prune -o -name .venv -prune -o -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1); base=$(cat .objective/anchor 2>/dev/null); [ \"$now\" != \"$base\" ] && delta=changed || delta=unchanged; if [ -z \"$ev\" ]; then rc=99; else bash -c \"$ev\" > .objective/evidence-$n.log 2>&1; rc=$?; fi; printf '{\"iteration\": %s, \"gate\": \"evidence\", \"dod_exit\": %s, \"delta\": \"%s\"}\n' \"$n\" \"$rc\" \"$delta\" >> .objective/convergence.jsonl; if [ $rc -eq 0 ] && [ \"$delta\" = changed ]; then : > .objective/evidence-pass; printf evidence_ok; else rm -f .objective/evidence-pass; printf evidence_bad; fi; fi"
+        tool_command="if [ -f .objective/evidence-command.sha256 ] && [ \"$(sha256sum .objective/evidence-command 2>/dev/null | cut -d' ' -f1)\" != \"$(cat .objective/evidence-command.sha256)\" ]; then echo 'FATAL: .objective/evidence-command was altered after triage_gate admitted it -- refusing to re-run a definition of done this run never approved' >&2; printf tampered; exit 1; fi; if [ -f .objective/dod.sha256 ] && [ \"$(sha256sum .objective/gen/dod.sh 2>/dev/null | cut -d' ' -f1)\" != \"$(cat .objective/dod.sha256)\" ]; then echo 'FATAL: .objective/gen/dod.sh was altered after contract_gate admitted it -- refusing to re-run a definition of done this run never approved' >&2; printf tampered; exit 1; fi; mi=$max_iterations; B=${mi:-3}; n=$(($(cat .objective/iter 2>/dev/null || echo 0)+1)); echo $n > .objective/iter; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"evidence\", \"budget\": \"exhausted\"}\n' \"$n\" >> .objective/convergence.jsonl; printf exhausted; else ev=$(cat .objective/evidence-command 2>/dev/null); now=$(find . -name .git -prune -o -name .objective -prune -o -name .ai -prune -o -name __pycache__ -prune -o -name .pytest_cache -prune -o -name .ruff_cache -prune -o -name node_modules -prune -o -name .venv -prune -o -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1); base=$(cat .objective/anchor 2>/dev/null); [ \"$now\" != \"$base\" ] && delta=changed || delta=unchanged; if [ -z \"$ev\" ]; then rc=99; else bash -c \"$ev\" > .objective/evidence-$n.log 2>&1; rc=$?; fi; printf '{\"iteration\": %s, \"gate\": \"evidence\", \"dod_exit\": %s, \"delta\": \"%s\"}\n' \"$n\" \"$rc\" \"$delta\" >> .objective/convergence.jsonl; if [ $rc -eq 0 ] && [ \"$delta\" = changed ]; then : > .objective/evidence-pass; printf evidence_ok; else rm -f .objective/evidence-pass; printf evidence_bad; fi; fi"
     ]
 
     // ---------- feedback: teach the NEXT attempt ----------------------------
@@ -299,6 +333,11 @@ digraph ObjectiveRunner {
     preflight -> escalated [condition="outcome=fail",                                    label="blocked -- refuse before spending an LLM"]
 
     frame -> triage_gate
+    // The same rule this graph's own contract gate enforces on generated
+    // children (C7): every box node needs a real failure route. `frame` retries
+    // its must_write violation first; a hard FAIL after that lands here rather
+    // than running the pipeline off the rim.
+    frame -> postmortem [condition="outcome=fail", label="hard failure"]
 
     // Intake routing. Every token edge carries the stale-label conjunction
     // because triage_gate also has an outcome=fail edge.
@@ -351,7 +390,7 @@ digraph ObjectiveRunner {
     evidence_gate -> approve    [condition="context.tool.last_line=evidence_ok && outcome=success",   label="evidence holds"]
     evidence_gate -> feedback   [condition="context.tool.last_line=evidence_bad && outcome=success",  label="not satisfied -- iterate"]
     evidence_gate -> postmortem [condition="context.tool.last_line=exhausted && outcome=success",     label="budget spent -- decision point"]
-    evidence_gate -> postmortem [condition="outcome=fail",                                            label="gate could not run"]
+    evidence_gate -> postmortem [condition="outcome=fail",                                            label="gate could not run, or the pinned check was altered"]
 
     // Corrective re-entry: back through the gate that owns the route, so the
     // same shape runs again in a fresh context with the feedback file as its

@@ -102,8 +102,10 @@ contract block. The load-bearing ones:
 | `finalize` (tool) | Refuse a green exit without a disposition | code-tier | file test | `.objective/disposition` = satisfied\|redirected + the artifact it points to | exit 0 only if disposition artifact present |
 
 **Budget fuse arithmetic (shown, not implied).** Engine safety net: `max_steps = nodes × 50`
-(`engine.py:137` `_MAX_GOAL_GATE_RETRIES: int = 50`, `engine.py:611`) — for this ~16-node graph,
-800 steps; the exemplar's own fuses fire far earlier. Runner fuses: `triage_bad` loop ≤ 2
+(`engine.py:137` `_MAX_GOAL_GATE_RETRIES: int = 50`, `engine.py:611`) — for the graph as
+shipped (21 nodes, 50 edges), 1050 steps; the exemplar's own fuses fire far earlier.
+*(Corrected post-review: the design said "~16-node graph, 800 steps", which was the estimate
+at design time and never the shipped number.)* Runner fuses: `triage_bad` loop ≤ 2
 re-frames (`.objective/frame-iter`); compose-fix loop ≤ `$max_compose` (default 2 → at most 3
 lint/contract attempts); evidence loop ≤ `$max_iterations` (default 3) counted in
 `.objective/iter` by `evidence_gate` itself, `bug-fix.dot`-style, so *every* re-entry spends
@@ -645,6 +647,56 @@ a cross-reference there would have been decoration.
   through `tee /tmp/pytest-out.txt` — non-vacuous (it greps for a passing test whose
   name mentions the None-avatar case) but writing scratch outside the workspace.
   Worth a future tightening of the `frame` prompt; recorded rather than hidden.
+
+### 11.9 Post-review: the DoD rule was prose, and prose is a suggestion
+
+An adversarial review of this PR found the exemplar breaking its own first rule.
+§4.1 and `compose-contract.md` both required a `dod.sh` that is *red before the
+work exists* — but that requirement lived only in the composer's prompt. The
+review verified the consequence by execution: a composer writing `exit 0`
+satisfies C1–C8, its child converges on the first attempt, and `evidence_gate`
+re-runs the same vacuous script and agrees (`rc=0`, `delta=changed` →
+`evidence_ok` → `disposition=satisfied`). A false green with zero work product —
+the incident shape §5 was written to prevent, reproduced by the graph that
+prevents it.
+
+Fixed by making the rule a check:
+
+- **C9** — `check_child_contract.py` now *executes* `dod.sh` once, at admission,
+  bounded by `--dod-timeout` (default 120s), and requires exit **1**. Exit 0 is
+  "already green"; exit ≥2, a signal, or a timeout is a *broken script*, named
+  separately so a crash is never mistaken for convergence pressure.
+- **The sha-pin** — C9 proves the DoD was red at admission; it cannot prove the
+  script re-run later is the same one. The review verified that dodge too: a
+  child that rewrites `.objective/gen/dod.sh` (or a lane child that rewrites
+  `.objective/evidence-command`) after admission gets `evidence_ok` from one
+  unrelated file touch. So `contract_gate` and `triage_gate` now record
+  `sha256` of what they admitted, and `evidence_gate` re-hashes *before*
+  re-running — a mismatch prints `tampered`, exits 1, and leaves through
+  `postmortem → escalated`.
+
+  This is **anti-accident, not anti-adversary**, and the docs say so in those
+  words. `.objective/` is inside the workspace the child writes to, so a child
+  determined to defeat the pin can rewrite the script and the pin together.
+  Closing that structurally needs custody outside the workspace (the pin held
+  where the child cannot reach, or the DoD executed from a copy taken at
+  admission). Deliberately out of scope for an exemplar: an honestly-stated
+  boundary teaches more than a defence that only looks complete.
+- **`frame` had no `outcome=fail` route** — the one worker in the graph without
+  one, contradicting the C7 rule this same graph enforces on generated children.
+  Added; 49 → 50 edges.
+- **`sha256sum` is now a preflight precondition**, alongside `md5sum` and `find`,
+  so a host missing it refuses at `preflight` rather than failing every run at
+  the evidence gate.
+
+Two smaller things the review named, resolved in the file rather than silently:
+`lint_gate`'s entry-checked wall lets `compose` run a fourth, never-linted time
+before `compose_exhausted` — bounded, on a path already headed to postmortem, and
+now stated in the graph as a recorded trade rather than an accident; and
+`goal_gate=true` on `evidence_gate` cannot actually fail (Idiom A always exits 0,
+and a tool node's exit 0 is an explicit SUCCESS verdict), so it is kept as a
+*declaration* of which node owns the verdict, with the comment saying exactly
+that and pointing at `finalize` as the enforcement that really holds.
 
 ---
 

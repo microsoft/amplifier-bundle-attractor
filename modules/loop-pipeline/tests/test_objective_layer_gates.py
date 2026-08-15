@@ -23,8 +23,12 @@ pattern as ``test_examples_lint_clean.py``.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -114,19 +118,49 @@ def triage() -> ModuleType:
     return _load("validate_triage.py")
 
 
-def _write_child(tmp_path: Path, dot_text: str, *, with_dod: bool = True) -> tuple[Path, Path]:
+#: A definition of done that is genuinely RED before the work exists: the
+#: sentinel is absent, so ``test -f`` exits 1.  C9 executes the DoD at admission
+#: and requires exactly that, so every conforming fixture has to be honestly red
+#: rather than merely plausible-looking.
+_RED_DOD = "#!/usr/bin/env bash\n# red until the work lands\ntest -f {sentinel}\n"
+
+#: The vacuous DoD from the adversarial review: structurally perfect, and a lie.
+_VACUOUS_DOD = "#!/usr/bin/env bash\nexit 0\n"
+
+#: Nonzero, but not a red check -- a script that could not run at all.
+_BROKEN_DOD = "#!/usr/bin/env bash\nthis-command-does-not-exist\n"
+
+
+def _write_child(
+    tmp_path: Path,
+    dot_text: str,
+    *,
+    with_dod: bool = True,
+    dod_body: str | None = None,
+) -> tuple[Path, Path]:
     gen = tmp_path / ".objective" / "gen"
     gen.mkdir(parents=True, exist_ok=True)
     child = gen / "child.dot"
     child.write_text(dot_text, encoding="utf-8")
     dod = gen / "dod.sh"
     if with_dod:
-        dod.write_text("#!/usr/bin/env bash\npython3 tools/check.py\n", encoding="utf-8")
+        body = dod_body or _RED_DOD.format(sentinel=tmp_path / "work-landed")
+        dod.write_text(body, encoding="utf-8")
     return child, dod
 
 
-def _run_contract(contract: ModuleType, child: Path, dod: Path, report: Path) -> tuple[int, str]:
-    rc = contract.main(["--child", str(child), "--dod", str(dod), "--report", str(report)])
+def _run_contract(
+    contract: ModuleType,
+    child: Path,
+    dod: Path,
+    report: Path,
+    pin: Path | None = None,
+) -> tuple[int, str]:
+    argv = ["--child", str(child), "--dod", str(dod), "--report", str(report)]
+    # Always pin somewhere hermetic: the default is workspace-relative, and a
+    # test must never write into the repo it is run from.
+    argv += ["--pin", str(pin or report.parent / "dod.sha256")]
+    rc = contract.main(argv)
     return rc, report.read_text(encoding="utf-8")
 
 
@@ -253,6 +287,298 @@ def test_minimal_parser_agrees_with_the_engine_on_shipped_graphs(contract, shipp
 
     assert set(mini_graph.nodes) == set(engine_graph.nodes)
     assert len(mini_graph.edges) == len(engine_graph.edges)
+
+
+# ---------------------------------------------------------------------------
+# C9 -- the DoD must be RED before the work exists
+#
+# The adversarial review on PR #232 verified the hole this closes: the rule used
+# to live only in the composer's prompt (`objective-runner.dot`'s compose node,
+# `compose-contract.md`), and a prompt instruction is a suggestion.  A composer
+# writing `exit 0` passed C1-C8, its child converged on the first attempt, and
+# the parent's evidence gate re-ran the same vacuous script and agreed:
+# `rc=0 && delta=changed` is `evidence_ok`.  A false green, in 2.4 hours, with
+# zero work product -- the exact incident shape the exemplar exists to prevent.
+# ---------------------------------------------------------------------------
+
+
+def test_c9_blocks_a_vacuous_dod(contract, tmp_path, capsys):
+    """`exit 0` before the work exists is not a definition of done."""
+    child, dod = _write_child(tmp_path, _GOOD_CHILD, dod_body=_VACUOUS_DOD)
+    report = tmp_path / "contract-report.txt"
+    rc, text = _run_contract(contract, child, dod, report)
+
+    assert rc == 0
+    assert capsys.readouterr().out == "contract_bad"
+    failed = {line.split()[1] for line in text.splitlines() if line.startswith("[FAIL]")}
+    # C9 alone -- every structural check still passes, which is precisely why
+    # C9 had to exist: nothing about the graph was wrong.
+    assert failed == {"C9"}, text
+    assert "exited 0 BEFORE any work was done" in text
+
+
+def test_c9_admits_a_genuinely_red_dod(contract, tmp_path, capsys):
+    """The conforming fixture's DoD exits 1, and C9 says so explicitly."""
+    child, dod = _write_child(tmp_path, _GOOD_CHILD)
+    report = tmp_path / "contract-report.txt"
+    rc, text = _run_contract(contract, child, dod, report)
+
+    assert rc == 0
+    assert capsys.readouterr().out == "contract_ok"
+    assert "[PASS] C9" in text
+    assert "exited 1 before the work exists" in text
+
+
+def test_c9_names_a_broken_dod_separately_from_a_green_one(contract, tmp_path, capsys):
+    """rc>=2 is a script that could not run, not a red check -- say which.
+
+    Conflating the two would teach the composer that shipping a crash is an
+    acceptable definition of done, because a crash is also "nonzero".
+    """
+    child, dod = _write_child(tmp_path, _GOOD_CHILD, dod_body=_BROKEN_DOD)
+    report = tmp_path / "contract-report.txt"
+    rc, text = _run_contract(contract, child, dod, report)
+
+    assert rc == 0
+    assert capsys.readouterr().out == "contract_bad"
+    assert "[FAIL] C9" in text
+    assert "BROKEN script, not a red check" in text
+    assert "exited 0 BEFORE" not in text
+
+
+def test_c9_names_a_dod_that_never_terminates(contract, tmp_path, capsys):
+    """The DoD is re-run at least three times per iteration; it must finish."""
+    child, dod = _write_child(
+        tmp_path, _GOOD_CHILD, dod_body="#!/usr/bin/env bash\nsleep 30\n"
+    )
+    report = tmp_path / "contract-report.txt"
+    rc = contract.main(
+        [
+            "--child", str(child),
+            "--dod", str(dod),
+            "--report", str(report),
+            "--pin", str(tmp_path / "dod.sha256"),
+            "--dod-timeout", "1",
+        ]
+    )
+    text = report.read_text(encoding="utf-8")
+
+    assert rc == 0
+    assert capsys.readouterr().out == "contract_bad"
+    assert "did not finish within 1s" in text
+
+
+def test_c9_is_not_reported_when_there_is_no_dod_to_run(contract, tmp_path, capsys):
+    """A missing DoD is C0b's judgement; running nothing would prove nothing."""
+    child, dod = _write_child(tmp_path, _GOOD_CHILD, with_dod=False)
+    report = tmp_path / "contract-report.txt"
+    rc, text = _run_contract(contract, child, dod, report)
+
+    assert rc == 0
+    assert capsys.readouterr().out == "contract_bad"
+    assert "C0b" in text
+    assert "C9" not in text
+
+
+# ---------------------------------------------------------------------------
+# The sha-pin -- "the DoD I admitted" vs "the DoD that got re-run"
+# ---------------------------------------------------------------------------
+
+
+def test_admission_pins_the_dod_and_rejection_leaves_no_pin(contract, tmp_path, capsys):
+    """The pin records exactly the bytes that passed C9, and only those."""
+    child, dod = _write_child(tmp_path, _GOOD_CHILD)
+    report = tmp_path / "contract-report.txt"
+    pin = tmp_path / "dod.sha256"
+
+    _run_contract(contract, child, dod, report, pin)
+    assert capsys.readouterr().out == "contract_ok"
+    expected = hashlib.sha256(dod.read_bytes()).hexdigest()
+    assert pin.read_text(encoding="utf-8").strip() == expected
+
+    # A rejected child must not leave a pin behind for a later run to match.
+    dod.write_text(_VACUOUS_DOD, encoding="utf-8")
+    _run_contract(contract, child, dod, report, pin)
+    assert capsys.readouterr().out == "contract_bad"
+    assert not pin.exists()
+
+
+def test_the_pin_matches_what_sha256sum_prints(contract, tmp_path, capsys):
+    """The graph compares this pin using shell `sha256sum`; the two must agree."""
+    child, dod = _write_child(tmp_path, _GOOD_CHILD)
+    report = tmp_path / "contract-report.txt"
+    pin = tmp_path / "dod.sha256"
+    _run_contract(contract, child, dod, report, pin)
+    assert capsys.readouterr().out == "contract_ok"
+
+    shell = subprocess.run(
+        ["sha256sum", str(dod)], capture_output=True, text=True, check=True
+    ).stdout.split()[0]
+    assert pin.read_text(encoding="utf-8").strip() == shell
+
+
+def test_triage_pins_the_evidence_command_it_published(triage, tmp_path, capsys):
+    """Lane runs get the same protection: the gate pins what it published."""
+    _run_triage(triage, tmp_path, _VALID_TRIAGE)
+    assert capsys.readouterr().out == "bugfix"
+    state = tmp_path / ".objective"
+    published = state / "evidence-command"
+    pin = state / "evidence-command.sha256"
+    assert pin.read_text(encoding="utf-8").strip() == hashlib.sha256(
+        published.read_bytes()
+    ).hexdigest()
+
+
+def test_triage_redirect_clears_the_evidence_command_pin(triage, tmp_path, capsys):
+    """No command to re-run means no pin left lying around to match against."""
+    _run_triage(triage, tmp_path, _VALID_TRIAGE)
+    capsys.readouterr()
+    assert (tmp_path / ".objective" / "evidence-command.sha256").exists()
+
+    _run_triage(triage, tmp_path, dict(_VALID_TRIAGE, shape="redirect", evidence_command="NONE"))
+    assert capsys.readouterr().out == "redirect"
+    assert not (tmp_path / ".objective" / "evidence-command.sha256").exists()
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: the REAL tool_command text, taken from the graph the engine runs
+#
+# These drive the shell the pipeline actually executes -- extracted from
+# objective-runner.dot by the engine's own parser -- rather than a paraphrase of
+# it.  A fix that only holds in a hand-written approximation of the gate is not
+# a fix.
+# ---------------------------------------------------------------------------
+
+_SHELL_GATES = pytest.mark.skipif(
+    not (shutil.which("bash") and shutil.which("sha256sum")),
+    reason="the shipped gate commands need bash and sha256sum",
+)
+
+
+def _tool_command(node_id: str) -> str:
+    """The verbatim tool_command of a node, read through the engine's parser."""
+    from amplifier_module_loop_pipeline.dot_parser import parse_dot
+
+    graph = parse_dot(
+        (_OBJECTIVE_DIR / "objective-runner.dot").read_text(encoding="utf-8")
+    )
+    return graph.nodes[node_id].attrs["tool_command"]
+
+
+def _objective_workspace(tmp_path: Path, dod_body: str) -> Path:
+    """A workspace at the point `contract_gate` is about to run on a compose route."""
+    (tmp_path / ".objective" / "gen").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "app.py").write_text("def f(): pass\n", encoding="utf-8")
+    # preflight's anchor, over the workspace as it was before any work.
+    subprocess.run(
+        "find . -name .git -prune -o -name .objective -prune -o -type f -exec md5sum {} + "
+        "2>/dev/null | LC_ALL=C sort | md5sum | cut -d' ' -f1 > .objective/anchor",
+        shell=True, cwd=tmp_path, check=True,
+    )
+    # triage_gate admitted a compose shape (CF-2 pins this exact command).
+    (tmp_path / ".objective" / "evidence-command").write_text(
+        "bash .objective/gen/dod.sh\n", encoding="utf-8"
+    )
+    (tmp_path / ".objective" / "gen" / "child.dot").write_text(_GOOD_CHILD, encoding="utf-8")
+    (tmp_path / ".objective" / "gen" / "dod.sh").write_text(dod_body, encoding="utf-8")
+    return tmp_path
+
+
+def _run_gate(node_id: str, workspace: Path) -> subprocess.CompletedProcess[str]:
+    env = {
+        **os.environ,
+        "runner_dir": str(_OBJECTIVE_DIR),
+        "target_dir": str(workspace),
+        "max_iterations": "3",
+    }
+    return subprocess.run(
+        _tool_command(node_id),
+        shell=True, cwd=workspace, env=env, capture_output=True, text=True, check=False,
+    )
+
+
+@_SHELL_GATES
+def test_real_contract_gate_command_blocks_the_vacuous_dod(tmp_path):
+    """The review's exact scenario, through the shell the pipeline really runs.
+
+    Before C9 this printed `contract_ok`, `run_child` ran a child that converged
+    instantly, and `evidence_gate` returned `evidence_ok`.
+    """
+    workspace = _objective_workspace(tmp_path, _VACUOUS_DOD)
+    result = _run_gate("contract_gate", workspace)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "contract_bad"
+    # contract_bad routes back to `compose`; `run_child` is never reached, so
+    # the vacuous DoD never gets to be re-run by the evidence gate at all.
+    assert not (workspace / ".objective" / "dod.sha256").exists()
+    assert "[FAIL] C9" in (workspace / ".objective" / "contract-report.txt").read_text(
+        encoding="utf-8"
+    )
+
+
+@_SHELL_GATES
+def test_real_evidence_gate_command_refuses_a_dod_rewritten_after_admission(tmp_path):
+    """The rewrite-after-admission dodge, closed by the pin.
+
+    An honestly-red DoD is admitted; the child then overwrites it with `exit 0`
+    and touches a file, which used to be enough for `rc=0 && delta=changed`.
+    """
+    red = "#!/usr/bin/env bash\ngrep -q MARKER_WORK_LANDED src/app.py\n"
+    workspace = _objective_workspace(tmp_path, red)
+
+    admitted = _run_gate("contract_gate", workspace)
+    assert admitted.stdout == "contract_ok", admitted.stderr
+    assert (workspace / ".objective" / "dod.sha256").is_file()
+
+    # The child does not do the work. It rewrites the check instead.
+    (workspace / ".objective" / "gen" / "dod.sh").write_text(_VACUOUS_DOD, encoding="utf-8")
+    (workspace / "src" / "app.py").write_text("def f(): pass\n# touched\n", encoding="utf-8")
+
+    result = _run_gate("evidence_gate", workspace)
+
+    assert result.returncode != 0, "a tampered pin must be a LOUD nonzero, not a token"
+    assert result.stdout == "tampered"
+    assert ".objective/gen/dod.sh was altered after contract_gate admitted it" in result.stderr
+    # Nonzero means tool.last_line is NOT refreshed, so every `&& outcome=success`
+    # edge is dead and only `outcome=fail -> postmortem` can match.
+    assert not (workspace / ".objective" / "evidence-pass").exists()
+
+
+@_SHELL_GATES
+def test_real_evidence_gate_command_refuses_a_rewritten_evidence_command(tmp_path):
+    """Same close, on the lane route: the evidence command is pinned too."""
+    workspace = _objective_workspace(tmp_path, "#!/usr/bin/env bash\nexit 1\n")
+    pin = hashlib.sha256(
+        (workspace / ".objective" / "evidence-command").read_bytes()
+    ).hexdigest()
+    (workspace / ".objective" / "evidence-command.sha256").write_text(
+        pin + "\n", encoding="utf-8"
+    )
+
+    # A lane child overwrites what the parent is about to re-run.
+    (workspace / ".objective" / "evidence-command").write_text("true\n", encoding="utf-8")
+    result = _run_gate("evidence_gate", workspace)
+
+    assert result.returncode != 0
+    assert result.stdout == "tampered"
+    assert ".objective/evidence-command was altered after triage_gate admitted it" in result.stderr
+
+
+@_SHELL_GATES
+def test_real_evidence_gate_command_still_passes_an_untampered_run(tmp_path):
+    """The pin must not break the honest path -- a negative control for the guard."""
+    workspace = _objective_workspace(tmp_path, "#!/usr/bin/env bash\ntest -f DONE\n")
+    assert _run_gate("contract_gate", workspace).stdout == "contract_ok"
+
+    # The child does the work the DoD asks for, and touches nothing else.
+    (workspace / "DONE").write_text("", encoding="utf-8")
+    result = _run_gate("evidence_gate", workspace)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "evidence_ok"
+    assert (workspace / ".objective" / "evidence-pass").exists()
 
 
 # ---------------------------------------------------------------------------

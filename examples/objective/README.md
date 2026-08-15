@@ -80,6 +80,8 @@ cat .objective/disposition        # satisfied | redirected | escalated
      `folder` node, unmodified, carrying its own gates and budgets.
    - **compose** — an LLM writes a purpose-built child `.dot` + `dod.sh`; two
      gates outside its context check the result before it is allowed to run.
+     One of them (**C9**) *executes* the `dod.sh` and rejects it unless it is
+     genuinely red — a definition of done that cannot fail is not one.
    - **redirect** — the honest no, written up as `.objective/redirect.md`.
 5. **`evidence_gate`** (tool, the load-bearing one) — **re-runs the definition of
    done itself**, in the parent, and asserts the workspace changed since the
@@ -120,6 +122,24 @@ The second half of that gate is the **delta assertion**: a green check on an
 unchanged workspace means nothing happened and the check was already passing.
 Both halves must hold, which is why `preflight` records an anchor first.
 
+Two later additions close the ways a green could still be manufactured, both
+found by an adversarial review of this exemplar rather than in theory:
+
+- **C9** — `contract_gate` *runs* the generated `dod.sh` once, at admission,
+  and requires exit 1. "The DoD must be red before the work exists" used to be
+  a line in the composer's prompt, and a prompt instruction is a suggestion: a
+  composer writing `exit 0` satisfied every structural check, its child
+  converged instantly, and this gate re-ran the same vacuous script and agreed.
+- **The sha-pin** — `triage_gate` and `contract_gate` record `sha256` of what
+  they admitted (`.objective/evidence-command.sha256`, `.objective/dod.sha256`);
+  `evidence_gate` re-hashes *before* re-running and refuses loudly on a
+  mismatch, so a check rewritten after it was approved cannot be the check that
+  gets run. It is **anti-accident, not anti-adversary** — the workspace is
+  child-writable, so a determined child could update the pin too. Closing that
+  structurally needs custody outside the workspace, which is deliberately out
+  of scope for an exemplar; see
+  [`compose-contract.md`](compose-contract.md#the-pin-and-what-it-is-not).
+
 ### 3. The honest no is a deliverable, not a failure
 
 `redirect` exits **green** with `.objective/redirect.md` — the objective
@@ -141,7 +161,7 @@ artifact is what lets an unattended caller tell that outcome apart from
 | [`triage-schema.json`](triage-schema.json) | the intake contract: routing vocabulary, required fields, and the cross-field rules |
 | [`validate_triage.py`](validate_triage.py) | `triage_gate`'s mechanism — stdlib only, no `jsonschema` dependency |
 | [`compose-contract.md`](compose-contract.md) | what every generated child must satisfy, written as the composer reads it |
-| [`check_child_contract.py`](check_child_contract.py) | `contract_gate`'s mechanism — the eight structural checks |
+| [`check_child_contract.py`](check_child_contract.py) | `contract_gate`'s mechanism — eight structural checks plus **C9**, which *runs* the generated `dod.sh` at admission and rejects it unless it is red |
 
 ---
 

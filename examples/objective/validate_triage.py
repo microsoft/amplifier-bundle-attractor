@@ -29,6 +29,14 @@ Side effects on an admitted record, all under ``--state-dir``:
   shape              the admitted token (audit trail)
   evidence-command   the definition-of-done command text, for the evidence gate
                      to re-run itself (absent for the redirect shape)
+  evidence-command.sha256
+                     the sha-pin of the file above, recorded at the moment it was
+                     admitted. ``evidence_gate`` re-hashes before re-running, so a
+                     child that overwrites the evidence command mid-run is caught
+                     rather than obeyed. Anti-accident, not anti-adversary: the
+                     workspace is child-writable, so a determined child could
+                     update the pin too (see compose-contract.md, "The pin, and
+                     what it is not").
   triage-report.txt  human-readable admission report (written on every run)
 
 Usage:
@@ -41,6 +49,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -264,11 +273,19 @@ def main(argv: list[str] | None = None) -> int:
 
     (state_dir / "shape").write_text(shape + "\n", encoding="utf-8")
     evidence_path = state_dir / "evidence-command"
+    pin_path = state_dir / "evidence-command.sha256"
     if shape == "redirect":
         # Nothing for the evidence gate to re-run: the deliverable is the diagnosis.
         evidence_path.unlink(missing_ok=True)
+        pin_path.unlink(missing_ok=True)
     else:
         evidence_path.write_text(evidence_command + "\n", encoding="utf-8")
+        # Pin the bytes we just published. The evidence gate re-hashes this file
+        # before it re-runs the command, so "the check triage admitted" and "the
+        # check the parent ran" are the same question.
+        pin_path.write_text(
+            hashlib.sha256(evidence_path.read_bytes()).hexdigest() + "\n", encoding="utf-8"
+        )
 
     report = [
         "TRIAGE ADMITTED",

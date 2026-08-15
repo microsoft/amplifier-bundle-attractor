@@ -10,8 +10,24 @@ context before it is allowed to run. Two gates do that, in order:
    itself knows about (dead conditional edges, stale-label collisions,
    fail-routed-to-exit, pipe-masked gate exit codes). ERRORs block.
 2. this script -- the *design* checks lint deliberately does not own: does the
-   generated graph actually have the shape of an attractor, and is its gate
-   really outside its workers?
+   generated graph actually have the shape of an attractor, is its gate really
+   outside its workers, and (C9) does the definition of done actually FAIL
+   before the work exists?
+
+C9 is the one check that is not structural. It EXECUTES ``dod.sh`` once, here,
+at admission time. Everything else about a vacuous ``exit 0`` definition of done
+looks perfect: the graph is shaped correctly, the gate runs the script, the
+child converges on the first attempt, and the parent's evidence gate re-runs the
+same script and agrees. Only running it *before the work exists* distinguishes
+"this check can go green" from "this check was always green". The rule used to
+live in the composer's prompt; as a prompt instruction it was a suggestion.
+
+On admission this script also PINS the bytes it approved (``--pin``, default
+``.objective/dod.sha256``). The parent's evidence gate re-hashes ``dod.sh``
+against that pin before re-running it, so a child that rewrites the definition
+of done *after* admission is caught rather than believed. See
+``compose-contract.md`` -- "The pin, and what it is not" -- for the honest
+boundary: the pin is anti-accident, not anti-adversary.
 
 See ``compose-contract.md`` for the contract in the composer's own words, and
 ``docs/PIPELINE_DESIGN_PRINCIPLES.md`` section 0 for why the gate must live
@@ -43,11 +59,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+#: How long C9's admission-time DoD probe may run. The contract tells the
+#: composer to keep ``dod.sh`` fast -- it is executed at least three times per
+#: iteration (here at admission, by the child's own gate, and again by the
+#: parent's evidence gate).
+DOD_PROBE_TIMEOUT_S = 120
 
 # ---------------------------------------------------------------------------
 # A small DOT reader -- only what the structural checks need
@@ -515,6 +539,90 @@ def run_checks(graph: DotGraph, dod_path: str) -> list[CheckResult]:
     return results
 
 
+def check_dod_is_red(dod_path: Path, timeout_s: int = DOD_PROBE_TIMEOUT_S) -> CheckResult:
+    """C9 -- EXECUTE the definition of done once, here, before the child runs.
+
+    The contract has always told the composer that ``dod.sh`` must be red before
+    the work exists. As a prompt instruction that is a *suggestion*: a composer
+    that writes ``exit 0`` satisfies every structural check, its child converges
+    instantly, and the parent's evidence gate then re-runs the same vacuous
+    script and agrees. ``rc=0 && delta=changed`` is a false green -- the exact
+    shape of the incident this whole exemplar exists to prevent.
+
+    So the gate runs it, once, at admission time -- outside the composer's
+    context, before any work exists -- and reads the exit status:
+
+      rc == 1        PASS. The check is genuinely red, so it can go green later.
+      rc == 0        FAIL. Already satisfied before the work exists; whatever it
+                     asserts, it is not this objective.
+      rc >= 2, <0    FAIL, named separately: a script that cannot run (syntax
+                     error, missing interpreter, missing tool) is BROKEN, not
+                     red. Conflating the two would teach the composer to ship a
+                     crash as a definition of done.
+      timeout        FAIL, named separately: the DoD is re-run at least three
+                     times per iteration, so one that never finishes is unusable.
+
+    This is a probe of a script the composer wrote and the child is about to run
+    anyway; running it one extra time here buys the only trustworthy answer to
+    "can this check ever fail?"
+    """
+    title = "the definition of done is red before the work exists"
+    try:
+        # Executing the DoD is the entire point of C9: it is the only way to
+        # distinguish "this check can go red" from "this check is a constant".
+        completed = subprocess.run(
+            ["bash", str(dod_path)],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            "C9",
+            title,
+            False,
+            f"{dod_path}: did not finish within {timeout_s}s -- a definition of done is "
+            "re-run by the child's gate and again by the parent; it must terminate",
+        )
+    except OSError as exc:
+        return CheckResult(
+            "C9", title, False, f"{dod_path}: could not be executed: {exc}"
+        )
+
+    rc = completed.returncode
+    tail = (completed.stdout + completed.stderr).strip().splitlines()
+    excerpt = f" | last output: {tail[-1][:160]}" if tail else ""
+
+    if rc == 0:
+        return CheckResult(
+            "C9",
+            title,
+            False,
+            f"{dod_path}: exited 0 BEFORE any work was done -- this check is already "
+            "green, so it proves nothing and can never fail. Assert something that is "
+            "false right now and becomes true only when the objective is satisfied"
+            + excerpt,
+        )
+    if rc == 1:
+        return CheckResult(
+            "C9", title, True, f"{dod_path}: exited 1 before the work exists -- red, as required"
+        )
+    return CheckResult(
+        "C9",
+        title,
+        False,
+        f"{dod_path}: exited {rc} -- that is a BROKEN script, not a red check. A "
+        "definition of done signals 'not satisfied' with exit 1; 2 or more (or a "
+        "signal) means it could not run at all" + excerpt,
+    )
+
+
+def sha256_file(path: Path) -> str:
+    """Hex digest of a file's bytes -- the same number ``sha256sum`` prints."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def render_report(child: str, dod: str, results: list[CheckResult], verdict: str) -> str:
     lines = [
         "COMPOSED-CHILD CONTRACT REPORT",
@@ -543,6 +651,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--report",
         default=".objective/contract-report.txt",
         help="where to write the human-readable report",
+    )
+    parser.add_argument(
+        "--pin",
+        default=".objective/dod.sha256",
+        help=(
+            "where to record the sha256 of the ADMITTED dod.sh (default: "
+            ".objective/dod.sha256). The parent's evidence gate re-hashes the "
+            "file against this pin before re-running it, so a child that "
+            "rewrites the definition of done after admission is caught."
+        ),
+    )
+    parser.add_argument(
+        "--dod-timeout",
+        type=int,
+        default=DOD_PROBE_TIMEOUT_S,
+        help=f"seconds C9's admission-time DoD probe may run (default: {DOD_PROBE_TIMEOUT_S})",
     )
     return parser
 
@@ -590,7 +714,31 @@ def main(argv: list[str] | None = None) -> int:
     if graph is not None:
         results.extend(run_checks(graph, str(dod_path)))
 
+    # C9 runs LAST and only when there is a non-empty script to run: a missing or
+    # empty dod.sh is already C0b's judgement, and executing nothing would say
+    # nothing. It is a *behavioural* check, so it deliberately does not depend on
+    # the child graph parsing -- a vacuous DoD is disqualifying on its own.
+    dod_runnable = not any(r.check_id == "C0b" for r in problems)
+    if dod_runnable:
+        results.append(check_dod_is_red(dod_path, args.dod_timeout))
+
     verdict = "contract_ok" if all(r.passed for r in results) and results else "contract_bad"
+
+    # The sha-pin: record the bytes we just admitted, so `evidence_gate` can tell
+    # "the DoD I approved" from "a DoD rewritten after I approved it". Written
+    # ONLY on admission; a rejected child leaves no pin behind to be matched
+    # against later. See compose-contract.md, "The pin, and what it is not".
+    pin_path = Path(args.pin)
+    try:
+        if verdict == "contract_ok" and dod_path.is_file():
+            pin_path.parent.mkdir(parents=True, exist_ok=True)
+            pin_path.write_text(sha256_file(dod_path) + "\n", encoding="utf-8")
+        else:
+            pin_path.unlink(missing_ok=True)
+    except OSError as exc:  # pragma: no cover - environment failure
+        print(f"check_child_contract: cannot write pin {pin_path}: {exc}", file=sys.stderr)
+        return 2
+
     report_path.write_text(render_report(args.child, args.dod, results, verdict), encoding="utf-8")
     print(verdict, end="")
     return 0

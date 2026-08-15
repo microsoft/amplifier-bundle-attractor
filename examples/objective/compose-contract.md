@@ -10,7 +10,7 @@ Two gates outside your context check your output before it is allowed to run:
 | Gate | What it is | What it owns |
 |---|---|---|
 | `lint_gate` | `attractor lint` — the engine's own linter | executability: parse errors, dead conditional edges (TOPO-001), stale-label collisions (TOPO-002), failure routed into the success exit (TOPO-006), pipe-masked gate exit codes (CMD-001/002). **ERRORs block.** Warnings are recorded, not fatal. |
-| `contract_gate` | `check_child_contract.py` | design shape: the eight checks below. Any FAIL sends you back here with the report. |
+| `contract_gate` | `check_child_contract.py` | design shape: the nine checks below — and C9 *executes* your `dod.sh` once, before your child ever runs. Any FAIL sends you back here with the report. |
 
 Neither gate can be argued with, and neither one is you. That is deliberate: in a
 live run of this repo's own pipelines, a worker fabricated its own convergence
@@ -30,10 +30,14 @@ before every rewrite — they name exactly what failed.
 A shell script, run from the workspace root, that **exits 0 if and only if the
 objective is satisfied**.
 
-- It must be able to *fail*. Run it before you write any of the work: it should
-  be **red right now**. A DoD that is already green proves nothing, and the
-  parent's evidence gate will notice — it also asserts that the workspace
-  actually changed, so a no-op cannot pass on a stale green.
+- It must be able to *fail*, and it must be **red right now**, before any of the
+  work exists. Say so with **exit code 1** — not 0 (already satisfied), and not
+  2 or more (a script that crashed is broken, not red). This is **C9**, and it is
+  not advice: `contract_gate` runs your `dod.sh` once at admission and returns
+  `contract_bad` unless it exits 1. Run it yourself first and check `$?`.
+- On admission the gate records **`sha256(dod.sh)`** in `.objective/dod.sha256`.
+  The parent re-hashes before it re-runs the file, so the DoD that gets re-run is
+  the one that was admitted. See *The pin, and what it is not*, below.
 - No `echo pass`. No "an LLM said it looked right". Assert something: a test
   runs, a file exists with required content, a schema validates, a command
   exits 0.
@@ -56,7 +60,7 @@ invent new machinery:
 
 ---
 
-## The eight checks (`check_child_contract.py`)
+## The nine checks (`check_child_contract.py`)
 
 | # | Check | Why it exists |
 |---|---|---|
@@ -68,6 +72,36 @@ invent new machinery:
 | C6 | **A reachable node exits nonzero when it cannot converge** | A non-converging run must be a LOUD red, not a quiet green. Use the `bug-fix.dot` idiom: `max_retries=0`, `printf escalated; exit 1`, no fail-route out of it. |
 | C7 | **Every `box` node has an `outcome=fail` route or a `retry_target`** | A FAIL does not traverse plain edges. An unrouted worker failure runs the pipeline off the rim. |
 | C8 | **The child consumes `$goal`** | The objective is cloned into your child's context as `goal`. If nothing reads it, your pipeline is working on nothing in particular. |
+| C9 | **`dod.sh` exits 1 when run right now** | The only check that *executes* anything. Everything else about a vacuous `exit 0` definition of done looks perfect: the shape passes, the child converges on its first attempt, and the parent re-runs the same vacuous script and agrees. Running it *before the work exists* is the only way to tell "this check can go green" from "this check was always green". |
+
+---
+
+## The pin, and what it is not
+
+C9 proves your `dod.sh` was red **at admission**. It cannot, by itself, prove the
+script the parent re-runs later is the same one. So on admission `contract_gate`
+records `sha256(dod.sh)` in `.objective/dod.sha256`, and `triage_gate` does the
+same for `.objective/evidence-command`. Before the parent's `evidence_gate`
+re-runs anything, it re-hashes both. A mismatch is not a red check and not a
+retry — the gate prints `tampered`, exits nonzero, and the run leaves through
+`postmortem → escalated` with the altered path named on stderr.
+
+That closes a real accident class. Without it, a child could pass every gate
+honestly and then, mid-run, overwrite `.objective/gen/dod.sh` with `exit 0`;
+one file touch anywhere gives `delta=changed`, and `rc=0 && delta=changed` is
+`evidence_ok`. The pin turns "the check I approved" and "the check I ran" into
+the same question.
+
+**Be clear about what this is.** The pin is **anti-accident, not
+anti-adversary.** `.objective/` lives in the workspace the child writes to, so a
+child determined to defeat the pin can rewrite `dod.sh` *and* `dod.sha256`
+together. Closing that structurally means custody outside the workspace — the
+pin held somewhere the child cannot reach, or the DoD executed from a copy taken
+at admission. That is deliberately out of scope here: this is an exemplar, and
+the honest statement of a boundary teaches more than a defence that only looks
+complete. What the pin does buy is that **drift, overwrite, and cleanup scripts
+now fail loudly instead of passing quietly** — and a child would have to take a
+second, deliberate step to get past it.
 
 ---
 
@@ -126,10 +160,15 @@ digraph ComposedChild {
 ## Things that will get you sent back
 
 - **A DoD that cannot fail.** `printf pass`, `true`, `test -d .` — or any check
-  that was already green before the work existed.
-- **Weakening `dod.sh` to get past a gate.** The parent re-runs it in its own
-  context afterwards. A hollow DoD buys a louder failure later, not an easier
-  one.
+  that was already green before the work existed. C9 runs it and reads `$?`.
+- **A DoD that crashes.** Exit 2, 127, or a signal is a *broken script*, not a
+  red check. C9 names that case separately, because a crash that happens to be
+  nonzero would otherwise look like healthy convergence pressure.
+- **Weakening `dod.sh` to get past a gate.** This does **not** buy a louder
+  failure later — it is refused at admission. C9 executes the script before your
+  child runs; a hollow DoD never gets to run at all. And rewriting it *after*
+  admission does not work either: the pin no longer matches, and the parent's
+  evidence gate hard-fails the run instead of re-running it.
 - **Putting the gate inside the worker** (`goal_gate=true` on a `box`, or a
   worker that writes its own "converged" file for a gate to read).
 - **A straight line.** `plan -> implement -> test` with no back-edge is a recipe

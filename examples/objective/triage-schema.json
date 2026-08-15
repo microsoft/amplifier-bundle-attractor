@@ -1,0 +1,71 @@
+{
+  "title": "objective-runner triage record",
+  "description": "The intake contract for examples/objective/objective-runner.dot. The `frame` node (an LLM worker) PROPOSES a triage record at .objective/triage.json; `triage_gate` (a code-tier node running validate_triage.py) ADMITS it. Routing happens on the admitted record -- never on the worker's self-report -- because verification inside the context that produced the evidence is not verification (docs/PIPELINE_DESIGN_PRINCIPLES.md section 0).",
+  "schema_dialect": "A deliberately small subset of JSON Schema: type, required, properties, enum, min_length. validate_triage.py implements exactly this subset with the standard library and nothing else -- no jsonschema dependency, so the gate runs anywhere python3 does.",
+  "type": "object",
+  "required": ["shape", "three_question", "evidence_command", "rationale"],
+  "properties": {
+    "shape": {
+      "type": "string",
+      "description": "The routing token. Single lowercase words, because condition matching is exact string equality (docs/ROUTING-REFERENCE.md section 3).",
+      "enum": [
+        "bugfix",
+        "feature",
+        "refactor",
+        "testgen",
+        "review",
+        "compose",
+        "redirect"
+      ]
+    },
+    "three_question": {
+      "type": "object",
+      "description": "The repo's own three-question test (docs/PIPELINE_DESIGN_PRINCIPLES.md section 0) applied PROSPECTIVELY to the stated objective. Each answer must begin with a bare yes or no so the diagnosis is machine-auditable, then say why.",
+      "required": ["cycle", "evidence_gate", "bad_day"],
+      "properties": {
+        "cycle": {
+          "type": "string",
+          "description": "Q1 -- Is there a cycle? Is there work that can be attempted, checked by machine, and re-attempted?",
+          "min_length": 4
+        },
+        "evidence_gate": {
+          "type": "string",
+          "description": "Q2 -- Is the exit gated on machine-checkable evidence external to the worker, rather than on step completion?",
+          "min_length": 4
+        },
+        "bad_day": {
+          "type": "string",
+          "description": "Q3 -- Would it still land if any one LLM node had a bad day -- a single response that is plausible but wrong?",
+          "min_length": 4
+        }
+      }
+    },
+    "evidence_command": {
+      "type": "string",
+      "description": "A shell command that exits 0 if and only if the objective is satisfied, or the literal string NONE. This is the definition of done that the parent's evidence_gate RE-RUNS itself after the child pipeline finishes -- the child's own green is necessary, never sufficient.",
+      "min_length": 1
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Why this shape, in the frame node's own words. Read by a human when a run is surprising.",
+      "min_length": 10
+    }
+  },
+  "cross_field_rules": [
+    {
+      "id": "CF-1",
+      "rule": "shape != redirect implies evidence_command != NONE",
+      "why": "No attractor without machine evidence. A lane or composed child whose definition of done is NONE has nothing for the evidence gate to re-run, so its exit would rest on an LLM's opinion of its own work -- the exact shape the redirect disposition exists to name honestly."
+    },
+    {
+      "id": "CF-2",
+      "rule": "shape == compose implies evidence_command == bash .objective/gen/dod.sh",
+      "why": "The composed child's definition of done lives at a fixed path so the parent's evidence gate can re-run it without trusting anything the composer wrote about itself. See compose-contract.md."
+    },
+    {
+      "id": "CF-3",
+      "rule": "each three_question answer starts with yes or no (case-insensitive)",
+      "why": "Keeps the diagnosis machine-auditable as well as readable; redirect.md quotes these answers verbatim."
+    }
+  ]
+}

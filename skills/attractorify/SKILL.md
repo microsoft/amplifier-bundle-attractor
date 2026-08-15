@@ -410,3 +410,14 @@ If empty, read the current session context to identify the work before diagnosin
   not answer; a fixed intake questionnaire is the anti-pattern this skill exists
   to prevent one level up. (The diagnosis artifact is the skill's own verdict
   record, written from session evidence — never a form posed to the user.)
+- **Not the objective layer.** This skill DESIGNS a new pipeline for work that
+  has none. `examples/objective/objective-runner.dot` SELECTS from — or COMPOSES
+  against — what already ships, at run time, from a stated objective. One triage
+  doctrine, two front doors: both apply the three-question test, and their
+  outcomes line up. A verdict of `attractor` or `existing-attractor` here is the
+  runner's `select`/`compose` route there; a verdict of `recipe` or `one-shot`
+  here is its `redirect` disposition — which the runner writes up as
+  `.objective/redirect.md` and exits green on, for the same reason this skill
+  stops at the artifact: the honest no IS the deliverable. Reach for the runner
+  when the user has an objective and no idea which shape fits; reach for this
+  skill when the shape that fits does not exist yet.

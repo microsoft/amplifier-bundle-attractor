@@ -942,6 +942,16 @@ The `goal` value comes from the graph-level `goal` attribute. Override it at run
 time with `--param goal="..."` on the `attractor run` CLI, or the `goal`
 parameter in `run_pipeline`.
 
+**`$goal` in a `tool_command` resolves differently than in a `prompt`.** LLM-node
+prompts are given `$goal` from the graph's `goal` attribute directly. Tool
+commands are substituted against the pipeline *context*, where the graph
+attribute lives under the dotted key `graph.goal` -- a bare `goal` key exists
+only when one was passed in (`--param goal="..."`, or a `params` entry). So a
+`tool_command` that must work regardless of how the pipeline was invoked --
+notably inside a `shape=folder` child, which inherits `graph.goal` from its
+parent but not necessarily a flat `goal` param -- should reference
+`${graph.goal}`, or accept `goal` as an explicit param.
+
 `$iteration` is seeded to `"0"` at pipeline start and increments by 1 on each
 `loop_restart` edge traversal. Use it in prompts to let the LLM know which
 attempt it is on:

@@ -89,6 +89,27 @@ class still has to say what it read — otherwise "no drift found" and "nothing
 was looked at" are the same record, and the first is a result while the second
 is a failure wearing its clothes.
 
+**`swept` is reconciled, not taken on trust.** The gate reads
+`.drift-review/inventory/<class>.txt` — the list written before you ran — and
+measures your array against it. Three things follow, and none of them is a trap:
+
+- **Report what you actually opened, and nothing else.** A partial sweep is a
+  legitimate outcome and it will be published as one (`examples: 62/114 (54%)`
+  reaches `report.md` under a gate). Padding the array to look complete is the
+  one move that turns an honest partial result into a false claim, and it is
+  the move the reconciliation exists to make visible.
+- **The normative sources you read for context belong in `swept` too.** They are
+  reported separately, as reads rather than as surfaces of your class, so they
+  no longer inflate the count. You do not have to decide what is in-class; the
+  gate already knows.
+- **Do not list the same path twice.** Duplicates are counted once and named in
+  the report. Harmless, but it is bookkeeping the gate should not have to do
+  for you.
+
+The only coverage rule that *rejects* is the floor: if **none** of what you
+listed is in your class's inventory, there was no review of that class to
+report, and the round comes back.
+
 ---
 
 ## What the gate checks, rule by rule

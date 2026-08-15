@@ -96,7 +96,8 @@ directory. It is scratch state, not a deliverable to commit -- copy
 |---|---|
 | `.drift-review/report.md` | **the deliverable** -- what was swept, every finding with both sides quoted |
 | `.drift-review/findings.json` | the admitted corpus, machine-readable, sorted by severity |
-| `.drift-review/findings-report.txt` | the gate's admission record: what it accepted and what it rejected, with reasons |
+| `.drift-review/findings-report.txt` | the gate's admission record: what it accepted and what it rejected, with reasons, plus the COVERAGE reconciliation |
+| `.drift-review/coverage.txt` | one measured `<class>: swept/inventory (pct)` line per class -- the numbers `report.md` is required to carry verbatim |
 | `.drift-review/disposition` | `findings` \| `clean` \| `escalated` -- how an unattended caller tells the outcomes apart |
 | `.drift-review/inventory/` | the four surface lists the reviewers were scoped to, and their counts |
 
@@ -143,8 +144,8 @@ larger bill.
 |---|---|
 | `preflight` | **Refuse before spending an LLM.** The five normative sources exist in the cwd; `check_findings.py` and `finding-contract.md` exist under `runner_dir`; `git`, `python3`, `grep`, `sort`, `wc` are on PATH. `ready`, or `blocked` and exit 1. |
 | `inventory` | **Scope is a file, not a recollection.** Four lists from `git ls-files` -- only tracked files, because an untracked scratch file makes no claim on anyone. A class matching nothing is a machinery failure (`no_surfaces`, exit 1), never an empty result: a review that swept an empty list would report "clean" about surfaces it never opened. |
-| `findings_gate` | **Every finding cites `file:line` on both sides, and the gate re-opens both files.** Shape, not truth. `findings_ok` \| `findings_bad` \| `revise_exhausted`; nonzero exit means the gate itself could not run, which routes to the loud terminal rather than into the repair loop. |
-| `report_gate` | **The exit is unreachable if the report dropped a finding.** Re-derives the ids from `findings.json` -- it never believes the report's own table -- and requires all four class names to appear, so a quietly-skipped class cannot read as a clean one. Also writes `disposition`. |
+| `findings_gate` | **Every finding cites `file:line` on both sides, and the gate re-opens both files.** Shape, not truth. Also **reconciles each reviewer's `swept` array against the inventory on disk** and publishes the coverage it measured. `findings_ok` \| `findings_bad` \| `revise_exhausted`; nonzero exit means the gate itself could not run, which routes to the loud terminal rather than into the repair loop. |
+| `report_gate` | **The exit is unreachable if the report dropped a finding, or overstated the sweep.** Re-derives the ids from `findings.json` -- it never believes the report's own table -- requires all four class names to appear, and requires every line of `coverage.txt` verbatim, so neither a quietly-skipped class nor a quietly-skipped half of a class can read as a clean one. Also writes `disposition`. |
 
 ### Honest exits
 
@@ -231,6 +232,16 @@ Named rather than left for a reader to find:
   everything. `swept` records what was opened, which bounds the claim honestly:
   the review covers the surfaces it names, at the judgment of the model that
   read them.
+- **Coverage is measured; reading is not.** `findings_gate` reconciles each
+  reviewer's `swept` array against the inventory the pipeline itself wrote, and
+  the fraction it computes rides into `report.md` under a gate — so a class
+  swept 62-of-114 can no longer publish as a clean sweep. What the gate compares
+  is the *array* against the inventory, not the *reading* against the file. It
+  is deliberately not a pass/fail bar for that reason: the cheapest way to
+  satisfy such a bar would be to paste the inventory into `swept`, which this
+  gate cannot tell from a real sweep, and the repair worker a rejection routes
+  to is forbidden from reviewing anyway. So the number is published rather than
+  enforced. An honest partial sweep is a fine outcome; an unmarked one is not.
 - **Untracked files are out of scope** by construction -- `git ls-files`.
 - **`vision-observation` issues are a protocol input, not a pipeline input.**
   The graph reads the tree, not the network. Bring the open observation set to

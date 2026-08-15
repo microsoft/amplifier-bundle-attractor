@@ -24,6 +24,16 @@ reachable from ``start``. If it is, the exit was never gated on evidence --
 which is the one property the whole doctrine rests on
 (``docs/PIPELINE_DESIGN_PRINCIPLES.md`` section 0).
 
+**A10 asks the question A4 leaves over.** A4 proves the exit is reached
+*through* a gate; it says nothing about whether the gate's answer mattered. A
+graph that routes both of a gate's tokens into the exit passes A3 (the command
+is real), A4 (the exit is gate-protected) and A8 (no *failure outcome* goes near
+the exit) while ending green whether the tests passed or failed. That shape is
+the cheapest way to comply with the letter of "do not weaken a gate" while
+defeating it: the gate is not weakened, deleted or relaxed -- it is left fully
+intact and simply unwired. A10 is pure topology, like A4, and its boundaries are
+stated on ``inert_gate_routes`` rather than left to be discovered.
+
 **What this script deliberately does NOT do** is judge whether the authored
 pipeline is any *good* for the brief it came from. Structure is checkable;
 fitness for purpose is not. That is the critique node's job, and it is why the
@@ -364,6 +374,54 @@ _NOT_SUCCESS_RE = re.compile(r"outcome\s*!=\s*success\b")
 _SUCCESS_CONJUNCTION_RE = re.compile(r"outcome\s*=\s*success\b")
 _LAST_LINE_RE = re.compile(r"context\.tool\.last_line\s*=")
 
+#: The token an edge routes ON, as opposed to one it routes AWAY from.
+#: ``context.tool.last_line=green && outcome=success`` yields ``green``. An
+#: inequality cannot match -- ``last_line!=green`` puts a ``!`` where this
+#: pattern requires ``=`` -- and that exclusion is deliberate: A10 reasons about
+#: which *answer* sends the run where, and "anything but green" is not an answer.
+_LAST_LINE_TOKEN_RE = re.compile(r"context\.tool\.last_line\s*=\s*([^\s&|]+)")
+
+#: Shapes that route without doing anything. Entering one of these and leaving
+#: by its single unconditional edge is indistinguishable, in every observable
+#: respect, from having taken that edge directly -- ``diamond`` is documented as
+#: a no-op node whose "outgoing edges do the deciding". A10 sees through exactly
+#: these and nothing else, so "both answers landed in the same place" can never
+#: quietly mean "the two branches ran different work and then converged".
+_TRANSPARENT_SHAPES = frozenset({"diamond", "point"})
+
+
+def _routed_token(condition: str) -> str | None:
+    """The ``tool.last_line`` value this edge condition selects on, if any."""
+    match = _LAST_LINE_TOKEN_RE.search(condition)
+    if match is None:
+        return None
+    return match.group(1).strip().strip('"').strip("'")
+
+
+def _transparent_relay(graph: DotGraph, node_id: str) -> DotEdge | None:
+    """The single edge out of a pure routing no-op, or ``None`` if not one."""
+    if _is_exit(graph, node_id) or _is_start(graph, node_id):
+        return None
+    if graph.attr(node_id, "shape") not in _TRANSPARENT_SHAPES:
+        return None
+    out = graph.outgoing(node_id)
+    if len(out) != 1 or out[0].attrs.get("condition"):
+        return None
+    return out[0]
+
+
+def _token_landing(graph: DotGraph, edge: DotEdge) -> str:
+    """Where a token edge actually puts the run, seeing through relay no-ops."""
+    node_id = edge.dst
+    seen = {edge.src}
+    while node_id not in seen:
+        seen.add(node_id)
+        relay = _transparent_relay(graph, node_id)
+        if relay is None:
+            break
+        node_id = relay.dst
+    return node_id
+
 
 def _is_failure_condition(condition: str) -> bool:
     """Does this edge condition select the FAILURE branch of its source node?"""
@@ -538,6 +596,72 @@ def evidence_gates(graph: DotGraph) -> list[str]:
             continue
         gates.append(node_id)
     return gates
+
+
+def inert_gate_routes(graph: DotGraph) -> list[str]:
+    """A10 -- evidence gates that answer into the exit no matter what they find.
+
+    ``evidence_gates`` above already refuses a gate that cannot fail
+    (``printf gate_pass``) and a gate that does not route (fewer than two
+    outgoing edges). Neither notices the shape that *satisfies both* and still
+    decides nothing::
+
+        gate -> done [condition="context.tool.last_line=green"]
+        gate -> done [condition="context.tool.last_line=red"]
+
+    The command is real, the exit is reached only through the gate, and no
+    *failure outcome* is routed anywhere near the exit -- so A3, A4 and A8 are
+    all green while the run ends successfully whether the tests passed or not.
+    A4 asks whether the exit is reached THROUGH a gate; A10 asks the question
+    left over, which is whether the gate's answer changed where the run went.
+    Both are pure topology: a set comparison over outgoing edges, no different
+    in kind from A4's reachability computation.
+
+    Deliberately narrow, in two directions, because a doctrine check that
+    over-fires teaches authors to route around it:
+
+    * **Only the exit.** Two distinct tokens landing on the same *ordinary*
+      node is inert for routing too, but it is frequently deliberate -- three
+      of this repo's own shipped graphs do it on purpose, sending several
+      distinct diagnoses to one node that writes them up
+      (``criteria_gate`` -> ``write_unspecced_finding`` on four separate
+      malformed-criteria tokens). There the token is recorded rather than
+      routed on, which is legitimate. Two tokens into the *exit* has no such
+      reading: the run ends green either way, and that is the single property
+      the whole doctrine rests on.
+    * **Only through relay no-ops.** ``_token_landing`` sees through a
+      ``diamond`` that merely forwards, because that is pure laundering of the
+      same defect. It stops at any node that *does* something -- if the two
+      answers ran different workers before converging, the gate's answer
+      demonstrably changed what happened, and whether that path should still
+      end green is a judgement A10 does not have. That is left to the critique
+      tier, honestly rather than by guessing.
+
+    Returns one message per offending gate, in the style of A7/A8: the gate,
+    the tokens, the shared target, and the edges as written.
+    """
+    exits = {n for n in graph.nodes if _is_exit(graph, n)}
+    messages: list[str] = []
+    for gate in evidence_gates(graph):
+        landed: dict[str, dict[str, str]] = {}
+        for edge in graph.outgoing(gate):
+            condition = edge.attrs.get("condition", "")
+            token = _routed_token(condition)
+            if token is None:
+                continue
+            landing = _token_landing(graph, edge)
+            if landing not in exits:
+                continue
+            landed.setdefault(landing, {})[token] = f"{gate} -> {edge.dst} [condition={condition!r}]"
+        for landing, edges in sorted(landed.items()):
+            if len(edges) < 2:
+                continue
+            tokens = sorted(edges)
+            messages.append(
+                f"{gate}: tokens {tokens} all end at the exit '{landing}' -- "
+                + "; ".join(edges[t] for t in tokens)
+            )
+    return messages
 
 
 def run_checks(graph: DotGraph, companion: Path | None) -> list[CheckResult]:
@@ -739,6 +863,27 @@ def run_checks(graph: DotGraph, companion: Path | None) -> list[CheckResult]:
     # --- A9: the companion document covers every worker -----------------------
     workers = sorted(n for n in graph.nodes if _is_worker(graph, n) and n in reachable)
     results.append(_check_companion(companion, workers))
+
+    # --- A10: an evidence gate's answer must be able to change the path -------
+    inert = inert_gate_routes(graph)
+    results.append(
+        CheckResult(
+            "A10",
+            "no evidence gate routes two different answers into the exit",
+            not inert,
+            f"gates whose answer cannot change the outcome: {inert or 'none'}"
+            + (
+                ""
+                if not inert
+                else " -- every one of those answers ends the run green, so the gate is "
+                "decorative: it runs, it prints a verdict, and the graph goes to the exit "
+                "either way. A4 only asks whether the exit is reached THROUGH a gate; this "
+                "asks whether the gate's answer decided anything. Route the failing token to "
+                "a repair loop, a postmortem, or a LOUD escalation -- somewhere that is not "
+                "the success door"
+            ),
+        )
+    )
 
     return results
 

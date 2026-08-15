@@ -42,17 +42,34 @@ genuine tool failure and the graph routes it through ``outcome=fail`` to the
 loud terminal -- deliberately distinct from ``findings_bad``, which is a
 *judgement* about the workers' output.
 
+Coverage is MEASURED, not attested. Each reviewer reports what it swept; this
+gate reconciles that array against ``inventory/<class>.txt`` -- the list the
+``inventory`` node wrote before any reviewer ran -- and publishes the fraction.
+Out-of-class normative sources and duplicate entries are counted separately, so
+the headline can no longer say "129 surfaces swept" about 118 real ones. What it
+deliberately does NOT do is *reject* a partial sweep: it can compare the array
+to the inventory but cannot check the reading, so a pass/fail bar there would
+buy a full-looking array rather than a full sweep. An honest partial sweep is a
+fine outcome; an unmarked one is not (``class_coverage``).
+
 Side effects, all under ``--state-dir``:
 
-  findings-report.txt   per-file, per-finding ACCEPT/REJECT with the reason
-                        (written on every run -- the revise worker's only input)
+  findings-report.txt   per-file, per-finding ACCEPT/REJECT with the reason,
+                        plus the COVERAGE reconciliation (written on every run
+                        -- the revise worker's only input)
   findings.json         the consolidated corpus, written ONLY on findings_ok
+  coverage.txt          one honest ``class: swept/inventory (pct)`` line per
+                        class, written ONLY on findings_ok; ``report_gate``
+                        requires report.md to carry each line verbatim, which
+                        is what stops the deliverable and the record from
+                        publishing two different numbers for the same run
   revise-iter           the corrective-loop counter (the budget wall)
 
 Usage:
     check_findings.py --raw-dir .drift-review/raw \\
                       --repo-root . \\
                       --state-dir .drift-review \\
+                      --inventory-dir .drift-review/inventory \\
                       --classes core-docs,examples,guidance,ledgers \\
                       --max-revisions 2
 """
@@ -103,6 +120,11 @@ MIN_TITLE_CHARS = 12
 #: citation, and a wrong citation is the failure this gate exists to catch.
 WINDOW_BEFORE = 2
 WINDOW_AFTER = 6
+
+#: How many unswept paths to name individually before switching to a count.
+#: Enough that a small gap is actionable; bounded so a 52-file gap does not
+#: bury the rest of the report.
+MAX_UNSWEPT_NAMED = 12
 
 _WS_RE = re.compile(r"\s+")
 
@@ -378,6 +400,137 @@ def check_class_file(
 
 
 # ---------------------------------------------------------------------------
+# Coverage -- reconciling what a reviewer SAYS it swept against what it was
+# scoped to
+#
+# `swept` arrives as an attestation. The `inventory` node already wrote, to
+# disk, the exact list of paths each class was scoped to. Both sides are
+# therefore in this gate's hands, outside every reviewer's context, and the
+# comparison is a set operation -- so leaving `swept` unreconciled was leaving a
+# measurement uncollected, not a hard problem unsolved.
+#
+# WHAT THIS DELIBERATELY DOES NOT DO: reject a partial sweep. See
+# `class_coverage` for the argument; the short version is that this gate can
+# check the ARRAY against the inventory but cannot check the READING, so a
+# pass/fail bar on coverage would buy a full-looking array rather than a full
+# sweep -- an unfalsifiable claim, which is the exact species of thing the rest
+# of this script exists to make impossible.
+# ---------------------------------------------------------------------------
+
+
+def load_inventory(inventory_dir: Path, cls: str) -> tuple[set[str] | None, str | None]:
+    """Read one class's inventory list. Returns ``(paths, why_unreadable)``."""
+    path = inventory_dir / f"{cls}.txt"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None, f"{path} does not exist"
+    except OSError as exc:
+        return None, f"{path} could not be read: {exc}"
+    entries = {line.strip() for line in text.splitlines() if line.strip()}
+    if not entries:
+        return None, f"{path} is empty"
+    return entries, None
+
+
+def class_coverage(cls: str, swept: list[str], inventory: set[str]) -> dict[str, Any]:
+    """Measure one class's reported sweep against the inventory it was scoped to.
+
+    Four numbers, each answering a question the bare array length silently
+    conflated:
+
+    ``in_class``
+        unique reported paths that ARE in this class's inventory. This is the
+        only population that may be called "surfaces of this class swept", and
+        it is what the headline count is now built from.
+    ``out_of_class``
+        reported paths that resolve in the tree but belong to no part of this
+        class's inventory. These are legitimately *read* -- every reviewer's
+        prompt tells it to open the canonical spec, the vision and the ledgers
+        for context -- but they are not surfaces of the class under review, and
+        counting them as such inflates the sweep. Reported separately.
+    ``duplicates``
+        paths named more than once in the same array. Bookkeeping, not
+        dishonesty, but it inflates a count just as effectively.
+    ``unswept``
+        inventory paths the array never names. **This is the finding.** The
+        first live run left 52 of 114 `examples` files here and reported a
+        clean four-class sweep.
+
+    Why this REPORTS rather than REJECTS. A hard ``swept >= inventory`` bar is
+    checkable, and it is the wrong instrument: what it checks is whether the
+    *array* covers the inventory, not whether the reviewer *read* the files.
+    The cheapest way to satisfy it is to paste the inventory into ``swept``,
+    which this gate cannot distinguish from a real sweep -- and the repair
+    worker that a rejection routes to is explicitly forbidden from reviewing,
+    so the only repair available to it IS the paste. That is a gate satisfiable
+    by the thing it grades, which is the shape this exemplar exists to refuse
+    (README, "Verification lives outside the worker's context").
+
+    An honest partial sweep is a fine outcome; an unmarked one is not. So the
+    fraction is measured, published, and carried into the deliverable by a
+    gate -- and the reader of ``report.md`` can now tell "swept 114 files, found
+    3 issues" from "swept 62 files, found 3 issues", which are very different
+    reports.
+    """
+    unique = sorted(set(swept))
+    counts: dict[str, int] = {}
+    for entry in swept:
+        counts[entry] = counts.get(entry, 0) + 1
+    in_class = sorted(p for p in unique if p in inventory)
+    return {
+        "class": cls,
+        "inventory": len(inventory),
+        "reported": len(swept),
+        "in_class": len(in_class),
+        "in_class_paths": in_class,
+        "out_of_class": sorted(p for p in unique if p not in inventory),
+        "duplicates": sorted(p for p, n in counts.items() if n > 1),
+        "unswept": sorted(inventory - set(unique)),
+    }
+
+
+def coverage_line(entry: dict[str, Any]) -> str:
+    """The one line per class that report.md is required to carry, verbatim.
+
+    Deliberately the smallest honest statement that cannot be rounded up:
+    swept-of-inventory and the percentage. ``report_gate`` greps for exactly
+    this string, so the number in the deliverable is the number this gate
+    measured -- closing the gap where ``report.md`` said ``guidance | 28`` and
+    the admission record said ``guidance: 33`` for the same run.
+    """
+    total = int(entry["inventory"])
+    swept = int(entry["in_class"])
+    pct = (100 * swept // total) if total else 0
+    return f"{entry['class']}: {swept}/{total} ({pct}%)"
+
+
+def coverage_report_lines(coverage: list[dict[str, Any]]) -> list[str]:
+    """The COVERAGE section of findings-report.txt."""
+    lines = [
+        "COVERAGE (reported sweep reconciled against the inventory on disk):",
+    ]
+    for entry in coverage:
+        lines.append(f"  {coverage_line(entry)}")
+        if entry["unswept"]:
+            names = entry["unswept"]
+            shown = names[:MAX_UNSWEPT_NAMED]
+            tail = "" if len(names) <= MAX_UNSWEPT_NAMED else f", and {len(names) - len(shown)} more"
+            lines.append(f"    NOT swept ({len(names)}): {', '.join(shown)}{tail}")
+        if entry["out_of_class"]:
+            lines.append(
+                f"    read but out of class ({len(entry['out_of_class'])}, not counted as "
+                f"surfaces of '{entry['class']}'): {', '.join(entry['out_of_class'])}"
+            )
+        if entry["duplicates"]:
+            lines.append(
+                f"    listed more than once ({len(entry['duplicates'])}, counted once): "
+                f"{', '.join(entry['duplicates'])}"
+            )
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # Fuse -- bounded revision
 # ---------------------------------------------------------------------------
 
@@ -403,6 +556,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--raw-dir", required=True, help="directory holding <class>.json files")
     parser.add_argument("--repo-root", default=".", help="repository the citations resolve against")
     parser.add_argument("--state-dir", default=".drift-review", help="gate bookkeeping directory")
+    parser.add_argument(
+        "--inventory-dir",
+        default=None,
+        help=(
+            "directory holding <class>.txt, the surface lists the inventory node wrote "
+            "(default: <state-dir>/inventory). Reconciliation without it is not "
+            "reconciliation, so its absence is a machinery failure, not a verdict"
+        ),
+    )
     parser.add_argument(
         "--classes",
         default="core-docs,examples,guidance,ledgers",
@@ -447,10 +609,32 @@ def main(argv: list[str] | None = None) -> int:
         print("check_findings: --classes resolved to an empty list", file=sys.stderr)
         return 2
 
+    # The inventory is the other half of every coverage number below. Without it
+    # this gate can only repeat what the reviewers claimed, which is the state
+    # issue #244 describes -- so its absence is a MACHINERY failure (exit 2, no
+    # token, routed to the loud terminal), never a quiet degradation to
+    # attestation-only. The inventory node runs before every reviewer, so a
+    # missing list means something upstream broke, not that a reviewer misbehaved.
+    inventory_dir = Path(args.inventory_dir) if args.inventory_dir else state_dir / "inventory"
+    inventories: dict[str, set[str]] = {}
+    for cls in classes:
+        entries, why = load_inventory(inventory_dir, cls)
+        if entries is None:
+            print(
+                f"check_findings: cannot reconcile the '{cls}' sweep because {why}. The "
+                "inventory node writes these lists before any reviewer runs; without them "
+                "'swept' is an unchecked claim and this gate would be reporting a coverage "
+                "number it did not measure.",
+                file=sys.stderr,
+            )
+            return 2
+        inventories[cls] = entries
+
     # --- things that make the FINDINGS bad: exit 0, print a judgement token.
     errors: list[str] = []
     accepted: list[dict[str, Any]] = []
     swept_by_class: dict[str, list[str]] = {}
+    coverage: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
 
     for cls in classes:
@@ -461,8 +645,29 @@ def main(argv: list[str] | None = None) -> int:
         accepted.extend(cls_findings)
         swept_by_class[cls] = cls_swept
 
+        entry = class_coverage(cls, cls_swept, inventories[cls])
+        coverage.append(entry)
+        # The ONE coverage rule with teeth, and it is the rule this gate already
+        # had -- "a class must say what it swept" -- corrected to measure the
+        # inventory instead of the array length. A reviewer whose whole `swept`
+        # array is out-of-class context files read nothing of its own class, and
+        # that is not a partial sweep, it is an absent one. Everything else about
+        # coverage is reported rather than adjudicated (see `class_coverage`).
+        # Guarded on a NON-EMPTY array: a class file that was never written, or
+        # whose `swept` is empty, is already named by its own rule above, and
+        # two errors for one cause is a worse repair brief than one.
+        if cls_swept and entry["in_class"] == 0 and entry["inventory"]:
+            errors.append(
+                f"{cls}.json: 'swept' names {entry['reported']} path(s) but NONE of them are "
+                f"in {inventory_dir / (cls + '.txt')}, which lists the {entry['inventory']} "
+                f"surface(s) this class was scoped to. Reading the normative sources for "
+                f"context is expected and they belong in 'swept'; reading none of the class "
+                f"itself means there was no review of '{cls}' to report."
+            )
+
     report_path = state_dir / "findings-report.txt"
     findings_path = state_dir / "findings.json"
+    coverage_path = state_dir / "coverage.txt"
 
     if errors:
         attempt = bump_revise_counter(state_dir)
@@ -479,6 +684,8 @@ def main(argv: list[str] | None = None) -> int:
             "",
             "Rejections (fix exactly these; leave everything else alone):",
             *(f"  - {e}" for e in errors),
+            "",
+            *coverage_report_lines(coverage),
         ]
         try:
             report_path.write_text("\n".join(report) + "\n", encoding="utf-8")
@@ -486,17 +693,27 @@ def main(argv: list[str] | None = None) -> int:
             print(f"check_findings: cannot write {report_path}: {exc}", file=sys.stderr)
             return 2
         # A rejected round must not leave a stale corpus behind for a later gate
-        # to mistake for this round's output.
+        # to mistake for this round's output. The same is true of the coverage
+        # contract: report_gate requires report.md to carry these lines
+        # verbatim, so a stale copy would let a later round be admitted against
+        # an earlier round's numbers.
         findings_path.unlink(missing_ok=True)
+        coverage_path.unlink(missing_ok=True)
         print(token, end="")
         return 0
 
     accepted.sort(key=lambda f: (SEVERITIES.index(str(f["severity"])), str(f["id"])))
     corpus = {
-        "schema": "drift-review/findings/1",
+        "schema": "drift-review/findings/2",
         "repo_root": str(repo_root),
         "classes": classes,
         "swept": swept_by_class,
+        # The reconciliation, carried in the corpus itself so that every
+        # downstream reader -- the consolidate worker, the report gate, and a
+        # human opening the artifact directory a month later -- is looking at
+        # the same measured numbers rather than re-deriving them or, as in the
+        # first live run, quietly disagreeing about them.
+        "coverage": coverage,
         "finding_count": len(accepted),
         "findings": accepted,
     }
@@ -506,7 +723,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"check_findings: cannot write {findings_path}: {exc}", file=sys.stderr)
         return 2
 
-    swept_total = sum(len(v) for v in swept_by_class.values())
+    try:
+        coverage_path.write_text(
+            "\n".join(coverage_line(entry) for entry in coverage) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        print(f"check_findings: cannot write {coverage_path}: {exc}", file=sys.stderr)
+        return 2
+
+    # THE HEADLINE, rebuilt so it cannot overstate. The old number was the sum
+    # of the reported array lengths, which counted normative context files and
+    # duplicate entries as swept surfaces of the class -- the first live run
+    # published "129 surfaces swept" against 118 real in-class surfaces and a
+    # 170-file inventory. Every population is now named separately, and the
+    # denominator is always present.
+    swept_total = sum(int(c["in_class"]) for c in coverage)
+    inventory_total = sum(int(c["inventory"]) for c in coverage)
+    out_of_class_total = sum(len(c["out_of_class"]) for c in coverage)
+    duplicate_total = sum(len(c["duplicates"]) for c in coverage)
+    pct = (100 * swept_total // inventory_total) if inventory_total else 0
     listing = [f"  {f['id']}  {str(f['severity']):<8}  {f['title']}" for f in accepted] or [
         "  (none -- a clean sweep is a result, not a failure)"
     ]
@@ -515,14 +750,18 @@ def main(argv: list[str] | None = None) -> int:
         f"raw dir:  {raw_dir}",
         f"classes:  {', '.join(classes)}",
         f"findings: {len(accepted)}",
-        f"swept:    {swept_total} surfaces",
+        f"swept:    {swept_total} of {inventory_total} inventoried in-class surfaces ({pct}%)",
+        f"also:     {out_of_class_total} out-of-class source(s) read, "
+        f"{duplicate_total} duplicate entr(y/ies) counted once",
         "",
         "Per class:",
         *(
             f"  {cls}: {sum(1 for f in accepted if f['class'] == cls)} finding(s), "
-            f"{len(swept_by_class[cls])} surface(s) swept"
-            for cls in classes
+            f"{entry['in_class']} of {entry['inventory']} surface(s) swept"
+            for cls, entry in zip(classes, coverage, strict=True)
         ),
+        "",
+        *coverage_report_lines(coverage),
         "",
         "Admitted findings (id / severity / title):",
         *listing,

@@ -57,7 +57,13 @@ pass_bar:
         nothing downstream is meaningful.
     - id: MC-E2
       kind: command_exit_zero
-      command: "python3 examples/objective/validate_triage.py .objective/triage.json"
+      command: >
+        tok="$(python3 examples/objective/validate_triage.py
+        --triage .objective/triage.json
+        --schema examples/objective/triage-schema.json
+        --state-dir "$(mktemp -d)" --max-frames 2)";
+        echo "triage_gate re-run token: $tok";
+        case "$tok" in triage_bad|triage_exhausted|"") exit 1;; *) exit 0;; esac
       cwd_is_workspace: true
       why: >
         The record is ADMISSIBLE by the exemplar's own gate mechanism, re-run outside the run that

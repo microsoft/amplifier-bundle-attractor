@@ -2115,3 +2115,84 @@ disease, not a remedy).
 - `modules/loop-pipeline/tests/test_provider_preflight.py`,
   `modules/pipeline-runner/tests/test_provider_preflight_drive_engine.py` — contract + regression
   tests (including the provider-not-in-profiles class, ruling R5)
+
+---
+
+## 37. Bundle Composition: Always-On Guidance, Agent Registration, and Ref-Free Same-Repo Sources
+
+> **This entry is a pure ADDITION in an area the canonical spec does not address.** Nothing
+> here changes graph semantics: no parser change, no node/edge/attribute vocabulary change, no
+> routing, verdict, retry, or budget behavior change. The change is entirely in how the
+> *Amplifier bundle* that hosts this engine mounts its own guidance surfaces into interactive
+> sessions and how it references its own modules and skills.
+>
+> **depends-on:** none
+>
+> **upstream action:** not applicable — this entry is a pure addition in a spec-silent area,
+> not a divergence (`upstream action:` is required only when an entry's banner states the
+> behavior DIVERGES from the canonical spec). There is nothing to propose upstream: the
+> canonical spec defines the coding agent and pipeline runtime, not the packaging of a host
+> platform's bundle.
+
+### Why the spec's silence is not a signal here
+
+The canonical spec specifies what the agent and the pipeline **do** — the graph, its execution
+tiers, edge selection, the verdict contract, budgets. It is silent on how a host platform mounts
+guidance into an interactive session, because that is not the artifact it governs; a
+spec-conformant engine is equally conformant whether its bundle serves 0 tokens of always-on
+guidance or 800. The silence is a scope boundary, not a prohibition, and this repo's
+`docs/QUALITY_PROTOCOL.md` §3 reaches this far on purpose: *"examples, guidance surfaces and
+process changes are classified by it too."* Hence this entry, filed under the Uncharted /
+extension tier.
+
+The guidance surfaces themselves (`context/pipeline-awareness.md`, `context/dot-reference.md`,
+`agents/attractor-expert.md`, `skills/attractorify/`) already shipped and already paid their own
+tolls. This change does not add doctrine; it makes the shipped bundle actually **serve** the
+doctrine on the documented install path, where measurement showed it served none of it.
+
+### What changed
+
+1. **Root `bundle.md` gained a `context:` key.** A new `context/attractor-awareness.md`
+   (3,246 bytes / 796 cl100k tokens) is now always-on for sessions composed from the root bundle:
+   the objective-first trigger and the say-the-names rule, the three-question test, the
+   never-clause (the self-report gate is the named anti-pattern), the authoring tripwire
+   (consult the expert; `dot-reference.md` is the attribute vocabulary; always `attractor lint`),
+   and a pointer block. Before this, `bundle.md` had **no `context:` key at all** and a standard
+   `amplifier bundle add git+…@main` install served **zero** always-on guidance.
+2. **`agents/attractor-expert.md` is registered.** It was previously referenced by no `agents:`
+   YAML anywhere — a 20 KB knowledge file no composition ever loaded. It now carries its own
+   mount plan in frontmatter (`session.orchestrator` = loop-agent, Layer-1 =
+   `context/system-attractor-expert.md`) and is registered as `attractor:attractor-expert` by
+   both `behaviors/attractor-core.yaml` and root `bundle.md`. The inline expert dict in
+   `behaviors/attractor-core.yaml` is gone: one expert, one definition.
+3. **Same-repo `git+…@main` self-pins became ref-free** where foundation's resolution semantics
+   allow it (15 of 44): `tools:`/`hooks:` module sources → relative (`../modules/X`), the root
+   bundle's own orchestrators → `./modules/X`, and the skills registration →
+   `"@attractor:skills"`. A self-pin at `@main` makes a **branch install serve main's bytes** —
+   including, for loop-agent, main's `context/` files, since loop-agent anchors a relative
+   `system_prompt_file` on its own installed location. That made branch regression-testing of
+   guidance structurally impossible.
+
+### Additive and non-interfering: a spec-conformant graph behaves identically
+
+- **Zero engine-module code changed.** The diff touches `bundle.md`, `behaviors/`, `bundles/`,
+  `profiles/`, `agents/`, `context/`, `docs/`, and this file. No file under
+  `modules/*/amplifier_module_*/` is modified.
+- **Every pipeline composition's served content is unchanged.** The new always-on context is
+  placed **root-only**, never in `behaviors/attractor-core.yaml` — which flows into every
+  pipeline LLM node. A pipeline node's composed context is byte-identical to before.
+- **The flipped sources serve identical bytes.** A relative source resolves inside the same
+  snapshot the pin used to fetch, at the ref that was installed; for an `@main` install the
+  bytes are the same bytes.
+- **Asserted behaviorally.** The guidance eval's `exemplar-01-sloppy-routable` and
+  `exemplar-02-honest-redirect` scenarios execute the shipped objective runner through real
+  pipeline compositions; both were re-run against this change as the non-interference proof.
+- **The conformance matrix and its runner are untouched** (`specs/conformance/attractor-matrix.yaml`,
+  `modules/loop-pipeline/tests/test_spec_conformance_matrix.py`). Nothing here is a normative
+  statement about graph semantics, so no matrix row is owed: the coverage tripwire requires rows
+  for DIVERGES entries, and this is not one.
+
+Design record and probe evidence:
+[`docs/designs/2026-08-15-composition-fix.md`](../docs/designs/2026-08-15-composition-fix.md),
+including §8's "two resolution classes" finding — the empirical reason the self-pin sweep is
+split rather than blanket.

@@ -48,6 +48,39 @@ meta:
     Integration questions need knowledge of DirectProviderBackend vs AmplifierBackend paths.
     </commentary>
     </example>
+
+# This file owns the WHOLE agent: metadata above, mount plan here, knowledge in the
+# body below.  There is no second definition in YAML -- `behaviors/attractor-core.yaml`
+# and the root `bundle.md` both register THIS file with
+# `agents: include: [attractor:attractor-expert]`.  One expert, one definition.
+#
+# IMPORTANT: the explicit session.orchestrator is REQUIRED.  The spawn capability merges
+# this agent's session: key onto the parent config; without it a child spawned from a
+# pipeline parent would inherit loop-pipeline and recurse.  attractor-expert is a
+# conversational knowledge agent, so loop-agent is the right orchestrator.
+session:
+  orchestrator:
+    module: loop-agent
+    # Snapshot-relative and REF-FREE on purpose.  loop-agent resolves a relative
+    # `system_prompt_file` against its OWN installed location (bundle root =
+    # parents[3] of its __init__.py), so whoever serves the loop-agent bytes serves
+    # the Layer-1 persona file next to them.  A `git+...@main` pin here served MAIN's
+    # persona to every branch install, which is exactly what made branch guidance
+    # untestable.  Resolves against the composed bundle root, so it lands on
+    # <this snapshot>/modules/loop-agent whenever the attractor bundle is the composed
+    # root (the documented `bundle add` + `bundle use` path).  In a composition where
+    # some OTHER bundle is the root, this activation is skipped with a logged warning
+    # and loop-agent resolves by name from that composition's own declaration --
+    # every shipped profile/bundle here declares it.  See
+    # docs/designs/2026-08-15-composition-fix.md, "As built".
+    source: ./modules/loop-agent
+    config:
+      # Layer-1 base prompt.  attractor-expert is provider-agnostic (a consultant,
+      # not a coding agent), so it gets its OWN persona base rather than a provider
+      # coding base.  Required: loop-agent fail-louds on an empty Layer-1 if this
+      # agent is ever spawned as an LLM node.
+      # See docs/designs/layer-1-profile-owned-system-prompt.md.
+      system_prompt_file: context/system-attractor-expert.md
 ---
 
 # Attractor Pipeline Expert

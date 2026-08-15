@@ -4,32 +4,29 @@ bundle:
   description: Core attractor tools and hooks (provider-agnostic)
 
 tools:
+  # Same-repo modules by RELATIVE source, never a `git+...@main` self-pin: a pinned
+  # self-reference makes a branch install serve MAIN's modules (and, for loop-agent,
+  # MAIN's context/ files next to them).  Relative sources in tools:/hooks:/providers:
+  # are resolved AT PARSE TIME against THIS FILE's directory (behaviors/), so they stay
+  # inside whatever snapshot was installed, under any composition.  "../modules/..." is
+  # correct; "./modules/..." would resolve to behaviors/modules/ and never load.
   - module: tool-report-outcome
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/tool-report-outcome
+    source: ../modules/tool-report-outcome
 
 hooks:
   - module: hooks-tool-truncation
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/hooks-tool-truncation
+    source: ../modules/hooks-tool-truncation
   - module: hooks-pipeline-progress
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/hooks-pipeline-progress
+    source: ../modules/hooks-pipeline-progress
   - module: hooks-pipeline-observability
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/hooks-pipeline-observability
+    source: ../modules/hooks-pipeline-observability
 
 agents:
-  # IMPORTANT: inline session.orchestrator is REQUIRED here.  The spawn capability merges
-  # the agent's session: key onto the parent config; without an explicit session.orchestrator
-  # the child inherits the parent's orchestrator and may recurse.
-  # attractor-expert is a conversational knowledge agent; loop-agent is the right orchestrator.
-  attractor-expert:
-    description: Attractor pipeline design expert and DOT authoring consultant
-    session:
-      orchestrator:
-        module: loop-agent
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
-        config:
-          # Layer-1 base prompt. attractor-expert is provider-agnostic (a
-          # consultant, not a coding agent), so it gets its OWN persona base
-          # rather than a provider coding base. Required: loop-agent fail-louds
-          # on an empty Layer-1 if this agent is ever spawned as an LLM node.
-          # See docs/designs/layer-1-profile-owned-system-prompt.md.
-          system_prompt_file: context/system-attractor-expert.md
+  # ONE expert, ONE definition.  agents/attractor-expert.md carries its own metadata,
+  # its own mount plan (session.orchestrator = loop-agent, Layer-1 =
+  # context/system-attractor-expert.md), AND the knowledge body that used to be a dead
+  # file no composition ever loaded.  Registering it here means every session that
+  # composes attractor-core gets the whole agent -- which is what README's
+  # "Sessions that compose attractor-core have access to attractor-expert" always claimed.
+  include:
+    - attractor:attractor-expert

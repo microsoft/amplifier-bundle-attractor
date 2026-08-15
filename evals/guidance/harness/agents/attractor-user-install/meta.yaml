@@ -1,0 +1,7 @@
+id: attractor-user-install
+name: Attractor bundle, installed the way a user installs it
+description: >
+  The agent under test is an ordinary Amplifier session with the attractor bundle composed onto
+  it, installed inside the DTU from a git URL exactly as a real user would. No curated push of a
+  host checkout: the eval grades what a `bundle add` actually delivers, not what is sitting in
+  someone's working tree.

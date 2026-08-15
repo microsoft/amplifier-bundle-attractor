@@ -1,0 +1,20 @@
+# Extraction hints for amplifier_evaluation.extractor.Extractor.
+#
+# What the guidance eval needs out of a finished trial is the SESSION ITSELF -- the transcript is
+# the artifact under grading, not a side effect of it. Everything else is secondary.
+session_paths:
+  - /root/.amplifier/projects
+  - /root/.amplifier/sessions
+
+deliverable_paths:
+  - /workspace
+
+notes: |
+  Session transcripts land under /root/.amplifier/projects/<cwd-slug>/sessions/<id>/ as
+  transcript.jsonl, events.jsonl and metadata.json. The AI user drives the session from
+  /workspace, so the slug derives from that path.
+
+  For exemplar-mode scenarios the deliverables that matter are under /workspace/.objective/ --
+  disposition, triage.json, redirect.md, objective.md, convergence.jsonl, and the evidence logs.
+
+  Do not pull the fixture repo's full tree; it is seeded from the harness and known.

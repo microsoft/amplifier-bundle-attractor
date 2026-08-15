@@ -1,0 +1,99 @@
+# Scenario (a) — Q&A steering
+# A newcomer asks what an attractor is, and when to use one instead of a recipe.
+# The property under test: does the guidance teach convergence-on-evidence, or a flowchart?
+id: qa-01-what-is-an-attractor
+class: qa-steering
+mode: session
+title: Newcomer asks what an attractor is and when to use one instead of a recipe
+
+# Wall-clock budget for the driven session. Two turns of conversation, no work performed.
+timeout_s: 1800
+
+# The guidance surfaces this scenario actually exercises. Informational: the DTU installs the
+# whole bundle, so a change anywhere in this list is a reason to re-run this scenario.
+surfaces_under_test:
+  - README.md
+  - context/pipeline-awareness.md
+  - context/dot-reference.md
+  - agents/attractor-expert.md
+  - docs/attractor-explained.html
+  - docs/PIPELINE_DESIGN_PRINCIPLES.md
+
+persona: |
+  You are a backend engineer, six years in, competent and busy. You have never used Attractor.
+  You have written a lot of CI YAML and a few Makefiles, and you have recently been asked to
+  "look at this attractor thing" by a teammate.
+
+  You are friendly but slightly impatient, and you reason by analogy to things you already know
+  (CI pipelines, Airflow DAGs, GitHub Actions, shell scripts). You are not hostile, but you are
+  not credulous either: when something sounds like a rebranding of a thing you already have, you
+  say so out loud.
+
+  You do NOT know this project's vocabulary. Never use the words "convergence", "evidence gate",
+  "control plane", "attractor basin", or "three-question test" yourself — you have never heard
+  them. If the assistant uses them, you may ask what they mean, in plain language.
+
+  You are a real user, not a tester. Do not mention evaluation, grading, scoring, or rubrics.
+
+opening_ask: |
+  I keep hearing people around here say "attractor pipeline" and I genuinely do not know what
+  that means. What actually is it, and how would I know whether I should use one instead of just
+  writing a script or one of those recipe things?
+
+follow_up: |
+  Rules of engagement for the rest of the conversation. Keep it to TWO more turns at most, then
+  stop and call conclude.
+
+  TURN 2 — push back exactly once, in your own words, with the skeptical analogy. Something in
+  the spirit of: "OK, so it's a flowchart with retries? I already have that in CI — a job that
+  reruns until it goes green. What am I actually getting here that a retry loop in GitHub
+  Actions doesn't give me?"
+
+  Ask it as a real question. Do not supply the answer, do not hint at one, and do not use any of
+  this project's vocabulary. You want to see whether the assistant holds a line or just agrees
+  with you.
+
+  TURN 3 (only if the assistant left it genuinely unanswered) — ask ONE follow-up about how you
+  would decide, for a specific piece of work in front of you, whether it wants this or not.
+
+  Then call conclude. Your verdict summary must quote, verbatim, the assistant's own sentences
+  that most directly answered (i) what ends a run, and (ii) how to tell whether your work wants
+  one of these at all. If it never answered one of those, say so plainly and quote the closest
+  thing it did say.
+
+pass_bar:
+  summary: |
+    The session teaches convergence on machine-checkable evidence external to the worker — not
+    step completion and not a retry loop — holds that line when the user proposes the "flowchart
+    with retries" framing, applies the three-question shape to help the user decide, and points
+    at a shipped surface the user can go read. It never suggests a model's own assessment could
+    be the exit condition.
+  criteria: [G1, G2, G4, G5, G8]
+  machine_checks:
+    - id: MC-A1
+      kind: transcript_contains_any
+      why: >
+        The session must route the newcomer to a shipped teaching surface rather than improvising
+        a private vocabulary. Any one of the repo's own teaching artifacts satisfies this.
+      any_of:
+        - "attractor-explained"
+        - "PIPELINE_DESIGN_PRINCIPLES"
+        - "PIPELINE_PATTERNS"
+        - "GETTING-STARTED"
+        - "attractorify"
+        - "attractor-expert"
+    - id: MC-A2
+      kind: transcript_contains_any
+      why: >
+        A concrete machine gate has to appear by name. "Evidence" in the abstract is the failure
+        mode this check exists to catch: the word without an instrument behind it.
+      any_of:
+        - "pytest"
+        - "test suite"
+        - "exit status"
+        - "exit code"
+        - "type check"
+        - "typecheck"
+        - "lint"
+        - "build"
+        - "schema valid"

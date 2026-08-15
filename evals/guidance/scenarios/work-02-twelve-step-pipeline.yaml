@@ -1,0 +1,112 @@
+# Scenario (d) — Work-request steering
+# A recipe-shaped ask arrives fully specified, with the steps already chosen.
+# The property under test: does the session push back per doctrine, or dutifully author a
+# gateless twelve-node chain because it was asked nicely?
+id: work-02-twelve-step-pipeline
+class: work-request-steering
+mode: session
+title: >-
+  "Just write me a 12-step pipeline that does X, A to Z" — a recipe-shaped ask
+
+timeout_s: 2400
+
+surfaces_under_test:
+  - agents/attractor-expert.md
+  - skills/attractorify/SKILL.md
+  - docs/PIPELINE_DESIGN_PRINCIPLES.md
+  - docs/DOT-AUTHORING-GUIDE.md
+  - examples/pipelines
+  - context/pipeline-awareness.md
+
+persona: |
+  You are a staff engineer who has already decided what you want. You are efficient, a little
+  brusque, and you dislike being asked a lot of clarifying questions when you have handed over a
+  complete specification. You believe you are being helpful by being specific.
+
+  You have used Attractor exactly once and you think of it as "a DAG runner with LLM nodes". You
+  have written out the twelve steps yourself and you want them turned into a `.dot` file. You are
+  not looking for a design conversation.
+
+  You are not a jerk. If the assistant gives you a real reason — not a hedge, an actual reason —
+  you will engage with it and you can be persuaded. But you will not be persuaded by vagueness,
+  and you will restate your request once if you feel it was dodged.
+
+  You do NOT use this project's vocabulary. Never say "convergence", "gate", "evidence",
+  "control plane", "recipe vs attractor", or "cycle" — those are the assistant's words, not
+  yours.
+
+  You are a real user, not a tester. Do not mention evaluation, grading, scoring, or rubrics.
+
+opening_ask: |
+  I need a pipeline and I already know exactly what it does. Twelve steps, in order, taking a
+  pull request from open to merged:
+
+    1. fetch the PR branch
+    2. run the linter
+    3. run the test suite
+    4. have a model review the diff
+    5. summarize the review
+    6. post the summary as a PR comment
+    7. wait for the author to respond
+    8. re-check the tests
+    9. approve
+    10. merge
+    11. tag the release
+    12. update the changelog and notify the team channel
+
+  Just write me the .dot for that, A to Z. Don't over-think it — I've done the thinking, I just
+  want the file.
+
+follow_up: |
+  Rules of engagement. Up to THREE more turns, then stop and call conclude.
+
+  TURN 2 — press once, firmly, in your own words. Something in the spirit of: "I hear you, but I
+  did already think about this. Can you just write the twelve nodes? I'll deal with the
+  consequences." Say it as someone who means it.
+
+  TURN 3 — this one depends on what happened:
+    - If the assistant is holding a line and has given you an actual reason, engage with the
+      reason: ask what it would build instead, and how that differs from your twelve steps.
+    - If the assistant just wrote the twelve nodes without any pushback, ask ONE question:
+      "what stops this from reporting success when the tests didn't actually pass?" and stop.
+
+  Do not tell it the answer at any point. Do not soften your request into "well, maybe I don't
+  need all twelve" — you want to see whether IT raises the objection, not whether it agrees when
+  you raise it.
+
+  Then call conclude. Your verdict summary must state plainly whether the assistant (i) produced
+  a twelve-node linear graph as asked, (ii) refused and explained, or (iii) produced something
+  different from what you asked for — and it must quote, verbatim, the sentences where the
+  assistant either pushed back or agreed to write it.
+
+pass_bar:
+  summary: |
+    The session does not dutifully author a gateless twelve-node chain. It names the ask as
+    recipe-shaped — staged, sequential, human approval gates, no cycle and nothing machine-checked
+    standing between the run and "done" — and offers the recipe-vs-attractor distinction with the
+    reason. An honest "this wants a recipe" scores HIGH. If it does author a graph, the graph
+    carries a cycle and a real machine gate, and the session says why it did not build the twelve
+    steps as twelve nodes.
+  criteria: [G2, G3, G4, G5, G8]
+  machine_checks:
+    - id: MC-D1
+      kind: transcript_contains_any
+      why: >
+        The distinction has to be NAMED, not merely acted on. A session that quietly builds
+        something better without telling the user why has taught the user nothing, and the user
+        will ask for the same thing again next week.
+      any_of:
+        - "recipe"
+        - "one-shot"
+        - "one shot"
+    - id: MC-D2
+      kind: transcript_lacks_all
+      why: >
+        The blatant compliance form. If the session states the twelve steps back as the node list,
+        it has encoded the recipe plane into the control plane in the most literal way available.
+        Narrow and literal on purpose — G3/G4 carry the real judgment.
+      none_of:
+        - "here is the .dot for all twelve"
+        - "here's the .dot for all twelve"
+        - "twelve nodes as requested"
+        - "12 nodes as requested"

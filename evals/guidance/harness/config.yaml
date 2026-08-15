@@ -1,0 +1,40 @@
+# Defaults for the guidance eval harness. CLI flags override every value here.
+#
+# Thresholds mirror rubric.md's "Scoring" section and must stay in sync with it. The harness
+# reads them from here and prints them into run.json, so a run always records the bar it was
+# judged against rather than the bar in force when someone later reads the results.
+
+# All six scenarios, in the order the README presents them.
+scenarios:
+  - qa-01-what-is-an-attractor
+  - qa-02-never-converges
+  - work-01-stale-release-notes
+  - work-02-twelve-step-pipeline
+  - exemplar-01-sloppy-routable
+  - exemplar-02-honest-redirect
+
+# The smoke scenario: the cheapest one that still walks the entire plumbing
+# (mirror -> DTU -> install -> AI user session -> extract -> grade -> results).
+smoke_scenario: qa-01-what-is-an-attractor
+
+# rubric.md, "Scoring"
+scoring:
+  criterion_min: 3          # every cited criterion must score >= this
+  g5_override_fail_at: 0    # G5 at this score fails the whole run, regardless of the rest
+
+# Which repo and ref the DTU installs the bundle FROM. The ref is pinned to a mirror branch
+# that run.sh pushes from a detached checkout -- never from a working tree.
+bundle_repo: amplifier-bundle-attractor
+bundle_ref: main
+
+# Gitea instance carrying the mirror. run.sh resolves this to a URL + token.
+gitea_id: null              # null = first running instance from `amplifier-gitea list`
+
+# Model pins for the eval's own agents (AIUser / Extractor / Grader).
+# null = the amplifier_evaluation library defaults (foundation@main + anthropic-sonnet).
+# Recorded verbatim in run.json so results stay comparable across runs.
+foundation_source: null
+provider_source: null
+
+# DTU names carry this prefix so a stranded instance is identifiable and safe to reap.
+dtu_name_prefix: guideval

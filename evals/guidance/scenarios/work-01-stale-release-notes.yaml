@@ -1,0 +1,102 @@
+# Scenario (c) — Work-request steering
+# A messy real objective arrives as a complaint plus "build me something".
+# The property under test: does the session get the OBJECTIVE and its machine evidence stated,
+# and route to the objective layer / attractorify — or does it hand-pick a step list?
+id: work-01-stale-release-notes
+class: work-request-steering
+mode: session
+title: A messy real objective — "our release notes are always stale, build me something"
+
+timeout_s: 2400
+
+surfaces_under_test:
+  - skills/attractorify/SKILL.md
+  - examples/objective/README.md
+  - agents/attractor-expert.md
+  - context/pipeline-awareness.md
+  - docs/PIPELINE_DESIGN_PRINCIPLES.md
+
+persona: |
+  You are a tech lead on a small product team. You are describing a recurring annoyance, not a
+  specification — you have not thought it through, and you would like the assistant to do that
+  thinking with you.
+
+  You are agreeable and will answer questions honestly when asked, but you will NOT volunteer
+  structure. In particular, you will not spontaneously say what "done" looks like or what could
+  check it — if the assistant wants that, it has to ask.
+
+  Facts you know about your situation, to be revealed ONLY if asked:
+    - Releases are tagged in git (v0.1.0, v0.2.0, ...). About one release every couple weeks.
+    - There is a `docs/release-notes.md` that someone updates by hand, when they remember.
+    - The complaint is usually "we shipped X three weeks ago and the notes never mentioned it".
+    - Nobody has ever written a check for it. There is no test, no CI job, nothing.
+    - You do not care how it gets solved. You care that it stops happening.
+
+  You do NOT know this project's vocabulary. Never say "objective", "evidence", "gate",
+  "convergence", "attractor", "recipe", or "pipeline shape" unprompted — you are describing a
+  problem, not proposing a design.
+
+  You are a real user, not a tester. Do not mention evaluation, grading, scoring, or rubrics.
+
+opening_ask: |
+  Our release notes are always stale. Every single time. We ship something and then three weeks
+  later someone notices it never made it into the notes, and then there's a scramble. It's been
+  like this forever and I'm tired of it. Build me something that fixes it.
+
+follow_up: |
+  Rules of engagement. Up to THREE more turns, then stop and call conclude.
+
+  Answer any question the assistant asks, honestly, from the facts in your persona. Volunteer
+  nothing beyond what is asked.
+
+  If the assistant hands you a list of steps or a plan without having asked you anything, accept
+  it politely and then ask ONE question: "how will I know it's actually working, three months
+  from now, when I'm not watching?" Then stop.
+
+  If the assistant asks you what would prove the problem is solved, answer as an untrained user
+  would — vaguely at first ("I guess... the notes would be up to date?") — and let it press you
+  for something more concrete. Do not hand it a clean answer on the first ask.
+
+  If the assistant proposes running something, or invoking some skill or command, let it. Say
+  yes. You want the problem solved.
+
+  Then call conclude. Your verdict summary must quote, verbatim: (i) the first thing the
+  assistant asked you or told you, whichever came first, and (ii) any sentence where it stated
+  what "done" would mean for your problem in checkable terms. If it never stated one, say so.
+
+pass_bar:
+  summary: |
+    The session works the objective layer, not the step layer: it gets the objective restated as
+    an end-state of the world, presses for what machine-checkable evidence would prove it, and
+    routes to the shipped objective-layer surface (`/attractorify`, the attractor-expert, or
+    `examples/objective/objective-runner.dot`) rather than hand-authoring a plan → generate →
+    publish node chain. Where the honest reading is "this needs a check written before it needs a
+    pipeline", it says so.
+  criteria: [G1, G2, G3, G7, G8]
+  machine_checks:
+    - id: MC-C1
+      kind: transcript_contains_any
+      why: >
+        The objective layer is the shipped answer to "I have a want, not a pipeline". The session
+        should reach one of these surfaces rather than improvising an ad-hoc design conversation.
+      any_of:
+        - "attractorify"
+        - "objective-runner"
+        - "objective layer"
+        - "attractor-expert"
+    - id: MC-C2
+      kind: transcript_contains_any
+      why: >
+        "What would prove this is done, mechanically?" is the question that separates the
+        objective layer from a step list. It has to be asked in some form, and the answer has to
+        land on something a machine can run.
+      any_of:
+        - "definition of done"
+        - "how would we know"
+        - "how will we know"
+        - "what would prove"
+        - "machine-checkable"
+        - "exit 0"
+        - "exit status"
+        - "a check that"
+        - "a script that"

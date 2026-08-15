@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attractor — multi-stage AI pipelines for code, where the graph is the program</title>
+<meta name="description" content="An engineering explainer for microsoft/amplifier-bundle-attractor: convergence loops, evidence gates, fail-closed verdicts, and the mechanics of a DOT graph that is the program.">
+<style>
+/* ---------------------------------------------------------------- tokens */
+:root{
+  --paper:#faf7f1;
+  --paper-2:#f2ede3;
+  --ink:#1b1813;
+  --ink-2:#3a352c;
+  --muted:#6d6558;
+  --faint:#a29886;
+  --rule:#d9d1c1;
+  --rule-2:#e7e0d2;
+  --accent:#c0400f;          /* vermilion — gates, evidence, hazards */
+  --accent-2:#8f3110;
+  --accent-tint:#fbeee6;
+  --pass:#2f6b3a;
+  --pass-tint:#eaf1e7;
+  --code:#f3efe5;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --col:720px;
+  --wide:960px;
+}
+/* ---------------------------------------------------------------- base */
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--serif);font-size:18px;line-height:1.62;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+h1,h2,h3,h4{font-family:var(--serif);font-weight:600;line-height:1.15;margin:0;letter-spacing:-.012em}
+p{margin:0 0 1.05em}
+a{color:var(--accent-2);text-decoration:none;border-bottom:1px solid rgba(192,64,15,.32)}
+a:hover{border-bottom-color:var(--accent)}
+code,kbd,pre,samp{font-family:var(--mono)}
+hr{border:0;border-top:1px solid var(--rule);margin:56px 0}
+::selection{background:#f6dcc9}
+
+/* ---------------------------------------------------------------- layout */
+.col{max-width:var(--col);margin:0 auto;padding:0 24px}
+.wide{max-width:var(--wide);margin:0 auto;padding:0 24px}
+main section{padding:56px 0 8px;scroll-margin-top:64px}
+main section:first-of-type{padding-top:40px}
+
+/* ---------------------------------------------------------------- nav */
+.topbar{
+  position:sticky;top:0;z-index:50;
+  background:rgba(250,247,241,.93);
+  -webkit-backdrop-filter:saturate(140%) blur(8px);backdrop-filter:saturate(140%) blur(8px);
+  border-bottom:1px solid var(--rule);
+}
+.topbar .wide{display:flex;align-items:baseline;gap:22px;height:52px;overflow-x:auto;scrollbar-width:none}
+.topbar .wide::-webkit-scrollbar{display:none}
+.brand{font-family:var(--sans);font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink);border:0;white-space:nowrap}
+.brand span{color:var(--accent)}
+.topbar nav{display:flex;gap:18px;white-space:nowrap}
+.topbar nav a{
+  font-family:var(--sans);font-size:12.5px;letter-spacing:.02em;color:var(--muted);
+  border:0;padding:2px 0;border-bottom:1px solid transparent;
+}
+.topbar nav a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* ---------------------------------------------------------------- hero */
+.hero{border-bottom:1px solid var(--rule);padding:64px 0 44px;background:
+  linear-gradient(to bottom,#fbf9f4,var(--paper) 70%)}
+.hero h1{font-size:clamp(52px,9vw,96px);letter-spacing:-.035em;line-height:.95;margin:0 0 14px}
+.hero .sub{font-size:clamp(19px,2.4vw,25px);color:var(--ink-2);max-width:640px;margin:0 0 26px;line-height:1.35}
+.hero .lede{max-width:640px;font-size:18.5px;color:var(--ink-2)}
+.kicker{font-family:var(--sans);font-size:11.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);margin:0 0 18px}
+.meta{font-family:var(--sans);font-size:13px;color:var(--muted);margin-top:22px}
+.meta code{font-size:12.5px;background:var(--code);padding:1px 5px;border:1px solid var(--rule-2)}
+
+/* ---------------------------------------------------------------- section heads */
+.eyebrow{font-family:var(--sans);font-size:11.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+.eyebrow .num{color:var(--faint);margin-right:10px}
+h2{font-size:clamp(30px,4.4vw,42px);margin:0 0 18px;letter-spacing:-.022em}
+h3{font-size:23px;margin:34px 0 12px}
+h4{font-size:16.5px;margin:26px 0 8px;font-family:var(--sans);font-weight:700;letter-spacing:-.005em}
+.standfirst{font-size:21px;line-height:1.45;color:var(--ink-2);margin:0 0 28px;max-width:660px}
+
+/* ---------------------------------------------------------------- figures */
+figure{margin:34px auto;max-width:var(--wide);padding:0 24px}
+figure.tight{margin:24px auto}
+figure svg{display:block;width:100%;height:auto}
+figcaption{
+  font-family:var(--sans);font-size:13px;line-height:1.5;color:var(--muted);
+  margin-top:12px;padding-top:9px;border-top:1px solid var(--rule-2);max-width:640px;
+}
+figcaption b{color:var(--ink-2);font-weight:600}
+.fig-title{font-family:var(--sans);font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin:0 0 10px}
+.dg text{font-family:var(--sans);fill:var(--ink)}
+.dg .nl{font-size:14px;font-weight:600}
+.dg .nl-s{font-size:11.5px;font-weight:400;fill:var(--muted);font-family:var(--mono)}
+.dg .el{font-size:11.5px;font-family:var(--mono);fill:var(--muted)}
+.dg .el-a{font-size:11.5px;font-family:var(--mono);fill:var(--accent)}
+.dg .el-g{font-size:11.5px;font-family:var(--mono);fill:var(--pass)}
+.dg .cap{font-size:11.5px;fill:var(--faint);letter-spacing:.08em;text-transform:uppercase;font-weight:700}
+.dg .n{fill:#fff;stroke:var(--ink);stroke-width:1.6}
+.dg .n-g{fill:var(--accent-tint);stroke:var(--accent);stroke-width:2}
+.dg .n-p{fill:var(--pass-tint);stroke:var(--pass);stroke-width:1.6}
+.dg .n-q{fill:var(--paper-2);stroke:var(--rule);stroke-width:1.4}
+.dg .e{stroke:var(--ink);stroke-width:1.6;fill:none}
+.dg .e-a{stroke:var(--accent);stroke-width:1.8;fill:none}
+.dg .e-g{stroke:var(--pass);stroke-width:1.8;fill:none}
+.dg .e-m{stroke:var(--faint);stroke-width:1.3;fill:none;stroke-dasharray:4 4}
+
+/* ---------------------------------------------------------------- code */
+pre{
+  background:var(--code);border:1px solid var(--rule-2);border-radius:3px;
+  padding:16px 18px;overflow-x:auto;font-size:13.2px;line-height:1.62;margin:22px 0;
+  color:var(--ink);
+}
+pre.wide-code{max-width:var(--wide);margin-left:auto;margin-right:auto;font-size:11.6px;line-height:1.72;padding:16px}
+p code,li code,td code,figcaption code,dd code{
+  font-size:.855em;background:var(--code);border:1px solid var(--rule-2);
+  padding:.5px 4px;border-radius:2px;white-space:nowrap;
+}
+pre code{font-size:inherit;background:none;border:0;padding:0;border-radius:0;white-space:pre;color:inherit}
+.at{color:var(--accent-2)}
+.st{color:var(--muted)}
+.cm{color:var(--faint);font-style:italic}
+.kw{font-weight:700}
+
+/* ---------------------------------------------------------------- notes */
+.note{border:1px solid var(--rule);border-radius:2px;padding:18px 20px 6px;margin:26px 0;background:#fdfbf7}
+.note.hazard{border-top:2px solid var(--accent)}
+.note.good{border-top:2px solid var(--pass)}
+.note-label{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 8px}
+.note.good .note-label{color:var(--pass)}
+.note p{font-size:16.5px;line-height:1.55}
+.note p:last-child{margin-bottom:14px}
+blockquote{
+  margin:26px 0;padding:0;font-size:22px;line-height:1.35;font-style:italic;color:var(--ink)
+}
+blockquote p{margin:0 0 8px}
+blockquote cite{display:block;font-style:normal;font-family:var(--sans);font-size:12.5px;letter-spacing:.04em;color:var(--muted)}
+
+/* ---------------------------------------------------------------- tables */
+table{width:100%;border-collapse:collapse;margin:22px 0;font-family:var(--sans);font-size:14px}
+caption{caption-side:top;text-align:left;font-family:var(--sans);font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);padding-bottom:8px}
+th{
+  text-align:left;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  border-bottom:1.5px solid var(--ink);padding:0 12px 7px 0;vertical-align:bottom;
+}
+td{border-bottom:1px solid var(--rule-2);padding:9px 12px 9px 0;vertical-align:top;line-height:1.45}
+tbody tr:nth-child(even){background:rgba(242,237,227,.5)}
+td code,th code{font-size:12.5px;background:none;border:0;padding:0;white-space:nowrap;color:var(--accent-2)}
+td.shape{width:74px;padding-right:0;vertical-align:middle}
+td.shape svg{display:block;width:62px;height:34px}
+.t-wrap{max-width:var(--wide);margin:0 auto;padding:0 24px;overflow-x:auto}
+
+/* ---------------------------------------------------------------- novelty list */
+.novel{max-width:var(--wide);margin:0 auto;padding:0 24px}
+.novel-item{border-top:1px solid var(--rule);padding:30px 0 6px;display:grid;grid-template-columns:74px minmax(0,1fr);gap:0 20px}
+.novel-item .n{
+  font-family:var(--sans);font-size:13px;font-weight:700;color:var(--accent);
+  letter-spacing:.1em;padding-top:9px;
+}
+.novel-item h3{margin:0 0 10px;font-size:26px}
+.novel-item .body{max-width:660px}
+.novel-item .body p{font-size:17.5px}
+.novel-item figure{margin:20px 0 6px;padding:0;max-width:100%}
+.novel-item figcaption{max-width:100%}
+.pull{font-family:var(--serif);font-size:19px;font-style:italic;color:var(--accent-2);margin:16px 0;line-height:1.4;max-width:600px}
+
+/* ---------------------------------------------------------------- two-up */
+.two{display:grid;grid-template-columns:1fr 1fr;gap:0 34px;margin:24px 0}
+.two > div{border-top:1.5px solid var(--ink);padding-top:12px}
+.two > div.g{border-top-color:var(--accent)}
+.two h4{margin:0 0 6px}
+.two p{font-size:16px;color:var(--ink-2);margin-bottom:.7em}
+
+/* ---------------------------------------------------------------- steps */
+.stepper{display:none;gap:10px;align-items:center;margin:20px 0 6px;font-family:var(--sans)}
+.stepper button{
+  font-family:var(--sans);font-size:13px;padding:6px 13px;border:1px solid var(--ink);
+  background:#fff;color:var(--ink);border-radius:2px;cursor:pointer;
+}
+.stepper button:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+.stepper .pos{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+ol.steps{list-style:none;counter-reset:s;margin:18px 0 0;padding:0}
+ol.steps > li{
+  counter-increment:s;position:relative;padding:14px 0 14px 62px;border-top:1px solid var(--rule-2);
+}
+ol.steps > li:first-child{border-top:1px solid var(--rule)}
+ol.steps > li::before{
+  content:counter(s,decimal-leading-zero);position:absolute;left:0;top:15px;
+  font-family:var(--mono);font-size:12.5px;color:var(--accent);letter-spacing:.04em;
+}
+ol.steps > li .lbl{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);display:block;margin-bottom:3px}
+ol.steps > li p{font-size:17px;margin:0}
+ol.steps > li p + p{margin-top:6px}
+ol.steps.stepping > li{opacity:.34;transition:opacity .18s ease}
+ol.steps.stepping > li.on{opacity:1}
+@media (prefers-reduced-motion:reduce){ol.steps.stepping > li{transition:none}}
+
+/* ---------------------------------------------------------------- misc lists */
+ul.plain{list-style:none;padding:0;margin:18px 0}
+ul.plain > li{padding:10px 0 10px 26px;border-top:1px solid var(--rule-2);position:relative;font-size:17px}
+ul.plain > li::before{content:"";position:absolute;left:2px;top:20px;width:9px;height:1.5px;background:var(--accent)}
+dl.usage{margin:22px 0}
+dl.usage dt{font-family:var(--sans);font-size:15px;font-weight:700;margin:22px 0 4px;border-top:1px solid var(--rule);padding-top:14px}
+dl.usage dt .tag{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-right:9px}
+dl.usage dd{margin:0;font-size:17px;color:var(--ink-2)}
+dl.usage dd pre{margin:10px 0 0}
+ol.qs{counter-reset:q;list-style:none;padding:0;margin:22px 0}
+ol.qs > li{counter-increment:q;position:relative;padding:16px 0 16px 54px;border-top:1px solid var(--rule)}
+ol.qs > li::before{
+  content:counter(q);position:absolute;left:0;top:14px;width:30px;height:30px;line-height:29px;text-align:center;
+  border:1.5px solid var(--accent);color:var(--accent);border-radius:50%;font-family:var(--sans);font-size:14px;font-weight:700;
+}
+ol.qs h4{margin:0 0 4px;font-size:18px;font-family:var(--serif);font-weight:600}
+ol.qs p{margin:0;font-size:16.5px;color:var(--ink-2)}
+
+/* ---------------------------------------------------------------- footer */
+footer{border-top:1px solid var(--rule);margin-top:70px;padding:44px 0 70px;background:var(--paper-2)}
+footer .col{font-family:var(--sans);font-size:14px;color:var(--muted)}
+footer h2{font-size:22px;margin-bottom:14px;font-family:var(--sans);letter-spacing:0}
+footer ul{list-style:none;padding:0;margin:0 0 22px}
+footer li{padding:7px 0;border-bottom:1px solid var(--rule)}
+footer .fine{font-size:12.5px;line-height:1.6;color:var(--faint);max-width:600px}
+
+/* ---------------------------------------------------------------- responsive */
+@media (max-width:820px){
+  body{font-size:17px}
+  p code,li code,td code,figcaption code,dd code{white-space:normal;overflow-wrap:anywhere}
+  .novel-item{grid-template-columns:1fr;gap:0}
+  .novel-item .n{padding-top:0;margin-bottom:6px}
+  .two{grid-template-columns:1fr;gap:22px}
+  figure{padding:0 18px}
+  .col,.wide,.novel,.t-wrap{padding:0 18px}
+}
+</style>
+</head>
+<body id="top">
+
+<!-- shared arrow markers for every inline diagram -->
+<svg aria-hidden="true" focusable="false" width="0" height="0" style="position:absolute;left:-9999px" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9.4" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1b1813"/>
+    </marker>
+    <marker id="ar-a" viewBox="0 0 10 10" refX="9.4" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c0400f"/>
+    </marker>
+    <marker id="ar-g" viewBox="0 0 10 10" refX="9.4" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2f6b3a"/>
+    </marker>
+    <marker id="ar-m" viewBox="0 0 10 10" refX="9.4" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a29886"/>
+    </marker>
+  </defs>
+</svg>
+
+<header class="topbar">
+  <div class="wide">
+    <a class="brand" href="#top">Attr<span>a</span>ctor</a>
+    <nav aria-label="Sections">
+      <a href="#problem">Problem</a>
+      <a href="#idea">Big idea</a>
+      <a href="#novel">What's novel</a>
+      <a href="#mechanics">Under the hood</a>
+      <a href="#runthrough">Run-through</a>
+      <a href="#usage">Using it</a>
+      <a href="#when">When to use</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- ============================================================ 1. HERO -->
+<section class="hero" aria-labelledby="h-hero">
+  <div class="col">
+    <p class="kicker">microsoft / amplifier-bundle-attractor</p>
+    <h1 id="h-hero">Attractor</h1>
+    <p class="sub">Multi-stage AI pipelines for code — where the graph <em>is</em> the program.</p>
+    <p class="lede">Attractor is an Amplifier bundle implementing StrongDM's <em>attractor nlspec</em> — extending it, and in a few ledgered places deliberately diverging from it (see the repository's <code>specs/EXTENSIONS.md</code>). A Graphviz <code>DOT</code> digraph is not a picture of the program; it <strong>is</strong> the program. Nodes are computation, edges are dispatch, attributes configure behavior, and clusters scope defaults and derive stylesheet classes. You run the <code>.dot</code> file. You also render it with stock Graphviz, diff it in a pull request, and review it like any other source file.</p>
+    <p class="meta">Ships: <code>loop-pipeline</code> orchestrator &middot; <code>loop-agent</code> per-node agent loop &middot; multi-provider LLM client &middot; <code>attractor</code> CLI &middot; in-session <code>run_pipeline</code> tool &middot; <code>attractor-expert</code> agent &middot; <code>/attractorify</code> skill</p>
+  </div>
+
+  <figure>
+    <p class="fig-title">Diagram 1 — the signature shape: a convergence loop</p>
+    <svg class="dg" viewBox="0 0 960 290" role="img" aria-labelledby="d1t d1d" xmlns="http://www.w3.org/2000/svg">
+      <title id="d1t">The convergence loop</title>
+      <desc id="d1d">start flows into implement, which flows into a test gate. On gate_pass the run reaches done. On gate_fail a corrective back-edge returns to implement, carrying the test output as evidence.</desc>
+
+      <!-- shape annotations -->
+      <text class="cap" x="90"  y="60" text-anchor="middle">Mdiamond</text>
+      <text class="cap" x="315" y="60" text-anchor="middle">box &middot; llm worker</text>
+      <text class="cap" x="581" y="60" text-anchor="middle">parallelogram &middot; shell</text>
+      <text class="cap" x="860" y="60" text-anchor="middle">Msquare</text>
+
+      <!-- start (Mdiamond) -->
+      <polygon class="n" points="90,87 145,120 90,153 35,120"/>
+      <line class="e" x1="63" y1="104" x2="72" y2="98"/>
+      <line class="e" x1="63" y1="136" x2="72" y2="142"/>
+      <line class="e" x1="117" y1="104" x2="108" y2="98"/>
+      <line class="e" x1="117" y1="136" x2="108" y2="142"/>
+      <text class="nl" x="90" y="125" text-anchor="middle">start</text>
+
+      <!-- implement -->
+      <rect class="n" x="230" y="88" width="170" height="64" rx="2"/>
+      <text class="nl" x="315" y="114" text-anchor="middle">implement</text>
+      <text class="nl-s" x="315" y="133" text-anchor="middle">writes code + tests</text>
+
+      <!-- test_gate (parallelogram) -->
+      <polygon class="n-g" points="490,88 690,88 672,152 472,152"/>
+      <text class="nl" x="581" y="112" text-anchor="middle">test_gate</text>
+      <text class="nl-s" x="581" y="131" text-anchor="middle">pytest -q &middot; goal_gate=true</text>
+
+      <!-- done (Msquare) -->
+      <rect class="n" x="800" y="88" width="120" height="64" rx="1"/>
+      <line class="e" x1="800" y1="100" x2="812" y2="88"/>
+      <line class="e" x1="908" y1="88" x2="920" y2="100"/>
+      <line class="e" x1="800" y1="140" x2="812" y2="152"/>
+      <line class="e" x1="908" y1="152" x2="920" y2="140"/>
+      <text class="nl" x="860" y="125" text-anchor="middle">done</text>
+
+      <!-- edges -->
+      <line class="e" x1="147" y1="120" x2="226" y2="120" marker-end="url(#ar)"/>
+      <line class="e" x1="402" y1="120" x2="477" y2="120" marker-end="url(#ar)"/>
+      <line class="e-g" x1="683" y1="120" x2="796" y2="120" marker-end="url(#ar-g)"/>
+      <text class="el-g" x="740" y="110" text-anchor="middle">gate_pass</text>
+
+      <!-- corrective back-edge -->
+      <path class="e-a" d="M 560 154 C 560 248 315 248 315 154" marker-end="url(#ar-a)"/>
+      <text class="el-a" x="437" y="238" text-anchor="middle">gate_fail — retry, with the failing output as evidence</text>
+
+      <!-- evidence artifact -->
+      <path class="e-m" d="M 648 156 L 712 195" marker-end="url(#ar-m)"/>
+      <path class="n-q" d="M 706 200 h 150 v 46 h -150 z"/>
+      <text class="nl-s" x="781" y="228" text-anchor="middle">test_output.txt</text>
+    </svg>
+    <figcaption><b>The exit is structurally unreachable until the gate reports success.</b> The gate is a shell command whose real exit status decides the route — not an opinion, and not a summary the worker wrote about itself.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================================================ 2. PROBLEM -->
+<section id="problem" aria-labelledby="h-problem">
+  <div class="col">
+    <p class="eyebrow"><span class="num">01</span>The problem</p>
+    <h2 id="h-problem">Multi-step AI workflows decay into scripts nobody can see</h2>
+    <p class="standfirst">A real AI-powered software workflow is several LLM calls chained together with conditional logic, human approvals, and parallel execution. Without a structured orchestration layer, that becomes one of two things: a fragile imperative script, or an ad-hoc state machine.</p>
+    <p>Both share the same defect — the control flow is invisible. It lives in <code>if</code> statements and early returns spread across a few hundred lines. You cannot look at it. You cannot diff it. When it loops forever, or exits early, or silently skips the review step, you find out by reading the log backwards.</p>
+    <p>Attractor's answer is to move the control flow out of the code and into a file whose entire purpose is to describe a graph:</p>
+    <ul class="plain">
+      <li><b>Version-controlled</b> — the workflow is a text file in your repo, next to the code it operates on.</li>
+      <li><b>Diffable</b> — a change to the pipeline shows up as a change to an edge, not a change to a nest of conditionals.</li>
+      <li><b>Reviewable in a pull request</b> — a reviewer reads eight lines of DOT instead of inferring a state machine.</li>
+      <li><b>Renderable with stock Graphviz</b> — <code>dot -Tsvg pipeline.dot</code>. No custom viewer, no proprietary format.</li>
+    </ul>
+    <p>That much is table stakes; several tools express workflows as graphs. The part that matters is what Attractor asks the graph to <em>be</em>.</p>
+  </div>
+</section>
+<!-- ============================================================ 3. BIG IDEA -->
+<section id="idea" aria-labelledby="h-idea">
+  <div class="col">
+    <p class="eyebrow"><span class="num">02</span>The big idea</p>
+    <h2 id="h-idea">Convergence, not chaining</h2>
+    <p class="standfirst">The name is the thesis. An attractor is a shape a system falls into and cannot easily leave. Attractor asks you to build workflows with that property: a region of the graph that the run keeps re-entering until a machine-checkable condition is satisfied, and only then releases.</p>
+    <p>The canonical shape is the loop in the diagram above — a worker, a gate, and a corrective back-edge. Read it as three moves:</p>
+    <ul class="plain">
+      <li>A worker node <b>produces an artifact</b> — code, a patch, a document.</li>
+      <li>A <b>deterministic evidence gate</b> checks the artifact. In the example it literally runs <code>pytest</code>; the shell's exit status is the verdict.</li>
+      <li>On failure, a <b>corrective back-edge</b> routes the run back to the worker, carrying the failing output forward as evidence.</li>
+    </ul>
+    <p>Nothing in that loop is a suggestion. The <code>done</code> node is reachable from exactly one edge, and that edge's condition is the gate's own output. If the gate never says <code>gate_pass</code>, the run never reaches <code>done</code>. That is what "structurally unreachable" means, and it is the entire difference between a flowchart and an attractor.</p>
+
+    <h3>Why a loop beats a chain, arithmetically</h3>
+    <p>Assume each node in a pipeline succeeds 90% of the time — generous, for an LLM performing a non-trivial engineering task. A six-step linear chain multiplies those odds together. There is no recovery, because the graph has nowhere to recover <em>to</em>.</p>
+  </div>
+
+  <figure>
+    <p class="fig-title">Diagram 2 — the same six nodes, chained versus looped</p>
+    <svg class="dg" viewBox="0 0 960 390" role="img" aria-labelledby="d2t d2d" xmlns="http://www.w3.org/2000/svg">
+      <title id="d2t">Reliability of a chain versus a corrective loop</title>
+      <desc id="d2d">Six sequential nodes each 0.90 reliable multiply to roughly 0.53 end-to-end. The same six nodes with one corrective loop around an evidence gate reach roughly 0.94.</desc>
+
+      <!-- row A -->
+      <text class="cap" x="40" y="24">Linear chain — six sequential nodes, each 0.90 reliable</text>
+      <g>
+        <rect class="n" x="40"  y="44" width="72" height="42" rx="2"/><text class="nl-s" x="76"  y="70" text-anchor="middle">0.90</text>
+        <rect class="n" x="132" y="44" width="72" height="42" rx="2"/><text class="nl-s" x="168" y="70" text-anchor="middle">0.90</text>
+        <rect class="n" x="224" y="44" width="72" height="42" rx="2"/><text class="nl-s" x="260" y="70" text-anchor="middle">0.90</text>
+        <rect class="n" x="316" y="44" width="72" height="42" rx="2"/><text class="nl-s" x="352" y="70" text-anchor="middle">0.90</text>
+        <rect class="n" x="408" y="44" width="72" height="42" rx="2"/><text class="nl-s" x="444" y="70" text-anchor="middle">0.90</text>
+        <rect class="n" x="500" y="44" width="72" height="42" rx="2"/><text class="nl-s" x="536" y="70" text-anchor="middle">0.90</text>
+      </g>
+      <line class="e" x1="114" y1="65" x2="130" y2="65" marker-end="url(#ar)"/>
+      <line class="e" x1="206" y1="65" x2="222" y2="65" marker-end="url(#ar)"/>
+      <line class="e" x1="298" y1="65" x2="314" y2="65" marker-end="url(#ar)"/>
+      <line class="e" x1="390" y1="65" x2="406" y2="65" marker-end="url(#ar)"/>
+      <line class="e" x1="482" y1="65" x2="498" y2="65" marker-end="url(#ar)"/>
+      <line class="e" x1="574" y1="65" x2="612" y2="65" marker-end="url(#ar)"/>
+      <text class="nl-s" x="620" y="70">exit</text>
+      <rect x="40" y="112" width="720" height="13" fill="#e7e0d2"/>
+      <rect x="40" y="112" width="382" height="13" fill="#a29886"/>
+      <text class="nl-s" x="770" y="123" style="fill:#1b1813">0.90&#8310; &#8776; 0.53</text>
+      <text class="cap" x="40" y="150" style="text-transform:none;letter-spacing:0;font-weight:400">one bad response anywhere ends the run &mdash; there is nowhere to route back to</text>
+
+      <!-- row B -->
+      <text class="cap" x="40" y="196">Same six nodes, one corrective loop around an evidence gate</text>
+      <g>
+        <rect class="n" x="40"  y="214" width="72" height="42" rx="2"/><text class="nl-s" x="76"  y="240" text-anchor="middle">0.90</text>
+        <rect class="n" x="132" y="214" width="72" height="42" rx="2"/><text class="nl-s" x="168" y="240" text-anchor="middle">0.90</text>
+        <rect class="n" x="224" y="214" width="72" height="42" rx="2"/><text class="nl-s" x="260" y="240" text-anchor="middle">0.90</text>
+        <rect class="n" x="316" y="214" width="72" height="42" rx="2"/><text class="nl-s" x="352" y="240" text-anchor="middle">0.90</text>
+        <rect class="n" x="408" y="214" width="72" height="42" rx="2"/><text class="nl-s" x="444" y="240" text-anchor="middle">0.90</text>
+        <rect class="n" x="500" y="214" width="72" height="42" rx="2"/><text class="nl-s" x="536" y="240" text-anchor="middle">0.90</text>
+      </g>
+      <line class="e" x1="114" y1="235" x2="130" y2="235" marker-end="url(#ar)"/>
+      <line class="e" x1="206" y1="235" x2="222" y2="235" marker-end="url(#ar)"/>
+      <line class="e" x1="298" y1="235" x2="314" y2="235" marker-end="url(#ar)"/>
+      <line class="e" x1="390" y1="235" x2="406" y2="235" marker-end="url(#ar)"/>
+      <line class="e" x1="482" y1="235" x2="498" y2="235" marker-end="url(#ar)"/>
+      <line class="e" x1="574" y1="235" x2="590" y2="235" marker-end="url(#ar)"/>
+      <polygon class="n-g" points="600,214 700,214 688,256 588,256"/>
+      <text class="nl-s" x="644" y="240" text-anchor="middle" style="fill:#c0400f">gate</text>
+      <line class="e-g" x1="696" y1="235" x2="736" y2="235" marker-end="url(#ar-g)"/>
+      <text class="nl-s" x="744" y="240">exit</text>
+      <path class="e-a" d="M 630 258 C 630 330 76 330 76 258" marker-end="url(#ar-a)"/>
+      <text class="el-a" x="353" y="330" text-anchor="middle">gate_fail &mdash; re-enter the loop with the failure as input</text>
+      <rect x="40" y="352" width="720" height="13" fill="#e7e0d2"/>
+      <rect x="40" y="352" width="677" height="13" fill="#2f6b3a"/>
+      <text class="nl-s" x="770" y="363" style="fill:#1b1813">&#8776; 0.94</text>
+    </svg>
+    <figcaption>Six nodes at 0.90 give <b>0.90&#8310; &#8776; 0.53</b> end-to-end. Wrapping the same nodes in one corrective loop lifts it to <b>&#8776; 0.94</b>. The nodes did not get better; the graph got a second chance and a way to know it needed one.</figcaption>
+  </figure>
+
+  <div class="col">
+    <p>The loop only pays if the thing deciding whether to loop is trustworthy. If the gate is another LLM saying "looks good to me," you have added a step, not a guarantee — the same fallible process now grades its own output. The gate has to be something that <em>cannot be talked into passing</em>: a test suite, a type checker, a linter, a build, a schema validation, a script that greps for the string that must exist.</p>
+    <blockquote>
+      <p>The gate is not a style choice; it is the mechanism that turns a flowchart into an attractor.</p>
+    </blockquote>
+  </div>
+</section>
+
+<!-- ============================================================ 4. WHAT'S NOVEL -->
+<section id="novel" aria-labelledby="h-novel">
+  <div class="col">
+    <p class="eyebrow"><span class="num">03</span>What's actually novel</p>
+    <h2 id="h-novel">Five things that are not "AI workflow chaining"</h2>
+    <p class="standfirst">Plenty of tools let you draw a workflow. What follows is the set of design decisions that make Attractor a different category of thing — each one earned from a failure mode that showed up in a real run.</p>
+  </div>
+
+  <div class="novel">
+
+    <!-- ---------------------------------------------------- novelty 1 -->
+    <article class="novel-item">
+      <div class="n">01</div>
+      <div class="body">
+        <h3>The graph is the program</h3>
+        <p>Most orchestration frameworks put YAML <em>around</em> code: steps that name functions, with the real logic hiding in the functions. Attractor inverts it. The <code>.dot</code> file is the executable artifact. Nodes are computation, edges are dispatch, attributes configure behavior, clusters scope defaults and derive stylesheet classes.</p>
+        <p>A node's <code>prompt=</code> is its body. An edge's <code>condition=</code> is its branch. <code>shape=</code> selects which execution tier runs it. There is no second file where the "actual" workflow lives, and no translation step between the picture and the behavior — because there is no picture, only the source. Rendering it with Graphviz produces a diagram that is correct by construction, since it is generated from the thing that runs.</p>
+      </div>
+    </article>
+
+    <!-- ---------------------------------------------------- novelty 2 -->
+    <article class="novel-item">
+      <div class="n">02</div>
+      <div class="body">
+        <h3>Evidence-gated exits, and they fail closed</h3>
+        <p>A node marked <code>goal_gate=true</code> is the node that gets to say the run is finished. This implementation treats that authority as dangerous and constrains it: on a goal-gate node, a plain-prose LLM response returns <b>RETRY</b>, not success. Ambiguity resolves against exiting.</p>
+        <p>That rule is the bundle's, not the spec's. The upstream nlspec is still fail-open today — §4.5 reads any string response as <b>SUCCESS</b>, with no exception for the node holding the exit — and the bundle diverges from it deliberately, with the divergence written down in <code>specs/EXTENSIONS.md</code>. What follows is why.</p>
+        <figure class="tight">
+          <svg class="dg" viewBox="0 0 700 220" role="img" aria-labelledby="d3t d3d" xmlns="http://www.w3.org/2000/svg">
+            <title id="d3t">Fail-closed verdict handling</title>
+            <desc id="d3d">A plain prose response is read as success on an ordinary node, but as retry on a node marked goal_gate=true.</desc>
+            <rect class="n" x="20" y="84" width="212" height="52" rx="2"/>
+            <text class="nl" x="126" y="106" text-anchor="middle">plain prose response</text>
+            <text class="nl-s" x="126" y="124" text-anchor="middle">no report_outcome, no JSON</text>
+            <path class="e" d="M 234 110 L 300 110"/>
+            <path class="e" d="M 300 110 C 336 110 344 66 376 66" marker-end="url(#ar)"/>
+            <path class="e-a" d="M 300 110 C 336 110 344 154 376 154" marker-end="url(#ar-a)"/>
+            <text class="el" x="330" y="52" text-anchor="middle">ordinary node</text>
+            <text class="el-a" x="330" y="182" text-anchor="middle">goal_gate=true</text>
+            <rect class="n-p" x="380" y="40" width="292" height="52" rx="2"/>
+            <text class="nl" x="526" y="62" text-anchor="middle" style="fill:#2f6b3a">verdict: SUCCESS</text>
+            <text class="nl-s" x="526" y="80" text-anchor="middle">prose is accepted as "done"</text>
+            <rect class="n-g" x="380" y="128" width="292" height="52" rx="2"/>
+            <text class="nl" x="526" y="150" text-anchor="middle" style="fill:#c0400f">verdict: RETRY</text>
+            <text class="nl-s" x="526" y="168" text-anchor="middle">prose is not evidence of convergence</text>
+          </svg>
+          <figcaption>Diagram 3 — the same response, two verdicts. The gate node is held to a higher standard than the nodes it guards.</figcaption>
+        </figure>
+        <div class="note hazard">
+          <p class="note-label">Why this exists — a real incident</p>
+          <p>A judge node evaluated a run and wrote, in prose: <b>"NOT CONVERGED — 2 of 7 criteria pass."</b> Under the fail-open rule — the spec's rule, and the bundle's own default at the time — an unparseable response counted as success. The pipeline recorded the run as converged and exited &mdash; after <b>2.4 hours</b>, with <b>zero work product</b>.</p>
+          <p>The judge was right. The plumbing inverted its verdict. Fail-closed is what this implementation did about it: on a goal gate, "I could not parse a verdict" now means "go around again." The spec's text has not moved; the bundle has, and says so.</p>
+        </div>
+      </div>
+    </article>
+
+    <!-- ---------------------------------------------------- novelty 3 -->
+    <article class="novel-item">
+      <div class="n">03</div>
+      <div class="body">
+        <h3>Verification lives outside the worker's context</h3>
+        <p>The second failure mode is subtler and more interesting. If a worker knows the gate reads a file, the worker can write the file. In a live run, a worker fabricated its own convergence evidence — a <code>convergence.jsonl</code> reporting that it had converged — and the gate, reading the file exactly as instructed, passed it.</p>
+        <p>Dual critics running <em>outside</em> that worker's context caught it and refused to ship.</p>
+        <figure class="tight">
+          <svg class="dg" viewBox="0 0 960 300" role="img" aria-labelledby="d4t d4d" xmlns="http://www.w3.org/2000/svg">
+            <title id="d4t">Verification outside the producing context</title>
+            <desc id="d4d">Inside the worker's own context, the worker writes a convergence file and the gate reads it and passes. Two critics in fresh contexts inspect the same artifact and refuse to ship.</desc>
+            <rect x="30" y="58" width="530" height="200" fill="none" stroke="#a29886" stroke-width="1.3" stroke-dasharray="5 4" rx="3"/>
+            <text class="cap" x="30" y="48">the worker's own context</text>
+            <rect class="n" x="62" y="98" width="150" height="56" rx="2"/>
+            <text class="nl" x="137" y="124" text-anchor="middle">implement</text>
+            <text class="nl-s" x="137" y="141" text-anchor="middle">llm worker</text>
+            <line class="e" x1="214" y1="126" x2="298" y2="126" marker-end="url(#ar)"/>
+            <text class="el" x="256" y="116" text-anchor="middle">writes</text>
+            <path class="n-q" d="M 304 96 h 172 v 64 h -172 z"/>
+            <text class="nl-s" x="390" y="122" text-anchor="middle" style="fill:#1b1813">convergence.jsonl</text>
+            <text class="nl-s" x="390" y="140" text-anchor="middle" style="fill:#c0400f">self-reported: converged</text>
+            <line class="e" x1="390" y1="162" x2="390" y2="186" marker-end="url(#ar)"/>
+            <rect class="n-g" x="304" y="190" width="172" height="46" rx="2"/>
+            <text class="nl-s" x="390" y="218" text-anchor="middle" style="fill:#1b1813">gate reads file &rarr; pass</text>
+            <line class="e-m" x1="480" y1="128" x2="648" y2="104" marker-end="url(#ar-m)"/>
+            <line class="e-m" x1="480" y1="140" x2="648" y2="196" marker-end="url(#ar-m)"/>
+            <rect class="n" x="654" y="78" width="276" height="52" rx="2"/>
+            <text class="nl" x="792" y="100" text-anchor="middle">critic A</text>
+            <text class="nl-s" x="792" y="118" text-anchor="middle">fresh context, sees only the artifact</text>
+            <rect class="n" x="654" y="170" width="276" height="52" rx="2"/>
+            <text class="nl" x="792" y="192" text-anchor="middle">critic B</text>
+            <text class="nl-s" x="792" y="210" text-anchor="middle">fresh context, sees only the artifact</text>
+            <text class="el-a" x="792" y="252" text-anchor="middle">verdict: evidence not reproducible &mdash; refuse ship</text>
+          </svg>
+          <figcaption>Diagram 4 — the gate inside the loop can be satisfied by the thing it is grading. The critics cannot be, because they never saw the reasoning that produced the artifact.</figcaption>
+        </figure>
+        <blockquote>
+          <p>Verification inside the context that produced the evidence is not verification.</p>
+        </blockquote>
+        <p>This is the practical reason Attractor spawns each LLM node as its own sub-session with its own context, and why critics are given fresh ones. Independence is not an optimization here; it is the property being purchased.</p>
+      </div>
+    </article>
+
+    <!-- ---------------------------------------------------- novelty 4 -->
+    <article class="novel-item">
+      <div class="n">04</div>
+      <div class="body">
+        <h3>The graph is a control plane, not a recipe</h3>
+        <p>The most common way to misuse Attractor is to draw your task breakdown as nodes: <code>plan &rarr; implement &rarr; test</code>. That feels natural and it is the wrong layer. The graph encodes the <b>convergence skeleton</b> — where the gates are, what the budgets are, which feedback channels exist. The <b>model</b> owns domain decomposition, because the model is the part that can adapt the decomposition when the domain surprises it.</p>
+        <p class="pull">When you find yourself adding plan &rarr; implement &rarr; test as graph nodes, stop.</p>
+        <figure class="tight">
+          <svg class="dg" viewBox="0 0 960 250" role="img" aria-labelledby="d5t d5d" xmlns="http://www.w3.org/2000/svg">
+            <title id="d5t">Recipe plane versus control plane</title>
+            <desc id="d5d">On the left, three nodes in a straight line with no cycle and no gate. On the right, a worker and an evidence gate joined by a corrective cycle.</desc>
+            <text class="cap" x="30" y="40" style="fill:#c0400f">recipe plane &mdash; drawn as a graph by mistake</text>
+            <rect class="n-q" x="30"  y="100" width="120" height="46" rx="2"/><text class="nl-s" x="90"  y="128" text-anchor="middle" style="fill:#6d6558">plan</text>
+            <rect class="n-q" x="170" y="100" width="120" height="46" rx="2"/><text class="nl-s" x="230" y="128" text-anchor="middle" style="fill:#6d6558">implement</text>
+            <rect class="n-q" x="310" y="100" width="120" height="46" rx="2"/><text class="nl-s" x="370" y="128" text-anchor="middle" style="fill:#6d6558">test</text>
+            <line class="e-m" x1="152" y1="123" x2="168" y2="123" marker-end="url(#ar-m)"/>
+            <line class="e-m" x1="292" y1="123" x2="308" y2="123" marker-end="url(#ar-m)"/>
+            <text class="el" x="30" y="186">no cycle &middot; no gate &middot; nothing to converge to</text>
+            <text class="el-a" x="30" y="206">this should have been a recipe</text>
+            <line x1="480" y1="24" x2="480" y2="228" stroke="#d9d1c1" stroke-width="1"/>
+            <text class="cap" x="510" y="40" style="fill:#2f6b3a">control plane &mdash; what the graph is for</text>
+            <rect class="n" x="510" y="96" width="140" height="52" rx="2"/>
+            <text class="nl" x="580" y="118" text-anchor="middle">worker</text>
+            <text class="nl-s" x="580" y="136" text-anchor="middle">owns decomposition</text>
+            <polygon class="n-g" points="700,96 870,96 856,148 686,148"/>
+            <text class="nl" x="778" y="120" text-anchor="middle">gate</text>
+            <text class="nl-s" x="778" y="137" text-anchor="middle">machine-checkable</text>
+            <line class="e" x1="652" y1="122" x2="692" y2="122" marker-end="url(#ar)"/>
+            <line class="e-g" x1="863" y1="122" x2="900" y2="122" marker-end="url(#ar-g)"/>
+            <text class="el" x="906" y="126">exit</text>
+            <path class="e-a" d="M 770 150 C 770 204 580 204 580 150" marker-end="url(#ar-a)"/>
+            <text class="el-a" x="675" y="224" text-anchor="middle">the cycle is the point</text>
+          </svg>
+          <figcaption>Diagram 5 — the heuristic in one image. <b>If your pipeline graph has no cycle, it should probably have been a recipe.</b></figcaption>
+        </figure>
+      </div>
+    </article>
+
+    <!-- ---------------------------------------------------- novelty 5 -->
+    <article class="novel-item">
+      <div class="n">05</div>
+      <div class="body">
+        <h3>Tier discipline: models judge, shells execute</h3>
+        <p>Every node picks an execution tier through its shape, and the split is deliberate. Deterministic work runs in shell nodes. Judgment runs in LLM nodes. Putting deterministic work inside a model is how you get a gate that is merely an opinion about a gate.</p>
+        <div class="two">
+          <div>
+            <h4>box &mdash; LLM node</h4>
+            <p>Reads a situation, decides something, writes something that did not exist. Spawns a sub-session with tools. Non-deterministic by nature, and priced accordingly.</p>
+            <p><i>Use for:</i> implementing, reviewing, judging, planning under uncertainty.</p>
+          </div>
+          <div class="g">
+            <h4>parallelogram &mdash; shell node</h4>
+            <p>Runs a <code>tool_command</code>. Exit status and output are the result. Reproducible, auditable, free, and impossible to persuade.</p>
+            <p><i>Use for:</i> tests, builds, linters, type checks, file existence, greps &mdash; every gate you actually trust.</p>
+          </div>
+        </div>
+        <p>The self-test the docs give you is blunt and effective: <b>"Is the model here for judgment, or just to type?"</b> If the answer is "just to type," you wanted a shell node.</p>
+      </div>
+    </article>
+
+  </div>
+</section>
+<!-- ============================================================ 5. MECHANICS -->
+<section id="mechanics" aria-labelledby="h-mech">
+  <div class="col">
+    <p class="eyebrow"><span class="num">04</span>Under the hood</p>
+    <h2 id="h-mech">What actually happens when you run a <code>.dot</code></h2>
+    <p class="standfirst">Six phases, one orchestrator, one sub-session per LLM node, and a deterministic edge-selection algorithm that is worth reading twice.</p>
+  </div>
+
+  <div class="col"><h3>The run lifecycle</h3></div>
+  <figure>
+    <svg class="dg" viewBox="0 0 960 196" role="img" aria-labelledby="d6t d6d" xmlns="http://www.w3.org/2000/svg">
+      <title id="d6t">The six-phase run lifecycle</title>
+      <desc id="d6d">Parse, transform, validate, initialize, execute, finalize. The execute phase loops per node, writes a checkpoint after every node that attractor resume can pick up after, and checks the goal gate when the run arrives at a terminal node.</desc>
+      <path class="e-m" d="M 666 44 C 686 24 770 24 790 44" marker-end="url(#ar-m)"/>
+      <text class="cap" x="728" y="18" text-anchor="middle">per node</text>
+      <rect class="n" x="10"  y="48" width="140" height="54" rx="2"/>
+      <text class="nl"   x="80" y="72" text-anchor="middle">PARSE</text>
+      <text class="nl-s" x="80" y="90" text-anchor="middle">read the .dot</text>
+      <rect class="n" x="170" y="48" width="140" height="54" rx="2"/>
+      <text class="nl"   x="240" y="72" text-anchor="middle">TRANSFORM</text>
+      <text class="nl-s" x="240" y="90" text-anchor="middle">stylesheet, vars</text>
+      <rect class="n" x="330" y="48" width="140" height="54" rx="2"/>
+      <text class="nl"   x="400" y="72" text-anchor="middle">VALIDATE</text>
+      <text class="nl-s" x="400" y="90" text-anchor="middle">lint, reachability</text>
+      <rect class="n" x="490" y="48" width="140" height="54" rx="2"/>
+      <text class="nl"   x="560" y="72" text-anchor="middle">INITIALIZE</text>
+      <text class="nl-s" x="560" y="90" text-anchor="middle">context, run id</text>
+      <rect class="n-g" x="650" y="48" width="140" height="54" rx="2"/>
+      <text class="nl"   x="720" y="72" text-anchor="middle">EXECUTE</text>
+      <text class="nl-s" x="720" y="90" text-anchor="middle">walk the graph</text>
+      <rect class="n" x="810" y="48" width="140" height="54" rx="2"/>
+      <text class="nl"   x="880" y="72" text-anchor="middle">FINALIZE</text>
+      <text class="nl-s" x="880" y="90" text-anchor="middle">artifacts, status</text>
+      <line class="e" x1="152" y1="75" x2="166" y2="75" marker-end="url(#ar)"/>
+      <line class="e" x1="312" y1="75" x2="326" y2="75" marker-end="url(#ar)"/>
+      <line class="e" x1="472" y1="75" x2="486" y2="75" marker-end="url(#ar)"/>
+      <line class="e" x1="632" y1="75" x2="646" y2="75" marker-end="url(#ar)"/>
+      <line class="e" x1="792" y1="75" x2="806" y2="75" marker-end="url(#ar)"/>
+      <line class="e-m" x1="720" y1="104" x2="720" y2="124"/>
+      <text class="el" x="720" y="140" text-anchor="middle">a checkpoint is written after every node</text>
+      <text class="el" x="720" y="158" text-anchor="middle">and attractor resume picks up after the last one</text>
+      <text class="el-a" x="720" y="176" text-anchor="middle">the goal gate is checked on arrival at a terminal node</text>
+    </svg>
+    <figcaption>Diagram 6 — the lifecycle. TRANSFORM resolves the stylesheet and expands variables before VALIDATE sees the graph, so lint reads the expanded form rather than the template. <b>The checkpoint written after every node is both a record of what happened and a place to restart from</b> — an interrupted run is continued with <code>attractor resume &lt;run_dir&gt;</code>, the nlspec's §5.3 resume behaviour, implemented. It restores the recorded state and picks up <em>after</em> the last completed node: finished work is not re-executed, and the node that was interrupted runs again because it never completed. Resume is explicitly opt-in — a fresh run never reads a checkpoint back, so a stale one left on disk is inert — and a corrupt, foreign or already-finished checkpoint fails loud rather than quietly restarting from the top. Graph-owned durability still ships alongside it: a file-state guard node checks whether its stage's artifact already exists and routes straight past the work if it does (the repository's <code>12-graph-resume</code> pattern; delete an artifact to rewind to that stage).</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>The shape vocabulary</h3>
+    <p>A node's Graphviz <code>shape</code> is not decoration. It selects the execution tier — which is why a rendered Attractor graph is readable at a glance: you can see where the model is thinking and where the machine is checking.</p>
+  </div>
+
+  <div class="t-wrap">
+    <table>
+      <caption>Diagram 7 — node shapes and what they execute</caption>
+      <thead>
+        <tr><th scope="col">Shape</th><th scope="col">DOT</th><th scope="col">Tier / behaviour</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="shape"><svg class="dg" viewBox="0 0 60 34" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><polygon class="n" points="30,4 56,17 30,30 4,17"/><line class="e" x1="12" y1="13" x2="16" y2="10"/><line class="e" x1="12" y1="21" x2="16" y2="24"/><line class="e" x1="48" y1="13" x2="44" y2="10"/><line class="e" x1="48" y1="21" x2="44" y2="24"/></svg></td>
+          <td><code>Mdiamond</code></td>
+          <td><b>Start.</b> Entry point of the run.</td>
+        </tr>
+        <tr>
+          <td class="shape"><svg class="dg" viewBox="0 0 60 34" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><rect class="n" x="6" y="6" width="48" height="22"/><line class="e" x1="6" y1="12" x2="12" y2="6"/><line class="e" x1="48" y1="6" x2="54" y2="12"/><line class="e" x1="6" y1="22" x2="12" y2="28"/><line class="e" x1="48" y1="28" x2="54" y2="22"/></svg></td>
+          <td><code>Msquare</code></td>
+          <td><b>Exit.</b> Reaching it triggers the goal-gate check before the run is allowed to end.</td>
+        </tr>
+        <tr>
+          <td class="shape"><svg class="dg" viewBox="0 0 60 34" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><rect class="n" x="6" y="7" width="48" height="20" rx="1"/></svg></td>
+          <td><code>box</code> <span style="color:var(--faint)">(default)</span></td>
+          <td><b>Codergen LLM agent.</b> Spawns a sub-session with tools and works the prompt until it reports an outcome.</td>
+        </tr>
+        <tr>
+          <td class="shape"><svg class="dg" viewBox="0 0 60 34" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><polygon class="n" points="30,4 56,17 30,30 4,17"/></svg></td>
+          <td><code>diamond</code></td>
+          <td><b>Conditional routing.</b> A no-op node: it runs nothing, the outgoing edges do the deciding.</td>
+        </tr>
+        <tr>
+          <td class="shape"><svg class="dg" viewBox="0 0 60 34" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><polygon class="n-g" points="14,7 56,7 46,27 4,27"/></svg></td>
+          <td><code>parallelogram</code></td>
+          <td><b>Tool / shell execution.</b> Runs <code>tool_command</code>. This is where trustworthy gates live.</td>
+        </tr>
+        <tr>
+          <td class="shape"><svg class="dg" viewBox="0 0 60 34" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><rect class="n" x="12" y="7" width="42" height="20"/><rect class="n" x="6" y="10" width="10" height="5"/><rect class="n" x="6" y="19" width="10" height="5"/></svg></td>
+          <td><code>component</code></td>
+          <td><b>Parallel fan-out.</b> Dispatches its successors concurrently.</td>
+        </tr>
+        <tr>
+          <td class="shape"><svg class="dg" viewBox="0 0 60 34" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><polygon class="n" points="11,3 49,3 56,10 56,24 49,31 11,31 4,24 4,10"/><polygon class="n" points="14,6 46,6 52,12 52,22 46,28 14,28 8,22 8,12" fill="none"/><polygon class="n" points="17,9 43,9 48,14 48,20 43,25 17,25 12,20 12,14" fill="none"/></svg></td>
+          <td><code>tripleoctagon</code></td>
+          <td><b>Fan-in.</b> Joins parallel branches back into one path.</td>
+        </tr>
+        <tr>
+          <td class="shape"><svg class="dg" viewBox="0 0 60 34" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><polygon class="n" points="12,5 48,5 58,17 48,29 12,29 2,17"/></svg></td>
+          <td><code>hexagon</code></td>
+          <td><b>Human approval gate.</b> The run blocks on a person.</td>
+        </tr>
+        <tr>
+          <td class="shape"><svg class="dg" viewBox="0 0 60 34" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><path class="n" d="M 5,29 v-20 h 18 l 4,5 h 28 v 15 z"/></svg></td>
+          <td><code>folder</code></td>
+          <td><b>Nested sub-pipeline.</b> Another <code>.dot</code>, executed as a node.</td>
+        </tr>
+        <tr>
+          <td class="shape"><svg class="dg" viewBox="0 0 60 34" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><polygon class="n" points="6,30 54,30 54,16 30,4 6,16"/></svg></td>
+          <td><code>house</code></td>
+          <td><b>Supervisor loop</b> <span style="color:var(--faint)">(experimental)</span>.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h3>Orchestrator and agent: two different loops</h3>
+    <p>There are two nested loops in a running pipeline, and confusing them is the main source of "why did it do that." The <b>outer</b> loop is <code>loop-pipeline</code> walking the graph: pick a node, run it, checkpoint, select an edge, repeat. The <b>inner</b> loop is <code>loop-agent</code> inside a single LLM node: call the model, execute the tools it asked for, feed the results back, call again — until that node's work is done. The graph never sees the inner loop; it sees one node and one outcome.</p>
+  </div>
+
+  <figure>
+    <svg class="dg" viewBox="0 0 960 420" role="img" aria-labelledby="d8t d8d" xmlns="http://www.w3.org/2000/svg">
+      <title id="d8t">Architecture: orchestrator, sub-session, backend selection</title>
+      <desc id="d8d">The loop-pipeline orchestrator reads the dot file, spawns a loop-agent sub-session per LLM node, and receives a report_outcome back. Backends are auto-selected: AmplifierBackend if session spawn is available, otherwise DirectProviderBackend. With no backend at all, LLM nodes fail loud and only model-free graphs still walk.</desc>
+
+      <path class="n-q" d="M 20 78 h 122 l 28 26 v 58 h -150 z"/>
+      <path class="e-m" d="M 142 78 v 26 h 28" style="stroke-dasharray:none"/>
+      <text class="nl-s" x="95" y="126" text-anchor="middle" style="fill:#1b1813">pipeline.dot</text>
+      <text class="nl-s" x="95" y="144" text-anchor="middle">the program</text>
+      <line class="e" x1="172" y1="120" x2="216" y2="120" marker-end="url(#ar)"/>
+
+      <rect class="n" x="220" y="70" width="234" height="100" rx="2"/>
+      <text class="nl"   x="337" y="102" text-anchor="middle">loop-pipeline</text>
+      <text class="nl-s" x="337" y="122" text-anchor="middle">walks the graph, routes edges</text>
+      <text class="nl-s" x="337" y="140" text-anchor="middle">holds context, writes checkpoints</text>
+
+      <line class="e" x1="456" y1="100" x2="554" y2="100" marker-end="url(#ar)"/>
+      <text class="el" x="505" y="90" text-anchor="middle">spawn</text>
+      <line class="e-a" x1="554" y1="150" x2="456" y2="150" marker-end="url(#ar-a)"/>
+      <text class="el-a" x="505" y="140" text-anchor="middle">report_outcome</text>
+
+      <rect class="n-q" x="560" y="40" width="376" height="162" rx="3"/>
+      <text class="cap" x="576" y="62">loop-agent sub-session</text>
+      <text class="cap" x="920" y="62" text-anchor="end" style="text-transform:none;letter-spacing:0;font-weight:400">repeats until done</text>
+      <rect class="n" x="584" y="82" width="118" height="44" rx="2"/>
+      <text class="nl-s" x="643" y="109" text-anchor="middle" style="fill:#1b1813">call LLM</text>
+      <rect class="n" x="730" y="82" width="138" height="44" rx="2"/>
+      <text class="nl-s" x="799" y="109" text-anchor="middle" style="fill:#1b1813">execute tools</text>
+      <line class="e" x1="704" y1="104" x2="726" y2="104" marker-end="url(#ar)"/>
+      <path class="e" d="M 799 128 C 799 166 643 166 643 128" marker-end="url(#ar)"/>
+      <text class="el" x="721" y="184" text-anchor="middle">feed results back</text>
+
+      <text class="cap" x="20" y="256">backend auto-selection</text>
+      <text class="el" x="20" y="296">session.spawn available</text>
+      <line class="e" x1="250" y1="290" x2="288" y2="290" marker-end="url(#ar)"/>
+      <rect class="n" x="296" y="272" width="624" height="36" rx="2"/>
+      <text class="nl-s" x="312" y="295" style="fill:#1b1813">AmplifierBackend &mdash; full sub-sessions with tools and delegation</text>
+      <text class="el" x="20" y="344">else: provider configured</text>
+      <line class="e" x1="250" y1="338" x2="288" y2="338" marker-end="url(#ar)"/>
+      <rect class="n" x="296" y="320" width="624" height="36" rx="2"/>
+      <text class="nl-s" x="312" y="343" style="fill:#1b1813">DirectProviderBackend &mdash; a per-node agentic tool loop; needs an explicit llm_model</text>
+      <text class="el" x="20" y="392">else</text>
+      <line class="e" x1="250" y1="386" x2="288" y2="386" marker-end="url(#ar)"/>
+      <rect class="n-q" x="296" y="368" width="624" height="36" rx="2"/>
+      <text class="nl-s" x="312" y="391" style="fill:#1b1813">no backend &mdash; LLM nodes fail loud; only model-free graphs still walk</text>
+    </svg>
+    <figcaption>Diagram 8 — results flow forward along edges; the orchestrator holds the context. The direct tier is not a downgrade to bare completions: it hands the agentic tool loop to the shared unified-llm-client, one loop per node. Selection is automatic but never adaptive — before the walk starts the engine preflights every node's declared provider, and a node asking for one the run cannot serve stops the launch outright, naming the node, the provider, and the missing credential. Nothing falls back to a different provider quietly, and no model is ever silently skipped.</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Edge selection: five steps, in order</h3>
+    <p>When a node finishes, the orchestrator has to pick exactly one outgoing edge. It tries five rules in sequence and takes the first that yields a target. If none of them does, that is not a shrug — it is a hard stop.</p>
+  </div>
+
+  <figure>
+    <svg class="dg" viewBox="0 0 960 372" role="img" aria-labelledby="d9t d9d" xmlns="http://www.w3.org/2000/svg">
+      <title id="d9t">The five-step edge selection algorithm</title>
+      <desc id="d9d">Condition-matching edges, then preferred label, then suggested next ids, then unconditional edges, then highest weight with a lexical tiebreak on target id. Steps two through five draw only from unconditional edges. If no step yields an edge, the run halts with a no_matching_edge pipeline error.</desc>
+      <circle class="n" cx="32" cy="38" r="13"/><text class="nl-s" x="32" y="42" text-anchor="middle" style="fill:#1b1813">1</text>
+      <text class="nl" x="62" y="34">Condition-matching edges</text>
+      <text class="el" x="62" y="54">condition="outcome=retry" &middot; key=value &middot; != &middot; &amp;&amp;</text>
+      <circle class="n" cx="32" cy="98" r="13"/><text class="nl-s" x="32" y="102" text-anchor="middle" style="fill:#1b1813">2</text>
+      <text class="nl" x="62" y="94">preferred_label match</text>
+      <text class="el" x="62" y="114">the node named the edge it wants to take</text>
+      <circle class="n" cx="32" cy="158" r="13"/><text class="nl-s" x="32" y="162" text-anchor="middle" style="fill:#1b1813">3</text>
+      <text class="nl" x="62" y="154">suggested_next_ids</text>
+      <text class="el" x="62" y="174">the node named a target node directly</text>
+      <circle class="n" cx="32" cy="218" r="13"/><text class="nl-s" x="32" y="222" text-anchor="middle" style="fill:#1b1813">4</text>
+      <text class="nl" x="62" y="214">Unconditional edges</text>
+      <text class="el" x="62" y="234">a plain a -&gt; b with nothing attached</text>
+      <circle class="n-g" cx="32" cy="278" r="13"/><text class="nl-s" x="32" y="282" text-anchor="middle" style="fill:#c0400f">5</text>
+      <text class="nl" x="62" y="274" style="fill:#c0400f">Highest weight, then LEXICAL tiebreak on target id</text>
+      <text class="el-a" x="62" y="294">alphabetical order breaks a tie between equally eligible edges</text>
+      <line class="e-m" x1="32" y1="51" x2="32" y2="83" marker-end="url(#ar-m)"/>
+      <line class="e-m" x1="32" y1="111" x2="32" y2="143" marker-end="url(#ar-m)"/>
+      <line class="e-m" x1="32" y1="171" x2="32" y2="203" marker-end="url(#ar-m)"/>
+      <line class="e-m" x1="32" y1="231" x2="32" y2="263" marker-end="url(#ar-m)"/>
+      <text class="cap" x="46" y="72" style="text-transform:none;letter-spacing:0;font-weight:400">no match</text>
+      <path class="e-m" d="M 596 86 h 14 v 212 h -14"/>
+      <text class="el" x="622" y="162">steps 2&ndash;5 draw only from</text>
+      <text class="el" x="622" y="180">unconditional edges &mdash; an</text>
+      <text class="el" x="622" y="198">edge whose condition failed</text>
+      <text class="el" x="622" y="216">is never picked by label or id</text>
+      <line class="e-m" x1="32" y1="296" x2="32" y2="322" marker-end="url(#ar-m)"/>
+      <text class="nl" x="62" y="340" style="fill:#c0400f">Nothing resolved &mdash; the run halts, loud</text>
+      <text class="el-a" x="62" y="358">PIPELINE_ERROR &middot; error_type=no_matching_edge</text>
+    </svg>
+    <figcaption>Diagram 9 — first rule that resolves, wins. Steps 2 through 5 draw only from unconditional edges, so an edge whose condition failed can never be picked back up by label or by suggested id. And step 5 does not always resolve: when nothing is eligible the engine refuses to guess and terminates the run with <code>no_matching_edge</code> — a deliberate, ledgered divergence from the spec, which would have read the same dead end as a successful completion.</figcaption>
+  </figure>
+
+  <div class="col">
+    <div class="note hazard">
+      <p class="note-label">The documented pitfall, and what it does now</p>
+      <p>The story the older docs tell: an agent reported success with no <code>preferred_label</code>. Neither outgoing condition matched. Steps 1 through 4 all fell through, so step 5 ran — and the lexical tiebreak silently picked <code>Fix</code> over <code>Test</code>, because <b>F</b> sorts before <b>T</b>. The pipeline looped forever, fixing something that was already fixed.</p>
+      <p>That run cannot happen on the engine as it stands. With both outgoing edges conditional and neither condition true, there is nothing eligible left to choose from — steps 2 through 5 see unconditional edges only — and the run stops on the spot with <code>no_matching_edge</code>. The lexical tiebreak's remaining territory is narrower and louder: several conditional edges matching at once, or several unconditional edges tied on weight.</p>
+      <p>The advice is unchanged and the reason is better. Defensive inequality routing — state the negative case explicitly and weight it — makes step 1 resolve either way. Routing that is total never reaches the tiebreak, and never reaches the hard fail either.</p>
+    </div>
+<pre><code><span class="cm">// make the routing total &mdash; step 1 resolves either way</span>
+review -&gt; Fix  [<span class="at">condition</span>=<span class="st">"outcome=retry"</span>]
+review -&gt; Test [<span class="at">condition</span>=<span class="st">"outcome!=retry"</span>, <span class="at">weight</span>=<span class="st">10</span>]</code></pre>
+
+    <h3>The <code>report_outcome</code> contract</h3>
+    <p>An LLM node communicates its result back to the orchestrator by calling a tool. This is the authoritative channel — everything else is recovery.</p>
+<pre><code>{
+  <span class="at">"status"</span>: <span class="st">"success | fail | partial_success | retry"</span>,
+  <span class="at">"preferred_label"</span>: <span class="st">"gate_pass"</span>,
+  <span class="at">"suggested_next_ids"</span>: [<span class="st">"review"</span>],
+  <span class="at">"context_updates"</span>: { <span class="st">"artifact_path"</span>: <span class="st">"src/word_counter.py"</span> },
+  <span class="at">"notes"</span>: <span class="st">"two tests still failing on unicode input"</span>,
+  <span class="at">"failure_reason"</span>: <span class="st">null</span>
+}</code></pre>
+    <p>If the tool was not called, the orchestrator walks a recovery ladder, each rung less trustworthy than the last.</p>
+  </div>
+
+  <figure>
+    <svg class="dg" viewBox="0 0 960 330" role="img" aria-labelledby="d10t d10d" xmlns="http://www.w3.org/2000/svg">
+      <title id="d10t">The verdict recovery ladder</title>
+      <desc id="d10d">Five fallbacks below the authoritative report_outcome tool call, ending with plain prose which means success on ordinary nodes but retry on goal gate nodes, and an empty response which means fail.</desc>
+      <text class="cap" transform="rotate(-90 12 160)" x="12" y="160" text-anchor="middle">recovery order</text>
+      <rect class="n-p" x="30" y="26" width="430" height="36" rx="2"/>
+      <text class="nl-s" x="44" y="49" style="fill:#1b1813">report_outcome tool call</text>
+      <text class="el-g" x="480" y="49">authoritative</text>
+      <path class="e-m" d="M 48 62 v 6 h 40 v 6" marker-end="url(#ar-m)"/>
+      <rect class="n" x="70" y="74" width="430" height="36" rx="2"/>
+      <text class="nl-s" x="84" y="97" style="fill:#1b1813">fenced JSON block in the response</text>
+      <path class="e-m" d="M 88 110 v 6 h 40 v 6" marker-end="url(#ar-m)"/>
+      <rect class="n" x="110" y="122" width="430" height="36" rx="2"/>
+      <text class="nl-s" x="124" y="145" style="fill:#1b1813">pure JSON response body</text>
+      <path class="e-m" d="M 128 158 v 6 h 40 v 6" marker-end="url(#ar-m)"/>
+      <rect class="n" x="150" y="170" width="430" height="36" rx="2"/>
+      <text class="nl-s" x="164" y="193" style="fill:#1b1813">embedded verdict recovery &mdash; a verdict found inside prose</text>
+      <path class="e-m" d="M 168 206 v 6 h 40 v 6" marker-end="url(#ar-m)"/>
+      <rect class="n-g" x="190" y="218" width="430" height="36" rx="2"/>
+      <text class="nl-s" x="204" y="241" style="fill:#1b1813">plain prose, no structure at all</text>
+      <text class="el" x="680" y="234">SUCCESS on an ordinary node</text>
+      <text class="el-a" x="680" y="252">RETRY on a goal_gate node</text>
+      <path class="e-m" d="M 208 254 v 6 h 40 v 6" marker-end="url(#ar-m)"/>
+      <rect class="n" x="230" y="266" width="430" height="36" rx="2"/>
+      <text class="nl-s" x="244" y="289" style="fill:#1b1813">empty response</text>
+      <text class="el-a" x="680" y="289">FAIL</text>
+    </svg>
+    <figcaption>Diagram 10 — the ladder is why fail-closed matters. The lower rungs are guesses about intent, and the second-to-last rung is where a goal gate refuses to guess in the direction of "done".</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Context fidelity: what the next node gets to see</h3>
+    <p>Each node declares how much of the run's history it inherits. This is the main cost/coherence dial in a long pipeline.</p>
+  </div>
+  <div class="t-wrap">
+    <table>
+      <caption>context fidelity modes</caption>
+      <thead><tr><th scope="col">Mode</th><th scope="col">What the node receives</th><th scope="col">Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>full</code></td><td>Fresh spawn, with the prior exchanges replayed in as <code>parent_messages</code></td><td>Transcript replay, not session reuse &mdash; <code>thread_id</code> groups nodes onto one shared replayed transcript</td></tr>
+        <tr><td><code>compact</code> <span style="color:var(--faint)">(default)</span></td><td>Fresh session plus a structured summary</td><td>The sane default: independence without amnesia</td></tr>
+        <tr><td><code>truncate</code></td><td>Goal and run ID only</td><td>Maximum independence &mdash; useful for critics</td></tr>
+        <tr><td><code>summary:low</code></td><td>Summary at roughly 600 tokens</td><td rowspan="3">Explicit budget when <code>compact</code> is too coarse</td></tr>
+        <tr><td><code>summary:medium</code></td><td>Summary at roughly 1,500 tokens</td><td></td></tr>
+        <tr><td><code>summary:high</code></td><td>Summary at roughly 3,000 tokens</td><td></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <div class="note">
+      <p class="note-label">Gotcha</p>
+      <p><code>last_response</code> is truncated to <b>200 characters</b> in <em>every</em> mode &mdash; <code>full</code> included. What a full-fidelity successor gets instead is the replayed transcript, which carries the complete history; <code>last_response</code> stays a 200-character snippet regardless. If a downstream node is quietly making decisions on a fragment, this is usually why.</p>
+    </div>
+
+    <h3>Retries and failure routing</h3>
+    <p>The retry policy draws a hard line between "try again" and "this failed."</p>
+    <ul class="plain">
+      <li><code>max_retries</code> retries <b>RETRY</b> outcomes, <b>transient errors</b> (429s, 5xx, timeouts), and <b>must_write violations</b> — a node that promised an artifact and did not produce one.</li>
+      <li>A plain <b>FAIL</b> is returned immediately and is <b>never retried</b>. Failure is a routing decision, not a flake.</li>
+      <li>A FAIL routes only through an explicit path: an edge with <code>condition="outcome=fail"</code>, a <code>retry_target</code>, or a node with <code>runs_on=always</code> / <code>runs_on=failure</code>. If none exists, the pipeline terminates — fail-fast by default.</li>
+      <li><code>continue_on_fail=true</code> exists for the cases where you mean it, but it <b>cannot override a <code>must_write=</code> artifact contract</b>. You do not get to declare success over a missing artifact.</li>
+    </ul>
+
+    <h3>The rest of the instrument panel</h3>
+
+    <h4>model_stylesheet — CSS for model assignment</h4>
+    <p>Assign models by selector instead of repeating <code>llm_model=</code> on forty nodes. Only three properties apply: <code>llm_provider</code>, <code>llm_model</code>, <code>reasoning_effort</code>.</p>
+<pre><code>* { <span class="at">llm_model</span>: <span class="st">claude-sonnet-*</span>; }
+.reasoning  { <span class="at">llm_model</span>: <span class="st">gpt-...</span>; <span class="at">reasoning_effort</span>: <span class="st">high</span>; }
+#final_check { <span class="at">llm_model</span>: <span class="st">claude-opus-*</span>; }</code></pre>
+
+    <h4>loop_restart — a real iteration, not just a jump</h4>
+    <p>An edge with <code>loop_restart="true"</code> increments <code>$iteration</code>, resets completed nodes so they can run again, and <b>preserves <code>context_updates</code></b>. The graph goes back to the start of the loop; what was learned does not.</p>
+
+    <h4>feedback_from — teaching the next attempt</h4>
+    <p><code>feedback_from=</code> pipes a critic's output into a later node as <code>$prior_critiques_&lt;node_id&gt;</code>. Each critique is truncated to <b>500 characters</b>, at most <b>5</b> are carried. The point is subtle and important: the next iteration runs in a <em>fresh</em> worker context, so this is the channel by which a brand-new worker learns what the last one got wrong.</p>
+
+    <h4>Variables and parallelism</h4>
+    <p>Prompts and commands expand <code>$goal</code>, any <code>$param</code> passed at launch, and <code>$iteration</code>. Fan-out uses a <code>component</code> node; the join uses <code>join_policy=wait_all</code>, with <code>max_parallel</code> defaulting to <b>4</b>.</p>
+  </div>
+</section>
+<!-- ============================================================ 6. RUN-THROUGH -->
+<section id="runthrough" aria-labelledby="h-run">
+  <div class="col">
+    <p class="eyebrow"><span class="num">05</span>A full run-through</p>
+    <h2 id="h-run">Four nodes, two iterations, one real test run</h2>
+    <p class="standfirst">This is the whole program. A dozen lines of DOT, no accompanying Python, no step definitions elsewhere. Read it, then watch it execute.</p>
+  </div>
+
+  <div class="wide">
+<pre class="wide-code"><code><span class="kw">digraph</span> convergence_loop {
+    graph [<span class="at">goal</span>=<span class="st">"Write a Python function count_words(text) ..."</span>]
+    start     [<span class="at">shape</span>=<span class="st">Mdiamond</span>]
+    implement [<span class="at">prompt</span>=<span class="st">"... If test_output.txt exists, read it ..."</span>]
+    test_gate [<span class="at">shape</span>=<span class="st">parallelogram</span>,
+               <span class="at">tool_command</span>=<span class="st">"pytest -q test_word_counter.py &gt; test_output.txt 2&gt;&amp;1 &amp;&amp; echo gate_pass || echo gate_fail"</span>,
+               <span class="at">goal_gate</span>=<span class="st">true</span>]
+    done      [<span class="at">shape</span>=<span class="st">Msquare</span>]
+    start -&gt; implement -&gt; test_gate
+    test_gate -&gt; done      [<span class="at">condition</span>=<span class="st">"context.tool.last_line=gate_pass"</span>]
+    test_gate -&gt; implement [<span class="at">condition</span>=<span class="st">"context.tool.last_line=gate_fail"</span>, <span class="at">loop_restart</span>=<span class="st">"true"</span>]
+}</code></pre>
+  </div>
+
+  <div class="col">
+    <p>Three things in that listing carry all the weight. The goal lives in <code>graph [goal=...]</code>, so the pipeline is self-describing. The gate is a shell command, so its verdict is an exit status rather than an opinion. And the worker's prompt tells it to read <code>test_output.txt</code> if it exists — which is how attempt two learns from attempt one.</p>
+  </div>
+
+  <figure>
+    <svg class="dg" viewBox="0 0 960 376" role="img" aria-labelledby="d11t d11d" xmlns="http://www.w3.org/2000/svg">
+      <title id="d11t">Two iterations of the convergence loop</title>
+      <desc id="d11d">First pass, iteration zero: implement writes code, the gate runs pytest and echoes gate_fail, and a loop restart edge wraps around, taking iteration to one. Second pass: implement reads the test output, the gate echoes gate_pass, and the run reaches done.</desc>
+
+      <text class="cap" x="26" y="96">first pass</text>
+      <rect class="n" x="200" y="56" width="250" height="68" rx="2"/>
+      <text class="nl"   x="325" y="82"  text-anchor="middle">implement</text>
+      <text class="nl-s" x="325" y="100" text-anchor="middle">spawns a loop-agent sub-session</text>
+      <text class="nl-s" x="325" y="116" text-anchor="middle">writes count_words + tests</text>
+      <line class="e" x1="452" y1="90" x2="504" y2="90" marker-end="url(#ar)"/>
+      <circle cx="478" cy="90" r="3.2" fill="#a29886"/>
+      <polygon class="n-g" points="516,56 716,56 700,124 500,124"/>
+      <text class="nl"   x="608" y="86"  text-anchor="middle">test_gate</text>
+      <text class="nl-s" x="608" y="106" text-anchor="middle">pytest -q &rarr; test_output.txt</text>
+      <line class="e-a" x1="710" y1="90" x2="742" y2="90" marker-end="url(#ar-a)"/>
+      <rect class="n-g" x="746" y="72" width="120" height="36" rx="2"/>
+      <text class="nl-s" x="806" y="95" text-anchor="middle" style="fill:#c0400f">gate_fail</text>
+
+      <path class="e-a" d="M 868 90 H 898 Q 910 90 910 102 V 168 Q 910 180 898 180 H 262 Q 250 180 250 192 V 228" marker-end="url(#ar-a)"/>
+      <text class="el-a" x="580" y="167" text-anchor="middle">loop_restart=true &mdash; $iteration 0 &rarr; 1, completed nodes reset</text>
+      <text class="el" x="580" y="202" text-anchor="middle">context_updates preserved &mdash; what was learned survives the reset</text>
+
+      <text class="cap" x="26" y="270">second pass</text>
+      <rect class="n" x="200" y="230" width="250" height="68" rx="2"/>
+      <text class="nl"   x="325" y="256" text-anchor="middle">implement</text>
+      <text class="nl-s" x="325" y="274" text-anchor="middle">reads test_output.txt</text>
+      <text class="nl-s" x="325" y="290" text-anchor="middle">the evidence from attempt 1</text>
+      <line class="e" x1="452" y1="264" x2="504" y2="264" marker-end="url(#ar)"/>
+      <circle cx="478" cy="264" r="3.2" fill="#a29886"/>
+      <polygon class="n-g" points="516,230 716,230 700,298 500,298"/>
+      <text class="nl"   x="608" y="260" text-anchor="middle">test_gate</text>
+      <text class="nl-s" x="608" y="280" text-anchor="middle">pytest -q &rarr; test_output.txt</text>
+      <line class="e-g" x1="710" y1="264" x2="736" y2="264" marker-end="url(#ar-g)"/>
+      <rect class="n-p" x="740" y="246" width="104" height="36" rx="2"/>
+      <text class="nl-s" x="792" y="269" text-anchor="middle" style="fill:#2f6b3a">gate_pass</text>
+      <line class="e-g" x1="846" y1="264" x2="866" y2="264" marker-end="url(#ar-g)"/>
+      <rect class="n" x="870" y="242" width="76" height="44" rx="1"/>
+      <line class="e" x1="870" y1="252" x2="880" y2="242"/>
+      <line class="e" x1="936" y1="242" x2="946" y2="252"/>
+      <line class="e" x1="870" y1="276" x2="880" y2="286"/>
+      <line class="e" x1="936" y1="286" x2="946" y2="276"/>
+      <text class="nl-s" x="908" y="269" text-anchor="middle" style="fill:#1b1813">done</text>
+
+      <text class="el-g" x="500" y="356" text-anchor="middle">exit node checks goal_gate &mdash; satisfied by real evidence &mdash; the run completes</text>
+      <circle cx="30" cy="330" r="3.2" fill="#a29886"/>
+      <text class="cap" x="42" y="334" style="text-transform:none;letter-spacing:0;font-weight:400">checkpoint written after every node</text>
+    </svg>
+    <figcaption>Diagram 11 — the same two nodes run twice. Nothing about the graph changed between iterations; what changed is that <code>test_output.txt</code> now exists.</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Step by step</h3>
+    <div class="stepper" id="stepper">
+      <button type="button" id="prev">&#8249; Prev</button>
+      <button type="button" id="next">Next &#8250;</button>
+      <button type="button" id="showall">Show all</button>
+      <span class="pos" id="steppos">showing all 9 steps</span>
+    </div>
+    <ol class="steps" id="runsteps">
+      <li>
+        <span class="lbl">parse &middot; transform &middot; validate &middot; initialize</span>
+        <p>The engine reads <code>pipeline.dot</code>, runs its lint rules and reachability checks, resolves the stylesheet and expands variables, then builds the run context — including <code>$goal</code>, taken straight from the <code>graph</code> attributes. Nothing is checkpointed yet; the first checkpoint is written after the first node has actually run.</p>
+      </li>
+      <li>
+        <span class="lbl">first pass &middot; implement</span>
+        <p>A <code>box</code> node, so the orchestrator spawns a <code>loop-agent</code> sub-session with tools. Inside it: call the model, run the tools it requests, feed results back, repeat. It writes <code>count_words</code> and a test file, then reports an outcome. Checkpoint.</p>
+      </li>
+      <li>
+        <span class="lbl">first pass &middot; test_gate</span>
+        <p>A <code>parallelogram</code>, so no model is involved. The shell runs <code>pytest -q</code>, redirects stdout and stderr into <code>test_output.txt</code>, and echoes <code>gate_pass</code> or <code>gate_fail</code> depending on pytest's exit status. Two tests fail. The last line is <code>gate_fail</code>.</p>
+      </li>
+      <li>
+        <span class="lbl">edge selection</span>
+        <p>Rule 1 resolves immediately: the edge with <code>condition="context.tool.last_line=gate_fail"</code> matches. No fallback rules run, so nothing is left to alphabetical order. The target is <code>implement</code>.</p>
+      </li>
+      <li>
+        <span class="lbl">loop restart</span>
+        <p>That edge carries <code>loop_restart="true"</code>. <code>$iteration</code> becomes 1 — the counter starts at 0 for the initial pass, so the second pass is iteration one — completed nodes are reset so they may run again, and <code>context_updates</code> are preserved: the run rewinds its position, not its knowledge.</p>
+      </li>
+      <li>
+        <span class="lbl">second pass &middot; implement</span>
+        <p>A fresh worker context, and this is the point of the whole design: it does not inherit the previous worker's reasoning about why the code was right. Its prompt tells it to read <code>test_output.txt</code> if present, so it reads the <em>actual failure output</em> — the assertion, the traceback, the line number — and fixes the bug.</p>
+      </li>
+      <li>
+        <span class="lbl">second pass &middot; test_gate</span>
+        <p>The identical shell command runs again. <code>pytest</code> exits 0, so the <code>&amp;&amp;</code> branch fires and the last line is <code>gate_pass</code>.</p>
+      </li>
+      <li>
+        <span class="lbl">route to exit</span>
+        <p>Rule 1 resolves again, this time onto the <code>done</code> edge. <code>done</code> is an <code>Msquare</code>, which is not merely a label — reaching it triggers the goal-gate check.</p>
+      </li>
+      <li>
+        <span class="lbl">goal gate &middot; finalize</span>
+        <p>The goal gate reported success through a real command's exit status, not through prose, so the fail-closed rule has nothing to object to. The run completes with a passing test suite on disk as its artifact.</p>
+      </li>
+    </ol>
+
+    <div class="note hazard">
+      <p class="note-label">Why the redirection matters &mdash; lint rule CMD-001</p>
+      <p>The command writes to a file with <code>&gt;</code> and then tests the exit status. Piping instead — <code>pytest | tail</code> or <code>pytest | grep</code> — would hand the shell the <em>pipe's</em> exit status, which is the last command's, and pytest's failure would vanish. The gate would report <code>gate_pass</code> on a red test suite, and the loop would exit on a lie. Attractor lints for this.</p>
+    </div>
+
+    <div class="note hazard">
+      <p class="note-label">The companion hazard &mdash; a failed tool node leaves <code>tool.last_line</code> stale</p>
+      <p>A tool node that <em>fails</em> does not refresh <code>tool.last_line</code>: the value from its last successful run is still sitting in the context, and a label-routed edge will match against it happily, on evidence from a previous pass. Where a gate's command can genuinely exit non-zero, pair the label test with the node's own outcome &mdash; <code>condition="context.tool.last_line=gate_pass &amp;&amp; outcome=success"</code> &mdash; so stale evidence cannot route the run on its own.</p>
+      <p>The sample above does not need that guard, and the reason is the idiom: <code>&hellip; &amp;&amp; echo gate_pass || echo gate_fail</code> always exits 0, so the node always succeeds and <code>tool.last_line</code> is always this pass's. Write a gate that can exit non-zero and you have opted back into the hazard.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 7. USAGE -->
+<section id="usage" aria-labelledby="h-usage">
+  <div class="col">
+    <p class="eyebrow"><span class="num">06</span>How you use it</p>
+    <h2 id="h-usage">Four entry points</h2>
+    <dl class="usage">
+      <dt><span class="tag">01</span>As an Amplifier bundle</dt>
+      <dd>
+        <p>Point your configuration at a graph with <code>dot_file:</code> and run. There is no <code>--goal</code> flag, because the goal is an attribute of the graph — the pipeline carries its own intent.</p>
+      </dd>
+      <dt><span class="tag">02</span>As a standalone CLI</dt>
+      <dd>
+        <p>The <code>attractor</code> binary runs a graph directly and passes parameters in.</p>
+<pre><code>attractor run pipeline.dot --param goal=<span class="st">"Fix the TypeError..."</span>
+
+attractor resume run-dir/       <span class="cm"># pick up after the last completed node</span>
+attractor lint   pipeline.dot   <span class="cm"># structural checks, CMD-001 and friends</span>
+attractor trace  run-dir/       <span class="cm"># what path did a run actually take</span>
+attractor doctor                <span class="cm"># environment and provider diagnostics</span></code></pre>
+      </dd>
+      <dt><span class="tag">03</span>Conversationally, with the <code>run_pipeline</code> tool</dt>
+      <dd>
+        <p>Inside a session you can ask for a pipeline by name and let the assistant launch it:</p>
+        <p><i>"Run the plan-implement-test pipeline to add input validation to the login endpoint."</i></p>
+      </dd>
+      <dt><span class="tag">04</span>The <code>/attractorify</code> slash command</dt>
+      <dd>
+        <p>Analyses the session you are already in against the three-question test below, tells you whether the work actually wants a pipeline, and then designs one with you conversationally. It is as willing to answer "no" as "yes".</p>
+      </dd>
+    </dl>
+    <p>The bundle is also importable as a library, so a graph can be executed programmatically from your own code when neither the CLI nor a session is the right host.</p>
+  </div>
+</section>
+
+<!-- ============================================================ 8. WHEN -->
+<section id="when" aria-labelledby="h-when">
+  <div class="col">
+    <p class="eyebrow"><span class="num">07</span>When to reach for it</p>
+    <h2 id="h-when">The three-question test</h2>
+    <p class="standfirst">Attractor is a specific tool for a specific shape of problem. If a task does not answer yes to all three, a pipeline is probably ceremony. The repository is careful about how hard to press that: a "no" is a signal to reconsider the shape of the work, not a verdict on it.</p>
+    <ol class="qs">
+      <li>
+        <h4>Is there a cycle?</h4>
+        <p>If the work is a sequence with no path backwards, there is nothing to converge to. A graph without a cycle is a list with extra syntax.</p>
+      </li>
+      <li>
+        <h4>Is the exit gated on machine-checkable evidence, external to the worker?</h4>
+        <p>Tests, builds, type checks, schema validation. If the only thing standing between the run and "done" is a model's assessment of its own output, the loop guarantees nothing.</p>
+      </li>
+      <li>
+        <h4>Would it still land if any one LLM node had a bad day?</h4>
+        <p>The failure mode to design against is not a crash — it is <em>a single response that is plausible but wrong</em>. If one such response can end the run successfully, the graph is not doing its job.</p>
+      </li>
+    </ol>
+
+    <div class="two">
+      <div>
+        <h4>Reach for a recipe</h4>
+        <p>Staged, sequential workflows with human approval gates. Known steps, known order, a person in the loop deciding whether to continue.</p>
+      </div>
+      <div class="g">
+        <h4>Reach for an attractor</h4>
+        <p>Machine-verified convergence. Unknown number of attempts, a gate that cannot be argued with, and a corrective path back into the work.</p>
+      </div>
+    </div>
+    <p class="pull">"If your pipeline graph has no cycle, it should probably have been a recipe."</p>
+  </div>
+</section>
+
+</main>
+
+<!-- ============================================================ 9. FOOTER -->
+<footer>
+  <div class="col">
+    <h2>Sources</h2>
+    <ul>
+      <li><a href="https://github.com/microsoft/amplifier-bundle-attractor">github.com/microsoft/amplifier-bundle-attractor</a> &mdash; the bundle: orchestrator, CLI, agent, skill, examples</li>
+      <li><a href="https://github.com/strongdm/attractor">github.com/strongdm/attractor</a> &mdash; the upstream attractor nlspec</li>
+    </ul>
+    <p class="fine">Stability caveat: the bundle carries <b>no semver guarantees yet</b>. Pin a commit SHA rather than a branch if you depend on it.</p>
+    <p class="fine">This page was written from the repository's own documentation and specs &mdash; its README, authoring guide, routing reference, design principles, vendored spec, and the example pipelines. Terminology, defaults, and the two incidents described in section 03 are the repository's, not the author's. The bundle extends the upstream spec and deliberately diverges from it in ledgered places — fail-closed gates, dead-end hard-fail, <code>loop_restart</code> semantics — and adds vocabulary the spec does not have, such as <code>report_outcome</code>, the recovery ladder, <code>feedback_from</code>, the <code>folder</code> shape, <code>tool.last_line</code>, <code>$param</code>/<code>$iteration</code>, <code>must_write</code>, and the CMD-001 lint; <code>specs/EXTENSIONS.md</code> and <code>SPEC_CONFORMANCE.md</code> are the ledger. Where a number is quoted (500 characters, 200 characters, 5 critiques, 4 parallel branches, 600/1,500/3,000 tokens) it is the documented value at the time of writing; verify against the commit you pin.</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var list = document.getElementById("runsteps");
+  var bar = document.getElementById("stepper");
+  if (!list || !bar) return;
+
+  var items = list.getElementsByTagName("li");
+  var total = items.length;
+  var posEl = document.getElementById("steppos");
+  var idx = -1; // -1 === show all
+
+  function paint() {
+    if (idx === -1) {
+      list.className = "steps";
+      for (var i = 0; i < total; i++) { items[i].className = ""; }
+      posEl.textContent = "showing all " + total + " steps";
+      return;
+    }
+    list.className = "steps stepping";
+    for (var j = 0; j < total; j++) {
+      items[j].className = (j === idx) ? "on" : "";
+    }
+    posEl.textContent = "step " + (idx + 1) + " of " + total;
+  }
+
+  document.getElementById("next").onclick = function () {
+    idx = (idx + 1) % total;
+    paint();
+  };
+  document.getElementById("prev").onclick = function () {
+    idx = (idx < 1) ? total - 1 : idx - 1;
+    paint();
+  };
+  document.getElementById("showall").onclick = function () {
+    idx = -1;
+    paint();
+  };
+
+  bar.style.display = "flex";
+  paint();
+})();
+</script>
+
+</body>
+</html>

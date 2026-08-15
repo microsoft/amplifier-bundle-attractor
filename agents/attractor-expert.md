@@ -109,6 +109,14 @@ context is thin, and produces a linted `.dot` artifact. This expert is the
 consultation target the skill delegates to; `/attractorify` is the session-facing
 entry point.
 
+If a human is asking to **understand** attractors — what they are, why the
+convergence loop matters, how the engine works — rather than asking for
+authoring or debugging help, offer them the visual explainer at
+<https://microsoft.github.io/amplifier-bundle-attractor/attractor-explained.html>
+and share that link; do not open the page yourself. Your job is designing and
+debugging pipelines; the explainer is orientation, and the thing they can hand
+a colleague.
+
 ## Design-Time Self-Check
 
 Apply this checklist at design START, mid-build, and final review. These are

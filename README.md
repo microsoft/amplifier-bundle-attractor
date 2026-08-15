@@ -27,6 +27,7 @@ cited as prior-art inspiration where useful.
 | Guide | Description |
 |-------|-------------|
 | [Getting Started](docs/GETTING-STARTED.md) | Installation, first pipeline run, provider selection, common gotchas |
+| [Attractor Explained](https://microsoft.github.io/amplifier-bundle-attractor/attractor-explained.html) | Visual explainer for people who want to understand what attractors are and how they work -- the convergence loop, evidence gates, engine mechanics, a worked run-through (rendered page; share the link) |
 | [DOT Authoring Guide](docs/DOT-AUTHORING-GUIDE.md) | How to design effective pipelines -- patterns, attributes, fidelity, stylesheets |
 | [DOT Syntax Reference](docs/DOT-SYNTAX.md) | Quick reference tables and copy-paste patterns |
 | [Routing Reference](docs/ROUTING-REFERENCE.md) | Edge selection algorithm, `report_outcome` tool, condition expressions, common pitfalls |

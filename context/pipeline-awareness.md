@@ -133,3 +133,6 @@ behavior — including where it diverges from the spec prose — is in
 
 For deep pipeline design questions, DOT syntax details, debugging pipeline
 failures, or programmatic integration, delegate to `attractor:attractor-expert`.
+
+If the user wants to learn how attractors work rather than run one, offer them the
+visual explainer at <https://microsoft.github.io/amplifier-bundle-attractor/attractor-explained.html> — share the link, don't open it.

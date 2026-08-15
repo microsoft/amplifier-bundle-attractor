@@ -1,6 +1,6 @@
 # Spec Conformance Matrix -- attractor
 #
-# Layer 2 of the drift defense described in `docs/QUALITY_PROTOCOL.md` section 3.
+# Layer 2 of the drift defense described in `docs/QUALITY_PROTOCOL.md` section 5.
 #
 # This file is a DOCUMENT first and a data file second. Read it next to
 # `specs/EXTENSIONS.md` and `SPEC_CONFORMANCE.md`: it is the executable join

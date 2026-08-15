@@ -52,6 +52,9 @@ evidence, and tries to break it. Two properties are non-negotiable:
   context is not verification -- a worker that knows what the gate reads can write what the gate
   reads. That is the same property `specs/EXTENSIONS.md` section 25 (fail-closed goal-gate outcomes)
   buys structurally, applied to human and agent review.
+- It **classifies the change's decision-matrix tier** (section 3) and verifies that tier's toll was
+  actually paid. A review that accepts an unclassified change has skipped the question the matrix
+  exists to force.
 
 **The maintainer's explicit word.** No merge without it. The mechanics -- the required
 `CI Gate (all checks passed)` status check, and the narrow, legitimate use of `--admin` -- are
@@ -70,22 +73,112 @@ may ask for more, never less.
 | **Engine / handler code** | `engine.py`, `handlers/*`, dispatch, routing, retry, checkpoint | Full module suites green **and** a live pipeline run exercising the changed path (paste the `events.jsonl` slice) **and** independent adversarial review **and** a ledger entry if the change is spec-relevant (last row) |
 | **Exemplar / example graphs** | `examples/pipelines/*.dot`, `examples/patterns/*.dot`, `examples/objective/*` | `attractor lint` with **zero ERROR** diagnostics -- warnings are informational, which is exactly the line `modules/loop-pipeline/tests/test_examples_lint_clean.py` enforces -- **and** at least one live convergence run **and** the graph's own gates demonstrated **RED and GREEN**: a negative control proving the gate can fail, a positive control proving it can pass. A gate only ever seen green is an unproven gate |
 | **Guidance surfaces** | `agents/`, `skills/`, `context/`, teaching content in `README.md` and `docs/` | Guidance-eval evidence **once the eval instrument ships**. *That instrument does not exist in this repo today: it is in flight, and a pilot is planned.* Until it lands, the floor is a **fresh-session walk-through** proving the guidance steers as written -- a session with no prior context follows only the changed text and arrives at the intended behavior. Paste the walk-through |
-| **Docs making factual claims** | any doc asserting a number, default, vocabulary, or behavior | A guard test pinning each load-bearing claim to **its source of truth in code**, following the existing guards (section 3, Layer 1). A page-only assertion ("the page says 500") is tautological: it passes forever and fails only when someone edits the page, which is the one case needing no guard. The assertion must read the value from the code and fail when the **code** moves |
-| **Spec-relevant behavior** | anything that conforms to, diverges from, or extends the nlspec | A `specs/EXTENSIONS.md` entry and/or a `SPEC_CONFORMANCE.md` row, **in the same PR**, per the Compatibility doctrine. Entries obey the Entry Format: `depends-on:`, plus `upstream action:` in one of its legal forms whenever the banner states a divergence |
+| **Docs making factual claims** | any doc asserting a number, default, vocabulary, or behavior | A guard test pinning each load-bearing claim to **its source of truth in code**, following the existing guards (section 5, Layer 1). A page-only assertion ("the page says 500") is tautological: it passes forever and fails only when someone edits the page, which is the one case needing no guard. The assertion must read the value from the code and fail when the **code** moves |
+| **Spec-relevant behavior** | anything that conforms to, diverges from, or extends the nlspec | A `specs/EXTENSIONS.md` entry and/or a `SPEC_CONFORMANCE.md` row, **in the same PR**, per the Compatibility doctrine. Entries obey the Entry Format: `depends-on:`, plus `upstream action:` in one of its legal forms whenever the banner states a divergence. Its **matrix tier** (section 3) sets the rest of the toll |
 
 Two of these already have machinery behind them: the `EXTENSIONS.md` requirement is on the PR
 checklist (`.github/PULL_REQUEST_TEMPLATE.md`), and the ledger's structural integrity is guarded in
 CI. The rest are enforced by review today.
 
+**Every change also carries a decision-matrix tier**, and the two compose rather than substitute for
+each other. The row above says what the change owes for *what it can break*; section 3 says what it
+owes for *which direction it moves relative to the nlspec*. A drifting engine change owes its live
+run **and** its ledger entry **and** its conformance-matrix row.
+
 **The Compatibility doctrine governs the last row.** Its four rules -- honor the nlspec design where
 possible; 100% support for community `.dot` files written against the nlspec; extensions additive
 and non-interfering; divergences only for safety, backed by measured evidence, and always loud --
 are stated in full at the top of [`SPEC_CONFORMANCE.md`](../SPEC_CONFORMANCE.md) (maintainer ruling,
-2026-08-14). Every disposition in that ledger is decided by them.
+2026-08-14). Every disposition in that ledger is decided by them. Section 3 is the general form of
+the same rule, applied past conformance to everything else.
 
 ---
 
-## 3. Drift defense in depth
+## 3. The decision matrix
+
+Maintainer ruling, 2026-08-15. The rule that decides which direction a change is allowed to move,
+and what it owes for moving there:
+
+> any changes in behavior/philosophy/decision-making/design-thinking (all the things) should
+> consider the strongdm/attractor nlspec -- it should be EASY/SUPPORTED to go the desired direction
+> if it means bringing us more aligned to it; it should be REALLY HARD/readily pushed back on if it
+> were to drift us from it; and RELATIVELY RESISTED if it takes us into uncharted
+> (non-specified/absent from the nlspec) territory.
+
+It applies to **all the things** -- code, docs, examples, philosophy, decision-making,
+design-thinking, process -- not only to the conformance-bearing code the ledger tracks.
+[`docs/VISION.md`](VISION.md) states it as the governing rule of the project; this section states
+what each tier costs before it merges.
+
+| Tier | Direction relative to the nlspec | Posture | Toll |
+|---|---|---|---|
+| **Toward-spec** | closes a gap with the canonical spec | EASY / SUPPORTED -- presumption of yes | The normal evidence for its change class (section 2). **No ledger entry needed**: conforming is the default state, not a deviation |
+| **Uncharted / extension** | the spec is silent here | RELATIVELY RESISTED | A stated justification for **why the spec's silence is not itself a signal**; proof the change is **additive and non-interfering** (a spec-conformant graph behaves identically); and a `specs/EXTENSIONS.md` entry in the same PR |
+| **Drift** | moves away from what the spec specifies | REALLY HARD / readily pushed back on | **Measured** safety evidence -- the named safety property, plus the incident or measurement showing the spec-literal behavior actually failed; **loud** behavior, never a quiet resolution toward success; and a `SPEC_CONFORMANCE.md` ledger entry **plus a conformance-matrix row, in the same PR** |
+
+**The drift row is the one with mechanical teeth.** Layer 2's coverage tripwire requires every
+DIVERGE-disposition `ATX-*` row and every DIVERGES-bannered `specs/EXTENSIONS.md` entry to be cited
+by at least one matrix row (section 5, Layer 2), so a drift cannot be ledgered without also being
+asserted -- and a later silent movement *back* toward spec fails the assertion just as loudly.
+
+**Uncharted is resisted, not forbidden.** Every shipped extension passed through that tier. What the
+resistance buys is that the silence gets *argued* rather than assumed -- and the argument is
+checkable later: at the `fb57a55` sync, upstream had absorbed `specs/EXTENSIONS.md` sections 1-7
+item-for-item, which is what "the spec has not said this yet" looks like when the extension was
+right.
+
+**Classify explicitly, in the PR.** The tier is a claim a reviewer can disagree with, which is only
+possible if it was stated. An unstated tier defaults, in practice, to "toward-spec" -- the cheapest
+one -- which is exactly the failure this section exists to prevent.
+
+Retirement condition: none. This is the project's steering rule, not scaffolding around a bug class.
+
+---
+
+## 4. "If you see something, do something"
+
+Maintainer ruling, 2026-08-15. The vision refines over time, so it cannot only be examined when
+someone sits down to examine it. During **any** work here -- including work with nothing to do with
+the vision -- everyone, human or agent, watches for observations against the currently captured
+vision in [`docs/VISION.md`](VISION.md), and captures them **without derailing the work at hand**.
+
+**What counts as an observation.** Anything bearing on the captured vision: the repo drifting from
+what the page says; the page drifting from what we actually believe; a shipped surface contradicting
+a stated principle; a parked layer that reality has un-parked; a spec passage the vision should be
+reading differently.
+
+**How it is captured.**
+
+- **A GitHub issue labeled `vision-observation`**, citing the `docs/VISION.md` passage -- or the spec
+  passage -- it bears on, and what was seen. One observation per issue.
+- **Plus an `## Observations` heading in the PR body** when one arises mid-PR, so the reviewer of
+  that PR sees it without going looking. The heading is honest when empty: *"none arose"* is a
+  finding, not a blank to fill.
+
+**Observations are non-blocking.** They never gate the work that surfaced them, and never need
+resolving in the PR that filed them. That is the property that makes the duty affordable: an
+observation costs one issue, not a detour.
+
+**Triage.** Open `vision-observation` issues are a named input to the Layer-3 holistic reviews
+(section 5) and to wave checkpoints, read *as a set* -- one observation is often noise, and five of
+them are a pattern.
+
+**Resolution paths**, each recorded:
+
+1. **A `docs/VISION.md` amendment**, through that page's own meta-protocol -- the maintainer's
+   explicit word, evidence, a dated Changelog entry.
+2. **A filed work item** -- the vision is right and the repo is not; the fix is ordinary work.
+3. **A recorded decline, with the reason** -- closed, saying why it changes nothing. A declined
+   observation that says why is a smaller version of the same value; a silently-closed one is a
+   lost one.
+
+Retirement condition: the duty has none. The label and the PR heading retire if the observation
+stream proves empty across several Layer-3 cycles -- which would itself be evidence the vision has
+stabilized, and the review that observed it would say so.
+
+---
+
+## 5. Drift defense in depth
 
 Five layers. Each catches a class the layer below cannot see. They are named so another repo can
 lift the model without lifting this repo's specifics.
@@ -117,7 +210,7 @@ claim to something that fails when the *code* moves:
 | `test_engine_semantics_doc_guard.py` | `context/engine-semantics.md`, the bundle's declared source of truth for shipped-engine behavior -- both text-anchored claims (the no-matching-edge and stale-label rules) and behavior-anchored ones (a real engine run asserting the main loop hard-fails on no matching edge) |
 | `test_explainer_doc_guard.py` | The published explainer page, `docs/attractor-explained.html`: feedback-critique caps, the parallel-branch default, `last_response` truncation, the summary budgets, the fidelity vocabulary and its default, the lifecycle phases, and the shape-to-execution-tier vocabulary -- each read from its source module, never from the page |
 | `test_examples_lint_clean.py` | Every `.dot` under `examples/` lints with zero ERROR diagnostics. Written because the dead-corrective-edge class shipped in eight examples for months, because nothing could see topology |
-| `test_quality_protocol_guard.py` | This document's own external references: every guard-test filename it names exists; the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records; the Changelog exists with a dated entry. Written because section 5 set its own adoption condition and this file has to keep it (section 5) |
+| `test_quality_protocol_guard.py` | This document's own external references: every guard-test filename it names exists; the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records; the Changelog exists with a dated entry. Also the vision wiring (Q-304..Q-307): `docs/VISION.md` exists with its own dated Changelog and names the decision matrix; this page carries the decision-matrix section and the literal `vision-observation` label; and the maintainer's ruling reads identically in both pages. Written because section 7 set its own adoption condition and this file has to keep it (section 7) |
 
 **The rule this layer imposes: a new claim-bearing doc ships with its guard.** The explainer guard
 states the reason plainly -- a page nobody re-reads rots silently and keeps being shared, which is
@@ -170,20 +263,22 @@ individually well-formed and collectively obsolete. That is a semantic reading o
 has to be done as one.
 
 Scope: docs, examples, guidance surfaces, and both ledgers, read against the canonical spec **and**
-against the repo's stated vision. Output: findings with `file:line` evidence, filed as issues -- not
-a report that gets read once.
+against the repo's stated vision -- which is [`docs/VISION.md`](VISION.md), not an inference.
+**Open `vision-observation` issues are a named input** (section 4): they are the observations the
+repo collected between reviews, read as a set. Output: findings with `file:line` evidence, filed as
+issues -- not a report that gets read once.
 
 Executed as an agent wave today. The intent is for it to become a **self-review attractor pipeline**
--- the repo reviewing itself with its own machinery (section 6). That pipeline does not exist yet.
+-- the repo reviewing itself with its own machinery (section 8). That pipeline does not exist yet.
 
 ### Layer 4 -- the meta-protocol
 
-Layers 0-3 are machinery, and machinery accretes. Section 5 governs how they are amended, and how
+Layers 0-3 are machinery, and machinery accretes. Section 7 governs how they are amended, and how
 they are retired.
 
 ---
 
-## 4. When the Layer-3 review fires
+## 6. When the Layer-3 review fires
 
 A release-less repo cannot measure in versions, so the primary trigger counts merges.
 
@@ -201,7 +296,7 @@ Triggers are inclusive -- whichever fires first, fires.
 
 ---
 
-## 5. The meta-protocol -- improving the protocol
+## 7. The meta-protocol -- improving the protocol
 
 This document is subject to itself. It is a doc making factual claims, it is a guidance surface, and
 it is machinery. All three of those rows in section 2 apply to it.
@@ -237,15 +332,23 @@ design that usually goes undone: yesterday's scaffolding is today's tax.
 `modules/loop-pipeline/tests/test_quality_protocol_guard.py`. The stated adoption condition -- *the
 first time one of those references is found stale, or the Layer-2 matrix lands, whichever comes
 first* -- **fired with the matrix**, and the guard shipped in the same PR rather than in the next
-one. A protocol that defers its own rule while enforcing it on others is not a protocol; that is the
+one. It was extended with the vision wave (Q-304..Q-307). A protocol that defers its own rule while enforcing it on others is not a protocol; that is the
 whole reason the condition was written with a trigger instead of an intention.
 
 What it pins, each claim read from this page and resolved against the repository rather than against
 the page itself: every guard-test filename named here resolves to a real file; the two Layer-2 files
 exist and Layer 2's status still reads *shipped*; `specs/canonical/attractor-spec-canonical.md`
 exists and the upstream SHA recorded in Layer 0 is the SHA `SPEC_CONFORMANCE.md`'s `SYNC-1` row
-records; and the Changelog this section mandates exists carrying at least one dated entry. It skips
-wholesale in a checkout without this file, and fails loud otherwise.
+records; the Changelog this section mandates exists carrying at least one dated entry; and, since
+the vision wave, that [`docs/VISION.md`](VISION.md) exists with its own dated Changelog and names
+the decision matrix, that this page names the `vision-observation` label section 4 depends on, and
+that the maintainer's decision-matrix ruling reads identically on both pages. It skips wholesale in
+a checkout without this file, and fails loud otherwise.
+
+**What is deliberately not guarded: the vision prose itself.** `docs/VISION.md` is judgment, not a
+set of fact claims about code, and a guard over its wording would pin taste rather than truth. The
+guards hold its *structure* (it exists, it has an amendment history, it states the governing rule)
+and the one thing that can silently rot -- the ruling being quoted in two places.
 
 **One reference remains unpinned, deliberately: the issue numbers.** The nine issue and PR numbers
 cited on this page (#144, #146, #156, #172, #175, #182, #204, #223, #234) resolve only over the
@@ -257,7 +360,7 @@ stops naming things, and retires only with the page.
 
 ---
 
-## 6. Dogfooding
+## 8. Dogfooding
 
 Improvements to this repo that fit the pipelines' weight class go through the repo's own lanes.
 [`docs/ISSUE_PIPELINE.md`](ISSUE_PIPELINE.md) documents both -- the defect lane (`ready:spec`) and
@@ -287,7 +390,7 @@ same reason it exists: criteria written after the work is done describe the work
 
 ---
 
-## 7. Lifting this model
+## 9. Lifting this model
 
 Other repos in the ecosystem are welcome to take this. What transfers, and what does not:
 
@@ -297,6 +400,18 @@ proof -> independent adversarial review -> maintainer's word); the *shape* of th
 one row per thing-that-can-break with the evidence it owes; and the meta-protocol itself --
 evidence-gated amendments, named retirement conditions, a periodic retirement review. Those are about
 the structure of a quality system, not about DOT graphs.
+
+Two more, added with the vision wave and portable for the same reason: a **captured vision document**
+governed by its own amendment meta-protocol (`docs/VISION.md`), so "the repo's stated vision" is a
+file rather than an inference; and the pair that keeps it alive -- a **decision matrix** stating a
+different posture and a different toll per direction relative to whatever your normative source is
+(section 3), plus the **standing observation duty** with a label, a PR heading, non-blocking capture,
+and named resolution paths (section 4). A repo with no upstream spec still has a direction it is
+being steered in, and can still ask what each change costs relative to it.
+
+**Intended follow-up, named not done:** promoting the vision-document + observation-convention
+pattern into `amplifier-foundation`'s per-repo-conventions guidance, so other repos inherit the shape
+instead of re-deriving it. That is a separate change in a separate repo; this PR does not make it.
 
 **This-repo-specific.** `attractor lint` and its rule IDs; the particular ledgers
 (`SPEC_CONFORMANCE.md`, `specs/EXTENSIONS.md`) and their entry formats; the six named guard files;
@@ -315,11 +430,53 @@ This repo's maintainers will help seed a customized version on request -- open a
 
 Amendments to this protocol, newest first. Each entry names the evidence that justified it.
 
+### 2026-08-15 -- the decision matrix and the observation duty (entry 4)
+
+- **Changed.** Two new sections, both maintainer rulings of 2026-08-15. **Section 3, "The decision
+  matrix"** states the three postures toward the `strongdm/attractor` nlspec verbatim and gives each
+  tier its toll (toward-spec: presumption of yes, no ledger entry; uncharted: justify the silence,
+  prove additive and non-interfering, `specs/EXTENSIONS.md` entry; drift: measured safety evidence,
+  loud behavior, ledger entry **plus** a conformance-matrix row in the same PR). **Section 4, "If
+  you see something, do something"** establishes the standing observation duty against
+  [`docs/VISION.md`](VISION.md) -- a `vision-observation` issue plus an `## Observations` heading in
+  the PR body, non-blocking, triaged into the Layer-3 reviews, with three recorded resolution paths.
+  Wired in: section 1's adversarial-review duties now include classifying the tier and verifying its
+  toll; section 2's table names the tier as a second, composing obligation; Layer 3 names
+  `docs/VISION.md` as the vision it reads against and `vision-observation` issues as an input;
+  section 9 adds both to the portable set.
+- **Renumbering, stated rather than silent.** Old sections 3-7 are now 5-9. Cross-references
+  throughout the page -- including in Changelog entries 1-3 -- were repointed at the new numbers, so
+  every citation still resolves. No historical *claim* was altered; only the pointers. The one
+  external citation (`specs/conformance/attractor-matrix.yaml`'s header comment) was updated in the
+  same PR.
+- **Evidence that these earn their cost.** The decision matrix is not new behavior -- it is the rule
+  the maintainer has been steering by, and the Compatibility doctrine (`SPEC_CONFORMANCE.md`,
+  2026-08-14) is it applied to conformance alone. What was missing was the general form and the
+  price list: nothing said what a *philosophy* or *exemplar* change owed for moving away from the
+  spec, and an unstated tier defaults in practice to the cheapest one. For the observation duty, the
+  measured gap is Layer 3's own scope line: it already read "against the repo's stated vision" while
+  no document stated it, and its findings only ever arrived in batches at review time -- so an
+  observation noticed during unrelated work had nowhere to go but a reviewer's memory.
+- **Scope of this change: documentation only.** No engine, handler, example or ledger *behavior*
+  changed. `docs/VISION.md` is new; `test_quality_protocol_guard.py` gains Q-304..Q-307.
+- **Proven red before green.** Each new assertion was mutated in a scratch copy and observed to fail
+  naming the specific stale reference, then restored byte-identically. A guard never seen red is an
+  unproven guard.
+- **Deliberately unguarded: the vision prose.** `docs/VISION.md` is judgment, not fact claims about
+  code. The guards hold its structure and the one thing that can silently rot -- the maintainer's
+  ruling being quoted on two pages -- and nothing about its wording.
+- **Retirement conditions.** The decision matrix has none: it is the project's steering rule, not
+  scaffolding around a bug class. The observation duty's label and PR heading retire if the
+  observation stream proves empty across several Layer-3 cycles, which would itself be a finding.
+- **Intended follow-up, named not done.** Promoting the vision-document + observation-convention
+  pattern into `amplifier-foundation`'s per-repo-conventions guidance (section 9). Separate repo,
+  separate change.
+
 ### 2026-08-15 -- this document's own guard shipped (entry 3)
 
-- **Changed.** Section 5's "**This document's own guard**" passage flipped from *owed next* to
+- **Changed.** Section 7's "**This document's own guard**" passage flipped from *owed next* to
   shipped, naming `modules/loop-pipeline/tests/test_quality_protocol_guard.py`. Layer 1 goes from
-  five guard files to six and the new guard gets its table row. Section 2's and section 7's
+  five guard files to six and the new guard gets its table row. Section 2's and section 9's
   pointers at "the five existing guards" / "the five named guard files" were updated with it.
 - **Evidence that justified it: the protocol's own rule fired, and the deferral was the finding.**
   Entry 2 recorded the adoption condition as met ("the matrix landed") and then deferred the guard
@@ -341,14 +498,14 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
 - **Scope of this change: additive.** One new test module and this page. No engine, handler,
   example or ledger *behavior* changed.
 - **Honest gap, named not hidden.** The nine issue/PR numbers on this page stay unpinned: they
-  resolve only over the network and these suites do not reach it. Recorded in section 5 in those
+  resolve only over the network and these suites do not reach it. Recorded in section 7 in those
   words, and assigned to the Layer-3 pass rather than to CI.
 - **Retirement condition.** None while this page names external references. The guard narrows as
   the page stops naming things, and retires only with the page.
 
 ### 2026-08-15 -- Layer 2 shipped (entry 2)
 
-- **Changed.** Section 3, Layer 2 flipped from *"in flight -- designed here, not built"* to shipped,
+- **Changed.** Section 5, Layer 2 flipped from *"in flight -- designed here, not built"* to shipped,
   naming the two real files: `specs/conformance/attractor-matrix.yaml` (38 tranche-1 rows) and
   `modules/loop-pipeline/tests/test_spec_conformance_matrix.py` (the runner). The disposition
   vocabulary gained `OPEN-PINNED` and `NOT-ASSERTABLE`; the coverage tripwire and the SYNC sha pin
@@ -374,7 +531,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
 - **Retirement conditions.** The matrix mechanism has none -- it is the executable form of a ledger
   that is itself permanent. Individual rows retire by changing disposition: when upstream absorbs a
   divergence, or when a decision closes an `OPEN-PINNED` row. **This document's own missing guard
-  (section 5) is now due**: its stated adoption condition -- "or the Layer-2 matrix lands" -- fired
+  (section 7) is now due**: its stated adoption condition -- "or the Layer-2 matrix lands" -- fired
   with this entry. *(Discharged by entry 3, same PR: the guard shipped rather than being deferred.)*
 
 ### 2026-08-15 -- protocol captured (entry 1)
@@ -392,7 +549,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
 - **Scope of this change: documentation only.** No engine, handler, example or test code changed.
   Layer 2 and the guidance-eval instrument are marked in flight and are explicitly *not* claimed to
   exist.
-- **Retirement conditions.** Section 5's retirement review has none: it is the mechanism that retires
+- **Retirement conditions.** Section 7's retirement review has none: it is the mechanism that retires
   other machinery and cannot retire itself. Layer 3's ~15-merge cadence retires when a measured rate
-  exists to replace the estimate. This document's missing self-guard (section 5) retires when that
+  exists to replace the estimate. This document's missing self-guard (section 7) retires when that
   guard lands.

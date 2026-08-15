@@ -1,0 +1,315 @@
+// ============================================================================
+// Drift Review -- the executor for QUALITY_PROTOCOL Layer 3
+// ============================================================================
+// docs/QUALITY_PROTOCOL.md section 5 defines five drift layers. Layers 0-2 are
+// LOCAL: a vendored spec pinned byte-for-byte, six guard tests pinning each
+// documented number to the code it came from, and an executable conformance
+// matrix asserting every decided divergence. Each checks one claim, one file,
+// one section -- and none of them can see that the README teaches one mental
+// model while an exemplar demonstrates another, or that a ledger entry is
+// individually well-formed and collectively obsolete.
+//
+// That reading is Layer 3, and this graph is it: a periodic holistic semantic
+// review of the whole repository against the canonical spec and the stated
+// vision, producing evidence-cited findings a human triages.
+//
+// It is built as an attractor on purpose. The repo reviews itself through its
+// own engine (section 8, dogfooding) -- which also means the review is subject
+// to the doctrine it is checking: gates outside workers, evidence over
+// self-report, one exit, a budget, a loud failure.
+//
+// Invocation (per KNOWN_ISSUES: process cwd MUST equal --cwd for box nodes):
+//   RD=/abs/path/to/examples/drift-review
+//   cd <the repository under review>
+//   attractor run "$RD/drift-review.dot" \
+//       --param goal="Layer-3 holistic drift review of this repository" \
+//       --param runner_dir="$RD" \
+//       --cwd .
+//
+// Parameters:
+//   goal            The review objective, carried into every worker's prompt.
+//   runner_dir      Absolute path to this file's directory. The findings gate
+//                   runs check_findings.py from here, and every review worker
+//                   is told to read finding-contract.md from here.
+//   max_revisions   Findings-repair budget (default 2 -> at most 3 gate passes).
+//   max_reports     Report-repair budget (default 2 -> at most 3 gate passes).
+//
+// THE REPOSITORY UNDER REVIEW IS THE PROCESS WORKING DIRECTORY. There is no
+// --param for it, deliberately: a second path to configure is a second way to
+// review the wrong tree while believing you reviewed the right one. `preflight`
+// asserts the normative sources are present in the cwd and refuses otherwise.
+//
+// SHAPE (the doctrine, made visible):
+//   - THE GATE IS OUTSIDE EVERY WORKER'S CONTEXT. Four LLM reviewers PROPOSE
+//     findings; check_findings.py -- run by `findings_gate`, in the parent --
+//     DECIDES which are shaped, and it re-reads the cited files itself. A
+//     worker cannot satisfy this gate by asserting more confidently; it can
+//     only satisfy it by citing something that is actually there. This is the
+//     fabricated-convergence.jsonl lesson applied to a review instrument:
+//     verification inside the context that produced the evidence is not
+//     verification (docs/PIPELINE_DESIGN_PRINCIPLES.md section 0).
+//   - EVIDENCE ON BOTH SIDES. A finding must cite file:line for the drifting
+//     surface AND for the normative passage it contradicts. Anything less is
+//     an assertion, and a Layer-3 pass that emits assertions costs a human the
+//     read while proving nothing.
+//   - FINDINGS ARE A SUCCESS. A review that finds drift did its job; a review
+//     that finds none did its job and says what it swept. Both leave through
+//     `done`, distinguished by .drift-review/disposition (findings | clean).
+//     Only a MACHINERY failure is red -- a gate that could not run, a corpus
+//     that never got written, a budget spent without converging.
+//   - THE PIPELINE NEVER FILES ANYTHING. It reports; a human verifies each
+//     finding and decides what becomes an issue or a vision-observation
+//     (QUALITY_PROTOCOL section 4). The separation is the design: an
+//     instrument that acts on its own findings has no independent check left.
+//   - TWO CORRECTIVE LOOPS, EACH WITH ITS OWN WALL. revise <-> findings_gate
+//     repairs unshaped findings ($max_revisions); consolidate <-> report_gate
+//     repairs a report that dropped an admitted finding ($max_reports). Both
+//     counters are files owned by the gates, so they survive every re-entry.
+//   - ONE GREEN EXIT. `done` is reachable only through `report_gate`, which
+//     re-derives the finding ids from findings.json and refuses to open if the
+//     report is missing any of them.
+//
+// WHY THE BACK-EDGES DO NOT CARRY loop_restart: both cycles re-enter a GATE to
+// re-judge an artifact that was just repaired, not a fresh attempt at the whole
+// review. loop_restart resets completed nodes, which would make the (expensive,
+// already-finished) parallel review branch re-runnable -- and re-running four
+// LLM reviewers is not what "fix the citation on finding 3" means. The budgets
+// live in files rather than in $iteration for the same reason.
+//
+// VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON:
+//   - STALE-LABEL RULE: a tool node that exits nonzero does NOT refresh
+//     tool.last_line, so a stale label can match at the same time as an
+//     outcome=fail edge. Every last_line edge below whose source also carries
+//     a failure edge conjoins `&& outcome=success`
+//     (docs/ROUTING-REFERENCE.md section 3).
+//   - error_policy=continue on a component node: one failed branch does not
+//     abort its siblings (handlers/parallel.py). The review branches carry no
+//     outcome=fail edges of their own on purpose -- a crashed reviewer shows up
+//     downstream as a missing <class>.json, which findings_gate rejects with a
+//     reason, which is a better signal than a branch quietly leaving the join.
+//   - PARAM NAMESPACE: substitution rewrites $name/${name} for any context key.
+//     The shell variables here (rd, f, c, t, n, B, mr, mv, id, fc, miss) are
+//     safe only because no param shares their name. Never add a param named
+//     like a shell var.
+// ============================================================================
+
+digraph DriftReview {
+    graph [
+        goal="$goal",
+        label="Drift Review (QUALITY_PROTOCOL Layer 3)",
+        params="goal, runner_dir, max_revisions, max_reports",
+        default_max_retries=2,
+        default_fidelity="compact",
+        max_pipeline_duration="10800s"
+    ]
+
+    start [shape=Mdiamond, label="Start"]
+    done  [shape=Msquare,  label="Done"]
+
+    // ---------- preflight: admission, before an LLM is ever paid ------------
+    // OBJECTIVE   Prove this is the repository under review and that the gate
+    //             can run, or refuse loudly.
+    // CONSTRAINTS code-tier only; no judgement.
+    // EVIDENCE    .drift-review/head-sha, .drift-review/started-at
+    // EXIT        ready | blocked (exit 1, LOUD)
+    // The normative-source check is what makes "run it in the wrong directory"
+    // a refusal rather than a review of nothing.
+    preflight [
+        shape=parallelogram, label="Preflight", max_retries=0,
+        tool_command="mkdir -p .drift-review/raw .drift-review/inventory .drift-review/postmortem || { printf blocked; exit 1; }; rd=\"$runner_dir\"; for f in check_findings.py finding-contract.md; do [ -f \"$rd/$f\" ] || { echo \"FATAL: --param runner_dir must name the examples/drift-review directory; missing $f under '$rd'\" >&2; printf blocked; exit 1; }; done; for f in git python3 grep sort wc; do command -v \"$f\" >/dev/null 2>&1 || { echo \"FATAL: '$f' is not on PATH; the inventory and the findings gate both need it\" >&2; printf blocked; exit 1; }; done; for f in specs/canonical/attractor-spec-canonical.md docs/VISION.md docs/QUALITY_PROTOCOL.md SPEC_CONFORMANCE.md specs/EXTENSIONS.md; do [ -f \"$f\" ] || { echo \"FATAL: the working directory is not the repository under review -- $f is missing. Run with --cwd at the repository root.\" >&2; printf blocked; exit 1; }; done; git rev-parse HEAD > .drift-review/head-sha 2>/dev/null || echo unknown > .drift-review/head-sha; date -u > .drift-review/started-at; printf ready"
+    ]
+
+    // ---------- inventory: enumerate the claim-bearing surfaces ------------
+    // OBJECTIVE   Turn 'the whole repo' into four explicit, countable lists, so
+    //             a reviewer's scope is a file rather than its own recollection.
+    // CONSTRAINTS code-tier only; tracked files only (git ls-files) -- an
+    //             untracked scratch file makes no claim on anyone.
+    // EVIDENCE    .drift-review/inventory/{core-docs,examples,guidance,
+    //             ledgers}.txt and summary.txt
+    // EXIT        inventoried | no_surfaces (exit 1, LOUD)
+    // A class that matches nothing is a machinery failure, not an empty
+    // result: it means the tree moved under the patterns, and a review that
+    // swept an empty list would report 'clean' about surfaces it never opened.
+    inventory [
+        shape=parallelogram, label="Inventory Claim-Bearing Surfaces", max_retries=0,
+        tool_command="t=.drift-review/inventory/_tracked.txt; git ls-files > \"$t\" 2>/dev/null || { echo 'FATAL: git ls-files failed; the surfaces under review are this repository tracked files' >&2; printf no_surfaces; exit 1; }; grep -E '^(README|PRINCIPLES|AGENTS|SUPPORT|SECURITY|CODE_OF_CONDUCT)[.]md$|^docs/[^/]+[.](md|html)$' \"$t\" | LC_ALL=C sort > .drift-review/inventory/core-docs.txt; grep -E '^examples/' \"$t\" | LC_ALL=C sort > .drift-review/inventory/examples.txt; grep -E '^(agents|skills|context|behaviors|bundles)/|^bundle[.]md$' \"$t\" | LC_ALL=C sort > .drift-review/inventory/guidance.txt; grep -E '^SPEC_CONFORMANCE[.]md$|^specs/' \"$t\" | LC_ALL=C sort > .drift-review/inventory/ledgers.txt; : > .drift-review/inventory/summary.txt; for c in core-docs examples guidance ledgers; do [ -s .drift-review/inventory/$c.txt ] || { echo \"FATAL: inventory class $c matched no tracked files; the patterns have drifted from the tree\" >&2; printf no_surfaces; exit 1; }; echo \"$c $(wc -l < .drift-review/inventory/$c.txt | tr -d ' ')\" >> .drift-review/inventory/summary.txt; done; printf inventoried"
+    ]
+
+    // ---------- the four reviewers, in parallel, in separate contexts -------
+    // Four classes because they fail differently: a doc lies in prose, an
+    // exemplar lies by demonstration, a guidance surface lies to an agent
+    // nobody is watching, and a ledger lies by staying true sentence-by-
+    // sentence while its disposition stops describing reality.
+    // error_policy=continue: one reviewer failing must not cost the other
+    // three. A missing <class>.json is caught, named and routed by the gate.
+    review_fanout [
+        shape=component,
+        label="Review Surface Classes (Parallel)",
+        join_policy="wait_all",
+        error_policy="continue",
+        max_parallel=4
+    ]
+
+    // ---------- class 1: core docs -----------------------------------------
+    // OBJECTIVE    Find where the teaching surfaces have drifted from the
+    //              normative sources.
+    // CONSTRAINTS  Report only; edit nothing outside .drift-review/. Every
+    //              finding cites file:line on BOTH sides.
+    // CAPABILITIES read the tree; read the inventory list; read the contract.
+    // EVIDENCE     .drift-review/raw/core-docs.json
+    // EXIT         the file exists, parses, and survives findings_gate.
+    review_core_docs [
+        shape=box, label="Review: Core Docs",
+        must_write=".drift-review/raw/core-docs.json",
+        prompt="LAYER-3 HOLISTIC DRIFT REVIEW -- surface class: core-docs.\n\nObjective for this run: $goal\n\nYou are one of four independent reviewers, each reading a different class of surface in the same repository. You will not see the others' work and they will not see yours; that independence is the point.\n\nFIRST, read $runner_dir/finding-contract.md IN FULL. It is the contract your output must satisfy, and a gate outside your context enforces it mechanically -- it re-opens every file you cite and checks that your quote is really there. It will send the file back with the exact reason if it is not.\n\nYOUR SCOPE is every path listed in .drift-review/inventory/core-docs.txt: the README, the root convention files, and docs/. These are the surfaces that TEACH -- a reader learns the system from them and then acts on what they learned.\n\nREAD FOR CONTEXT, then read for drift:\n  specs/canonical/attractor-spec-canonical.md   the vendored upstream nlspec\n  docs/VISION.md                                the repo's stated vision\n  SPEC_CONFORMANCE.md and specs/EXTENSIONS.md   the two ledgers\n  docs/QUALITY_PROTOCOL.md section 5            what each drift layer owns\n\nWHAT TO LOOK FOR, specifically: a paragraph that teaches behavior the engine or the doctrine has retired; a mental model a page teaches that the vision explicitly resists; vocabulary that has slipped from the spec's, so a reader who learns the word here mis-reads it there; a claim that was true when written and is not now; a page describing machinery in the present tense that does not exist, or in the future tense that already shipped.\n\nWHAT NOT TO REPORT: pinned numbers (Layer 1's six guard tests own those), ledgered divergences that flipped (Layer 2's conformance matrix owns those), typos, and the nine unresolvable issue numbers docs/QUALITY_PROTOCOL.md already names as a deliberate gap.\n\nWORK THE EVIDENCE, NOT YOUR MEMORY. For every candidate finding, open both files and copy both lines. Use your tools to get the real line numbers -- a citation you reconstructed is the exact failure the gate exists to catch, and it will bounce.\n\nWRITE .drift-review/raw/core-docs.json in the contract's shape, class core-docs, finding ids prefixed DR-CORE-. List in 'swept' every path you actually opened. Findings may be an empty list: a clean class is a real result, and saying what you swept is what makes it one. Edit nothing outside .drift-review/."
+    ]
+
+    // ---------- class 2: examples ------------------------------------------
+    review_examples [
+        shape=box, label="Review: Examples",
+        must_write=".drift-review/raw/examples.json",
+        prompt="LAYER-3 HOLISTIC DRIFT REVIEW -- surface class: examples.\n\nObjective for this run: $goal\n\nYou are one of four independent reviewers, each reading a different class of surface in the same repository. You will not see the others' work and they will not see yours; that independence is the point.\n\nFIRST, read $runner_dir/finding-contract.md IN FULL. It is the contract your output must satisfy, and a gate outside your context enforces it mechanically -- it re-opens every file you cite and checks that your quote is really there.\n\nYOUR SCOPE is every path listed in .drift-review/inventory/examples.txt: the shipped .dot graphs, their .md guides, the gate primitives, and the objective layer. An exemplar does not teach by assertion, it teaches by DEMONSTRATION -- which is why an example that contradicts doctrine is worse than a paragraph that does. A reader copies it.\n\nREAD FOR CONTEXT, then read for drift:\n  specs/canonical/attractor-spec-canonical.md   the vendored upstream nlspec\n  docs/VISION.md                                especially 'What we deliberately resist'\n  specs/EXTENSIONS.md and SPEC_CONFORMANCE.md   what this engine adds and where it diverges\n  docs/PIPELINE_DESIGN_PRINCIPLES.md sections 0-3 and docs/PIPELINE_PATTERNS.md\n\nWHAT TO LOOK FOR, specifically: a graph that hardcodes cognitive phases as nodes while the vision calls that the anti-pattern; a guide describing behavior its own .dot no longer has; an example depending on an attribute or a routing form the spec or the ledger has moved on from; two exemplars teaching incompatible mental models of the same mechanism; a sample whose comments explain a rule the graph itself stopped obeying.\n\nWHAT NOT TO REPORT: lint findings (attractor lint and test_examples_lint_clean.py own those), and anything a Layer-1 guard test already pins.\n\nWORK THE EVIDENCE, NOT YOUR MEMORY. For every candidate finding, open both files and copy both lines. Use your tools to get the real line numbers.\n\nWRITE .drift-review/raw/examples.json in the contract's shape, class examples, finding ids prefixed DR-EX-. List in 'swept' every path you actually opened. Findings may be an empty list: a clean class is a real result. Edit nothing outside .drift-review/."
+    ]
+
+    // ---------- class 3: guidance surfaces ---------------------------------
+    review_guidance [
+        shape=box, label="Review: Guidance Surfaces",
+        must_write=".drift-review/raw/guidance.json",
+        prompt="LAYER-3 HOLISTIC DRIFT REVIEW -- surface class: guidance.\n\nObjective for this run: $goal\n\nYou are one of four independent reviewers, each reading a different class of surface in the same repository. You will not see the others' work and they will not see yours; that independence is the point.\n\nFIRST, read $runner_dir/finding-contract.md IN FULL. It is the contract your output must satisfy, and a gate outside your context enforces it mechanically -- it re-opens every file you cite and checks that your quote is really there.\n\nYOUR SCOPE is every path listed in .drift-review/inventory/guidance.txt: agents/, skills/, context/, behaviors/, bundles/ and bundle.md. These steer models, usually with no human reading along. A stale instruction here does not mislead a reader -- it silently produces wrong work, over and over, and nobody sees the sentence that caused it.\n\nREAD FOR CONTEXT, then read for drift:\n  specs/canonical/attractor-spec-canonical.md   the vendored upstream nlspec\n  docs/VISION.md                                'Operating principles' and 'What we deliberately resist'\n  specs/EXTENSIONS.md and SPEC_CONFORMANCE.md   what this engine adds and where it diverges\n  context/engine-semantics.md                   the bundle's declared source of truth for shipped-engine behavior\n\nWHAT TO LOOK FOR, specifically: a system prompt or agent brief teaching an engine behavior that has since changed; guidance that steers a model toward a shape the vision explicitly resists; a skill or context file whose vocabulary has drifted from the spec's so a model uses the word wrongly downstream; a capability described as available that the ledger records as not implemented, or vice versa; guidance that contradicts what another guidance surface tells a model to do about the same mechanism.\n\nWHAT NOT TO REPORT: pinned numbers and ledgered divergences -- Layers 1 and 2 own those.\n\nWORK THE EVIDENCE, NOT YOUR MEMORY. For every candidate finding, open both files and copy both lines. Use your tools to get the real line numbers.\n\nWRITE .drift-review/raw/guidance.json in the contract's shape, class guidance, finding ids prefixed DR-GUIDE-. List in 'swept' every path you actually opened. Findings may be an empty list: a clean class is a real result. Edit nothing outside .drift-review/."
+    ]
+
+    // ---------- class 4: ledgers vs repo -----------------------------------
+    review_ledgers [
+        shape=box, label="Review: Ledger vs Repo",
+        must_write=".drift-review/raw/ledgers.json",
+        prompt="LAYER-3 HOLISTIC DRIFT REVIEW -- surface class: ledgers.\n\nObjective for this run: $goal\n\nYou are one of four independent reviewers, each reading a different class of surface in the same repository. You will not see the others' work and they will not see yours; that independence is the point.\n\nFIRST, read $runner_dir/finding-contract.md IN FULL. It is the contract your output must satisfy, and a gate outside your context enforces it mechanically -- it re-opens every file you cite and checks that your quote is really there.\n\nYOUR SCOPE is every path listed in .drift-review/inventory/ledgers.txt: SPEC_CONFORMANCE.md, specs/EXTENSIONS.md, specs/conformance/ and specs/canonical/. Your question is the one docs/QUALITY_PROTOCOL.md says only a whole-repo read can answer: is a ledger entry individually well-formed and COLLECTIVELY obsolete? Structural integrity is already guarded (test_extensions_ledger_integrity.py); numbering and banners are not your job.\n\nWHAT TO LOOK FOR, specifically: an entry whose disposition no longer describes what the engine or the repo actually does; an entry describing a divergence the vendored canonical spec has since absorbed or contradicted; two entries that are each defensible and mutually inconsistent; an entry naming an artifact, guard, module or path that has moved or vanished; a conformance-matrix row whose stated rationale has drifted from the ledger row it cites; a stated retirement condition that has demonstrably fired without the entry being retired.\n\nBECAUSE PARTS OF YOUR SCOPE ARE THEMSELVES NORMATIVE, remember the contract's rule: 'drift' and 'contradicts' must be DIFFERENT files. A ledger entry that contradicts the vendored spec is a finding whose drifting side is the ledger and whose normative side is specs/canonical/.\n\nWHAT NOT TO REPORT: heading numbering, banner grammar, and anything test_extensions_ledger_integrity.py or test_spec_conformance_matrix.py already asserts.\n\nWORK THE EVIDENCE, NOT YOUR MEMORY. For every candidate finding, open both files and copy both lines. Use your tools to get the real line numbers.\n\nWRITE .drift-review/raw/ledgers.json in the contract's shape, class ledgers, finding ids prefixed DR-LEDGER-. List in 'swept' every path you actually opened. Findings may be an empty list: a clean class is a real result. Edit nothing outside .drift-review/."
+    ]
+
+    reviews_join [shape=tripleoctagon, label="Collect Class Findings"]
+
+    // ---------- findings_gate: the load-bearing gate ------------------------
+    // OBJECTIVE    Decide which proposed findings are SHAPED -- by re-opening
+    //              every cited file here, in the parent, outside every
+    //              reviewer's context.
+    // CONSTRAINTS  Files and exit codes only. Never a worker's self-report.
+    //              Shape, not truth: whether the drift is REAL is a human's
+    //              call, and the report says so.
+    // CAPABILITIES check_findings.py; the repository tree.
+    // EVIDENCE     .drift-review/findings-report.txt (always),
+    //              .drift-review/findings.json (only when admitted)
+    // EXIT         findings_ok | findings_bad | revise_exhausted
+    // Idiom A (always exit 0) so tool.last_line is always fresh. A nonzero exit
+    // here means the GATE could not run -- the raw directory is gone, the
+    // report is unwritable -- which is a different thing from bad findings, and
+    // it routes differently: to the loud terminal, not to a repair.
+    // THE COUNTER LIVES IN THE SCRIPT (--max-revisions, .drift-review/revise-
+    // iter), so every rejected round spends budget no matter which reviewer
+    // caused it, and the wall survives every re-entry.
+    findings_gate [
+        shape=parallelogram, label="Findings Shaped?", max_retries=0,
+        tool_command="mv=$max_revisions; python3 \"$runner_dir/check_findings.py\" --raw-dir .drift-review/raw --repo-root . --state-dir .drift-review --classes core-docs,examples,guidance,ledgers --max-revisions \"${mv:-2}\""
+    ]
+
+    // ---------- revise: repair the citations, not the conclusions -----------
+    // OBJECTIVE    Make every rejected finding satisfy the contract, or drop
+    //              the ones that cannot.
+    // CONSTRAINTS  Do not invent findings. Do not weaken a finding to get past
+    //              the gate. Dropping an uncitable finding is the honest move.
+    // EVIDENCE     the repaired .drift-review/raw/*.json files
+    // EXIT         findings_gate admits the corpus.
+    // A finding that cannot be cited is not a finding this instrument can
+    // ship: the human triaging it would have to re-derive the evidence, which
+    // is the work the review was supposed to have done.
+    revise [
+        shape=box, label="Repair Findings",
+        prompt="The findings gate REJECTED this round. Read .drift-review/findings-report.txt: it names every rejection, by file, by finding, with the reason.\n\nRead $runner_dir/finding-contract.md again for the rules you are being held to.\n\nFix exactly what the report names, in .drift-review/raw/*.json. Nothing else. Specifically:\n  - A citation whose quote did not resolve: OPEN the cited file, find the text you meant, and correct the line number and the quote to what is actually there. Do not adjust the quote to fit the line -- adjust the citation to fit the evidence.\n  - A citation whose file does not exist: find the real path, or drop the finding.\n  - A 'contradicts' side that is not a normative source: either cite the spec, vision or ledger passage the surface really contradicts, or drop the finding. Do not retarget it at a random normative file to satisfy the rule.\n  - A missing <class>.json: that reviewer produced nothing. Write the file honestly -- record what that class swept, with an empty findings list if you cannot review it yourself.\n  - A malformed field: fix the field.\n\nDROPPING A FINDING IS A LEGITIMATE REPAIR and often the right one. A finding whose evidence you cannot locate is not a finding; shipping it would cost a human the read and teach them to distrust the instrument.\n\nDo not add new findings in this pass, do not restate accepted ones, and edit nothing outside .drift-review/."
+    ]
+
+    // ---------- consolidate: the report a human will actually read ----------
+    // OBJECTIVE    Turn the admitted corpus into the deliverable.
+    // CONSTRAINTS  Report every admitted finding; invent none; fix none.
+    // EVIDENCE     .drift-review/report.md
+    // EXIT         report_gate admits it (must_write + the id check).
+    consolidate [
+        shape=box, label="Consolidate Report",
+        must_write=".drift-review/report.md",
+        prompt="The findings gate admitted this round's corpus. Write the deliverable.\n\nRead .drift-review/findings.json (every admitted finding, already sorted by severity), .drift-review/findings-report.txt (the admission summary), .drift-review/inventory/summary.txt (how many surfaces each class holds), .drift-review/inventory/*.txt, and .drift-review/head-sha.\n\nWrite .drift-review/report.md. It must contain:\n  1. A header: the commit reviewed (from head-sha), the date, and which QUALITY_PROTOCOL section 6 triggers this pass answers.\n  2. WHAT WAS SWEPT -- name all four classes by their exact names (core-docs, examples, guidance, ledgers), with the count of surfaces each holds and what that class covers. A gate checks that all four names appear: a review that quietly skipped a class must not read as a clean one.\n  3. A findings table: id, severity, class, title.\n  4. One section per finding, in severity order. Quote BOTH sides with their file:line, verbatim from findings.json, then the 'why'. Every finding id in findings.json must appear literally in this report -- a gate outside your context re-derives the ids and refuses the report if any is missing.\n  5. A disposition sentence: either 'this review found N findings' or 'this review found no drift', stated plainly.\n  6. WHAT HAPPENS NEXT: a human verifies each finding by reading both cited sides, then decides what becomes an issue or a vision-observation. State explicitly that this pipeline files nothing and fixes nothing.\n\nIf findings.json holds zero findings, that is a RESULT and the report says so: what was swept, against which normative sources, and that nothing contradicted them. Do not pad it into sounding like a failure, and do not invent findings to justify the run.\n\nReport only. Fix nothing. Edit nothing outside .drift-review/."
+    ]
+
+    // ---------- report_gate: refuse a green exit that drops a finding -------
+    // OBJECTIVE    Make 'the run ended' and 'the report carries every admitted
+    //              finding' the same event.
+    // CONSTRAINTS  deterministic checks only; it re-derives the ids from
+    //              findings.json rather than believing the report's own table.
+    // EVIDENCE     .drift-review/report-gate.txt, .drift-review/disposition
+    // EXIT         report_ok | report_bad | report_exhausted | no_corpus(exit 1)
+    // ON goal_gate=true, HONESTLY: this node uses Idiom A for its judgements,
+    // and a tool node's exit 0 is an explicit SUCCESS verdict, so the engine's
+    // exit-time gate check cannot itself fail here. It is kept as a
+    // DECLARATION of which node owns the verdict -- the same honesty
+    // examples/objective/objective-runner.dot records about its evidence_gate.
+    // The enforcement that really holds is structural: `done` has exactly one
+    // incoming edge and it is this node's report_ok.
+    report_gate [
+        shape=parallelogram, label="Report Complete?", max_retries=0,
+        goal_gate=true, retry_target="consolidate",
+        tool_command="mr=$max_reports; B=${mr:-2}; n=$(($(cat .drift-review/report-iter 2>/dev/null || echo 0)+1)); echo $n > .drift-review/report-iter; if [ ! -s .drift-review/findings.json ]; then echo 'FATAL: .drift-review/findings.json is absent -- the findings gate never admitted a corpus, so there is nothing to report on' >&2; printf no_corpus; exit 1; fi; fc=$(grep -o '\"finding_count\": [0-9]*' .drift-review/findings.json | head -1 | tr -cd '0-9'); if [ \"${fc:-0}\" -gt 0 ]; then echo findings > .drift-review/disposition; else echo clean > .drift-review/disposition; fi; if [ \"$n\" -gt $((B+1)) ]; then printf report_exhausted; else : > .drift-review/report-gate.txt; miss=0; if [ ! -s .drift-review/report.md ]; then echo 'report.md is missing or empty' >> .drift-review/report-gate.txt; miss=1; else for id in $(grep -o '\"id\": \"[^\"]*\"' .drift-review/findings.json | cut -d'\"' -f4); do grep -qF \"$id\" .drift-review/report.md || { echo \"admitted finding $id never appears in report.md\" >> .drift-review/report-gate.txt; miss=1; }; done; for c in core-docs examples guidance ledgers; do grep -qF \"$c\" .drift-review/report.md || { echo \"report.md never names the swept surface class $c\" >> .drift-review/report-gate.txt; miss=1; }; done; fi; if [ \"$miss\" -eq 0 ]; then printf report_ok; else printf report_bad; fi; fi"
+    ]
+
+    // ---------- postmortem -> escalated: salvage, then fail LOUD ------------
+    postmortem [
+        shape=box, label="Postmortem",
+        must_write=".drift-review/postmortem/report.md",
+        prompt="This Layer-3 review reached a decision point without producing a report: $goal\n\nRead .drift-review/findings-report.txt, .drift-review/report-gate.txt (if it exists), .drift-review/inventory/summary.txt, and whatever is in .drift-review/raw/. Write .drift-review/postmortem/report.md: which stage stalled, what each round attempted, and -- specifically -- whether the failure was in the REVIEWERS (could not cite what they claimed), in the CONTRACT (the shape rules reject findings that are actually sound), in the MACHINERY (a gate or the inventory), or in the SCOPE (the classes are too large for one pass). Then state the options: relax nothing, but say whether to re-run, re-scope, raise a budget, or take it to a human.\n\nBe honest, and be specific about what was salvageable: if some classes produced admitted findings and one did not, say which, because a partial sweep is worth more to a human than a discarded run. This report is the value salvaged from a non-converging review."
+    ]
+
+    // Escalation is a deterministic non-terminal handoff, not a second
+    // successful exit. It writes a handoff even if the postmortem LLM itself
+    // failed, then exits 1 DELIBERATELY: max_retries=0 and no fail-route, so
+    // the engine hard-fails LOUD (run status=fail, CLI exit 1).
+    escalated [
+        shape=parallelogram, label="Escalated", max_retries=0,
+        tool_command="mkdir -p .drift-review/postmortem; if [ -s .drift-review/postmortem/report.md ]; then echo 'Read .drift-review/postmortem/report.md and .drift-review/findings-report.txt, then choose: re-run, re-scope the classes, raise a budget, or review by hand.' > .drift-review/postmortem/escalation.md; else echo 'The Layer-3 review could not run. Preserve .drift-review/ and escalate to a human.' > .drift-review/postmortem/escalation.md; fi; echo escalated > .drift-review/disposition; printf escalated; exit 1"
+    ]
+
+    // ========================= edges =========================
+    start -> preflight
+
+    preflight -> inventory [condition="context.tool.last_line=ready && outcome=success", label="preconditions hold"]
+    preflight -> escalated [condition="outcome=fail",                                    label="blocked -- refuse before spending an LLM"]
+
+    inventory -> review_fanout [condition="context.tool.last_line=inventoried && outcome=success", label="surfaces enumerated"]
+    inventory -> escalated     [condition="outcome=fail",                                          label="no surfaces -- the patterns lost the tree"]
+
+    review_fanout -> review_core_docs
+    review_fanout -> review_examples
+    review_fanout -> review_guidance
+    review_fanout -> review_ledgers
+
+    review_core_docs -> reviews_join
+    review_examples  -> reviews_join
+    review_guidance  -> reviews_join
+    review_ledgers   -> reviews_join
+
+    reviews_join -> findings_gate
+
+    findings_gate -> consolidate [condition="context.tool.last_line=findings_ok && outcome=success",      label="every finding is shaped"]
+    findings_gate -> revise      [condition="context.tool.last_line=findings_bad && outcome=success",     label="unshaped -- repair the citations"]
+    findings_gate -> postmortem  [condition="context.tool.last_line=revise_exhausted && outcome=success", label="revision budget spent"]
+    findings_gate -> escalated   [condition="outcome=fail",                                               label="gate could not run"]
+
+    // The corrective cycle: back to the gate that owns the verdict.
+    revise -> findings_gate
+    revise -> postmortem [condition="outcome=fail", label="hard failure"]
+
+    consolidate -> report_gate
+    consolidate -> postmortem [condition="outcome=fail", label="hard failure"]
+
+    report_gate -> done        [condition="context.tool.last_line=report_ok && outcome=success",        label="report carries every admitted finding"]
+    report_gate -> consolidate [condition="context.tool.last_line=report_bad && outcome=success",       label="report dropped a finding -- rewrite"]
+    report_gate -> postmortem  [condition="context.tool.last_line=report_exhausted && outcome=success", label="report budget spent"]
+    report_gate -> escalated   [condition="outcome=fail",                                               label="no corpus -- refuse to exit green"]
+
+    postmortem -> escalated [condition="outcome=fail", label="postmortem failed"]
+    postmortem -> escalated [label="escalate"]
+}

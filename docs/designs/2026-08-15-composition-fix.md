@@ -237,75 +237,91 @@ Constraint check: `bundles/attractor-interactive.yaml` keeps working (its own in
 
 ## 8. As built: what shipped, and where it deviates
 
-Sections 1-7 are the design as written *before* the build. This section records what the
-build actually did and every place it departed from that design. Where they disagree, this
-section is the one describing the shipped bundle.
+Sections 1-7 are the design as written *before* the build. This section records what the build
+actually did and every place it departed from that design. Where they disagree, this section
+describes the shipped bundle.
 
-### 8.1 The deviation that matters: **two resolution classes**, not one
+### 8.1 The deviation that matters: **two resolution classes**, and one pin that cannot be removed
 
 §3.3 recommended flipping **every** same-repo `git+…@main` pin to a relative source, on the
-strength of the P2 ecosystem survey (work-tracker et al.). Build-time probes against the
-installed foundation (`amplifier_foundation` 1.0.0) found that survey generalised one case too
-far. Foundation resolves a module `source:` in **two different ways**, and only one of them is
-safe to make relative:
+strength of the P2 ecosystem survey (work-tracker et al.). That survey generalised one case too
+far. Foundation resolves a module `source:` in **two different ways**, and only one of them can
+be made relative:
 
 | Class | Where | When resolved | Anchored on | Relative safe? |
 |---|---|---|---|---|
-| **A — parse-time** | `tools:` / `providers:` / `hooks:` list entries | at **parse** time, in `Bundle.from_dict` → `_validate_module_list` (`bundle/_dataclass.py`: *"Resolve relative source paths to absolute (before composition can change base_path) — this fixes issue #190"*) | **the declaring file's own directory** | **YES** — under any composition |
-| **B — late** | `session.orchestrator.source` (top-level, agent dicts, and agent-`.md` frontmatter) | at **prepare** time, via `FileSourceHandler(base_path=…)` | **the COMPOSED ROOT's `base_path`** — and `Bundle.compose` sets `result.base_path = other.base_path` (last wins), i.e. the outermost declaring bundle | **NO** — only when the declaring bundle *is* the composed root |
+| **A — parse-time** | `tools:` / `providers:` / `hooks:` list entries | at **parse** time, in `Bundle.from_dict` → `_validate_module_list` (foundation `bundle/_dataclass.py`: *"Resolve relative source paths to absolute (before composition can change base_path) — this fixes issue #190"*) | **the declaring file's own directory** | **YES** — under any composition |
+| **B — late** | `session.orchestrator.source` (top-level, agent dicts, and agent-`.md` frontmatter) | at **prepare** time, via `FileSourceHandler(base_path=…)` | **the COMPOSED ROOT's `base_path`** — and `Bundle.compose` ends with `result.base_path = other.base_path`, so the *outermost* declaring bundle wins | **NO** — never, in a real session |
 
-Probe evidence (all run against the real foundation, no LLM calls):
+Class B is not merely fragile; in a real `amplifier` session it is always wrong, because the
+composed root is the **app's own bundle**, not this one. That was measured, not reasoned: a first
+build of this PR made bundle.md's four orchestrators and the expert's orchestrator relative, was
+pushed, and the guidance eval installed it into a clean DTU the documented way
+(`amplifier bundle add git+…@<branch>` + `amplifier bundle use attractor`). The session refused
+to start:
 
-- **Class A holds under a foreign root.** A synthetic user bundle whose `includes:` names
-  `behaviors/attractor-core.yaml` resolved `../modules/tool-report-outcome` to the absolute
-  in-snapshot path `…/attr-comp-fix/modules/tool-report-outcome`. Parse-time resolution had
-  already baked the declaring file's directory in.
-- **Class B breaks under a foreign root.** The same shape, with
-  `profiles/attractor-profile-anthropic.yaml`'s orchestrator flipped to `../modules/loop-agent`
-  — i.e. the README Quick Start, verbatim — logged
-  `Failed to activate loop-agent: File not found: <user-config-dir>/modules/loop-agent` and
-  left `loop-agent` out of the resolver entirely.
+```
+5 of 117 modules failed to activate (strict mode):
+  - loop-agent: File not found:
+    /root/.local/share/uv/tools/amplifier/lib/python3.12/site-packages/
+      amplifier_app_cli/_bundle/behaviors/modules/loop-agent        (x4)
+  - loop-pipeline: File not found:
+    .../amplifier_app_cli/_bundle/behaviors/modules/loop-pipeline
+The session was not started because it would have been missing the capabilities above.
+```
 
-**Consequence for the sweep.** A blanket flip would have broken the documented Quick Start
-(`includes: - bundle: git+…#subdirectory=profiles/attractor-profile-anthropic`), where the
-*user's* bundle is the composed root. So the shipped sweep is split by class:
+`.../amplifier_app_cli/_bundle/behaviors/` is the composed root's `base_path`. No relative path
+written in this repo can reach this repo's snapshot from there, and foundation has no namespaced
+module-source form (`attractor:modules/X`) to write instead — confirmed by reading
+`sources/resolver.py`'s handler list (file / git / zip / http; no namespace handler).
 
-- **Class A — flipped, everywhere:** `behaviors/attractor-core.yaml` (4), plus the
-  `tools:`/`hooks:` self-pins in `bundles/attractor-interactive.yaml`,
-  `profiles/attractor-e2e-anthropic.yaml`, `profiles/attractor-e2e-gemini.yaml`,
-  `profiles/attractor-profile-openai.yaml` (5).
-- **Class B — flipped only where the declaring file is itself the composed root** on the
-  install path this fix is about (`amplifier bundle add git+… && amplifier bundle use
-  attractor`): root `bundle.md`'s four agent orchestrators, and
-  `agents/attractor-expert.md`'s own orchestrator.
-- **Class B — deliberately kept as `@main`** in `bundles/*.yaml`, `profiles/*.yaml`,
-  `agents/*.yaml`: those files are documented `includes:` targets, where the user's bundle is
-  the root. Each kept pin now carries a six-line comment naming the reason, so a later
-  contributor does not "finish the sweep" and break the Quick Start.
-- **Skills registration** → `"@attractor:skills"` (namespaced, ref-free — work-tracker's form),
-  which is neither class: skills resolve through `source_base_paths`, always in-snapshot.
+Class A was verified the other way, in the same probe pass: with a synthetic foreign root
+composing `behaviors/attractor-core.yaml`, `../modules/tool-report-outcome` resolved to the
+absolute in-snapshot path, because parse-time resolution had already baked the declaring file's
+directory in.
 
-**Net: 15 pins flipped** (matching §3.3's estimate, by a different route), 29 kept and
-documented.
+**Therefore the shipped sweep is split by class:**
+
+- **Class A — flipped, everywhere (9):** `behaviors/attractor-core.yaml` (4), plus the
+  `tools:`/`hooks:` self-pins in `bundles/attractor-interactive.yaml` (1),
+  `profiles/attractor-e2e-anthropic.yaml` (2), `profiles/attractor-e2e-gemini.yaml` (2),
+  `profiles/attractor-profile-openai.yaml` (1). *(9 module pins across 5 files.)*
+- **Skills registration (1):** `"@attractor:skills"` — namespaced and ref-free, work-tracker's
+  production form. Neither class: skills resolve through `source_base_paths`, always in-snapshot.
+- **Class B — kept as `@main`, everywhere (34), each with a comment naming the measurement.**
+  These are not oversights and a later contributor must not "finish the sweep": doing so is what
+  produced the DTU failure quoted above.
+
+**What this means for cause 3 (§1), stated plainly.** A branch install is now self-consistent
+for every surface that resolves through the bundle namespace or through parse-time anchoring:
+
+| Surface | Serves the branch on a branch install? | Mechanism |
+|---|---|---|
+| `context/attractor-awareness.md` (new, always-on) | **YES** | `context: include: attractor:context/…` → `source_base_paths` |
+| `agents/attractor-expert.md` — the 18 KB knowledge body | **YES** | `agents: include: attractor:attractor-expert` → `source_base_paths` |
+| `skills/attractorify/SKILL.md` | **YES** | `"@attractor:skills"` |
+| `context/pipeline-awareness.md`, `context/dot-reference.md` | **YES** | `attractor:context/…` include + `@attractor:` mentions |
+| `tool-report-outcome`, the three hooks, `tool-pipeline-run`, `tool-apply-patch` | **YES** | Class A relative sources |
+| **loop-agent / loop-pipeline module code** | **NO — still `@main`** | Class B; no expressible alternative |
+| **`context/system-attractor-expert.md` (the expert's Layer-1 persona)** | **NO — still `@main`** | rides with loop-agent: the module resolves a relative `system_prompt_file` against its own installed location (`parents[3]`) |
+
+The last two rows are the honest residual. They are also the two this PR does not modify. The
+remedy is not in this repo: it needs a foundation-level ref-free same-repo module source (a
+`attractor:modules/X` form, or parse-time resolution extended to `session.orchestrator`). That is
+filed as follow-up work, with the DTU output above as its evidence.
 
 ### 8.2 Verified composition behavior of the shipped tree
 
-Three compositions, probed against the built worktree:
+Three compositions, probed against the built worktree with the real foundation (no LLM calls):
 
-| Composition | expert registered (body served) | `loop-agent` resolves | which snapshot serves the Layer-1 persona |
-|---|---|---|---|
-| **Root install** — `bundle add git+…@<ref>` + `bundle use attractor` (the documented path, and the eval's) | YES, 18,101-char body | YES, from `./modules/loop-agent` | **the installed ref's** — the defect is fixed |
-| **README Quick Start** — user bundle `includes:` a profile | YES, 18,101-char body | YES (from the profile's own declaration; the expert's relative activation is skipped with a logged warning) | the profile's pin (`@main`) — unchanged from today |
-| **`attractor-core` alone under a foreign root** | YES, 18,101-char body | NO | n/a — see below |
+| Composition | expert registered (body served) | `loop-agent` resolves |
+|---|---|---|
+| **Root install** — `bundle add git+…@<ref>` + `bundle use attractor` | YES, 18,101-char body | YES |
+| **README Quick Start** — user bundle `includes:` a profile | YES, 18,101-char body | YES |
+| **`attractor-core` alone under a foreign root** | YES, 18,101-char body | YES |
 
-The third row is a **known, narrow behavior change and the honest cost of this fix**: in a
-composition that includes `behaviors/attractor-core.yaml` and *nothing else that declares
-loop-agent*, the expert's orchestrator module no longer activates (previously the inline dict's
-`@main` pin activated it). Every shipped composition here — root `bundle.md`, all three
-`bundles/*`, all `profiles/*`, all `agents/*` — declares loop-agent itself, so the row is
-reachable only from a hand-rolled bundle that composes the behavior in isolation. It fails
-loudly (module-not-found at delegation) rather than silently, and the app layer wraps
-foundation's resolver with a settings-level fallback that was not probed here and may cover it.
+All three hold because every orchestrator source stayed a resolvable `git+` URL. The expert
+merge changes *which file defines the agent*, not whether its orchestrator can be found.
 
 ### 8.3 Other deviations from §6's build order
 
@@ -314,18 +330,19 @@ foundation's resolver with a settings-level fallback that was not probed here an
   mention `run_pipeline` (the root bundle does not mount `tool-pipeline-run`), pointing at the
   `attractor` CLI and the `attractor-pipeline-runner` agent instead.
 - **Step 2 (`bundle.md`):** the `context:` entry uses the **namespaced** `attractor:context/…`
-  form rather than §3.1's plain relative one — the P4 probe showed namespaced includes are
-  implemented and in production, and the namespaced form is what survives being composed from
-  anywhere. Root `bundle.md` *also* registers the expert (`agents: include:`), so the standard
-  install gets it even if attractor-core is ever recomposed.
+  form rather than §3.1's plain relative one — P4 showed namespaced includes are implemented and
+  in production, and the namespaced form is the one that survives being composed from anywhere
+  (the same property Class B lacks). Root `bundle.md` *also* registers the expert, so the
+  standard install gets it even if attractor-core is ever recomposed.
 - **Step 3/4 (the expert merge):** shipped as §3.2's **primary** shape (the `.md` owns
   everything) — probe B1 confirmed foundation loads `session:` from agent-`.md` frontmatter and
-  the 18 KB body as `instruction`. The fallback shape was not needed. One nuance: the registered
+  the 18 KB body as `instruction`. The fallback shape was not needed. Two nuances: the registered
   agent name is **`attractor:attractor-expert`** (namespaced, as `agents: include:` always
-  produces), which is exactly the name `skills/attractorify/SKILL.md` and the awareness file
-  already tell callers to delegate to.
-- **Step 6 (interactive):** its two heavy context includes were moved to the namespaced
-  `attractor:context/…` form as well, and the stale "pending foundation namespaced-include
-  support" comment was replaced with what the probe found.
+  produces) — exactly the name `skills/attractorify/SKILL.md` and the awareness file already tell
+  callers to delegate to; and the orchestrator source in that frontmatter is a Class B pin, so it
+  stayed `@main` per §8.1.
+- **Step 6 (interactive):** its two heavy context includes moved to the namespaced
+  `attractor:context/…` form, and the stale "pending foundation namespaced-include support"
+  comment was replaced with what P4 found.
 - **Step 8 (eval):** run as specified — all six scenarios, branch installed directly, no
   mirror-main hybrid. Results in the PR body.

@@ -49,6 +49,15 @@ agents:
   include:
     - attractor:attractor-expert
 
+  # The `@main` self-pins below are DELIBERATE and cannot currently be removed.  Unlike
+  # tools:/hooks:/providers: sources (resolved at PARSE time against this file's own
+  # directory -- see behaviors/attractor-core.yaml), a session.orchestrator `source:` is
+  # resolved LATE against the COMPOSED ROOT's base_path, which in a real amplifier session
+  # is the APP's own bundle directory, not this one.  Measured, from a DTU install of a
+  # branch that made these relative:
+  #   loop-agent: File not found: .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent
+  # and the session refused to start.  See docs/designs/2026-08-15-composition-fix.md.
+  #
   # IMPORTANT: each child agent MUST declare an inline session.orchestrator running a
   # non-pipeline loop (e.g. loop-agent).  The spawn capability merges this agent's session:
   # key onto the parent config; without an explicit orchestrator the child would inherit the
@@ -58,7 +67,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: ./modules/loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
         config:
           default_command_timeout_ms: 120000
   attractor-profile-openai:
@@ -66,7 +75,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: ./modules/loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
         config:
           default_command_timeout_ms: 10000
   attractor-profile-gemini:
@@ -74,7 +83,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: ./modules/loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
         config:
           default_command_timeout_ms: 10000
   attractor-pipeline-runner:
@@ -82,7 +91,7 @@ agents:
     session:
       orchestrator:
         module: loop-pipeline
-        source: ./modules/loop-pipeline
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline
         config:
           profiles:
             anthropic: attractor-agent-anthropic

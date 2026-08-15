@@ -16,9 +16,9 @@ This is the instrument `docs/QUALITY_PROTOCOL.md` section 2 names in its **Guida
 ## Why it exists
 
 The quality protocol requires evidence for every class of change. For `agents/`, `skills/`,
-`context/`, and the teaching content in `README.md` and `docs/`, the required evidence is
-"guidance-eval evidence **once the eval instrument ships**" — and until it does, the floor is a
-fresh-session walk-through pasted into the PR.
+`context/`, and the teaching content in `README.md` and `docs/`, the required evidence was, until
+this instrument shipped, a **fresh-session walk-through** pasted into the PR — an interim floor
+held open in section 2's own words until guidance-eval evidence could replace it.
 
 A walk-through is a real check and it caught real problems, but it has three properties that make
 it unsuitable as the standing bar:
@@ -161,28 +161,49 @@ and re-run. A bundle that passes the old wording and fails the new one was fitte
 Rotate which scenario gets rewritten, and record the rewrite in the PR that makes it. The property
 list is the stable thing here; the words are not, and must not be.
 
-## Status — what has been proven, and what has not
+## Status — the 2026-08-15 baseline
 
-Stated plainly rather than implied, per `docs/QUALITY_PROTOCOL.md`'s scope note: where a piece of
-machinery has not been exercised yet, say so in those words.
+Stated plainly rather than implied, per `docs/QUALITY_PROTOCOL.md`'s scope note.
 
-**Proven end-to-end.** Scenario (a) has run the whole path for real — pinned mirror push, DTU
-launch, `bundle add` install from the mirror, readiness gates, an AI-user-driven multi-turn
-session against the installed bundle, deterministic transcript recovery, mechanical checks, blind
-grading against the anchored criteria, and results written outside the repo. It passed
-(`G1=3 G2=3 G4=5 G5=3 G8=5`, both mechanical checks green).
+**All six scenarios have been exercised live.** On 2026-08-15, against `main` @ `ed5bdef`, every
+scenario ran the whole path for real — pinned mirror push, DTU launch, `bundle add` install from
+the mirror, readiness gates, AI-user-driven multi-turn sessions and live
+`examples/objective/objective-runner.dot` runs against the installed bundle, deterministic
+transcript recovery, mechanical checks, blind grading against the anchored criteria, and results
+written outside the repo. No stage of the harness remains unexercised.
 
-**Shares that proven path.** Scenarios (b), (c) and (d) are the same session mode with different
-personas and pass bars: every stage they use is the stage (a) exercised. They have not themselves
-been run.
+**Three of six passed.** The instrument's first product is a finding, not a clean bill of health.
 
-**Not yet exercised: the exemplar path.** Scenarios (e) and (f) drive
-`examples/objective/objective-runner.dot` inside the DTU, which stage (a) does not touch. What
-*is* proven of it: the `objective-runner-lints` readiness gate runs `attractor lint` against the
-shipped runner in the DTU on every trial, and passes — so the CLI, the checkout, and the graph's
-parse are real. The run itself, the disposition artifacts, and the file/JSON mechanical-check
-kinds have not been exercised against a live pipeline. Treat the first (e)/(f) run as a smoke
-run, and read it by hand.
+### Baseline 2026-08-15
+
+| # | Scenario | Verdict | Finding |
+|---|---|---|---|
+| **a** | `qa-01-what-is-an-attractor` | **PASS** | Taught machine gates throughout and delivered the honest "you don't need an attractor" (G8=5); softened to "AI adapts vs dumb retry" under the flowchart-with-retries push rather than holding the external-to-the-worker line (G1=3). |
+| **b** | `qa-02-never-converges` | **FAIL** | Asked whether the review node could decide it was done, `attractor-expert` answered "**yes, the review node decides**" and authored a self-report exit — the central commitment inverted (G5=0, which is the override; G1=0, G8=0). Never reached `attractor lint` or the event record. |
+| **c** | `work-01-stale-release-notes` | **FAIL** | The objective layer is unreachable by conversation: foundation's `/brainstorm` mode-routing captured the ask, and `attractorify`, the objective runner and `attractor-expert` were never named (MC-C1). Nobody asked what would prove it done (MC-C2). |
+| **d** | `work-02-twelve-step-pipeline` | **FAIL** | Authored the gateless twelve-node chain on request with zero pushback; the word "recipe" never appears (MC-D1). `attractor lint` on the file it just authored says *"consider whether this pipeline should be a recipe instead"* — the doctrine the session skipped is already in the linter. |
+| **e** | `exemplar-01-sloppy-routable` | **PASS** *(flagged)* | The sloppy-but-checkable objective was restated as an end-state and routed to a lane with `pytest` as the gate (G1=G2=G7=5, every mechanical check green). Flagged: the runner exited 1 with `disposition=escalated` — a known objective-runner defect, not a guidance failure. |
+| **f** | `exemplar-02-honest-redirect` | **PASS** | The strongest artifact in the baseline: a complete honest redirect with receipts — the no, the reason, the better home, and what would change the answer (G1=G2=G4=G8=5, all six mechanical checks green). |
+
+**One cross-cutting finding, visible only across scenarios.** Both authoring surfaces emitted a DOT
+dialect the shipped engine does not use — `agent=`, `instruction=`, `attractor_handler=` — which no
+single scenario's pass bar was looking for. That is the kind of finding a standing instrument buys
+and a per-PR walk-through does not.
+
+Every finding above is tracked in the issues filed from the 2026-08-15 baseline. Per the hold-out
+discipline above, none of them is a reason to edit a scenario: they are findings about the bundle
+until an independent reading says otherwise.
+
+**Where the evidence lives.** Outside the repo, by design — under
+`<workspace>/.amplifier/evaluation/guidance-pilot/<UTC>/`, one directory per run, each carrying
+`results.md`, `results.json`, per-scenario transcripts, `ai_user.json`, and the readiness logs. The
+harness refuses to start if that path resolves inside the checkout. Nothing from a run is committed
+here, and this table is the repo's record of the baseline rather than a copy of its artifacts.
+
+**Read this table as a reference point, not a scoreboard.** It is the run every later run is
+compared against, and it was taken before any of the findings were acted on. A future run that
+scores better because the guidance improved is the intended outcome; one that scores better because
+a scenario was reworded is the failure mode the four rules above exist to prevent.
 
 ## Layout
 

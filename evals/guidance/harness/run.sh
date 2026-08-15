@@ -162,7 +162,7 @@ if [ "$code" != "200" ]; then
 fi
 
 log "pushing $BUNDLE_SHA -> admin/$BUNDLE_REPO@$BUNDLE_BRANCH"
-git -C "$CACHE/src" -c credential.helper= push --force \
+git -C "$CACHE/src.git" -c credential.helper= push --force \
     "http://admin:$GITEA_TOKEN@localhost:$GITEA_PORT/admin/$BUNDLE_REPO.git" \
     "$BUNDLE_SHA:refs/heads/$BUNDLE_BRANCH" >/dev/null 2>&1 \
     || die "mirror push failed"

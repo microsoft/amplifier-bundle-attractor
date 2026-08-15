@@ -72,7 +72,7 @@ may ask for more, never less.
 |---|---|---|
 | **Engine / handler code** | `engine.py`, `handlers/*`, dispatch, routing, retry, checkpoint | Full module suites green **and** a live pipeline run exercising the changed path (paste the `events.jsonl` slice) **and** independent adversarial review **and** a ledger entry if the change is spec-relevant (last row) |
 | **Exemplar / example graphs** | `examples/pipelines/*.dot`, `examples/patterns/*.dot`, `examples/objective/*` | `attractor lint` with **zero ERROR** diagnostics -- warnings are informational, which is exactly the line `modules/loop-pipeline/tests/test_examples_lint_clean.py` enforces -- **and** at least one live convergence run **and** the graph's own gates demonstrated **RED and GREEN**: a negative control proving the gate can fail, a positive control proving it can pass. A gate only ever seen green is an unproven gate |
-| **Guidance surfaces** | `agents/`, `skills/`, `context/`, teaching content in `README.md` and `docs/` | Guidance-eval evidence **once the eval instrument ships**. *That instrument does not exist in this repo today: it is in flight, and a pilot is planned.* Until it lands, the floor is a **fresh-session walk-through** proving the guidance steers as written -- a session with no prior context follows only the changed text and arrives at the intended behavior. Paste the walk-through |
+| **Guidance surfaces** | `agents/`, `skills/`, `context/`, teaching content in `README.md` and `docs/` | **Guidance-eval evidence** from [`evals/guidance/`](../evals/guidance/README.md) -- the instrument shipped, and its 2026-08-15 baseline is the run every later run is read against. Run the scenarios whose `surfaces_under_test:` name the file you touched and paste the results table plus the decisive transcript quotes; a broad change -- a bundle recomposition, a doctrine amendment, a new guidance surface -- warrants the full six. Where the eval genuinely cannot reach the changed surface, say so in the PR in those words and fall back to a **fresh-session walk-through**: a session with no prior context follows only the changed text and arrives at the intended behavior |
 | **Docs making factual claims** | any doc asserting a number, default, vocabulary, or behavior | A guard test pinning each load-bearing claim to **its source of truth in code**, following the existing guards (section 5, Layer 1). A page-only assertion ("the page says 500") is tautological: it passes forever and fails only when someone edits the page, which is the one case needing no guard. The assertion must read the value from the code and fail when the **code** moves |
 | **Spec-relevant behavior** | anything that conforms to, diverges from, or extends the nlspec | A `specs/EXTENSIONS.md` entry and/or a `SPEC_CONFORMANCE.md` row, **in the same PR**, per the Compatibility doctrine. Entries obey the Entry Format: `depends-on:`, plus `upstream action:` in one of its legal forms whenever the banner states a divergence. Its **matrix tier** (section 3) sets the rest of the toll |
 
@@ -434,6 +434,40 @@ This repo's maintainers will help seed a customized version on request -- open a
 ## Changelog
 
 Amendments to this protocol, newest first. Each entry names the evidence that justified it.
+
+### 2026-08-15 -- the guidance eval shipped; section 2's interim floor retired (entry 7)
+
+- **Amended.** Section 2's **Guidance surfaces** row required "guidance-eval evidence *once the eval
+  instrument ships*" and named a fresh-session walk-through as the floor until it did. The
+  instrument shipped: [`evals/guidance/`](../evals/guidance/README.md) -- six scenarios, a rubric
+  whose every criterion cites a canonical-spec section or a `docs/VISION.md` passage, and a harness
+  that installs the bundle over the real `amplifier bundle add` path into a fresh container and
+  grades the resulting sessions blind. The row now names it. The walk-through survives only as a
+  stated-in-the-PR fallback for a surface the eval cannot reach.
+- **Evidence that it earns its cost, at adoption.** The full six ran on 2026-08-15 against `main`
+  @ `ed5bdef`: **three of six passed**, and the failures are findings about this bundle, not about
+  the instrument. `attractor-expert`, asked whether a review node could decide it was done,
+  answered "yes, the review node decides" and authored a self-report exit -- the project's central
+  commitment, inverted, on the surface that exists to teach it. The objective layer proved
+  unreachable by conversation: `/attractorify`, the objective runner and `attractor-expert` were
+  never named. A gateless twelve-node chain was authored on request with no pushback, on a file
+  whose own `attractor lint` run says "consider whether this pipeline should be a recipe instead".
+  A fourth finding was visible only *across* scenarios, which is precisely what a per-PR
+  walk-through cannot see: both authoring surfaces emit a DOT dialect the shipped engine does not
+  use. Each is tracked in the issues filed from that baseline.
+- **The cost it retires.** The interim floor was verification inside the context that produced the
+  artifact -- a walk-through authored by the person whose change it validates, run against a working
+  tree rather than an installed bundle, and not comparable to any other walk-through. That is the
+  property section 1's independent-review rule refuses everywhere else in this document.
+- **Scope of this change: documentation and `evals/` only.** No engine, handler, example or test
+  code changed. Section 2's row is the only normative edit. The baseline table lives in
+  `evals/guidance/README.md`, not here, and no run artifact is committed: the harness refuses to
+  write results inside the checkout, so transcripts and prompts stay out of source by construction.
+- **Retirement conditions.** The instrument's own are stated in `evals/guidance/README.md` and are
+  governed by section 7's retirement review -- *what has it caught since the last review?* -- plus a
+  hold-out discipline that requires one scenario rewritten from scratch, same property and new
+  words, whenever several runs pass without finding anything. The walk-through fallback in the
+  section 2 row retires when no change class remains that the eval cannot reach.
 
 ### 2026-08-15 -- Layer 3 gets an executor (entry 6)
 

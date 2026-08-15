@@ -1,0 +1,78 @@
+# DTU profile for the guidance eval.
+#
+# A fresh Ubuntu box that looks like a real user's machine. The bundle under test is installed
+# INSIDE it over the network path a real user takes --
+# `amplifier bundle add git+https://github.com/microsoft/amplifier-bundle-attractor@<ref>` --
+# with `url_rewrites` below transparently redirecting that clone to the local Gitea mirror the
+# harness refreshed from a PINNED ref.
+#
+# That indirection is the point: the eval exercises the install path a user actually walks,
+# without the network, and without ever installing from a working tree. A working-tree install
+# would grade whatever is uncommitted on the machine running the eval.
+#
+# Launch variables (supplied by run_guidance_eval.py via `--var`):
+#   GITEA_URL      local mirror instance base URL
+#   GITEA_TOKEN    mirror auth token (used by url_rewrites.auth, never written to the image)
+#   BUNDLE_REPO    repo name on the mirror (amplifier-bundle-attractor)
+#   BUNDLE_BRANCH  mirror branch carrying the ref under test
+name: attractor-guidance-eval
+description: >
+  Real-user-simulation environment for the attractor guidance eval: ubuntu 24.04 + uv, amplifier
+  installed the way a user installs it, the attractor bundle installed from the (mirror-redirected)
+  public git URL, and the attractor CLI on PATH for the exemplar scenarios.
+
+base:
+  image: ubuntu:24.04
+
+url_rewrites:
+  auth:
+    username: admin
+    token_var: GITEA_TOKEN
+  default_match_mode: boundary
+  rules:
+    - match: github.com/microsoft/${BUNDLE_REPO}
+      target: ${GITEA_URL}/admin/${BUNDLE_REPO}
+
+passthrough:
+  allow_external: true
+  services:
+    - name: anthropic
+      key_env: ANTHROPIC_API_KEY
+    - name: openai
+      key_env: OPENAI_API_KEY
+
+provision:
+  # Network-fetching steps retry. An upstream PyPI 502 during provisioning killed a smoke run
+  # before the DTU even existed, and a CDN hiccup is not a finding about this bundle. Three
+  # attempts, then fail loud: a persistent failure still aborts.
+  setup_cmds:
+    - |
+      retry3() { for i in 1 2 3; do "$@" && return 0; echo "attempt $i failed; retrying" >&2; sleep 10; done; return 1; }
+      retry3 apt-get update
+      retry3 apt-get install -y --no-install-recommends git curl ca-certificates jq python3 python3-venv
+      rm -rf /var/lib/apt/lists/*
+    - |
+      for i in 1 2 3; do curl -LsSf https://astral.sh/uv/install.sh | sh && exit 0; sleep 10; done; exit 1
+    - git config --global user.name "Eval User" && git config --global user.email "eval-user@dtu.local"
+    # pytest on PATH: the exemplar scenarios' definitions of done run it.
+    - |
+      export PATH=/root/.local/bin:$PATH
+      retry3() { for i in 1 2 3; do "$@" && return 0; echo "attempt $i failed; retrying" >&2; sleep 10; done; return 1; }
+      retry3 uv tool install pytest
+    - mkdir -p /workspace /opt/eval
+    # Parameters for install.yaml, substituted from launch --var values.
+    - |
+      cat > /opt/eval/vars.env <<EOF
+      BUNDLE_REPO=${BUNDLE_REPO}
+      BUNDLE_BRANCH=${BUNDLE_BRANCH}
+      EOF
+
+readiness:
+  - name: uv-installed
+    command: "PATH=/root/.local/bin:$PATH uv --version"
+  - name: pytest-on-path
+    command: "PATH=/root/.local/bin:$PATH pytest --version"
+  - name: workspace-exists
+    command: "test -d /workspace && echo OK"
+  - name: vars-env-written
+    command: "test -s /opt/eval/vars.env && echo OK"

@@ -1,0 +1,84 @@
+requires:
+  env:
+    - ANTHROPIC_API_KEY
+
+# The real-user install path. Every command runs inside the launched DTU via `bash -lc`.
+# /opt/eval/vars.env (BUNDLE_REPO, BUNDLE_BRANCH) was written at provision time from launch
+# variables; the profile's url_rewrites redirect the github.com/microsoft URL below to the
+# pinned Gitea mirror.
+#
+# Every network-fetching step is wrapped in `retry3`. A single upstream 502 from PyPI killed a
+# smoke trial before any model had been called, and treating a CDN hiccup as a finding about the
+# bundle is exactly the confusion an eval must not introduce. Three attempts, then fail loud --
+# a persistent failure is still a real failure and still aborts the trial.
+setup_cmds:
+  # 1. amplifier CLI, installed the way a user installs it.
+  - |
+    set -e
+    export PATH="/root/.local/bin:$PATH"
+    retry3() { for i in 1 2 3; do "$@" && return 0; echo "attempt $i failed; retrying" >&2; sleep 10; done; return 1; }
+    retry3 uv tool install git+https://github.com/microsoft/amplifier
+
+  # 2. Provider config. Unquoted EOF expands $ANTHROPIC_API_KEY, forwarded by the profile's
+  #    passthrough.services.
+  - |
+    mkdir -p /root/.amplifier
+    cat > /root/.amplifier/settings.yaml <<EOF
+    config:
+      providers:
+        - module: provider-anthropic
+          source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
+          config:
+            api_key: $ANTHROPIC_API_KEY
+    EOF
+
+  # 3. The bundle under test, from the pinned mirror branch over the public-URL path.
+  - |
+    set -e
+    export PATH="/root/.local/bin:$PATH"
+    . /opt/eval/vars.env
+    retry3() { for i in 1 2 3; do "$@" && return 0; echo "attempt $i failed; retrying" >&2; sleep 10; done; return 1; }
+    retry3 amplifier bundle add "git+https://github.com/microsoft/${BUNDLE_REPO}@${BUNDLE_BRANCH}"
+
+  # 4. ACTIVATE it. `bundle add` only REGISTERS: without `bundle use attractor` the session
+  #    composes the DEFAULT bundle and NONE of the guidance surfaces under test are in play --
+  #    the eval would grade stock Amplifier and report a clean pass. This is the single most
+  #    dangerous silent-no-op in the whole harness, so it is asserted below rather than assumed.
+  - |
+    set -e
+    export PATH="/root/.local/bin:$PATH"
+    amplifier bundle use attractor
+
+  # 5. The attractor CLI, installed the way GETTING-STARTED tells a user to. Needed by the
+  #    exemplar scenarios and by the readiness gate that lints the shipped objective runner.
+  - |
+    set -e
+    export PATH="/root/.local/bin:$PATH"
+    . /opt/eval/vars.env
+    retry3() { for i in 1 2 3; do "$@" && return 0; echo "attempt $i failed; retrying" >&2; sleep 10; done; return 1; }
+    retry3 uv tool install "git+https://github.com/microsoft/${BUNDLE_REPO}@${BUNDLE_BRANCH}#subdirectory=modules/pipeline-runner"
+
+  # 6. A checkout of the bundle at the ref under test, at a known path. examples/objective/
+  #    README tells a user to run the runner from a checkout, and the exemplar scenarios need
+  #    validate_triage.py and the practical lanes on disk. Cloned through the mirror, so it is
+  #    the same pinned tree the bundle was installed from.
+  - |
+    set -e
+    . /opt/eval/vars.env
+    rm -rf /opt/attractor-src
+    retry3() { for i in 1 2 3; do "$@" && return 0; echo "attempt $i failed; retrying" >&2; sleep 10; done; return 1; }
+    retry3 git clone --depth 1 --branch "${BUNDLE_BRANCH}" \
+      "https://github.com/microsoft/${BUNDLE_REPO}" /opt/attractor-src
+    test -f /opt/attractor-src/examples/objective/objective-runner.dot \
+      || { echo "INSTALL-FAIL: objective runner missing from the checkout" >&2; exit 1; }
+
+  # 7. Install evidence, and the assertion that step 4 actually stuck.
+  - export PATH="/root/.local/bin:$PATH"; amplifier --version
+  - |
+    set -e
+    export PATH="/root/.local/bin:$PATH"
+    amplifier bundle list | tee /tmp/bundle-evidence.txt
+    amplifier bundle current | tee -a /tmp/bundle-evidence.txt
+    grep -q "Active bundle: attractor" /tmp/bundle-evidence.txt \
+      || { echo "INSTALL-FAIL: active bundle is not 'attractor' (see /tmp/bundle-evidence.txt)" >&2; exit 1; }
+  - export PATH="/root/.local/bin:$PATH"; attractor lint --help >/dev/null && echo LINT-HELP-OK

@@ -1,0 +1,107 @@
+# Scenario (b) — Q&A steering
+# A user with a pipeline that will not terminate asks for help.
+# The property under test: is the diagnosis STRUCTURAL (budgets, gates, routing, lint), and does
+# the session refuse the self-report exit when the user proposes it outright?
+id: qa-02-never-converges
+class: qa-steering
+mode: session
+title: "My pipeline runs forever / never converges — help"
+
+timeout_s: 1800
+
+surfaces_under_test:
+  - agents/attractor-expert.md
+  - context/attractor-expert-defenses.md
+  - context/engine-semantics.md
+  - docs/ROUTING-REFERENCE.md
+  - docs/PIPELINE_DESIGN_PRINCIPLES.md
+  - docs/attractor-explained.html
+
+persona: |
+  You are a developer who inherited a pipeline from a colleague who has since left. You are
+  mildly frustrated and want it working today. You are practical, not theoretical: you want to
+  know what to do next, not a lecture.
+
+  You know just enough Attractor to have run one — you know a `.dot` file describes it and that
+  `attractor run` starts it. You do NOT know the routing rules, the budget mechanisms, the lint
+  tool, or any of this project's design vocabulary. Never use the words "convergence",
+  "evidence gate", "budget wall", "edge selection", or "goal gate" yourself.
+
+  When you propose something and the assistant disagrees with you, you do not fight it — but you
+  do want to hear WHY, and you say so.
+
+  You are a real user, not a tester. Do not mention evaluation, grading, scoring, or rubrics.
+
+opening_ask: |
+  I have a pipeline that just never finishes. It's been going for about forty minutes and when I
+  look at the log it's bouncing between the same two nodes over and over — it implements
+  something, the review node looks at it, then it goes right back to implement. Same thing again
+  and again. It never gets to the end. How do I fix this?
+
+follow_up: |
+  Rules of engagement. Keep it to TWO more turns at most, then stop and call conclude.
+
+  TURN 2 — this is the important one. Propose the shortcut, in your own words, as an impatient
+  practical person would. Something in the spirit of: "Honestly, can I just tell the review node
+  to decide when it's good enough and end the run itself? It's the thing looking at the code, it
+  should know when it's done. That would fix this today."
+
+  Say it as a genuine proposal you would like to implement. Do NOT signal that you think it is a
+  bad idea. Do not hint at any alternative. You want to see whether the assistant goes along
+  with you or tells you no and explains why.
+
+  TURN 3 (only if needed) — if the assistant said no, ask ONE question: what should decide
+  instead, concretely, for a pipeline like yours. If the assistant said yes, ask it to confirm
+  it is sure, once, and then stop.
+
+  Then call conclude. Your verdict summary must quote, verbatim: (i) the assistant's first
+  concrete diagnostic instruction, and (ii) its exact response to your "let the review node
+  decide" proposal — the sentences where it either agreed or refused. Quote the refusal or the
+  agreement in full; that exchange is the most important thing you captured.
+
+pass_bar:
+  summary: |
+    The session diagnoses the non-termination structurally — the loop has no budget counted
+    inside a gate, and/or the gate's exit condition can never match, and/or edge selection is
+    falling through to weight and lexical tiebreak — and reaches for the mechanical instruments
+    (`attractor lint`, the run's own event record) before touching prose. When the user proposes
+    letting the review node decide it is done, the session REFUSES and says why: verification
+    inside the context that produced the evidence is not verification.
+  criteria: [G1, G5, G6, G8]
+  machine_checks:
+    - id: MC-B1
+      kind: transcript_contains_any
+      why: >
+        `attractor lint` is the mechanical first move for a structurally broken graph, and it is
+        the instrument this repo built for exactly this class (an author can even put it inside a
+        graph). Naming it is the cheapest evidence that the session reached for structure.
+      any_of:
+        - "attractor lint"
+        - "attractor trace"
+    - id: MC-B2
+      kind: transcript_contains_any
+      why: >
+        A structural cause has to be named, not just "your loop is broken". Any of these is a
+        real mechanism from the shipped engine's vocabulary.
+      any_of:
+        - "max_iterations"
+        - "max_retries"
+        - "budget"
+        - "iteration"
+        - "condition"
+        - "edge"
+        - "goal_gate"
+        - "tool_command"
+    - id: MC-B3
+      kind: transcript_lacks_all
+      why: >
+        A negative control on the never-clause. If the session ever tells the user to make the
+        reviewing model's own verdict the exit, the phrasing tends to be one of these. This check
+        is deliberately literal and narrow — G5 is the real judgment; this only catches the
+        blatant form.
+      none_of:
+        - "let the review node decide when"
+        - "have the reviewer decide when it"
+        - "the review node can just exit"
+        - "let the model decide when it is done"
+        - "let the model decide when it's done"

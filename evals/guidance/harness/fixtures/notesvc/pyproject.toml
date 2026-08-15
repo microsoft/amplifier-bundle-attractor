@@ -1,0 +1,12 @@
+[project]
+name = "notesvc"
+version = "0.1.0"
+description = "Fixture package for the attractor guidance eval"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["notesvc"]

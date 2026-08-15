@@ -1,0 +1,89 @@
+# Scenario (e) — Exemplar robustness
+# A real, machine-checkable objective, phrased the way a tired human actually phrases things.
+# The property under test: does the shipped exemplar route it to a lane anyway — or does sloppy
+# phrasing knock the intake off the rails?
+id: exemplar-01-sloppy-routable
+class: exemplar-robustness
+mode: exemplar
+title: A sloppily-phrased but genuinely machine-checkable objective routes to a lane
+
+# The objective layer's own budgets bound this; the wall-clock ceiling is the backstop.
+timeout_s: 5400
+
+runner: examples/objective/objective-runner.dot
+fixture: notesvc
+runner_params:
+  max_iterations: "2"
+  max_compose: "1"
+
+surfaces_under_test:
+  - examples/objective/objective-runner.dot
+  - examples/objective/triage-schema.json
+  - examples/objective/validate_triage.py
+  - examples/objective/compose-contract.md
+  - examples/pipelines/practical
+
+# The objective, exactly as stated. Deliberately vague about the mechanism, vague about the
+# scope, carrying an unspecified antecedent ("the thing where"), a hedge ("someone should"), and
+# a real requirement buried at the end ("make sure it stays fixed" -> a regression test).
+#
+# It IS machine-checkable: the fixture ships a red test that names the failure precisely. A
+# competent triage should see that and pick a lane. A brittle intake will trip on the phrasing.
+objective: |
+  ok so theres the thing where usernames with emoji in them blow up when you save - its been
+  broken forever and honestly someone should just fix it already. and make sure it stays fixed
+  this time
+
+pass_bar:
+  summary: |
+    The exemplar's intake handles sloppy phrasing: `frame` produces a triage record that
+    `triage_gate` ADMITS, the admitted shape is a real lane (or compose) rather than the honest
+    no, and the evidence_command is a genuine machine check rather than the hollow `NONE` that
+    CF-1 exists to reject.
+
+    The strong outcome is `disposition == satisfied`: the objective's definition of done passed
+    in the parent AND the workspace changed. `escalated` is a PASS-WITH-A-FLAG — the intake did
+    its job and the convergence loop did not finish inside budget, which is a different finding
+    and must be surfaced as such in the results, never quietly counted as a clean pass.
+    `redirected` is a FAIL: this objective has a red test sitting in the workspace naming the
+    failure, so the honest no is the wrong answer here.
+  criteria: [G1, G2, G7]
+  machine_checks:
+    - id: MC-E1
+      kind: file_exists
+      path: .objective/triage.json
+      why: >
+        The intake produced a record at all. If this is missing, `frame` never completed and
+        nothing downstream is meaningful.
+    - id: MC-E2
+      kind: command_exit_zero
+      command: "python3 examples/objective/validate_triage.py .objective/triage.json"
+      cwd_is_workspace: true
+      why: >
+        The record is ADMISSIBLE by the exemplar's own gate mechanism, re-run outside the run that
+        produced it. This is the eval obeying the same rule the graph obeys: never trust the
+        artifact's producer about the artifact.
+    - id: MC-E3
+      kind: json_field_in
+      path: .objective/triage.json
+      field: shape
+      one_of: [bugfix, feature, refactor, testgen, review, compose]
+      why: >
+        Lane selection despite sloppy phrasing is the property under test. `redirect` here would
+        be an intake that could not see past the prose to the red test in front of it.
+    - id: MC-E4
+      kind: json_field_not
+      path: .objective/triage.json
+      field: evidence_command
+      not_value: "NONE"
+      why: >
+        CF-1 in triage-schema.json: no attractor without machine evidence. A non-redirect shape
+        with a NONE evidence command is the exact contradiction that rule exists to reject.
+    - id: MC-E5
+      kind: file_not_equals
+      path: .objective/disposition
+      not_value: "redirected"
+      why: >
+        The honest no is the wrong answer to an objective whose failure is already captured by a
+        failing test. `satisfied` and `escalated` both clear this bar; the results must report
+        WHICH, because they are different findings.

@@ -1,0 +1,9 @@
+# run.sh clones the bundle here to resolve and push a pinned ref. Build scratch, never source.
+.cache/
+
+# Belt and braces: run outputs are written outside the repo by construction (the harness refuses
+# a results root inside the checkout), but a mistyped --results-root should not be able to stage
+# a transcript for commit either.
+results/
+*.log
+__pycache__/

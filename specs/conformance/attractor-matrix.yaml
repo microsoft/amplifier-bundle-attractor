@@ -1,0 +1,969 @@
+# Spec Conformance Matrix -- attractor
+#
+# Layer 2 of the drift defense described in `docs/QUALITY_PROTOCOL.md` section 3.
+#
+# This file is a DOCUMENT first and a data file second. Read it next to
+# `specs/EXTENSIONS.md` and `SPEC_CONFORMANCE.md`: it is the executable join
+# between them and the canonical upstream nlspec.
+#
+# One row = one normative statement cluster in the canonical spec, with:
+#   - the VERBATIM spec text it answers to (runner-verified against the
+#     canonical file's bytes -- a row cannot cite text that is not there),
+#   - the repo's decided DISPOSITION for it,
+#   - the LEDGER entry that licenses that disposition, and
+#   - an executable ASSERTION that fails when the behavior moves.
+#
+# The load-bearing idea: DECIDED DIVERGENCES ARE ASSERTED TOO. Drift is any
+# behavioral movement not recorded in the ledgers, in EITHER direction --
+# drifting away from spec unledgered, and drifting silently BACK toward spec
+# at a point where the ledger says we deliberately do not conform. The second
+# makes the ledger lie, which is the same incident class as the engine lying.
+#
+# A flipped assertion is never merely a red test. Its failure message names the
+# spec section, the ledger entry, and the two legal exits (revert the behavior,
+# or move the record with it in the SAME PR). Never edit the assertion to
+# match new behavior without moving the ledger -- that is the one illegal exit.
+#
+# Runner: modules/loop-pipeline/tests/test_spec_conformance_matrix.py
+# Design: docs/designs/2026-08-15-conformance-matrix.md
+#
+# ---------------------------------------------------------------- schema ----
+#
+#   id            Stable forever. Never renumbered, never reused. Retiring an
+#                 id requires a comment here naming the successor rows.
+#   title         Short human label, used in the flip banner.
+#   spec:
+#     section     Canonical section anchor, e.g. "3.2".
+#     heading     The section's heading text, for the flip message.
+#     quote       VERBATIM text from the canonical file. Runner-verified.
+#     line        INFORMATIONAL ONLY. Never asserted (see the design, section 9).
+#     also        Optional list of {section, quote} -- additional verbatim
+#                 anchors for a cluster that spans non-contiguous spec text.
+#                 Verified exactly like `quote`.
+#     conflict    Optional {section, quote, note} -- where the canonical spec
+#                 CONTRADICTS ITSELF and this row pins one side by named
+#                 choice. Also verified verbatim.
+#   disposition   CONFORM | DIVERGE-DECIDED | EXTENSION | OPEN-PINNED
+#                 | NOT-IMPLEMENTED-DECIDED | NOT-ASSERTABLE
+#   ledger:
+#     conformance SPEC_CONFORMANCE.md row id (e.g. ATX-11). Checked to exist.
+#     extensions  specs/EXTENSIONS.md section number. Checked to exist.
+#     issue       GitHub issue number, for an OPEN-PINNED row whose ledger
+#                 disposition has not been written yet BECAUSE THIS MATRIX
+#                 SURFACED IT. Pinning behavior is not the same as deciding
+#                 it; the issue is the open decision, and the row's flip
+#                 message points at it.
+#   assertion:
+#     kind        probe | indexed | absence | none
+#     probe       Function name in the runner module. Cross-checked BOTH ways.
+#     indexed     Existing coverage this row indexes (never duplicates).
+#                 Verified by AST parse -- NEVER by import, because these cites
+#                 cross per-module venv boundaries.
+#     absence     {pattern, roots} -- the feature is asserted ABSENT. This is
+#                 how "we do not implement section X" becomes executable:
+#                 shipping it without moving the ledger turns the matrix red.
+#   justification Required for OPEN-PINNED and NOT-ASSERTABLE.
+#   notes         Free text. Included in the flip message as a row-specific hint.
+#
+# --------------------------------------------------------------- tranche ----
+#
+# Tranche 1 (this file): every decided divergence, every OPEN ledger item
+# pinned, the two unledgered findings this matrix's construction surfaced
+# (F1 / F4, issue #234), the load-bearing conformances a community `.dot`
+# stakes its correctness on, and the SYNC row. Tranche 2+ (the remaining
+# rows by section) and tranche 3 (ULM/CAL matrices) are named in the
+# design, section 6 and section 12.
+
+canonical:
+  path: specs/canonical/attractor-spec-canonical.md
+  upstream: strongdm/attractor @ fb57a55
+  # Recomputed ONLY as part of a deliberate SYNC event -- see row ATX-M-000.
+  sha256: "235354496e2bc35cba9822cded2ebd71ff35a8fb7fce4e51f52b2788586e92ec"
+
+ledgers:
+  conformance: SPEC_CONFORMANCE.md
+  extensions: specs/EXTENSIONS.md
+
+rows:
+
+  # ==========================================================================
+  # A. Upstream sync
+  # ==========================================================================
+
+  - id: ATX-M-000
+    title: canonical spec is byte-pinned to the recorded upstream sha
+    spec:
+      section: "1.1"
+      heading: "Problem Statement"
+      quote: |
+        Attractor solves this by letting pipeline authors define multi-stage AI workflows as directed graphs using Graphviz DOT syntax. The graph is the workflow: nodes are tasks, edges are transitions, and attributes configure behavior. The result is a declarative, visual, version-controllable pipeline definition that an execution engine can traverse deterministically.
+      line: 29
+    disposition: CONFORM
+    ledger:
+      conformance: SYNC-1
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_000
+    notes: >
+      Every other row in this file quotes the canonical bytes. A re-sync is
+      therefore a full-matrix re-review event, not a quiet vendoring commit.
+      Precedent: the 2026-08-14 fb57a55 sync retconned EXTENSIONS sections 1-7
+      as ABSORBED and discovered section 18's k_of_n/quorum had been REMOVED
+      upstream.
+
+  # ==========================================================================
+  # B. Decided divergences -- asserted in both directions
+  #
+  # Each of these proves (a) our ledgered behavior occurs AND (b) the spec's
+  # behavior does NOT. Half (b) is what makes silent RE-alignment loud.
+  # ==========================================================================
+
+  - id: ATX-M-011
+    title: dead-end hard-fail (main loop)
+    spec:
+      section: "3.2"
+      heading: "Core Execution Loop"
+      quote: |
+                -- Step 6: Select next edge
+                next_edge = select_edge(node, outcome, context, graph)
+                IF next_edge is NONE:
+                    IF outcome.status == FAIL:
+                        RETURN outcome
+                    RETURN Outcome(status=SUCCESS, notes="Pipeline completed")
+      line: 388
+    disposition: DIVERGE-DECIDED
+    ledger:
+      conformance: ATX-11
+      extensions: 33
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_011
+      indexed:
+        - modules/loop-pipeline/tests/test_engine.py::test_no_matching_edge_returns_fail
+        - modules/loop-pipeline/tests/test_pipeline_events.py::TestErrorEvents::test_emits_error_on_no_edge
+    notes: >
+      A dead-ended graph silently reporting success is the incident class this
+      divergence exists to prevent. Load-bearing for
+      examples/pipelines/practical/bug-fix.dot ('escalated'). Paired doc guard:
+      modules/loop-pipeline/tests/test_engine_semantics_doc_guard.py and
+      context/engine-semantics.md must move with any change here.
+
+  - id: ATX-M-012
+    title: loop_restart is an in-process reset, not a terminate-and-relaunch
+    spec:
+      section: "2.7"
+      heading: "Edge Attributes"
+      quote: |
+        | `loop_restart` | Boolean | `false` | When `true`, terminates the current run and re-launches with a fresh log directory. |
+      line: 177
+      also:
+        - section: "3.2"
+          quote: |
+                    -- Step 7: Handle loop_restart
+                    IF next_edge has loop_restart=true:
+                        restart_run(graph, config, start_at=next_edge.target)
+                        RETURN
+    disposition: DIVERGE-DECIDED
+    ledger:
+      conformance: ATX-12
+      extensions: 24
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_012
+      indexed:
+        - modules/loop-pipeline/tests/test_convergence_observability.py
+    notes: >
+      The spec's terminate-and-relaunch would destroy exactly what convergence
+      needs: $iteration continuity, surviving context_updates, and feedback_from=
+      collection across iterations. Design record:
+      docs/plans/2026-02-24-engine-enhancements-design.md quotes the spec, then
+      chooses otherwise.
+
+  - id: ATX-M-025a
+    title: fail-closed goal gate -- the codergen prose-to-SUCCESS rung
+    spec:
+      section: "4.5"
+      heading: "Codergen Handler"
+      quote: |
+                -- 5. Write status and return outcome
+                outcome = Outcome(
+                    status=SUCCESS,
+                    notes="Stage completed: " + node.id,
+                    context_updates={
+                        "last_stage": node.id,
+                        "last_response": truncate(response_text, 200)
+                    }
+                )
+      line: 694
+    disposition: DIVERGE-DECIDED
+    ledger:
+      extensions: 25
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_025a
+      indexed:
+        - modules/loop-pipeline/tests/test_backend.py::test_backend_plain_text_returns_success
+        - modules/loop-pipeline/tests/test_fail_closed_outcomes.py::test_fc001_goal_gate_plain_prose_returns_retry
+        - modules/loop-pipeline/tests/test_fail_closed_outcomes.py::test_fc002_non_goal_gate_plain_prose_returns_success
+        - modules/loop-pipeline/tests/test_fail_closed_outcomes.py::test_fc010_goal_gate_plain_prose_does_not_exit_success
+    notes: >
+      Scoped to goal_gate=true nodes ONLY -- the spec's prose-to-SUCCESS wrap is
+      preserved everywhere else, which is what keeps this divergence
+      non-interfering for community graphs (doctrine rule 3). The control half of
+      that claim is asserted by the same probe.
+
+  - id: ATX-M-025b
+    title: fail-closed goal gate -- the status-only satisfaction rung
+    spec:
+      section: "3.4"
+      heading: "Goal Gate Enforcement"
+      quote: |
+        FUNCTION check_goal_gates(graph, node_outcomes):
+            FOR EACH (node_id, outcome) IN node_outcomes:
+                node = graph.nodes[node_id]
+                IF node.goal_gate == true:
+                    IF outcome.status NOT IN {SUCCESS, PARTIAL_SUCCESS}:
+                        RETURN (false, node)
+            RETURN (true, NONE)
+      line: 471
+    disposition: DIVERGE-DECIDED
+    ledger:
+      extensions: 25
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_025b
+      indexed:
+        - modules/loop-pipeline/tests/test_fail_closed_outcomes.py::test_fc008_spawn_status_only_is_not_explicit
+        - modules/loop-pipeline/tests/test_fail_closed_outcomes.py::test_fc011_goal_gate_explicit_json_success_exits_success
+    notes: >
+      The gate additionally requires is_explicit -- a status-only SUCCESS (the
+      shape a bare spawn produces) does NOT satisfy it. Evidence: the run in which
+      a judge wrote "NOT CONVERGED -- 2 of 7 criteria pass" in prose and the
+      pipeline recorded convergence and exited with zero work product.
+
+  - id: ATX-M-016
+    title: FAIL is fail-fast at unconditional edges
+    spec:
+      section: "3.3"
+      heading: "Edge Selection Algorithm"
+      quote: |
+            -- Step 4 & 5: Weight with lexical tiebreak (unconditional edges only)
+            unconditional = [e FOR e IN edges WHERE e.condition is empty]
+            IF unconditional is not empty:
+                RETURN best_by_weight_then_lexical(unconditional)
+      line: 448
+    disposition: DIVERGE-DECIDED
+    ledger:
+      extensions: 16
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_edge_selection_no_silent_fallthrough.py::test_fail_outcome_does_not_traverse_unconditional_edges
+        - modules/loop-pipeline/tests/test_edge_selection_no_silent_fallthrough.py::test_success_outcome_traverses_unconditional_edges_as_before
+    notes: >
+      Canonical step 4 selects the best unconditional edge REGARDLESS of outcome
+      status. This engine stops on FAIL unless the target declares runs_on in
+      {always, failure} or continue_on_fail. Both directions already have
+      dedicated tests -- this row indexes them rather than duplicating them.
+
+  - id: ATX-M-022
+    title: "`outcome=` in a condition resolves to preferred_label first"
+    spec:
+      section: "10.4"
+      heading: "Variable Resolution"
+      quote: |
+        FUNCTION resolve_key(key, outcome, context) -> String:
+            IF key == "outcome":
+                RETURN outcome.status as string
+            IF key == "preferred_label":
+                RETURN outcome.preferred_label
+      line: 1693
+    disposition: DIVERGE-DECIDED
+    ledger:
+      conformance: ATX-5
+      extensions: 22
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_conditions.py::test_outcome_resolves_preferred_label_custom_value
+        - modules/loop-pipeline/tests/test_conditions.py::test_outcome_resolves_status_when_no_preferred_label
+    notes: >
+      Canonical defines `outcome` as `outcome.status` only, with `preferred_label`
+      as a separate key. Load-bearing for report_outcome-driven routing. Not
+      behavior-neutral: a canonical graph matching `outcome=<status>` changes
+      meaning when a node also sets a preferred_label (EXTENSIONS section 22,
+      "Compatibility").
+
+  - id: ATX-M-036
+    title: startup provider preflight is fail-loud, not silent fallback
+    spec:
+      section: "4.5"
+      heading: "CodergenBackend Interface"
+      quote: |
+        How you implement this interface is up to you. The pipeline engine only cares that it gets a String or Outcome back.
+      line: 718
+    disposition: EXTENSION
+    ledger:
+      extensions: 36
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_provider_preflight.py
+        - modules/loop-pipeline/tests/test_profile_routing.py
+        - modules/pipeline-runner/tests/test_provider_preflight_drive_engine.py
+    notes: >
+      The canonical spec is silent on provider mounting/serviceability -- section
+      4.5 explicitly delegates backend internals to the implementer -- so this is
+      an EXTENSION into a spec-silent area, not a divergence. It is asserted here
+      anyway because it CHANGED observable behavior (per-visit crash or
+      wrong-provider silent run, now refusal at startup), which is exactly the
+      movement class this matrix exists to notice.
+
+  # ==========================================================================
+  # C. OPEN ledger items -- pinned, not laundered into decisions
+  #
+  # These behaviors are real and asserted. Their DISPOSITION is undecided.
+  # Undecided is not the same as unpinned: the flip message on these rows says
+  # "either this PR is the decision (move the ledger row) or it is an accident".
+  # ==========================================================================
+
+  - id: ATX-M-006o
+    title: a FAIL outcome is returned immediately and never retried
+    spec:
+      section: "3.5"
+      heading: "Retry Logic"
+      quote: |
+                IF outcome.status == FAIL:
+                    RETURN outcome
+      line: 519
+      conflict:
+        section: "11.5"
+        quote: |
+          - [ ] Nodes with `max_retries > 0` are retried on RETRY or FAIL outcomes
+        note: >
+          The canonical spec contradicts itself. Section 3.5's pseudocode returns
+          a FAIL outcome without retrying; the section 11 Definition of Done
+          checklist says FAIL outcomes ARE retried. This engine follows section
+          3.5. ATX-6's recorded disposition is ALIGN-spec-first (reconcile the
+          spec), so the pin is on today's behavior, not on a decision nobody has
+          made.
+    disposition: OPEN-PINNED
+    ledger:
+      conformance: ATX-6
+    justification: >
+      ATX-6 is OPEN with disposition "ALIGN-spec-first (reconcile the spec)".
+      Recording the behavior as DIVERGE-DECIDED here would forge a decision the
+      maintainer has not made; leaving it unasserted would let it move silently
+      while the ledger says the question is still open. OPEN-PINNED does neither.
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_006o
+      indexed:
+        - modules/loop-pipeline/tests/test_retry.py::test_retry_policy_from_node_max_retries
+
+  - id: ATX-M-007o
+    title: condition literals are NOT unquoted before comparison
+    spec:
+      section: "10.5"
+      heading: "Evaluation"
+      quote: |
+        FUNCTION parse_literal(value) -> String:
+            value = trim(value)
+            IF value starts with '"' AND value ends with '"':
+                RETURN unescape_string(value[1..-2])
+            RETURN value
+      line: 1743
+    disposition: OPEN-PINNED
+    ledger:
+      conformance: ATX-7
+    justification: >
+      ATX-7 is OPEN with disposition "ALIGN (minor)". The probe pins TODAY's
+      behavior -- a double-quoted condition literal is compared including its
+      quotes -- so that the eventual ALIGN is a deliberate, ledgered edit rather
+      than an incidental one. A community graph written to canonical section 10.5
+      that quotes a condition literal does not route the way the spec says it
+      will; that compatibility cost is what the open decision is weighing.
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_007o
+
+  - id: ATX-M-003o
+    title: tool_hooks.pre / tool_hooks.post are not implemented
+    spec:
+      section: "9.7"
+      heading: "Tool Call Hooks"
+      quote: |
+        Graph-level or node-level attributes `tool_hooks.pre` and `tool_hooks.post` specify shell commands executed around each LLM tool call:
+      line: 1652
+    disposition: OPEN-PINNED
+    ledger:
+      conformance: ATX-3
+    justification: >
+      ATX-3 is an explicit DECIDE item (ALIGN vs DIVERGE), hinging on whether
+      DOT-author-level per-call guards are wanted or Amplifier's kernel hook
+      mechanism already covers the need. The absence assertion is the
+      "un-diverging silently is drift too" mechanism pointed at the
+      not-implemented direction: shipping tool_hooks without moving ATX-3 turns
+      this row red instead of quietly green.
+    assertion:
+      kind: absence
+      absence:
+        pattern: "tool_hooks"
+        roots:
+          - modules/loop-pipeline/amplifier_module_loop_pipeline
+
+  - id: ATX-M-004n
+    title: no HTTP server mode
+    spec:
+      section: "9.5"
+      heading: "HTTP Server Mode"
+      quote: |
+        Implementations may expose the pipeline engine as an HTTP service for web-based management, remote human interaction, and integration with external systems.
+      line: 1591
+    disposition: NOT-IMPLEMENTED-DECIDED
+    ledger:
+      conformance: ATX-4
+    justification: >
+      Section 9.5 is permissive ("may expose"), so not implementing it is
+      conformant rather than divergent -- ATX-4's "DIVERGE (spec-optional)"
+      records the omission as deliberate. The bundle exposes programmatic tools
+      and a CLI instead. Asserted as an absence so that shipping an HTTP surface
+      becomes a ledger event rather than a quiet feature.
+    assertion:
+      kind: absence
+      absence:
+        pattern: "(?:^|[^A-Za-z_])(?:uvicorn|fastapi|BaseHTTPRequestHandler|HTTPServer)(?:[^A-Za-z_]|$)"
+        roots:
+          - modules/loop-pipeline/amplifier_module_loop_pipeline
+          - modules/pipeline-runner/amplifier_module_pipeline_runner
+
+  # ==========================================================================
+  # D. Findings surfaced by building this matrix -- unledgered today
+  #
+  # NOT decided divergences. These are behaviors that contradict the canonical
+  # spec with no ledger entry licensing them. Filed as issue #234. The rows pin
+  # actual behavior so that the decision, when it comes, is deliberate.
+  # ==========================================================================
+
+  - id: ATX-M-F01
+    title: unknown node shape hard-errors instead of falling back to the default handler
+    spec:
+      section: "4.2"
+      heading: "Handler Registry"
+      quote: |
+                -- 3. Default
+                RETURN default_handler
+      line: 628
+      also:
+        - section: "4.2"
+          quote: |
+            3. **Default handler** (the codergen/LLM handler)
+    disposition: OPEN-PINNED
+    ledger:
+      issue: 234
+    justification: >
+      F1. Canonical section 4.2's resolve() pseudocode falls through to the
+      DEFAULT HANDLER when a shape is unrecognized; HandlerRegistry.get() instead
+      raises ValueError naming the bad shape and listing the supported ones. That
+      is the right behavior under doctrine rule 4 (a typo'd shape silently
+      becoming a full LLM session is a real footgun, argued from section 2.8's
+      finite table in test_no_silent_fallback.py's docstring) -- but it is
+      ATX-11's exact biography: correct, load-bearing, and undocumented. No ATX
+      row and no EXTENSIONS entry licenses it today. Pinned here; decision filed
+      as issue #234, whose two resolution shapes are ledger-it-as-DIVERGE or
+      conform to section 4.2.
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_f01
+      indexed:
+        - modules/loop-pipeline/tests/test_no_silent_fallback.py::test_unknown_shape_raises_value_error
+        - modules/loop-pipeline/tests/test_no_silent_fallback.py::test_known_shapes_still_dispatch_correctly
+
+  - id: ATX-M-F04
+    title: reasoning_effort has no built-in default -- Appendix A's high does not hold
+    spec:
+      section: "2.6"
+      heading: "Node Attributes"
+      quote: |
+        | `reasoning_effort`  | String   | `"high"`        | LLM reasoning effort: `low`, `medium`, `high`. |
+      line: 162
+      also:
+        - section: "Appendix A"
+          quote: |
+            | `reasoning_effort`      | String   | `"high"`      | Reasoning depth: low/medium/high |
+    disposition: OPEN-PINNED
+    ledger:
+      issue: 234
+    justification: >
+      F4, verified empirically rather than assumed. Both the section 2.6
+      attribute table and Appendix A give `reasoning_effort` a default of
+      `"high"`. Parsing a node that omits the attribute yields
+      `Node.reasoning_effort is None`, and None is what reaches the backend -- so
+      the provider's own default applies, not "high". A community graph written
+      to the canonical spec therefore gets a different reasoning depth here than
+      the spec promises. Unledgered; filed together with F1 as issue #234 (same
+      class, same two resolution shapes, one maintainer sitting). Pinned to
+      actual behavior in the meantime.
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_f04
+
+  # ==========================================================================
+  # E. Load-bearing conformances
+  #
+  # Membership rule: the behaviors a community `.dot` file written against the
+  # canonical spec stakes its correctness on (doctrine rule 2). Mostly INDEXED
+  # to the suites that already carry them -- the matrix indexes coverage, it
+  # never duplicates it.
+  # ==========================================================================
+
+  - id: ATX-M-101
+    title: start-node resolution -- shape=Mdiamond, then id start/Start, else error
+    spec:
+      section: "3.2"
+      heading: "Core Execution Loop"
+      quote: |
+            current_node = find_start_node(graph)
+                -- Resolves by: (1) shape=Mdiamond, (2) id="start" or "Start"
+                -- Raises error if not found
+      line: 347
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_validation.py::test_missing_start_node
+        - modules/loop-pipeline/tests/test_validation.py::test_multiple_start_nodes
+
+  - id: ATX-M-102
+    title: step 4 -- context_updates merged, outcome set, preferred_label set only when non-empty
+    spec:
+      section: "3.2"
+      heading: "Core Execution Loop"
+      quote: |
+                -- Step 4: Apply context updates from outcome
+                FOR EACH (key, value) IN outcome.context_updates:
+                    context.set(key, value)
+                context.set("outcome", outcome.status)
+                IF outcome.preferred_label is not empty:
+                    context.set("preferred_label", outcome.preferred_label)
+      line: 377
+    disposition: CONFORM
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_102
+    notes: >
+      The "only when non-empty" half matters: an unconditional overwrite would
+      let a stale preferred_label from an earlier node steer a later edge. That
+      is a shipped-bug class in this repo's history (the stale-label rule in
+      context/engine-semantics.md).
+
+  - id: ATX-M-103
+    title: a checkpoint is saved after every node completion
+    spec:
+      section: "3.2"
+      heading: "Core Execution Loop"
+      quote: |
+                -- Step 5: Save checkpoint
+                checkpoint = create_checkpoint(context, current_node.id, completed_nodes)
+                save_checkpoint(checkpoint, logs_root)
+      line: 384
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_checkpoint.py::TestCheckpointEngineIntegration
+
+  - id: ATX-M-104
+    title: reaching a terminal node runs the goal-gate check before the run may end
+    spec:
+      section: "3.2"
+      heading: "Core Execution Loop"
+      quote: |
+                -- Step 1: Check for terminal node
+                IF is_terminal(node):
+                    gate_ok, failed_gate = check_goal_gates(graph, node_outcomes)
+      line: 354
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_goal_gates.py::test_satisfied_goal_gates_allow_exit
+        - modules/loop-pipeline/tests/test_engine.py::test_goal_gate_unsatisfied_returns_fail
+
+  - id: ATX-M-105
+    title: edge selection step 1 -- condition-matching edges win, best by weight then lexical
+    spec:
+      section: "3.3"
+      heading: "Edge Selection Algorithm"
+      quote: |
+            -- Step 1: Condition matching
+            condition_matched = []
+            FOR EACH edge IN edges:
+                IF edge.condition is not empty:
+                    IF evaluate_condition(edge.condition, outcome, context) == true:
+                        condition_matched.append(edge)
+            IF condition_matched is not empty:
+                RETURN best_by_weight_then_lexical(condition_matched)
+      line: 425
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_edge_selection.py::test_condition_matching_takes_priority
+        - modules/loop-pipeline/tests/test_edge_selection.py::test_condition_beats_preferred_label
+
+  - id: ATX-M-106
+    title: edge selection step 2 -- preferred label matches UNCONDITIONAL edges only, after normalization
+    spec:
+      section: "3.3"
+      heading: "Edge Selection Algorithm"
+      quote: |
+        **Step 2: Preferred label match.** If no condition-matching edges were found and the node's outcome includes a `preferred_label`, find the first unconditional edge whose `label` matches after normalization. Label normalization: lowercase, trim whitespace, strip accelerator prefixes (patterns like `[Y] `, `Y) `, `Y - `).
+      line: 412
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_edge_selection.py::test_preferred_label_match
+        - modules/loop-pipeline/tests/test_edge_selection.py::test_step2_skips_conditional_edge_with_matching_label
+
+  - id: ATX-M-107
+    title: edge selection step 3 -- first suggested_next_ids match, unconditional edges only
+    spec:
+      section: "3.3"
+      heading: "Edge Selection Algorithm"
+      quote: |
+            -- Step 3: Suggested next IDs
+            IF outcome.suggested_next_ids is not empty:
+                FOR EACH suggested_id IN outcome.suggested_next_ids:
+                    FOR EACH edge IN edges:
+                        IF edge.condition is empty AND edge.to_node == suggested_id:
+                            RETURN edge
+      line: 441
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_edge_selection.py::test_preferred_label_beats_suggested_ids
+
+  - id: ATX-M-108
+    title: edge selection steps 4-5 -- weight descending, lexical tiebreak, deterministic
+    spec:
+      section: "3.3"
+      heading: "Edge Selection Algorithm"
+      quote: |
+        FUNCTION best_by_weight_then_lexical(edges):
+            SORT edges BY (weight DESCENDING, to_node ASCENDING)
+            RETURN edges[0]
+      line: 456
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_edge_selection.py::test_weight_tiebreak
+        - modules/loop-pipeline/tests/test_edge_selection.py::test_lexical_tiebreak
+        - modules/loop-pipeline/tests/test_edge_selection.py::test_deterministic_with_same_inputs
+
+  - id: ATX-M-109
+    title: exactly ONE edge is selected -- never a fan-out from a non-component node
+    spec:
+      section: "3.3"
+      heading: "Edge Selection Algorithm"
+      quote: |
+        After a node completes, the engine selects the next edge from the node's outgoing edges. The selection is deterministic and follows a five-step priority order:
+      line: 408
+    disposition: CONFORM
+    ledger:
+      conformance: ATX-10
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_109
+    notes: >
+      This is a RESTORED conformance, not a never-broken one: an unledgered
+      multi-match fan-out dialect shipped and was retired under ATX-10 (T0-4).
+      Asserted rather than merely indexed because re-introducing it is a
+      plausible "feature", and the ledger says it is not one.
+
+  - id: ATX-M-110
+    title: SUCCESS and PARTIAL_SUCCESS both satisfy a goal gate
+    spec:
+      section: "3.4"
+      heading: "Goal Gate Enforcement"
+      quote: |
+        2. If any goal gate node has a non-success outcome (not SUCCESS or PARTIAL_SUCCESS), the pipeline cannot exit.
+      line: 466
+    disposition: CONFORM
+    ledger:
+      extensions: 4
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_goal_gates.py::test_satisfied_goal_gates_allow_exit
+        - modules/loop-pipeline/tests/test_goal_gates.py::test_partial_success_satisfies_goal_gate
+
+  - id: ATX-M-111
+    title: goal-gate retry-target ladder -- node, node fallback, graph, graph fallback
+    spec:
+      section: "3.4"
+      heading: "Goal Gate Enforcement"
+      quote: |
+        3. Instead, jump to the `retry_target` of the unsatisfied goal gate node. If that is not set, try `fallback_retry_target`. If that is also not set, try the graph-level `retry_target` and `fallback_retry_target`.
+      line: 467
+    disposition: CONFORM
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_111
+    notes: >
+      Probed rather than indexed because the four rungs degrade independently and
+      the graph-level rungs are the least exercised in the existing suite.
+
+  - id: ATX-M-112
+    title: no retry target at any level ends the pipeline with FAIL
+    spec:
+      section: "3.4"
+      heading: "Goal Gate Enforcement"
+      quote: |
+        4. If no retry target exists at any level, the pipeline ends with a FAIL outcome.
+      line: 468
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_engine.py::test_goal_gate_unsatisfied_returns_fail
+
+  - id: ATX-M-113
+    title: max_retries is ADDITIONAL attempts; graph default inherited; built-in default 0
+    spec:
+      section: "3.5"
+      heading: "Retry Logic"
+      quote: |
+        The `max_retries` attribute specifies additional attempts. So `max_retries=3` means a total of 4 executions (1 initial + 3 retries). Internally this maps to `max_attempts = max_retries + 1`.
+      line: 490
+    disposition: CONFORM
+    ledger:
+      extensions: 3
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_retry.py::test_retry_policy_from_node_max_retries
+        - modules/loop-pipeline/tests/test_retry.py::test_retry_policy_from_graph_default
+        - modules/loop-pipeline/tests/test_retry.py::test_retry_policy_default_zero
+
+  - id: ATX-M-114
+    title: RETRY exhaustion yields PARTIAL_SUCCESS when allow_partial, else FAIL
+    spec:
+      section: "3.5"
+      heading: "Retry Logic"
+      quote: |
+                IF outcome.status == RETRY:
+                    IF attempt < retry_policy.max_attempts:
+                        increment_retry_counter(node.id)
+                        delay = retry_policy.backoff.delay_for_attempt(attempt)
+                        sleep(delay)
+                        CONTINUE
+                    ELSE:
+                        IF node.allow_partial == true:
+                            RETURN Outcome(status=PARTIAL_SUCCESS, notes="retries exhausted, partial accepted")
+                        RETURN Outcome(status=FAIL, failure_reason="max retries exceeded")
+      line: 509
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_engine_must_write.py
+        - modules/loop-pipeline/tests/test_retry.py::TestShouldRetry
+
+  - id: ATX-M-115
+    title: preset retry-policy table values
+    spec:
+      section: "3.6"
+      heading: "Retry Policy"
+      quote: |
+        | `standard`   | 5           | 200ms         | 2.0    | General-purpose. Delays: 200, 400, 800, 1600, 3200ms. |
+      line: 557
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_spec_conformance_batch.py
+
+  - id: ATX-M-116
+    title: default should_retry -- transient retryable, auth/400/validation terminal
+    spec:
+      section: "3.6"
+      heading: "Retry Policy"
+      quote: |
+        **Default should_retry predicate:** Returns `true` for network errors, rate limit errors (HTTP 429), server errors (HTTP 5xx), and provider-reported transient failures. Returns `false` for authentication errors (HTTP 401, 403), bad request errors (HTTP 400), validation errors, and configuration errors.
+      line: 562
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_retry.py::TestShouldRetry
+
+  - id: ATX-M-117
+    title: failure-routing order -- fail edge, retry_target, fallback, terminate
+    spec:
+      section: "3.7"
+      heading: "Failure Routing"
+      quote: |
+        1. **Fail edge:** An outgoing edge with `condition="outcome=fail"`. If found, follow it.
+        2. **Retry target:** Node attribute `retry_target`. Jump to that node.
+        3. **Fallback retry target:** Node attribute `fallback_retry_target`. Jump to that node.
+        4. **Pipeline termination:** No failure route found. The pipeline fails with the stage's failure reason.
+      line: 568
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_failure_routing.py
+        - modules/loop-pipeline/tests/test_folder_node_failure_routing.py
+
+  - id: ATX-M-118
+    title: the nine-shape to handler-type mapping table
+    spec:
+      section: "2.8"
+      heading: "Shape-to-Handler-Type Mapping"
+      quote: |
+        The `shape` attribute on a node determines which handler executes it, unless overridden by an explicit `type` attribute. This table defines the canonical mapping:
+      line: 181
+    disposition: CONFORM
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_118
+      indexed:
+        - modules/loop-pipeline/tests/test_no_silent_fallback.py::test_known_shapes_still_dispatch_correctly
+    notes: >
+      Probed as a parametrized table so that a single row silently changing tier
+      (the exact class the explainer doc guard also watches) fails by name.
+      `folder` is an EXTENSION shape (EXTENSIONS section 10), not canonical -- the
+      probe asserts the nine canonical rows and treats folder separately.
+
+  - id: ATX-M-119
+    title: a handler exception becomes a FAIL outcome, not a crash
+    spec:
+      section: "3.5"
+      heading: "Retry Logic"
+      quote: |
+                CATCH exception:
+                    IF retry_policy.should_retry(exception) AND attempt < retry_policy.max_attempts:
+      line: 496
+    disposition: CONFORM
+    ledger:
+      extensions: 6
+    assertion:
+      kind: probe
+      probe: test_row_atx_m_119
+
+  - id: ATX-M-120
+    title: checkpoint carries the six section 5.3 fields at the section 5.6 path
+    spec:
+      section: "5.3"
+      heading: "Checkpoint"
+      quote: |
+        Checkpoint:
+            timestamp       : Timestamp              -- when this checkpoint was created
+            current_node    : String                  -- ID of the last completed node
+            completed_nodes : List<String>            -- IDs of all completed nodes in order
+            node_retries    : Map<String, Integer>    -- retry counters per node
+            context_values  : Map<String, Any>        -- serialized snapshot of the context
+            logs            : List<String>            -- run log entries
+      line: 1101
+    disposition: CONFORM
+    ledger:
+      conformance: ATX-2
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_checkpoint.py::TestCheckpointKeyShape
+        - modules/loop-pipeline/tests/test_checkpoint.py::TestCheckpointV2Schema
+    notes: >
+      Schema v2 is a strict SUPERSET: the six fields keep their exact names and
+      shapes at {logs_root}/checkpoint.json, plus schema_version, run_state,
+      node_outcomes, engine_state and graph.
+
+  - id: ATX-M-121
+    title: resume rules 1-5 -- restore state, continue after current_node
+    spec:
+      section: "5.3"
+      heading: "Checkpoint"
+      quote: |
+        1. Load the checkpoint from `{logs_root}/checkpoint.json`.
+        2. Restore context state from `context_values`.
+        3. Restore `completed_nodes` to skip already-finished work.
+        4. Restore retry counters from `node_retries`.
+        5. Determine the next node to execute (the one after `current_node` in the traversal).
+      line: 1129
+    disposition: CONFORM
+    ledger:
+      conformance: ATX-2
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_engine_resume.py::test_resume_degrades_first_full_hop_once
+        - modules/loop-pipeline/tests/test_resume_validation.py
+        - modules/loop-pipeline/tests/test_no_implicit_resume.py
+        - modules/pipeline-runner/tests/test_resume_e2e.py
+    notes: >
+      test_resume_e2e.py is the live-proof rung -- a really-SIGKILLed subprocess
+      resumed by a separate `attractor resume` invocation. It lives in another
+      module's venv, which is exactly why indexed cites are verified by AST parse
+      and never by import.
+
+  - id: ATX-M-122
+    title: resume rule 6 -- full degrades to summary:high for exactly one hop
+    spec:
+      section: "5.3"
+      heading: "Checkpoint"
+      quote: |
+        6. If the previous node used `full` fidelity, degrade to `summary:high` for the first resumed node, because in-memory LLM sessions cannot be serialized. After this one degraded hop, subsequent nodes may use `full` fidelity again.
+      line: 1134
+    disposition: CONFORM
+    ledger:
+      conformance: ATX-2
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_engine_resume.py::test_resume_degrades_first_full_hop_once
+        - modules/loop-pipeline/tests/test_engine_resume.py::test_no_degrade_when_the_first_hop_is_not_full
+
+  - id: ATX-M-123
+    title: fidelity precedence -- edge, node, graph, then compact
+    spec:
+      section: "5.4"
+      heading: "Context Fidelity"
+      quote: |
+        1. Edge `fidelity` attribute (on the incoming edge)
+        2. Target node `fidelity` attribute
+        3. Graph `default_fidelity` attribute
+        4. Default when unset: `compact`
+      line: 1160
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_fidelity.py::test_resolve_fidelity_default_is_compact
+
+  - id: ATX-M-124
+    title: ERROR-severity diagnostics refuse execution
+    spec:
+      section: "7.1"
+      heading: "Diagnostic Model"
+      quote: |
+        Validation produces a list of diagnostics, each with a severity level. The engine must refuse to execute a pipeline with error-severity diagnostics.
+      line: 1375
+      conflict:
+        section: "11.12"
+        quote: |
+          | Validate: orphan node -> warning                 | [ ] |
+        note: >
+          The canonical spec contradicts itself on reachability severity. Section
+          7.2's lint-rule table gives `reachability` severity ERROR; the section
+          11 Definition of Done checklist calls the same finding a warning. This
+          engine implements section 7.2 (ERROR), pinned here by named choice: a
+          `.dot` with an orphan node is refused, not merely flagged.
+    disposition: CONFORM
+    assertion:
+      kind: indexed
+      indexed:
+        - modules/loop-pipeline/tests/test_validation.py::test_validate_or_raise_raises_on_errors

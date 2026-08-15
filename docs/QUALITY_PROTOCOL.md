@@ -124,12 +124,22 @@ strictly worse than an internal doc going stale.
 
 ### Layer 2 -- executable conformance matrix
 
-**Status: in flight -- designed here, not built.** No conformance-matrix code and no CI job exists
-in this repo today. What follows is the specification for it, not a description of something
-running.
+**Status: shipped (tranche 1).** Two files, run in CI on every PR inside the existing
+loop-pipeline job:
+
+| File | What it is |
+|---|---|
+| `specs/conformance/attractor-matrix.yaml` | The matrix itself -- a reviewed *document*, one row per normative statement cluster, carrying the verbatim spec quote, the disposition, the ledger cite, and the assertion |
+| `modules/loop-pipeline/tests/test_spec_conformance_matrix.py` | The runner -- per-row structural integrity, in-process behavioral probes, the upstream-sync sha pin, and the coverage tripwire |
+
+Tranche 1 covers every decided divergence, every OPEN ledger item, the load-bearing conformances,
+and the SYNC row. Later tranches extend it section by section; ULM/CAL matrices are named as tranche
+3. The design record is [`docs/designs/2026-08-15-conformance-matrix.md`](designs/2026-08-15-conformance-matrix.md).
 
 One row per spec section: **spec section -> executable assertion -> disposition**, where disposition
-is one of `CONFORM`, `DIVERGE-DECIDED`, `EXTENSION`, `NOT-IMPLEMENTED-DECIDED`.
+is one of `CONFORM`, `DIVERGE-DECIDED`, `EXTENSION`, `NOT-IMPLEMENTED-DECIDED`, plus two the build
+earned: `OPEN-PINNED` (pin an undecided behavior without forging a decision the maintainer has not
+made) and `NOT-ASSERTABLE` (aspirational prose, argued per row).
 
 The load-bearing idea is that **decided divergences are asserted too.** A matrix that only asserts
 conformance detects drift in one direction and is blind in the other -- silently drifting *back*
@@ -141,7 +151,15 @@ So a flipped assertion is never merely a red test: its failure message names **t
 must change**. The failure is a prompt to update `SPEC_CONFORMANCE.md` or `specs/EXTENSIONS.md`, or
 to revert -- never to edit the assertion.
 
-Intended to run in CI on every PR, alongside the Layer 1 guards.
+Two mechanisms keep that honest. A **coverage tripwire** requires every DIVERGES-bannered
+`EXTENSIONS.md` entry and every DIVERGE-disposition `ATX-*` row to be cited by at least one matrix
+row, so a future divergence cannot be ledgered without also being asserted. And the **SYNC row**
+pins the canonical file's sha256, turning a re-vendor from a quiet commit into a demanded
+full-matrix re-review -- which is exactly the work the `fb57a55` sync required by hand.
+
+Retirement condition: none for the mechanism. Individual rows retire when upstream absorbs the
+divergence (the `ABSORBED UPSTREAM` banner protocol) or when a decision closes an `OPEN-PINNED`
+row -- in both cases the row changes disposition rather than disappearing.
 
 ### Layer 3 -- periodic holistic semantic review
 
@@ -218,7 +236,9 @@ design that usually goes undone: yesterday's scaffolding is today's tax.
 guard filenames, the canonical SHA, the four issue numbers -- are not machine-pinned today, and by
 section 2's own rule that is a gap, named here rather than left for a reader to find. Adoption
 condition: the first time one of those references is found stale, or the Layer-2 matrix lands
-(whichever comes first), this file gets the guard it asks of everything else.
+(whichever comes first), this file gets the guard it asks of everything else. **That condition has
+now fired** -- the matrix landed 2026-08-15 -- so this file's own guard is owed next, and is
+recorded as such in the Changelog below rather than left for a reader to discover.
 
 ---
 
@@ -279,6 +299,37 @@ This repo's maintainers will help seed a customized version on request -- open a
 ## Changelog
 
 Amendments to this protocol, newest first. Each entry names the evidence that justified it.
+
+### 2026-08-15 -- Layer 2 shipped (entry 2)
+
+- **Changed.** Section 3, Layer 2 flipped from *"in flight -- designed here, not built"* to shipped,
+  naming the two real files: `specs/conformance/attractor-matrix.yaml` (38 tranche-1 rows) and
+  `modules/loop-pipeline/tests/test_spec_conformance_matrix.py` (the runner). The disposition
+  vocabulary gained `OPEN-PINNED` and `NOT-ASSERTABLE`; the coverage tripwire and the SYNC sha pin
+  are described because they now exist.
+- **Evidence that the layer earns its cost, at adoption.** Building tranche 1 was itself the
+  measurement. It surfaced **two unledgered contradictions with the canonical spec** that four
+  existing defenses could not see -- the unknown-shape hard error against section 4.2's
+  default-handler fallback, and `reasoning_effort`'s absent `"high"` default against Appendix A --
+  both filed as [#234](https://github.com/microsoft/amplifier-bundle-attractor/issues/234) and
+  pinned as `OPEN-PINNED` rows rather than silently encoded. It also pinned three points where the
+  canonical spec **contradicts itself** (retry-on-FAIL, reachability severity, and the goal-gate
+  ladder's routing signal), each recorded on the row that chooses a side. Layer 1 could not have
+  found any of these: those guards pin *our docs* to *our code*, and say nothing about the spec.
+- **The mechanism was proven by mutation before it merged.** Per the design's definition of done,
+  one real engine behavior was flipped in a scratch copy (dead-end-with-non-FAIL made to return
+  SUCCESS, the exact un-divergence `ATX-11` forbids) and the matrix produced the specified failure
+  naming spec section 3.2, `ATX-11`, `EXTENSIONS.md` section 33, and the two legal exits; a ledger
+  citation was deleted in a second scratch copy and the structural check failed naming it. A guard
+  never seen red is an unproven guard.
+- **Scope of this change: additive.** No engine, handler, or example code changed. The matrix
+  *indexes* existing coverage rather than duplicating it: 22 of 38 rows cite tests that already
+  exist, verified by AST parse rather than import (indexed cites cross per-module venv boundaries).
+- **Retirement conditions.** The matrix mechanism has none -- it is the executable form of a ledger
+  that is itself permanent. Individual rows retire by changing disposition: when upstream absorbs a
+  divergence, or when a decision closes an `OPEN-PINNED` row. **This document's own missing guard
+  (section 5) is now due**: its stated adoption condition -- "or the Layer-2 matrix lands" -- fired
+  with this entry.
 
 ### 2026-08-15 -- protocol captured (entry 1)
 

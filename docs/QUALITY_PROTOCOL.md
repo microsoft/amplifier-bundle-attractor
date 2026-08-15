@@ -270,8 +270,11 @@ against the repo's stated vision -- which is [`docs/VISION.md`](VISION.md), not 
 repo collected between reviews, read as a set. Output: findings with `file:line` evidence, filed as
 issues -- not a report that gets read once.
 
-Executed as an agent wave today. The intent is for it to become a **self-review attractor pipeline**
--- the repo reviewing itself with its own machinery (section 8). That pipeline does not exist yet.
+Executed as an agent wave until now. **The executor is
+[`examples/drift-review/`](../examples/drift-review/)** -- a self-review attractor pipeline (section
+8), whose findings gate re-opens every cited `file:line` on *both* sides outside every reviewer's
+context, and whose shape is guarded by
+`modules/loop-pipeline/tests/test_drift_review_gate.py`. It reports; a human triages and files.
 
 ### Layer 4 -- the meta-protocol
 
@@ -431,6 +434,36 @@ This repo's maintainers will help seed a customized version on request -- open a
 ## Changelog
 
 Amendments to this protocol, newest first. Each entry names the evidence that justified it.
+
+### 2026-08-15 -- Layer 3 gets an executor (entry 6)
+
+- **Changed.** Layer 3's closing line flipped from *"that pipeline does not exist yet"* to naming
+  [`examples/drift-review/`](../examples/drift-review/): the holistic review is now run by an
+  attractor, with `check_findings.py` as the gate that decides which proposed findings are shaped
+  and `modules/loop-pipeline/tests/test_drift_review_gate.py` guarding both. Nothing about Layer
+  3's *scope* changed -- docs, examples, guidance surfaces and both ledgers, read against the
+  canonical spec and `docs/VISION.md`.
+- **Evidence that justified it: the triggers in section 6 fired, and the layer had no executor to
+  answer them with.** More than fifteen PRs touching `modules/` and `docs/` have merged since the
+  protocol was captured, and the conformance surface moved repeatedly (the matrix landed, the
+  vision wave amended two pages). Layer 3 was the only layer whose defense was "someone will read
+  everything carefully" -- which is the defense that silently does not happen. The first real pass
+  was run with this executor before it merged; its report is the adoption evidence.
+- **What the executor buys that a careful read does not.** Findings are *shaped* or they do not
+  ship: each cites `file:line` on both sides -- the drifting surface and the normative passage it
+  contradicts -- and the gate re-opens both files rather than believing either citation. That
+  closes the gap an unstructured review leaves, where a plausible-sounding finding costs a human
+  the read and proves nothing.
+- **Deliberately not automated: filing.** The pipeline reports; a human verifies each finding and
+  decides what becomes an issue or a `vision-observation` (section 4). Shape is not truth -- the
+  gate proves a citation resolves, never that two passages actually contradict each other -- and a
+  reviewer that acts on its own findings has re-entered the context it was built to stay outside
+  of.
+- **Scope of this change: additive.** No engine, handler or ledger *behavior* changed. One new
+  example directory, one new guard test, one README gallery row, and this page's Layer-3 line.
+- **Retirement condition.** The layer has none. The *executor* retires if the review it runs stops
+  earning its cost under section 7's retirement review -- if it finds nothing across several
+  cycles, that is itself the finding, and the review that observed it would say so.
 
 ### 2026-08-15 -- the decision matrix stated in authored prose (entry 5)
 

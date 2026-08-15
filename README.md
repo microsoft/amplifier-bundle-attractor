@@ -197,6 +197,7 @@ The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 s
 | [Feature Build](examples/pipelines/practical/feature-build.md) | Parallel implementation + human gate |
 | [Refactoring](examples/pipelines/practical/refactor.md) | Snapshot-safe code improvement |
 | [Multi-Lens Review](examples/pipelines/practical/multi-lens-review.md) | 3 providers × 3 lenses |
+| [Drift Review](examples/drift-review/README.md) | `QUALITY_PROTOCOL.md` Layer 3: holistic semantic review of this repo against the canonical spec and `docs/VISION.md` |
 
 `Bug Fix`, `Test Generation`, and `Refactoring` ship a runnable sample, so they work with no setup. See [examples/pipelines/practical/](examples/pipelines/practical/) for the full set.
 

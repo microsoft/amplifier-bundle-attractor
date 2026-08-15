@@ -180,6 +180,17 @@ _A8_FAIL_TO_EXIT = (
     "critique -> work       [loop_restart=\"true\"]",
     'critique -> work       [loop_restart="true"]\n    critique -> done [condition="outcome=fail"]',
 )
+#: A10 -- give the gate a SECOND token that also ends at the exit. Nothing is
+#: removed, so A5's exhaustion route survives, the conjunction keeps A7 quiet
+#: and `red` is a token rather than an outcome so A8 stays green: exactly the
+#: single property under test, and nothing else.
+_A10_SECOND_TOKEN_TO_EXIT = (
+    'dod_gate -> critique   [condition="outcome=fail", label="not yet -- iterate"]',
+    (
+        'dod_gate -> critique   [condition="outcome=fail", label="not yet -- iterate"]\n'
+        '    dod_gate -> done   [condition="context.tool.last_line=red && outcome=success"]'
+    ),
+)
 
 
 @pytest.mark.parametrize(
@@ -193,6 +204,7 @@ _A8_FAIL_TO_EXIT = (
         pytest.param(_A6_UNROUTED_WORKER, "A6", id="A6-worker-with-no-failure-route"),
         pytest.param(_A7_STALE_LABEL, "A7", id="A7-label-edge-without-the-conjunction"),
         pytest.param(_A8_FAIL_TO_EXIT, "A8", id="A8-failure-routed-into-the-exit"),
+        pytest.param(_A10_SECOND_TOKEN_TO_EXIT, "A10", id="A10-both-gate-answers-end-at-the-exit"),
     ],
 )
 def test_checker_catches_each_single_mutation(checker, tmp_path, capsys, mutation, expected_fail):
@@ -236,6 +248,212 @@ def test_a9_fires_on_an_empty_companion(checker, tmp_path, capsys):
     assert capsys.readouterr().out == "doctrine_bad"
     assert "[FAIL] A9" in text
     assert "empty" in text
+
+
+# ---------------------------------------------------------------------------
+# A10 -- the hollow gate (issue #245)
+#
+# Construction B1, rebuilt here from the issue rather than copied from a run:
+# a pipeline that is doctrinally sound in every respect EXCEPT that its evidence
+# gate's answer is discarded.  Both tokens route into the exit, so the run ends
+# green whether the tests passed or failed.  Against the checker as shipped in
+# PR #239 this printed `doctrine_ok` with A1-A9 all green, and `attractor lint`
+# had nothing to say about it either.
+# ---------------------------------------------------------------------------
+
+_B1_IGNORED_GATE = """
+digraph b1_ignored_gate {
+    graph [default_max_retries=1]
+
+    start [shape=circle, label="START"]
+    done  [shape=Msquare, label="DONE"]
+
+    work [
+        shape=box, label="Do the work",
+        prompt="Make the change the brief asks for. Report success when the edit is written."
+    ]
+
+    // A REAL evidence gate: runs pytest for real, emits green/red on its last line.
+    gate [
+        shape=parallelogram, label="Test Gate", max_retries=0,
+        tool_command="if python3 -m pytest -q >/tmp/b1probe/test.log 2>&1; then printf green; else printf red; fi"
+    ]
+
+    // Budget wall: counts iterations, routes exhaustion to a salvage path.
+    budget [
+        shape=parallelogram, label="Budget Wall", max_retries=0,
+        tool_command="n=$(cat /tmp/b1probe/iter 2>/dev/null || echo 0); n=$((n+1)); echo $n > /tmp/b1probe/iter; if [ $n -gt 5 ]; then printf exhausted; else printf continue; fi"
+    ]
+
+    postmortem [
+        shape=box, label="Postmortem",
+        prompt="The budget is spent. Write an honest postmortem of what the loop tried and why it did not converge."
+    ]
+
+    escalate [
+        shape=parallelogram, label="Escalate LOUD", max_retries=0,
+        tool_command="echo 'budget exhausted -- escalating' >&2; exit 1"
+    ]
+
+    start -> work
+    work  -> budget     [condition="outcome=success"]
+    work  -> postmortem [condition="outcome=fail"]
+
+    budget -> gate       [condition="context.tool.last_line=continue"]
+    budget -> postmortem [condition="context.tool.last_line=exhausted"]
+
+    // ---- THE DEFECT: both gate tokens route into the exit ----
+    gate -> done [condition="context.tool.last_line=green"]
+    gate -> done [condition="context.tool.last_line=red"]
+
+    postmortem -> work     [condition="outcome=success"]
+    postmortem -> escalate [condition="outcome=fail"]
+}
+"""
+
+_B1_COMPANION = """# B1 probe
+
+The `work` node makes the change the brief asks for. The `postmortem` node
+writes an honest account of a loop that did not converge.
+"""
+
+
+def test_a10_catches_the_gate_whose_answer_is_discarded(checker, tmp_path, capsys):
+    """The reproduction from issue #245, verbatim in shape.
+
+    Everything A1-A9 asks for is present: a real command (A3), an exit that is
+    unreachable without the gate (A4), a budget wall (A5), failure routes on
+    every worker (A6), and no failure *outcome* anywhere near the exit (A8).
+    The one thing missing is the only thing that matters -- somewhere for a red
+    answer to go that is not the success door.
+    """
+    pipeline, companion = _write_draft(tmp_path, _B1_IGNORED_GATE, companion=_B1_COMPANION)
+    rc, text = _run_checker(checker, pipeline, companion, tmp_path / "report.txt")
+
+    assert rc == 0
+    assert capsys.readouterr().out == "doctrine_bad", text
+
+    # A10 is the ONLY thing that fires -- if any sibling check also went red the
+    # construction would be proving something other than the hole it was built
+    # to prove.
+    failed = [line for line in text.splitlines() if line.startswith("[FAIL]")]
+    assert len(failed) == 1, text
+    assert failed[0].startswith("[FAIL] A10"), text
+
+    # The message names the gate, both tokens, and the shared target, in the
+    # style of A7/A8 -- the contract is stated, not left to be guessed at.
+    assert "gate:" in text
+    assert "'green'" in text and "'red'" in text
+    assert "the exit 'done'" in text
+
+
+def test_a10_sees_through_a_relay_no_op(checker, tmp_path, capsys):
+    """Putting a forwarding `diamond` in the middle launders nothing.
+
+    A diamond with a single unconditional edge runs nothing and decides
+    nothing, so entering it and leaving it is indistinguishable from taking the
+    edge directly.  If A10 stopped at the first hop, the cheapest way past it
+    would be to add two of these.
+    """
+    laundered = _B1_IGNORED_GATE.replace(
+        '    gate -> done [condition="context.tool.last_line=green"]\n'
+        '    gate -> done [condition="context.tool.last_line=red"]',
+        '    relay_green [shape=diamond]\n'
+        '    relay_red   [shape=diamond]\n'
+        '    gate -> relay_green [condition="context.tool.last_line=green"]\n'
+        '    gate -> relay_red   [condition="context.tool.last_line=red"]\n'
+        "    relay_green -> done\n"
+        "    relay_red   -> done",
+    )
+    assert laundered != _B1_IGNORED_GATE, "relay mutation anchor drifted"
+
+    pipeline, companion = _write_draft(tmp_path, laundered, companion=_B1_COMPANION)
+    _, text = _run_checker(checker, pipeline, companion, tmp_path / "report.txt")
+
+    assert capsys.readouterr().out == "doctrine_bad", text
+    assert "[FAIL] A10" in text, text
+
+
+def test_a10_admits_a_gate_whose_answers_go_to_different_places(checker, tmp_path, capsys):
+    """The fix the failure message asks for, applied -- and it passes.
+
+    A check whose only demonstrated behaviour is rejection has not been shown
+    to be satisfiable. Routing `red` back into the corrective loop is exactly
+    what the message tells the author to do, so it has to be enough.
+    """
+    repaired = _B1_IGNORED_GATE.replace(
+        'gate -> done [condition="context.tool.last_line=red"]',
+        'gate -> work [condition="context.tool.last_line=red"]',
+    )
+    assert repaired != _B1_IGNORED_GATE, "repair anchor drifted"
+
+    pipeline, companion = _write_draft(tmp_path, repaired, companion=_B1_COMPANION)
+    _, text = _run_checker(checker, pipeline, companion, tmp_path / "report.txt")
+
+    assert capsys.readouterr().out == "doctrine_ok", text
+    assert "[PASS] A10" in text
+
+
+def test_a10_admits_two_tokens_converging_on_an_ordinary_node(checker, tmp_path, capsys):
+    """The deliberate boundary: only the EXIT fires A10.
+
+    Sending several distinct diagnoses to one node that writes them up is a
+    real pattern in this repo's own graphs -- there the token is *recorded*
+    rather than routed on, which is legitimate. Only the exit makes the
+    convergence a lie, because only there does the run end green either way.
+    """
+    converging = _B1_IGNORED_GATE.replace(
+        'gate -> done [condition="context.tool.last_line=red"]',
+        'gate -> postmortem [condition="context.tool.last_line=red"]',
+    ).replace(
+        'gate -> done [condition="context.tool.last_line=green"]',
+        'gate -> done [condition="context.tool.last_line=green"]\n'
+        '    gate -> postmortem [condition="context.tool.last_line=flaky"]',
+    )
+
+    pipeline, companion = _write_draft(tmp_path, converging, companion=_B1_COMPANION)
+    _, text = _run_checker(checker, pipeline, companion, tmp_path / "report.txt")
+
+    assert capsys.readouterr().out == "doctrine_ok", text
+    assert "[PASS] A10" in text
+
+
+def test_a10_admits_a_re_gate_loop(checker, tmp_path, capsys):
+    """A gate whose failing token re-enters the loop that ends at the same gate.
+
+    Every token in a convergent attractor *eventually* reaches the exit -- that
+    is what convergence means. A10 must not read that as inertness, so the rule
+    is about where an answer LANDS, never about what it can eventually reach.
+    """
+    re_gated = _B1_IGNORED_GATE.replace(
+        'gate -> done [condition="context.tool.last_line=red"]',
+        'gate -> budget [condition="context.tool.last_line=red"]',
+    )
+
+    pipeline, companion = _write_draft(tmp_path, re_gated, companion=_B1_COMPANION)
+    _, text = _run_checker(checker, pipeline, companion, tmp_path / "report.txt")
+
+    assert capsys.readouterr().out == "doctrine_ok", text
+    assert "[PASS] A10" in text
+
+
+def test_a10_ignores_an_inequality_because_it_is_not_an_answer(checker, tmp_path, capsys):
+    """`last_line!=green` selects a complement, not a token.
+
+    A10 reasons about which *answer* sends the run where. "Anything but green"
+    is not an answer, and reading it as one would make the ordinary
+    green-or-otherwise gate look like two tokens into the exit.
+    """
+    complement = _B1_IGNORED_GATE.replace(
+        'gate -> done [condition="context.tool.last_line=red"]',
+        'gate -> work [condition="context.tool.last_line!=green"]',
+    )
+
+    pipeline, companion = _write_draft(tmp_path, complement, companion=_B1_COMPANION)
+    _, text = _run_checker(checker, pipeline, companion, tmp_path / "report.txt")
+
+    assert capsys.readouterr().out == "doctrine_ok", text
+    assert "[PASS] A10" in text
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +583,52 @@ def test_shipped_exemplars_satisfy_the_authoring_contract(checker, tmp_path, cap
 
     assert rc == 0
     assert capsys.readouterr().out == "doctrine_ok", report.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "shipped",
+    [
+        "examples/authoring/pipeline-author.dot",
+        "examples/patterns/task-runner.dot",
+        "examples/pipelines/practical/bug-fix.dot",
+        "examples/drift-review/drift-review.dot",
+        "examples/objective/objective-runner.dot",
+    ],
+)
+def test_a10_admits_every_shipped_gate_bearing_graph(checker, tmp_path, capsys, shipped):
+    """A10's calibration set, stated separately because it is wider than A1-A9's.
+
+    ``drift-review.dot`` and ``objective-runner.dot`` do not carry a paired
+    ``.md`` at the path A9 looks for, so they cannot be in the ``doctrine_ok``
+    set above -- but they are dense, real, gate-heavy graphs and they are
+    exactly where a mis-calibrated A10 would show up. Asserting the A10 line
+    specifically keeps them in the calibration set without pretending they
+    satisfy checks they do not.
+    """
+    dot_path = _REPO_ROOT / shipped
+    if not dot_path.is_file():  # pragma: no cover - defensive
+        pytest.skip(f"{shipped} not present")
+
+    report = tmp_path / "report.txt"
+    checker.main(
+        [
+            "--pipeline",
+            str(dot_path),
+            "--companion",
+            str(dot_path.with_suffix(".md")),
+            "--report",
+            str(report),
+        ]
+    )
+    capsys.readouterr()
+
+    text = report.read_text(encoding="utf-8")
+    assert "[PASS] A10" in text, text
+
+    # And the graph really does exercise the rule: a graph with no evidence
+    # gate at all would pass A10 vacuously and calibrate nothing.
+    graph = checker.parse_dot_min(dot_path.read_text(encoding="utf-8"))
+    assert checker.evidence_gates(graph), f"{shipped} has no evidence gate to calibrate against"
 
 
 def test_the_authoring_attractor_obeys_the_contract_it_enforces(checker, tmp_path, capsys):

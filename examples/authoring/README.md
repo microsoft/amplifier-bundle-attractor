@@ -189,6 +189,29 @@ wrote a line.
 | **A7** | label-routing edges conjoin `&& outcome=success` where the source can also fail | a failing tool node does not refresh `context.tool.last_line`, so a **stale** label can match alongside the failure edge on a later visit ([`docs/ROUTING-REFERENCE.md`](../../docs/ROUTING-REFERENCE.md) §3) |
 | **A8** | no failure outcome routed into the terminal success node | this converts a failure into a successful run. The engine's own lint calls this `TOPO-006` and **warns**; here it **blocks** |
 | **A9** | a companion `.md` exists and names every reachable LLM worker | every exemplar in this repo ships with a paired guide, because a graph shows what it does and not why it is shaped that way. Coverage is the machine-checkable core of the node contract |
+| **A10** | no evidence gate routes **two different answers** into the exit | A4 asks whether the exit is reached *through* a gate; A10 asks the question left over — whether the gate's answer decided anything. `gate -> done [last_line=green]` **plus** `gate -> done [last_line=red]` satisfies A3, A4 and A8 while the run ends green whether the tests passed or not |
+
+**A10 is the hollow-gate check**, and it exists because the shape it catches is
+the cheapest available way to comply with the letter of "do not weaken a gate"
+while defeating it: the gate is not weakened, deleted or relaxed — it is left
+fully intact and simply **unwired**. Nothing else in the repo flags it, the
+engine's own linter included.
+
+Its boundary is drawn narrowly on purpose, and both edges are worth stating:
+
+- **Only the exit fires it.** Two distinct tokens landing on the same *ordinary*
+  node is inert for routing too, but it is frequently deliberate — three of this
+  repo's own shipped graphs do it on purpose, sending several distinct diagnoses
+  to one node that writes them up (`criteria_gate -> write_unspecced_finding` on
+  four separate malformed-criteria tokens). There the token is *recorded* rather
+  than routed on, which is legitimate. Two tokens into the **exit** has no such
+  reading.
+- **Only relay no-ops are seen through.** A `diamond` that merely forwards is
+  chased through, because putting one in the middle is pure laundering of the
+  same defect. The chase stops at any node that *does* something: if the two
+  answers ran different workers before converging, the gate's answer
+  demonstrably changed what happened, and whether that path should still end
+  green is a judgement A10 does not have. That one is left to the critique tier.
 
 **A5's vocabulary is deliberately explicit**, because a check nobody can satisfy
 on purpose is a trap. The budget node's `tool_command` must name one of
@@ -216,6 +239,14 @@ checkable; fitness for purpose is not. A gate can be structurally perfect and
 assert the wrong thing, or assert something that was already true. That is the
 critique node's job, and it is why the authoring pipeline still pays for an LLM
 after both machine gates are already green.
+
+That line is *semantic vs structural*, and it is worth saying where A10 sits
+relative to it. "Does this gate assert the right thing?" needs judgment and
+stays on the critique side. "Can this gate's result change where the graph
+goes?" is pure topology — a set comparison over outgoing edges, no different in
+kind from A4's reachability computation — so it belongs in the machine tier,
+where the deterministic failures are supposed to die before an LLM is paid to
+find them.
 
 ### Calibration: it admits the repo's own exemplars
 

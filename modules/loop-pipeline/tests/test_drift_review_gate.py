@@ -112,9 +112,32 @@ The repository ships a convergence loop exemplar for new authors.
 """
 
 
+#: The inventory the `inventory` node writes before any reviewer runs -- and the
+#: other half of every coverage number ``check_findings.py`` reports. Class
+#: membership here mirrors the shipped graph's own `git ls-files` patterns:
+#: `docs/*` and the root convention files are core-docs, `examples/` is
+#: examples, `agents|context|...` is guidance, `SPEC_CONFORMANCE.md|specs/` is
+#: ledgers. `examples` is deliberately the biggest class, because that is the
+#: one the first live run under-swept.
+_INVENTORY: dict[str, tuple[str, ...]] = {
+    "core-docs": ("README.md", "docs/SOME-GUIDE.md", "docs/VISION.md", "docs/QUALITY_PROTOCOL.md"),
+    "examples": (
+        "examples/00-loop.dot",
+        "examples/00-loop.md",
+        "examples/01-linear.dot",
+        "examples/01-linear.md",
+    ),
+    "guidance": ("agents/reviewer.md", "context/engine-semantics.md"),
+    "ledgers": ("SPEC_CONFORMANCE.md", "specs/canonical/spec.md"),
+}
+
+#: Filler for the inventoried files that carry no citation of their own.
+_FILLER = "# placeholder\n\nA line of real text so a citation could resolve here.\n"
+
+
 @pytest.fixture()
 def repo(tmp_path: Path) -> Path:
-    """A tiny tree with one drifting surface and two normative sources."""
+    """A tiny tree with one drifting surface, two normative sources, and an inventory."""
     root = tmp_path / "repo"
     (root / "docs").mkdir(parents=True)
     (root / "specs" / "canonical").mkdir(parents=True)
@@ -123,7 +146,29 @@ def repo(tmp_path: Path) -> Path:
     (root / "docs" / "QUALITY_PROTOCOL.md").write_text(_QUALITY_PROTOCOL, encoding="utf-8")
     (root / "specs" / "canonical" / "spec.md").write_text(_NORMATIVE_SPEC, encoding="utf-8")
     (root / "README.md").write_text(_README, encoding="utf-8")
+
+    for paths in _INVENTORY.values():
+        for rel in paths:
+            target = root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                target.write_text(_FILLER, encoding="utf-8")
+
+    _write_inventory(root, _INVENTORY)
     return root
+
+
+def _write_inventory(repo: Path, inventory: dict[str, tuple[str, ...]]) -> Path:
+    """Write the per-class surface lists exactly as the `inventory` node does."""
+    directory = repo / ".drift-review" / "inventory"
+    directory.mkdir(parents=True, exist_ok=True)
+    for cls, paths in inventory.items():
+        (directory / f"{cls}.txt").write_text("\n".join(sorted(paths)) + "\n", encoding="utf-8")
+    return directory
+
+
+def _coverage(repo: Path) -> str:
+    return (repo / ".drift-review" / "coverage.txt").read_text(encoding="utf-8")
 
 
 def _good_finding() -> dict:
@@ -147,16 +192,20 @@ def _good_finding() -> dict:
 
 
 def _corpus() -> dict[str, dict]:
-    """One admissible raw file per class: findings on core-docs, clean elsewhere."""
+    """One admissible raw file per class: findings on core-docs, clean elsewhere.
+
+    Every class sweeps its whole inventory, so the baseline is 100% coverage
+    and a mutation below can only be moving the number it means to move.
+    """
     corpus: dict[str, dict] = {
         "core-docs": {
             "class": "core-docs",
-            "swept": ["README.md", "docs/SOME-GUIDE.md"],
+            "swept": list(_INVENTORY["core-docs"]),
             "findings": [_good_finding()],
         }
     }
     for cls in _CLASSES[1:]:
-        corpus[cls] = {"class": cls, "swept": ["README.md"], "findings": []}
+        corpus[cls] = {"class": cls, "swept": list(_INVENTORY[cls]), "findings": []}
     return corpus
 
 
@@ -201,12 +250,14 @@ def test_admits_a_shaped_corpus_and_writes_the_findings_file(checker, repo, caps
     assert written["findings"][0]["id"] == "DR-CORE-001"
     # The swept record survives into the corpus: "clean" and "never looked" must
     # stay distinguishable downstream.
-    assert written["swept"]["guidance"] == ["README.md"]
+    assert written["swept"]["guidance"] == list(_INVENTORY["guidance"])
     assert "FINDINGS ADMITTED" in _report(repo)
 
 
 def test_zero_findings_is_a_result_not_a_failure(checker, repo, capsys):
-    corpus = {cls: {"class": cls, "swept": ["README.md"], "findings": []} for cls in _CLASSES}
+    corpus = {
+        cls: {"class": cls, "swept": list(_INVENTORY[cls]), "findings": []} for cls in _CLASSES
+    }
     _write(repo, corpus)
     assert _run(checker, repo) == 0
     assert capsys.readouterr().out == "findings_ok"
@@ -497,6 +548,207 @@ def test_the_repair_loop_is_bounded_and_exhaustion_is_a_distinct_token(checker, 
 
 
 # ---------------------------------------------------------------------------
+# Coverage: `swept` reconciled against the inventory (issue #244)
+#
+# `swept` used to be an attestation nothing ever checked. A reviewer that read
+# half its class and reported half its class passed every rule, and the run
+# published a clean four-class sweep -- the first live run swept 62 of 114
+# inventoried `examples` files and said "129 surfaces swept", a number larger
+# than the honest one. These cases pin the three ways that number lied.
+# ---------------------------------------------------------------------------
+
+
+def test_an_under_sweep_is_measured_named_and_published(checker, repo, capsys):
+    """RED before: 1-of-4 was indistinguishable from 4-of-4. Now it is on the record.
+
+    Deliberately NOT a rejection. The gate can compare the array to the
+    inventory; it cannot check the reading, so a pass/fail bar there would buy
+    a full-looking array rather than a full sweep. An honest partial sweep is a
+    fine outcome -- an unmarked one is not.
+    """
+    corpus = _corpus()
+    corpus["examples"]["swept"] = ["examples/00-loop.dot"]
+    _write(repo, corpus)
+
+    assert _run(checker, repo) == 0
+    assert capsys.readouterr().out == "findings_ok"
+
+    report = _report(repo)
+    assert "examples: 1/4 (25%)" in report
+    assert "NOT swept (3)" in report
+    assert "examples/01-linear.dot" in report
+
+    # The honest fraction rides into the contract file the report must carry,
+    # so the deliverable cannot publish a different number than the record.
+    assert "examples: 1/4 (25%)" in _coverage(repo)
+
+    # And the headline is the in-class total against the inventory, never the
+    # sum of the array lengths.
+    assert "swept:    9 of 12 inventoried in-class surfaces (75%)" in report
+
+
+def test_out_of_class_reads_are_flagged_not_counted_as_swept_surfaces(checker, repo, capsys):
+    """RED before: reading the spec for context inflated the class's own count.
+
+    Every reviewer is TOLD to open the canonical spec, the vision and the
+    ledgers before it reads for drift, so these paths belong in `swept`. They
+    are simply not surfaces of the class under review, and counting them as
+    such is what turned 118 real surfaces into a reported 129.
+    """
+    corpus = _corpus()
+    corpus["examples"]["swept"] = [*_INVENTORY["examples"], "specs/canonical/spec.md"]
+    _write(repo, corpus)
+
+    assert _run(checker, repo) == 0
+    assert capsys.readouterr().out == "findings_ok"
+
+    report = _report(repo)
+    assert "examples: 4/4 (100%)" in report, report
+    assert "read but out of class (1" in report
+    assert "specs/canonical/spec.md" in report
+    assert "1 out-of-class source(s) read" in report
+
+    written = json.loads((repo / ".drift-review" / "findings.json").read_text(encoding="utf-8"))
+    examples = next(c for c in written["coverage"] if c["class"] == "examples")
+    assert examples["in_class"] == 4
+    assert examples["out_of_class"] == ["specs/canonical/spec.md"]
+
+
+def test_a_duplicated_path_is_counted_once_and_named(checker, repo, capsys):
+    """RED before: `context/engine-semantics.md` twice counted twice.
+
+    Bookkeeping rather than dishonesty -- and it inflated the headline just as
+    effectively, so it is deduplicated and reported rather than ignored.
+    """
+    corpus = _corpus()
+    corpus["guidance"]["swept"] = [*_INVENTORY["guidance"], "context/engine-semantics.md"]
+    _write(repo, corpus)
+
+    assert _run(checker, repo) == 0
+    assert capsys.readouterr().out == "findings_ok"
+
+    report = _report(repo)
+    assert "guidance: 2/2 (100%)" in report
+    assert "listed more than once (1, counted once)" in report
+    assert "1 duplicate entr" in report
+
+    written = json.loads((repo / ".drift-review" / "findings.json").read_text(encoding="utf-8"))
+    guidance = next(c for c in written["coverage"] if c["class"] == "guidance")
+    assert guidance["reported"] == 3
+    assert guidance["in_class"] == 2
+    assert guidance["duplicates"] == ["context/engine-semantics.md"]
+
+
+def test_a_class_that_swept_none_of_its_own_inventory_is_rejected(checker, repo, capsys):
+    """The one coverage rule with teeth -- and it is the rule that was already there.
+
+    "A class must say what it swept" was always the contract; it was measured
+    against the array's length rather than against the class. A reviewer whose
+    whole array is out-of-class context files read nothing of its own class,
+    and that is not a partial sweep, it is an absent one.
+    """
+    corpus = _corpus()
+    corpus["examples"]["swept"] = ["specs/canonical/spec.md", "docs/VISION.md"]
+    _write(repo, corpus)
+
+    assert _run(checker, repo) == 0
+    assert capsys.readouterr().out == "findings_bad"
+
+    report = _report(repo)
+    assert "NONE of them are in" in report
+    assert "examples.txt" in report
+    assert "no review of 'examples' to report" in report
+
+
+def test_the_arithmetic_matches_the_first_live_run(checker):
+    """Re-derived from the archived 2026-08-15 run, not carried over from prose.
+
+    `examples`: 68 reported entries over a 114-file inventory, of which 62 were
+    in class and 6 were normative sources read for context -- so 52 files were
+    never opened and the report said nothing. This pins the arithmetic that
+    turns that into a published `62/114 (54%)`.
+    """
+    inventory = {f"examples/f{i}.md" for i in range(114)}
+    swept = [f"examples/f{i}.md" for i in range(62)] + [
+        "specs/canonical/attractor-spec-canonical.md",
+        "docs/VISION.md",
+        "specs/EXTENSIONS.md",
+        "SPEC_CONFORMANCE.md",
+        "docs/QUALITY_PROTOCOL.md",
+        "docs/PIPELINE_PATTERNS.md",
+    ]
+    entry = checker.class_coverage("examples", swept, inventory)
+
+    assert entry["reported"] == 68
+    assert entry["inventory"] == 114
+    assert entry["in_class"] == 62
+    assert len(entry["out_of_class"]) == 6
+    assert entry["duplicates"] == []
+    assert len(entry["unswept"]) == 52
+    assert checker.coverage_line(entry) == "examples: 62/114 (54%)"
+
+
+def test_the_unswept_listing_is_bounded_but_the_count_never_is(checker):
+    """A 52-file gap must be legible without burying the rest of the report."""
+    inventory = {f"examples/f{i}.md" for i in range(60)}
+    entry = checker.class_coverage("examples", ["examples/f0.md"], inventory)
+    lines = checker.coverage_report_lines([entry])
+    body = "\n".join(lines)
+
+    assert "NOT swept (59)" in body
+    assert f"and {59 - checker.MAX_UNSWEPT_NAMED} more" in body
+
+
+def test_coverage_is_reported_on_a_rejected_round_too(checker, repo, capsys):
+    """The postmortem reads findings-report.txt; coverage is evidence, not a reward."""
+    corpus = _mutate(_set("drift.line", 9999))
+    corpus["examples"]["swept"] = ["examples/00-loop.dot"]
+    _write(repo, corpus)
+
+    assert _run(checker, repo) == 0
+    assert capsys.readouterr().out == "findings_bad"
+    assert "examples: 1/4 (25%)" in _report(repo)
+
+
+def test_a_rejected_round_removes_a_stale_coverage_contract(checker, repo, capsys):
+    """report_gate holds report.md to coverage.txt, so a stale copy would admit
+    this round's report against last round's numbers."""
+    _write(repo, _corpus())
+    assert _run(checker, repo) == 0
+    assert capsys.readouterr().out == "findings_ok"
+    coverage_path = repo / ".drift-review" / "coverage.txt"
+    assert coverage_path.is_file()
+
+    _write(repo, _mutate(_set("drift.line", 9999)))
+    assert _run(checker, repo) == 0
+    assert capsys.readouterr().out == "findings_bad"
+    assert not coverage_path.exists()
+
+
+def test_a_missing_inventory_is_a_machinery_failure_not_a_verdict(checker, repo, capsys):
+    """Reconciliation without the inventory is not reconciliation.
+
+    Degrading quietly back to attestation-only is precisely the state issue
+    #244 describes, so its absence exits nonzero with no token and routes to
+    the loud terminal -- the same treatment a missing raw directory gets.
+    """
+    _write(repo, _corpus())
+    (repo / ".drift-review" / "inventory" / "examples.txt").unlink()
+
+    assert _run(checker, repo) != 0
+    assert capsys.readouterr().out == ""
+
+
+def test_an_empty_inventory_class_is_also_a_machinery_failure(checker, repo, capsys):
+    """An empty list would make every class trivially 0/0 (0%) and say nothing."""
+    _write(repo, _corpus())
+    (repo / ".drift-review" / "inventory" / "guidance.txt").write_text("\n", encoding="utf-8")
+
+    assert _run(checker, repo) != 0
+    assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
 # Cannot-run is not the same as bad-findings
 # ---------------------------------------------------------------------------
 
@@ -533,6 +785,13 @@ def _report_gate_command() -> str:
     return str(graph.nodes["report_gate"].attrs["tool_command"])
 
 
+#: What check_findings.py writes beside findings.json on admission, and what
+#: report_gate now requires report.md to carry verbatim.
+_COVERAGE_TXT = (
+    "core-docs: 4/4 (100%)\nexamples: 2/4 (50%)\nguidance: 2/2 (100%)\nledgers: 2/2 (100%)\n"
+)
+
+
 def _report_gate_workspace(tmp_path: Path) -> Path:
     """A workspace holding an admitted corpus and a report that drops its finding."""
     state = tmp_path / ".drift-review"
@@ -540,6 +799,7 @@ def _report_gate_workspace(tmp_path: Path) -> Path:
     (state / "findings.json").write_text(
         '{"finding_count": 1, "findings": [{"id": "DR-001"}]}\n', encoding="utf-8"
     )
+    (state / "coverage.txt").write_text(_COVERAGE_TXT, encoding="utf-8")
     (state / "report.md").write_text(
         "a report naming neither the admitted finding nor the swept classes\n", encoding="utf-8"
     )
@@ -561,8 +821,15 @@ def _run_report_gate(workspace: Path, max_reports: str = "2") -> str:
 
 
 def _complete_report(workspace: Path) -> None:
+    """A report that names the finding, all four classes, AND the measured coverage.
+
+    The coverage lines are what stop the deliverable and the admission record
+    publishing two different numbers for the same run, so a report without them
+    is exactly as incomplete as one that dropped a finding.
+    """
     (workspace / ".drift-review" / "report.md").write_text(
-        "DR-001 across core-docs, examples, guidance, ledgers\n", encoding="utf-8"
+        "DR-001 across core-docs, examples, guidance, ledgers\n\n" + _COVERAGE_TXT,
+        encoding="utf-8",
     )
 
 
@@ -628,6 +895,18 @@ def test_the_shipped_graph_keeps_its_layer_three_contract():
 
     # The gate that judges findings runs the checker shipped next to the graph.
     assert "check_findings.py" in str(graph.nodes["findings_gate"].attrs.get("tool_command"))
+
+    # The measured coverage is carried into the deliverable BY A GATE, not by a
+    # worker's good intentions: report_gate requires coverage.txt to exist and
+    # requires report.md to carry every line of it verbatim. Without both, the
+    # honest fraction is advice and the headline can drift back to the reported
+    # array length.
+    report_gate_command = str(graph.nodes["report_gate"].attrs.get("tool_command"))
+    assert "coverage.txt" in report_gate_command
+    assert "read -r cl" in report_gate_command
+    consolidate_prompt = str(graph.nodes["consolidate"].prompt or "")
+    assert "coverage.txt" in consolidate_prompt
+    assert "VERBATIM" in consolidate_prompt
 
     # Both corrective cycles exist: repair findings, and repair the report.
     pairs = {(e.from_node, e.to_node) for e in graph.edges}

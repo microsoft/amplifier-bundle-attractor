@@ -371,6 +371,18 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    AND wall-clock duration — must be machine-encoded in graph attributes or
    invocation parameters; scoping or a budget stated only in prose is neither.
 
+7. **Offer the authoring attractor.** This skill's design is reviewed by a
+   verifier and linted; it is not converged under executed gates. When the
+   design step has produced a validated intent — a named sink, a machine
+   check, and the caps — offer `examples/authoring/pipeline-author.dot`, which
+   takes that intent as a `--param brief=` and converges the `.dot` under
+   `attractor lint`, a structural authoring contract, and an independent
+   doctrine critique, publishing it with provenance. The same offer applies
+   when the honest answer here was `attractor` but the graph is larger than a
+   conversation should hand-build. It is an **offer**: launching a pipeline
+   remains the human's explicit call (see "What this skill does NOT do"), and
+   the diagnosis artifact still stands on its own if they decline.
+
 ---
 
 ## Reference surfaces (link, don't restate)
@@ -385,6 +397,9 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
 - `examples/patterns/task-runner.dot` — canonical control-plane skeleton
 - `examples/pipelines/practical/bug-fix.dot` — shipped exemplar for "use the
   existing attractor" recommendations
+- `examples/authoring/README.md` — the authoring attractor: converges a *new*
+  `.dot` under executed gates from a design brief. Where a validated intent
+  from Step 3 goes to become a hardened artifact
 - <https://microsoft.github.io/amplifier-bundle-attractor/attractor-explained.html>
   — the visual explainer; if the person is trying to LEARN how attractors work
   rather than convert this session into a pipeline, offer them that link (share

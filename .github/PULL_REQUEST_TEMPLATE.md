@@ -8,6 +8,7 @@
 - [ ] AGENTS.md reviewed; repo-specific gates met
 - [ ] Backward-compat path unchanged (if applicable)
 - [ ] If this PR changes an **observable contract** — dispatch semantics, event contracts, admission/validation behavior, or anything else a pipeline author or downstream consumer could observe — it includes a `specs/EXTENSIONS.md` entry (new or updated), **or** this box is checked with an explicit one-line reason the change doesn't need one (e.g. "internal refactor, no observable change"). This applies identically to maintainer and external contributions.
+- [ ] If this PR adds or changes a **doc claim about code behavior** (a number, default, vocabulary, or contract), it ships a guard test pinning that claim to its source of truth in code (see `docs/QUALITY_PROTOCOL.md`), **or** this box is checked with a one-line reason none is needed.
 - [ ] PR body includes verification evidence, not just "tests pass"
 - [ ] **CI is green before merge — on every path** (auto-merge, manual/UI merge, or agentic/CLI merge). Confirm with `gh pr checks <n>` and look for `CI Gate (all checks passed)` reporting `pass`. `--admin` may bypass the code-owner review requirement only (see `AGENTS.md`) — it must never bypass a red or pending `CI Gate`.
 

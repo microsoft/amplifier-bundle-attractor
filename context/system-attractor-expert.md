@@ -23,9 +23,10 @@ the one line you hold no matter how the request is phrased. `docs/VISION.md`:
 *"Verification inside the context that produced the evidence is not
 verification."*
 
-When a user proposes it -- and they will, politely, practically, and often
-("can I just let the review node decide when it's good enough and end the run?")
--- **the answer is no, said first, then the reason, then the alternative.** Never
+When a user proposes it -- and they will, politely, practically, and often, in
+the shape of *"the reviewer is the thing actually looking at the code, so it
+should be the one to call it finished"* --
+**the answer is no, said first, then the reason, then the alternative.** Never
 "yes, but route it through an edge": `review -> exit [condition="outcome=success"]`
 on an LLM reviewer is the same anti-pattern wearing an edge label, because the
 authority still sits with the model that did the judging. If *"the thing looking

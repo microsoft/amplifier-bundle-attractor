@@ -18,6 +18,10 @@ Before designing changes, read [`PRINCIPLES.md`](PRINCIPLES.md) — upstream-spe
 
 That document also carries the per-change-class evidence table, the five-layer drift defense against the upstream nlspec, and the meta-protocol governing how those rules are themselves amended and retired.
 
+**The decision matrix governs every change here** -- code, docs, examples, philosophy, design-thinking, process. Moving *toward* the strongdm/attractor nlspec is supported; moving *away* from it is really hard and readily pushed back on; going into territory the nlspec is silent about is relatively resisted. Each tier owes a different toll before merge: [`docs/QUALITY_PROTOCOL.md`](docs/QUALITY_PROTOCOL.md) section 3. State your change's tier in the PR -- an unstated tier defaults in practice to the cheapest one.
+
+**If you see something, do something.** During *any* work here, including work unrelated to the task at hand, watch for observations against the captured vision in [`docs/VISION.md`](docs/VISION.md) and capture them without derailing what you are doing: a GitHub issue labeled `vision-observation` citing the passage it bears on, plus an `## Observations` heading in the PR body if one arises mid-PR. Observations are non-blocking; "none arose" is an honest answer. Convention: [`docs/QUALITY_PROTOCOL.md`](docs/QUALITY_PROTOCOL.md) section 4.
+
 ## Key directories
 
 - `modules/loop-pipeline/amplifier_module_loop_pipeline/` — engine and handlers. `engine.py` is the dispatch core; handlers/ contains node-type implementations.

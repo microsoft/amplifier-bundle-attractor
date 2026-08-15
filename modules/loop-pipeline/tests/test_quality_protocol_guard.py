@@ -1,4 +1,4 @@
-"""Drift guard for docs/QUALITY_PROTOCOL.md -- Q-300..Q-303.
+"""Drift guard for docs/QUALITY_PROTOCOL.md and docs/VISION.md -- Q-300..Q-307.
 
 Guards the quality protocol itself against its own external references going
 stale.  The doc is binding on contributors and on AI coding agents working
@@ -27,8 +27,17 @@ Claims guarded, and what each is resolved against:
          -> ``specs/canonical/attractor-spec-canonical.md`` exists, and the
             sha the doc records appears in ``SPEC_CONFORMANCE.md`` at the
             ``SYNC-1`` row the doc names as the pin's home
-  Q-303  the Changelog section the meta-protocol (section 5) requires
+  Q-303  the Changelog section the meta-protocol (section 7) requires
          -> the section exists and carries at least one dated entry
+  Q-304  the captured vision the protocol now reads against
+         -> ``docs/VISION.md`` exists and carries its own dated Changelog
+  Q-305  VISION.md states the decision matrix, and the repo-relative files
+         it cites resolve -> every relative markdown link lands on a real file
+  Q-306  the protocol carries the decision-matrix section and names the
+         ``vision-observation`` label the observation convention depends on
+         -> both are present in the page
+  Q-307  the maintainer's decision-matrix ruling is quoted on two pages
+         -> the two quotes are byte-identical once whitespace-normalized
 
 Honest limits:
   - Q-300 extracts filenames by regex over backticked prose.  A guard file
@@ -40,14 +49,25 @@ Honest limits:
     the matrix's SYNC row owns the byte-level sha256 pin.  This check owns
     the narrower claim that the doc and the ledger name the same commit.
   - Q-303 asserts a dated entry exists, not that the newest entry describes
-    the newest amendment.  No mechanical check can know that; section 5's
+    the newest amendment.  No mechanical check can know that; section 7's
     review owns it.
+  - Q-304..Q-307 deliberately do **not** guard the vision's prose.  A vision
+    is judgment, not a set of fact claims about code; a guard over its
+    wording would pin taste rather than truth, and would fail exactly when
+    someone improved it.  What they guard is its *structure* (it exists, it
+    has an amendment history, it states its governing rule, its citations
+    resolve) and the one thing that can silently rot -- a maintainer ruling
+    duplicated across two pages, where editing one copy leaves the other
+    quietly misquoting him.
+  - The ``vision-observation`` label itself is repo-external state (GitHub),
+    which these suites cannot and should not reach.  Q-306 asserts the doc
+    *states the label name*, which is the part that can drift in-tree.
   - This module skips wholesale when ``docs/QUALITY_PROTOCOL.md`` is absent,
     so the loop-pipeline suite still runs in a module-only/partial checkout.
 
-Reference: ``docs/QUALITY_PROTOCOL.md`` section 3 (Layers 0-2) and section 5
+Reference: ``docs/QUALITY_PROTOCOL.md`` section 5 (Layers 0-2), section 7
 (the meta-protocol, which is where this guard's own adoption condition is
-recorded).
+recorded), and sections 3-4 (the decision matrix and the observation duty).
 """
 
 import re
@@ -77,6 +97,7 @@ def _find_bundle_root() -> Path | None:
 
 BUNDLE_ROOT = _find_bundle_root()
 DOC_REL = "docs/QUALITY_PROTOCOL.md"
+VISION_REL = "docs/VISION.md"
 DOC_PATH = (BUNDLE_ROOT / DOC_REL) if BUNDLE_ROOT is not None else None
 TESTS_DIR_REL = "modules/loop-pipeline/tests"
 
@@ -312,4 +333,203 @@ def test_q303_changelog_exists_with_at_least_one_dated_entry():
         "entry. Section 5 requires every amendment to be recorded and dated; an "
         "empty changelog means either the history was dropped or entries stopped "
         "using the dated heading form this guard (and every reader) relies on."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Q-304: the captured vision the protocol reads against
+# ---------------------------------------------------------------------------
+
+
+def _vision_path() -> Path:
+    return _root() / VISION_REL
+
+
+def _vision() -> str:
+    return _vision_path().read_text(encoding="utf-8")
+
+
+def test_q304_vision_doc_exists():
+    """Layer 3 and section 4 both read against a *file*, not an inference."""
+    assert _vision_path().is_file(), (
+        f"{DOC_REL} names `{VISION_REL}` as the repo's captured vision -- Layer 3 "
+        "reads against it, and section 4's observation duty is defined as "
+        "observations *against it*.\n"
+        f"  `{VISION_REL}` does not exist in this checkout, which leaves both "
+        "pointing at nothing.\n"
+        "  Either the file moved -- update every citation in the same PR -- or "
+        "the vision capture was reverted, in which case sections 3-4 and Layer 3 "
+        "have to be rewritten with it."
+    )
+
+
+def test_q304b_vision_changelog_exists_with_a_dated_entry():
+    """VISION.md's own meta-protocol mandates a dated amendment history."""
+    doc = _vision()
+    assert re.search(r"^##\s+Changelog\s*$", doc, re.MULTILINE), (
+        f"{VISION_REL}: the `## Changelog` section is gone. That page's "
+        "'Maintaining this document' section makes it load-bearing -- amendments "
+        "land there, dated, with the evidence named, and the sections above are "
+        "only ever the current state. Without it the vision has no amendment "
+        "history and cannot be amended per its own rule."
+    )
+    changelog = doc.split("## Changelog", 1)[1]
+    entries = _CHANGELOG_ENTRY_RE.findall(changelog)
+    assert entries, (
+        f"{VISION_REL}: the Changelog carries no dated `### YYYY-MM-DD` entry. "
+        "Every amendment to the vision requires the maintainer's explicit word "
+        "and a dated record of it; an empty changelog means either the history "
+        "was dropped or entries stopped using the dated heading form."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Q-305: VISION.md states the governing rule, and its citations resolve
+# ---------------------------------------------------------------------------
+
+_MD_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+
+def test_q305_vision_names_the_decision_matrix():
+    """The vision's governing rule has to be *in* the vision."""
+    doc = _vision()
+    assert "decision matrix" in doc, (
+        f"{VISION_REL}: the page no longer says 'decision matrix'.\n"
+        "  The maintainer's 2026-08-15 ruling makes it THE governing rule of "
+        "this project -- the three postures toward the strongdm/attractor "
+        "nlspec -- and `docs/QUALITY_PROTOCOL.md` section 3 defers to this page "
+        "as where it is stated as such.\n"
+        "  If the rule was renamed, re-anchor this guard and section 3's "
+        "cross-reference in the same PR; if it was removed, that is a vision "
+        "amendment and needs the maintainer's explicit word plus a Changelog "
+        "entry."
+    )
+
+
+def test_q305b_vision_relative_links_resolve():
+    """Every repo-relative file the vision cites is a file that exists."""
+    broken = []
+    for target in _MD_LINK_RE.findall(_vision()):
+        target = target.split("#", 1)[0].strip()
+        if not target or "://" in target or target.startswith("mailto:"):
+            continue
+        resolved = (_vision_path().parent / target).resolve()
+        if not resolved.exists():
+            broken.append(f"{target} (looked for {resolved})")
+    assert not broken, (
+        f"{VISION_REL} links to files that do not exist:\n"
+        + "".join(f"  - {b}\n" for b in broken)
+        + "  The vision is a short page whose authority rests on tracing every\n"
+        "  claim to a real source. A dead citation is the page asserting a\n"
+        "  provenance it does not have. Update the link in the PR that moved\n"
+        "  the file."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Q-306: the protocol carries the decision matrix and names the label
+# ---------------------------------------------------------------------------
+
+OBSERVATION_LABEL = "vision-observation"
+
+
+def test_q306_protocol_carries_the_decision_matrix_section():
+    """Section 3's heading, anchored on the title rather than its number."""
+    assert re.search(r"^##\s+\d+\.\s+The decision matrix\s*$", _doc(), re.MULTILINE), (
+        f"{DOC_REL}: no '## <n>. The decision matrix' section heading.\n"
+        "  That section is where each matrix tier's toll is defined -- section 1's "
+        "review duties, section 2's evidence table and `docs/VISION.md` all defer "
+        "to it.\n"
+        "  The heading is matched by title, not by number, so renumbering the page "
+        "is fine; removing or renaming the section is not, and needs the "
+        "maintainer's word plus a Changelog entry."
+    )
+
+
+def test_q306b_protocol_names_the_observation_label():
+    """The observation convention is defined by a label it must name."""
+    assert f"`{OBSERVATION_LABEL}`" in _doc(), (
+        f"{DOC_REL}: the literal label string `{OBSERVATION_LABEL}` is not in the "
+        "page.\n"
+        "  Section 4's convention is mechanically 'file an issue carrying this "
+        "label'; if the page stops naming it, nobody can file one correctly and "
+        "the Layer-3 triage input silently empties.\n"
+        "  The label's existence on GitHub is repo-external state this suite "
+        "cannot see -- what it guards is that the doc still states the name."
+    )
+
+
+def test_q306c_vision_points_at_the_observation_convention():
+    """VISION.md delegates observation capture; the target must still be there."""
+    vision = _vision()
+    assert "if you see something, do something" in vision.lower(), (
+        f"{VISION_REL}: the page no longer points at the "
+        f'"if you see something, do something" convention.\n'
+        f"  Its 'Maintaining this document' section delegates observation capture "
+        f"to {DOC_REL} rather than restating it; dropping the pointer leaves "
+        "readers with a duty and no procedure."
+    )
+    assert re.search(
+        r"^##\s+\d+\.\s+\"If you see something, do something\"\s*$",
+        _doc(),
+        re.MULTILINE,
+    ), (
+        f"{DOC_REL}: no '## <n>. \"If you see something, do something\"' section "
+        f"heading, but {VISION_REL} points readers at it for how observations are "
+        "captured, triaged and resolved. Re-anchor both in the same PR."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Q-307: the maintainer's ruling is quoted identically on both pages
+# ---------------------------------------------------------------------------
+
+_RULING_START = "any changes in behavior/philosophy/decision-making/design-thinking"
+_RULING_END = "(non-specified/absent from the nlspec) territory."
+
+
+def _flatten_quote(text: str) -> str:
+    """Strip blockquote markers and collapse whitespace.
+
+    The same ruling is hard-wrapped differently on the two pages, so a raw
+    substring compare would fail on formatting rather than on meaning.
+    """
+    unquoted = [re.sub(r"^\s*>\s?", "", line) for line in text.splitlines()]
+    return re.sub(r"\s+", " ", " ".join(unquoted)).strip()
+
+
+def _extract_ruling(text: str, rel: str) -> str:
+    flat = _flatten_quote(text)
+    start = flat.find(_RULING_START)
+    assert start != -1, (
+        f"{rel}: the maintainer's decision-matrix ruling (2026-08-15) is not "
+        f"quoted here -- could not find {_RULING_START!r}.\n"
+        "  Both pages quote it verbatim on purpose: the vision states it as the "
+        "governing rule, the protocol prices each tier of it. A paraphrase on "
+        "either page is the ruling drifting from the maintainer's own words."
+    )
+    end = flat.find(_RULING_END, start)
+    assert end != -1, (
+        f"{rel}: the ruling quote starts but does not end with "
+        f"{_RULING_END!r}. The third posture -- 'RELATIVELY RESISTED ... "
+        "uncharted' -- is the one most easily dropped, and it is the one that "
+        "distinguishes this matrix from a two-way conform/diverge rule."
+    )
+    return flat[start : end + len(_RULING_END)]
+
+
+def test_q307_ruling_is_quoted_identically_on_both_pages():
+    """One maintainer ruling, two homes -- they must not drift apart."""
+    from_protocol = _extract_ruling(_doc(), DOC_REL)
+    from_vision = _extract_ruling(_vision(), VISION_REL)
+    assert from_protocol == from_vision, (
+        "DECISION-MATRIX RULING DRIFT: the maintainer's 2026-08-15 ruling reads "
+        "differently on the two pages that quote it.\n"
+        f"  {DOC_REL}:\n    {from_protocol}\n"
+        f"  {VISION_REL}:\n    {from_vision}\n"
+        "  This is the cost of quoting one ruling in two places, and the reason\n"
+        "  this check exists: editing one copy leaves the other misquoting him.\n"
+        "  Fix the copy that drifted -- do not 'meet in the middle'. If the\n"
+        "  ruling itself changed, that is an amendment: the maintainer's\n"
+        "  explicit word, both pages updated, both Changelogs entered."
     )

@@ -26,6 +26,7 @@ cited as prior-art inspiration where useful.
 
 | Guide | Description |
 |-------|-------------|
+| [Vision](docs/VISION.md) | What this repo is for and how it is steered -- the north star it carries forward from the nlspec, the **decision matrix** governing every change, the layers shipped and the layers deliberately parked, and what we resist |
 | [Getting Started](docs/GETTING-STARTED.md) | Installation, first pipeline run, provider selection, common gotchas |
 | [Attractor Explained](https://microsoft.github.io/amplifier-bundle-attractor/attractor-explained.html) | Visual explainer for people who want to understand what attractors are and how they work -- the convergence loop, evidence gates, engine mechanics, a worked run-through (rendered page; share the link) |
 | [DOT Authoring Guide](docs/DOT-AUTHORING-GUIDE.md) | How to design effective pipelines -- patterns, attributes, fidelity, stylesheets |

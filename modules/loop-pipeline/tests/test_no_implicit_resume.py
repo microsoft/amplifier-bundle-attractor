@@ -18,6 +18,14 @@ proof:
   (b) BEHAVIOR: a stale, foreign, corrupt, or v1 ``checkpoint.json`` planted
       where a fresh run can see it produces records identical to a clean-dir
       control run's, and is simply overwritten.
+
+  (c) OUTPUT SHAPE: a fresh run's own checkpoints carry NO ``resume.*`` key at
+      all. (a) and (b) both compare branch-against-branch, so neither can see
+      a resume-machinery key that leaks into EVERY fresh checkpoint equally --
+      exactly what ``context.set(RESUME_FIDELITY_CAP_KEY, None)`` did, writing
+      ``resume.fidelity_cap: null`` into every fresh run's context snapshot and
+      silently changing the fresh-run record versus main. (c) is the absolute
+      pin the other two structurally cannot provide.
 """
 
 import ast
@@ -32,7 +40,9 @@ from amplifier_module_loop_pipeline.dot_parser import parse_dot
 from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.graph import Node
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
+from amplifier_module_loop_pipeline.fidelity import RESUME_FIDELITY_CAP_KEY
 from amplifier_module_loop_pipeline.handlers.context import HandlerContext
+from amplifier_module_loop_pipeline.pipeline_events import PIPELINE_CHECKPOINT
 from amplifier_module_loop_pipeline.validation import validate_or_raise
 
 ENGINE_PATH = (
@@ -70,7 +80,7 @@ class RecordingBackend:
         return "ok"
 
 
-def _engine(logs_root, backend) -> PipelineEngine:
+def _engine(logs_root, backend, hooks=None) -> PipelineEngine:
     graph = parse_dot(DOT)
     validate_or_raise(graph)
     return PipelineEngine(
@@ -78,6 +88,7 @@ def _engine(logs_root, backend) -> PipelineEngine:
         context=PipelineContext(),
         handler_registry=HandlerRegistry(HandlerContext(backend=backend)),
         logs_root=str(logs_root),
+        hooks=hooks,
     )
 
 
@@ -227,3 +238,81 @@ async def test_fresh_run_is_inert_to_a_planted_checkpoint(tmp_path, kind):
 
     # The planted file was simply overwritten by the run that owns the dir.
     assert _checkpoint(planted_logs) == _checkpoint(control_logs)
+
+
+# ---------------------------------------------------------------------------
+# (c) Output shape: a fresh run's checkpoints carry no resume machinery at all
+# ---------------------------------------------------------------------------
+
+
+class _CheckpointContextRecorder:
+    """Reads ``checkpoint.json`` back off disk at every checkpoint write.
+
+    The engine emits ``PIPELINE_CHECKPOINT`` immediately AFTER
+    ``save_checkpoint()`` returns, so each capture is the exact bytes a
+    crashed process would have left behind at that node -- not just whatever
+    survived to the end of the run.
+    """
+
+    def __init__(self, logs_root: Path) -> None:
+        self._path = logs_root / "checkpoint.json"
+        self.contexts: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(self, event_name: str, data: dict[str, Any]) -> None:
+        if event_name != PIPELINE_CHECKPOINT:
+            return
+        written = json.loads(self._path.read_text())
+        self.contexts.append((data.get("node_id", "?"), written["context"]))
+
+
+@pytest.mark.asyncio
+async def test_no_resume_keys_in_a_fresh_checkpoint(tmp_path):
+    """A fresh run's checkpoint context contains NO ``resume.*`` key. Ever.
+
+    This is the fresh-vs-MAIN pin the AC-4 suite structurally lacked. Every
+    other AC-4 test compares one branch run against another branch run, so a
+    resume-machinery key that leaks into EVERY fresh checkpoint equally is
+    invisible to all of them -- both sides carry it, the diff is empty, the
+    test is green, and the fresh-run record has silently changed shape versus
+    main anyway.
+
+    The concrete regression: clearing the spec 5.3 rule-6 one-hop cap with
+    ``context.set(RESUME_FIDELITY_CAP_KEY, None)`` ran unconditionally on
+    every node of every run, so the key was CREATED (null-valued) on runs
+    that had never resumed anything, and rode into every checkpoint --
+    contradicting the design's own 6 ("can never leak into ... checkpoints").
+    The clear is a ``pop`` now: still unconditional (a guard that has to
+    decide whether it was armed is a guard that can be wrong), but leaving no
+    trace.
+
+    Asserted over the whole ``resume.`` namespace, not just today's one key,
+    so the next reserved resume key inherits the pin for free.
+    """
+    logs_root = tmp_path / "fresh"
+    logs_root.mkdir()
+
+    recorder = _CheckpointContextRecorder(logs_root)
+    outcome = await _engine(logs_root, RecordingBackend(), hooks=recorder).run()
+    assert outcome.status.value == "success"
+
+    # The run really did checkpoint -- otherwise this test proves nothing.
+    assert [node_id for node_id, _ in recorder.contexts] == ["start", "a", "b", "exit"]
+
+    leaked = {
+        node_id: sorted(k for k in ctx if k.startswith("resume."))
+        for node_id, ctx in recorder.contexts
+        if any(k.startswith("resume.") for k in ctx)
+    }
+    assert leaked == {}, (
+        f"fresh run leaked resume machinery into its checkpoints: {leaked}. "
+        "A fresh run never resumes anything, so no resume.* key may appear in "
+        "its context snapshot -- not even null-valued. Note that set(key, None) "
+        "CREATES the key; the one-hop cap must be cleared with pop()."
+    )
+
+    # Belt and braces: the same holds for the final on-disk file and for the
+    # engine's live context, and the reserved key specifically is absent
+    # (not merely null) -- `in` distinguishes what `.get()` cannot.
+    final_ctx = json.loads((logs_root / "checkpoint.json").read_text())["context"]
+    assert RESUME_FIDELITY_CAP_KEY not in final_ctx
+    assert not [k for k in final_ctx if k.startswith("resume.")]

@@ -52,6 +52,18 @@ class PipelineContext:
         with self._lock:
             self._values[key] = value
 
+    def pop(self, key: str, default: Any = None) -> Any:
+        """Remove a key entirely and return its value (default if absent).
+
+        Deliberately distinct from ``set(key, None)``: a null write leaves the
+        key PRESENT, so it surfaces in :meth:`snapshot` and therefore in every
+        subsequent ``checkpoint.json`` context. Reserved one-hop keys (e.g.
+        ``resume.fidelity_cap``, spec 5.3 rule 6) must leave no trace at all,
+        so their clear is a removal, not a null write.
+        """
+        with self._lock:
+            return self._values.pop(key, default)
+
     def update(self, updates: dict[str, Any]) -> None:
         """Merge multiple key-value pairs into the context."""
         with self._lock:

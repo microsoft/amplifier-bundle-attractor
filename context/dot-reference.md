@@ -2,6 +2,56 @@
 
 Quick reference for generating Attractor DOT pipelines.
 
+## This card is the attribute vocabulary. There is no other one.
+
+The shapes and attributes on this page are **the** vocabulary the shipped engine reads:
+`shape=`, `prompt=`, `tool_command=`, `goal_gate=`, `condition=`, `max_retries=`,
+`retry_target=`, `fidelity=`, `weight=`, `label=` -- those, and the rest of the tables below.
+
+**An attribute that is not on this page is not read by anything.** The parser keeps unknown
+attributes on the node and no handler ever looks at them: the engine does not reject them, does
+not warn about them, and runs the graph as though you had never written them. DOT that *looks*
+configured runs unconfigured. These are the invented spellings seen in real sessions, and every
+one of them is inert:
+
+| Invented -- does nothing | What the engine actually reads |
+|---|---|
+| `agent="..."`, `handler="agent"`, `attractor_handler=agent` | `shape=box` (the default LLM tier) |
+| `instruction="..."`, a node-level `goal="..."`, `attractor_goal="..."` | `prompt="..."` |
+| `attractor_retry_limit=3` | `max_retries=3` |
+| `shape=circle`, `shape=doublecircle`, `shape=square` | `shape=Mdiamond` (start), `shape=Msquare` (exit) |
+| an invented `verdict` variable in a condition | `condition="outcome=success"`, or `condition="context.tool.last_line=<token>"` from a real command |
+
+An unrecognized `shape=` falls back to the **codergen (LLM)** handler -- so a node you meant as a
+gate quietly becomes another model call, and the graph looks gated while nothing is being checked.
+
+**So: lint what you author, every time.** `attractor lint <file.dot>` is the fail-loud step that
+turns a silently-inert attribute into a message you can read -- a node carrying an invented
+`instruction=` surfaces as `[prompt_on_llm_nodes] LLM node 'x' has no prompt and no explicit
+label`. Author, lint, relay what it said. Handing someone a `.dot` you never linted is handing
+them a file you have not read.
+
+## Before you author: run the three-question test on the REQUEST
+
+Authoring is the second step. The first is deciding whether the thing being asked for is an
+attractor at all:
+
+1. **Is there a cycle?** -- a path backwards, so a failed attempt can be corrected.
+2. **Is the exit gated on machine-checkable evidence external to the worker** -- a real command
+   with a real exit status -- rather than on steps completing or a model's own assessment?
+3. **Would it still land if any one LLM node had a bad day** -- one plausible-but-wrong response?
+
+**A linear, gateless chain of steps is recipe territory.** Say so *before* authoring it, name the
+distinction (recipes: staged sequential work with human approval gates; attractors: machine-verified
+convergence), and give the reason. A "twelve steps, A to Z" request is the recognizable shape of
+this ask -- twelve nodes in a row is the recipe plane copied into the control plane, and it is
+exactly what `attractor lint`'s `acyclic_graph` rule says out loud: *"consider whether this pipeline
+should be a recipe instead."*
+
+If the user hears the distinction and still wants the file, **author it** -- then run
+`attractor lint` on what you wrote and relay the verdict, warnings included. Their call, made with
+the information. Not silent compliance, and not a refusal to help.
+
 ## Node Shapes -> Handlers
 
 | Shape | Handler | Purpose |
@@ -35,7 +85,10 @@ node_id [
     goal_gate=true,              // Must succeed for pipeline to pass
     max_retries=3,               // Retry on failure (default: graph-level)
     retry_target="node_id",      // Where to jump on gate failure
-    fidelity="full",             // full|compact|summary:high|summary:low
+    fidelity="full",             // full|truncate|compact|summary:low|summary:medium|summary:high
+                                 //   (all six -- `truncate` is goal+run-id only, the most
+                                 //   aggressive carryover cut and the right choice for a critic
+                                 //   that must not inherit the producing context)
     llm_provider="anthropic",    // Override provider for this node
     llm_model="claude-sonnet-4-6", // Override model
     reasoning_effort="high",     // low|medium|high -- NO DEFAULT: unset unless you set it
@@ -63,7 +116,8 @@ digraph MyPipeline {
     graph [
         goal="The overall objective -- replaces $goal in prompts",
         default_fidelity="compact",
-        default_max_retry=3,
+        default_max_retries=3,              // canonical name; `default_max_retry` is the
+                                           // legacy alias and is still accepted
         retry_target="some_node",          // Retry target when exit has unsatisfied goal gates (spec §3.4); NOT a per-node failure catch-all
         max_pipeline_duration=5m,          // Abort if exceeded
         model_stylesheet="box { llm_provider: anthropic; llm_model: claude-sonnet-4-6 }
@@ -102,25 +156,39 @@ Available keys: `outcome` (success|fail|partial_success|retry|skipped),
 
 ## 3 Patterns
 
-### Linear
+### Linear (the deliberate one-pass shape -- and the recipe warning)
 
 ```dot
 digraph { start [shape=Mdiamond]; a [prompt="Step 1: $goal"]; b [prompt="Step 2"]; done [shape=Msquare]; start -> a -> b -> done }
 ```
 
-### Conditional Loop (retry on failure)
+No cycle and no gate: nothing here can fail and be corrected, and nothing decides "done" except
+running out of nodes. `attractor lint` warns on exactly this (`acyclic_graph`). Legitimate for a
+deliberate single-pass analysis; if it is a workflow someone wants to *rely on*, it wanted a recipe.
+
+### Convergence loop (the shape that makes it an attractor)
+
+The gate is a `parallelogram` running a **real command**; its exit status is the verdict, and the
+exit is unreachable until that command goes green. The worker never certifies its own work.
 
 ```dot
 digraph {
     graph [goal="$goal"]
     start [shape=Mdiamond]; done [shape=Msquare]
-    implement [prompt="$goal", goal_gate=true, retry_target="implement", max_retries=3]
-    test [prompt="Run tests"]
-    start -> implement -> test
-    test -> done [condition="outcome=success"]
-    test -> implement [condition="outcome!=success", label="retry"]
+    implement [prompt="$goal.  If test_output.txt exists, read it -- it holds the last run's failures."]
+    test_gate [shape=parallelogram,
+               tool_command="pytest -q > test_output.txt 2>&1 && echo gate_pass || echo gate_fail",
+               goal_gate=true]
+    start -> implement -> test_gate
+    test_gate -> done      [condition="context.tool.last_line=gate_pass"]
+    test_gate -> implement [condition="context.tool.last_line=gate_fail", loop_restart="true"]
 }
 ```
+
+Note what is NOT here: no `test [prompt="Run tests"]` box node whose own outcome opens the exit.
+An LLM node reporting that the tests passed is a self-report, and a self-report is not evidence
+(see the expert brief's *"The one answer you never give"*). If you catch yourself writing a box
+node whose job is to *check*, make it a parallelogram running the check.
 
 ### Parallel Fan-Out
 
@@ -140,5 +208,11 @@ digraph {
 ## Decision: Pipeline vs Direct
 
 - **No pipeline**: Single file edit, simple question, < 2 steps.
-- **Inline pipeline**: 2-4 ordered steps, clear sequence, no branching.
-- **Full pipeline**: Branches, retries, parallel work, quality gates, human review.
+- **A recipe (not an attractor)**: staged sequential steps, one pass, human approval between
+  stages, nothing machine-checked standing between the run and "done". Name it as a recipe rather
+  than authoring it as a gateless graph.
+- **Attractor pipeline**: there is a cycle, and the exit is gated on a real command's exit status
+  external to the worker -- retries, corrective back-edges, quality gates, parallel work.
+
+The line, in one sentence from `docs/VISION.md`: *"If your pipeline graph has no cycle, it should
+probably have been a recipe."*

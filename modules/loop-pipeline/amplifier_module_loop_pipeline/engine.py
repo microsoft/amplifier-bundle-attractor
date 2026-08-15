@@ -960,7 +960,18 @@ class PipelineEngine:
                 # Spec §5.3 rule 6 is ONE hop: clear the cap the moment the
                 # handler returns, so it can never reach a later node or a
                 # checkpoint's context snapshot (Step 4b below).
-                self.context.set(RESUME_FIDELITY_CAP_KEY, None)
+                #
+                # POP, not set(None).  This runs on EVERY node of EVERY run,
+                # deliberately — an unconditional clear cannot misfire the way
+                # a "was it armed?" guard can, which is what keeps the one-shot
+                # airtight.  But a null WRITE would create the key on every
+                # fresh run too, putting `resume.fidelity_cap: null` into every
+                # fresh checkpoint's context and changing the fresh-run record
+                # vs. main (AC-4).  Removing the key keeps the unconditional
+                # clear AND leaves no trace: design §6's "can never leak into
+                # later hops or checkpoints" holds for fresh and resumed runs
+                # alike.  Pinned by test_no_resume_keys_in_a_fresh_checkpoint.
+                self.context.pop(RESUME_FIDELITY_CAP_KEY)
 
                 # Step 2.5: Check for cancellation after node execution
                 if self._check_cancelled():

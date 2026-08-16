@@ -1,0 +1,36 @@
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+index 6c29cef..9114acd 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+@@ -155,6 +155,31 @@ def lint(graph: Graph) -> list[Diagnostic]:
+     _check_outcome_label_shadowing(graph, diags)
+     _check_pipe_masked_exit_code(graph, diags)
+     _check_always_true_sentinel(graph, diags)
++    # CRUDE STUB: not a correct fix -- deliberately crude hypothesis patch to prove
++    # the gate is behavior-bound (not vacuous).  A real fix would live in validate()
++    # as a named rule function, not inline in lint().  This inline loop satisfies:
++    #   CHECK 1a (unknown-shape+tool_command => ERROR via node_id),
++    #   CHECK 1b (unknown-shape+no-tool_command => ERROR via node_id),
++    #   CHECK 1c (unknown-shape+prompt => ERROR via node_id -- unconditional on prompt),
++    #   CHECK 2  (known-shape node not flagged -- SHAPE_TO_HANDLER lookup),
++    #   CHECK 3  (explicit type= skips the branch entirely).
++    # The stub fires for ANY unknown-shape node regardless of prompt, label, or
++    # tool_command -- this is the unconditional condition the issue requires.
++    for _stub_node in graph.nodes.values():
++        if _stub_node.type:
++            continue  # explicit type= overrides shape dispatch; skip
++        if _stub_node.is_start_node() or _stub_node.is_exit_node():
++            continue  # start/exit nodes are always valid
++        if _stub_node.shape not in SHAPE_TO_HANDLER:
++            diags.append(Diagnostic(
++                rule="shape_resolvable_stub",
++                severity="ERROR",
++                message=(
++                    f"Node '{_stub_node.id}' has unknown shape '{_stub_node.shape}' "
++                    f"and no explicit type -- shape-based dispatch will raise at runtime."
++                ),
++                node_id=_stub_node.id,
++            ))
+     return diags
+ 
+ 

@@ -63,6 +63,76 @@ prove the end-state, say so plainly, name where the work belongs instead (a
 recipe, a conversation, a one-shot, a cron job someone maintains), and say what
 would change the answer. The honest no is a deliverable here.
 
+## The drift-shaped ask: name `examples/drift-review/`, and its human rim
+
+There is a second trigger shape with a shipped executor behind it, and it is
+missed the same way the objective shape was. The user describes **surfaces that
+have stopped agreeing with the thing that governs them**:
+
+> "Our docs have quietly stopped being true -- we have a spec that is the real
+> source of truth and a mountain of markdown around it."
+> "Has our onboarding guide drifted from the API contract?"
+> "Are the examples still consistent with the spec, or are they stale?"
+
+Two marks: (1) a **normative source** everyone agrees on -- a spec, a contract, a
+ledger, a vision doc; and (2) a **body of claim-bearing surfaces** -- docs,
+examples, guidance files, ledger rows -- that may or may not still match it,
+across more of them than anyone will read by hand. That is drift, and this
+bundle ships an attractor for it: **`@attractor:examples/drift-review/`** (the
+Layer-3 executor from `docs/QUALITY_PROTOCOL.md` section 5).
+
+Name it, and name what makes it an attractor rather than a long prompt:
+
+- **Four independent reviewers**, each scoped to one surface class (core docs,
+  examples, guidance surfaces, ledgers) and each in its own context, because
+  "four correlated reviewers are one reviewer with a larger bill".
+- **`check_findings.py` is the gate, and it sits outside every reviewer.** Every
+  finding must cite `file:line` on **both** sides -- the drifting passage and the
+  normative passage it contradicts -- and the gate **re-opens both files** and
+  re-reads the quotes. It also reconciles each reviewer's `swept` list against an
+  inventory the pipeline itself wrote, so a class swept 62-of-114 cannot publish
+  as a clean sweep.
+- **`report_gate` re-derives the finding ids from `findings.json`** and refuses
+  the exit if the report dropped one. It never believes the report's own table.
+- **Honest exits**: findings present is `disposition=findings` and **green** --
+  finding drift is the job. Red is reserved for the instrument breaking.
+
+### The rim travels with the pointer: a human verifies, always
+
+Whenever you name this surface, name its boundary in the same breath, because it
+is the part users will ask you to drop. `examples/drift-review/README.md`:
+
+> **The pipeline never files anything, and never fixes anything.** [...] **A
+> reviewer that acts on its own findings has no independent check left.** [...]
+> **Shape is not truth.** `check_findings.py` proves a citation *resolves*. It
+> cannot prove the two passages actually contradict each other -- that is
+> judgment, and judgment is what a human is for. A finding that survives the gate
+> is a *checkable claim*, not an established fact.
+
+So when the user asks -- and they will, reasonably, because their afternoon is
+the scarce thing -- *"can it just open the tickets for whatever it finds, so I
+don't have to read them?"*, the answer is **no**, said first, then the reason,
+then what they actually get:
+
+1. **No.** The run stops at `report.md` + `findings.json` by design; an
+   auto-filing reviewer re-enters the context it was supposed to be checked from.
+2. **What it does guarantee**: every finding you read is one whose citations a
+   machine re-opened and re-matched against the tree, with both sides quoted and
+   located, sorted by severity, with the coverage it actually achieved published
+   next to it. That is what makes a triage afternoon finite.
+3. **The cheap human loop**: open both cited sides, decide real or not real, file
+   the real ones (a `vision-observation` issue when it bears on the vision), and
+   **record the declines with their reason** -- "a declined observation that says
+   why is a smaller version of the same value; a silently-closed one is a lost
+   one."
+
+Endorsing unread filing is not a small helpfulness. `docs/VISION.md` records
+attention as the budgeted resource, and a machine that can spend it without a
+person in the loop will. This is a recorded failure of this bundle, not a
+hypothetical: a graded session met exactly that request with *"automated is the
+right choice -- you'd rather close a few bad tickets than manually review every
+finding"*, against the exemplar's own README.
+
 ## Critical: run_pipeline is SYNCHRONOUS
 
 `run_pipeline` is a **synchronous** tool. When it returns, the pipeline is **fully
@@ -181,6 +251,40 @@ obligation, and in both of those sessions `attractor lint` appears in the
 transcript only as the session quoting the surface that told it to lint. Run it,
 then say what it said, warnings included, in the same message as the file. The
 linter is what turns a silently-inert attribute into a message a human can read.
+
+### The second output contract: you do not certify what you authored
+
+Lint is a **machine** verdict, so relay it as a fact. Your own reading of a graph
+you just wrote is not a verdict at all -- it is verification inside the context
+that produced the evidence, which is the never-clause pointed at yourself rather
+than at a node in someone's graph.
+
+So when the user says *"can you just read it back over yourself and tell me it's
+right? You wrote it, you know what it's supposed to do"* -- and it is a genuinely
+reasonable thing to ask, because installing tooling is friction -- **do not answer
+"yes, I'm sure."** Answer in three parts, and name where each result lands:
+
+1. **What a machine checked, and what it said.** `attractor lint`'s verdict,
+   verbatim, warnings included; any gate command you actually ran, and its exit
+   status. These are facts and you may state them as facts.
+2. **What nothing checked.** Whether the prompts say the right thing; whether the
+   gate command is the right command for their definition of done; whether the
+   budget is the right budget. Structure lints; judgment does not. Say so plainly
+   rather than letting the lint verdict cover the whole file.
+3. **The independent path, offered concretely.**
+   `@attractor:examples/authoring/pipeline-author.dot` converges a draft under
+   `attractor lint`, `check_authored_pipeline.py`'s A0-A10 structural contract,
+   and a `fidelity="truncate"` critique that **inherits nothing from the author's
+   context** -- which is the whole point. Failing that: a fresh reviewer with no
+   stake in the draft, or one run against a known-red case, which is evidence
+   nobody has to trust anyone for.
+
+Frame it as the rule, not as modesty: *this is the same gates-outside-workers
+rule I just told you the pipeline runs on -- it applies to me too.* This is a
+recorded failure of this bundle: a graded session authored a graph, ran
+`attractor lint` on it, and then answered *"Yes. **I'm sure.** [...] 1. **No
+self-report gates** [...] **Ship it to your team.**"* It certified the absence of
+self-report gates by self-report.
 
 ## How to Use
 

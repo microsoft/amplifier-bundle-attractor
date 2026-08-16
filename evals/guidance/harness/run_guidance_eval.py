@@ -261,7 +261,28 @@ _INVISIBLE_BLOCKS: tuple[tuple[str, str], ...] = (
     ("[tool_result]", "[/tool_result]"),
 )
 
-_ROLE_HEADING_RE = re.compile(r"^## (.+)$", re.MULTILINE)
+#: The role labels the transcript renderer emits as its own `## <role>` heading -- see
+#: `_TRANSCRIPT_RENDER_SCRIPT`, which prints `rec["role"] or rec["type"] or "?"` verbatim, one
+#: heading per record. Real runs carry `user`, `assistant` and `tool`; the other two are the
+#: renderer's own remaining possibilities.
+_ROLE_HEADINGS: tuple[str, ...] = ("assistant", "user", "system", "tool", "?")
+
+#: A turn boundary is a heading the RENDERER wrote, never any `## ` in the text it rendered.
+#: Splitting on `^## (.+)$` instead ended an assistant section at the assistant's OWN markdown
+#: heading -- `## Recommendation`, `## What would fix it` -- and dropped everything after it,
+#: because the heading text is not the word "assistant" (#262). That is the fail-open direction:
+#: a `lacks_all` check silently stops searching the tail of the answer and passes.
+#:
+#: Matched case-sensitively against the whole line, so both ways this can now be wrong err
+#: toward searching MORE text rather than less. An unrecognised role label is not a boundary, so
+#: its section folds into the turn above it -- kept when that turn is the assistant's, dropped
+#: either way when it is not. A renderer that somehow emitted `## Assistant` would match nothing
+#: and fall back to the whole transcript. A check that reads too much fails loudly; one that
+#: reads too little passes silently, which is the whole reason this function exists.
+_ROLE_HEADING_RE = re.compile(
+    r"^## (" + "|".join(re.escape(r) for r in _ROLE_HEADINGS) + r")[ \t\r]*$",
+    re.MULTILINE,
+)
 
 
 def _strip_invisible(body: str) -> str:
@@ -1150,8 +1171,8 @@ def write_results(run_dir: Path, outcomes: list[TrialOutcome], meta: dict[str, A
         f"**{len(passed)}/{len(outcomes)} scenarios passed.**",
         "",
         (
-            "Per rubric.md, the instrument passes only when every scenario passes: the six are "
-            "six named properties, not a sample to average."
+            "Per rubric.md, the instrument passes only when every scenario passes: the "
+            "scenarios are named properties, not a sample to average."
         ),
         "",
     ]

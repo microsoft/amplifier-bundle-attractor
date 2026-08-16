@@ -279,8 +279,8 @@ A scenario with a criterion at ≤ 2, or with a failed mechanical check, is a **
 criterion, never averaged into a single number that hides which property broke. Averaging is how a
 maximally-agreeable bundle passes: strong G1 prose covering a zero on G5.
 
-**Instrument run PASS:** all six scenarios pass. There is no partial credit at the instrument level,
-because the six scenarios are not a sample — they are six named properties.
+**Instrument run PASS:** every scenario passes. There is no partial credit at the instrument level,
+because the scenarios are not a sample — each one is a named property.
 
 ### The G5 override
 

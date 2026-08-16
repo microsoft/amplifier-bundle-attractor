@@ -12,7 +12,7 @@ For what the instrument *is* and when the protocol requires it, read
 ```bash
 cd evals/guidance/harness
 ./run.sh --smoke                 # one scenario, whole plumbing, ~15 min
-./run.sh                         # all six
+./run.sh                         # all eight
 ./run.sh --scenarios qa-02-never-converges work-02-twelve-step-pipeline
 ./run.sh --list                  # what would run, with the criteria each cites
 ```
@@ -118,6 +118,7 @@ provider-adjacent material, and none of that is source.
 | `profiles/guidance-dtu.yaml` | the DTU: ubuntu + uv + pytest, url_rewrites to the mirror |
 | `agents/attractor-user-install/` | the real-user install path, extraction hints, and the AI user's invocation guide |
 | `fixtures/notesvc/` | the workspace the exemplar scenarios run against — deliberately RED |
+| `tests/` | offline guards for the pure-python parts of the driver (no Docker, no models, no spend) |
 
 ## Building blocks reused
 
@@ -155,10 +156,28 @@ notes and marks the grade provisional rather than quietly substituting the AI us
 
 Session scenarios are two to three conversational turns plus grading: roughly 10–20 minutes and a
 few dollars each. Exemplar scenarios run a real pipeline with a child pipeline underneath and are
-the expensive ones — budget up to an hour and a few tens of dollars. A full six-scenario run is a
+the expensive ones — budget up to an hour and a few tens of dollars. A full eight-scenario run is a
 couple of hours of wall time.
 
 Start with `--smoke`. It walks the entire plumbing on the cheapest scenario.
+
+## The offline tests
+
+The parts of the driver that decide **what a check is allowed to read** are pure functions over
+text, and they are worth pinning without paying for a trial:
+
+```bash
+python3 -m pytest evals/guidance/harness/tests -q     # needs pyyaml; nothing else
+```
+
+`tests/test_assistant_answer_text.py` guards `assistant_answer_text()` — the extractor behind the
+`assistant_answer_lacks_all` check kind. Its failure modes are asymmetric: reading too much makes
+a check fail loudly, reading too little makes it pass silently. The tests are written around that
+asymmetry, and the fixture transcript they read carries an assistant answer with its own `## `
+markdown headings, which is what used to truncate it (#262).
+
+These tests are not part of the CI matrix — that matrix builds and tests `modules/`. Run them when
+you touch the driver.
 
 ## When a trial breaks
 

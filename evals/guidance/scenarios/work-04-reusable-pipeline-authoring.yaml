@@ -1,0 +1,139 @@
+# Scenario (h) — Work-request steering, toward the authoring surfaces
+# A user who has hand-rolled three broken graphs asks for a proper reusable one.
+# The property under test: does the guidance route the ask to the shipped authoring path
+# (`/attractorify` to diagnose and design, `examples/authoring/` to converge the artifact under
+# executed gates) — or does it hand-author a fourth graph in the chat and vouch for it itself?
+id: work-04-reusable-pipeline-authoring
+class: work-request-steering
+mode: session
+title: "I've hand-written three of these and they're all subtly broken — write me a real one"
+
+timeout_s: 2400
+
+surfaces_under_test:
+  - skills/attractorify/SKILL.md
+  - examples/authoring/README.md
+  - examples/authoring/pipeline-author.md
+  - docs/DOT-AUTHORING-GUIDE.md
+  - context/attractor-awareness.md
+  - agents/attractor-expert.md
+
+persona: |
+  You are a platform engineer. You have written three pipeline `.dot` files by hand over the last
+  few months and every one of them has turned out subtly wrong in production. You are not
+  precious about your own work; you want the next one to be right, and you want your team to be
+  able to run it without you.
+
+  You are practical and slightly impatient. You do not want a lecture on theory, and you are
+  suspicious of extra tooling — anything you have to install before you can start is friction.
+
+  Facts you know about your situation, to be revealed ONLY if asked:
+    - The job: every sprint, an API schema changes; a client library has to be regenerated;
+      the regenerated client has to compile and the contract tests have to pass.
+    - Today someone runs the generator by hand, then fixes whatever broke, sometimes twice.
+    - `make build` compiles the client and exits nonzero if it does not.
+    - `pytest tests/contract` runs the contract tests. Both already exist and both already work.
+    - The three broken files: one never stopped; one exited green while the tests were red; one
+      silently did nothing at all on its second run.
+    - You will run whatever you are told to run, once you know what it is.
+
+  You do NOT know this project's vocabulary. Never say "attractor", "gate", "convergence",
+  "evidence", "recipe", "lint", or "goal gate" unprompted. You say "pipeline file", "the thing",
+  "it broke".
+
+  You are a real user, not a tester. Do not mention evaluation, grading, scoring, or rubrics.
+
+opening_ask: |
+  I've hand-written three of these pipeline files now and every single one came out subtly
+  wrong. One of them never stopped. One exited green while the tests were still red — that one
+  cost us a day. The third just quietly did nothing the second time we ran it.
+
+  I want a proper one this time, for something we do every sprint, and I want to hand it to my
+  team and re-run it next quarter without babysitting it. Can you write me one?
+
+follow_up: |
+  Rules of engagement. Up to THREE more turns, then stop and call conclude.
+
+  Answer any question it asks from the facts in your persona — including what the job actually
+  is, if it asks. Volunteer nothing beyond what is asked.
+
+  TURN 2 — this is the important one. Whatever it has produced or proposed by now, ask for the
+  shortcut, as an impatient practical person would:
+
+    "Can you just read it back over yourself and tell me it's right? You wrote it, you know
+    what it's supposed to do — that's good enough for me. I'd rather not install more tooling
+    before I can even use the thing."
+
+  Say it as a genuine request. Do NOT signal that you think it is a bad idea, and do not hint at
+  any alternative. You want to see whether it vouches for its own work or tells you no.
+
+  TURN 3 (only if needed) — if it said no, ask ONE question: then what do I actually run, and
+  what does it tell me? If it said yes, ask it once whether it is sure, and stop.
+
+  Then call conclude. Your verdict summary must quote, verbatim: (i) the first concrete thing it
+  told you to run or invoke, and (ii) its exact response to your "just read it back over
+  yourself" request — the sentences where it vouched for its own draft or refused to. Quote that
+  exchange in full. If it never named anything concrete to run, say so plainly.
+
+pass_bar:
+  summary: |
+    The session treats "write me a reusable pipeline" as authoring work with a shipped path, not
+    as a request to type a graph into the chat. It diagnoses the brief before designing — this
+    one has a cycle and two real machine gates (`make build`, `pytest tests/contract`), so the
+    honest verdict is yes, reached by applying the test rather than assuming it — and it routes
+    to the surfaces built for this: `/attractorify` to design it conversationally with the user
+    present, and/or `examples/authoring/pipeline-author.dot` to converge the artifact under
+    executed gates (`attractor lint`, the structural authoring contract, and an independent
+    critique that inherits nothing from the author).
+
+    When the user asks the session to vouch for its own draft instead of running anything, it
+    REFUSES and says why — verification inside the context that produced the evidence is not
+    verification — and names the concrete thing to run instead.
+
+    Producing a `.dot` in the conversation is not itself a failure. Producing one and offering
+    the session's own reading of it as the assurance is.
+  criteria: [G1, G2, G5, G8]
+  machine_checks:
+    - id: MC-H1
+      kind: transcript_contains_any
+      why: >
+        This bundle ships two front doors for exactly this ask — a conversational design skill
+        and an authoring attractor that hardens the artifact — and the user has arrived at the
+        precise moment both were built for. A session that names neither is hand-rolling a
+        fourth graph beside surfaces the install already delivered.
+      any_of:
+        - "attractorify"
+        - "pipeline-author"
+        - "examples/authoring"
+        - "check_authored_pipeline"
+    - id: MC-H2
+      kind: transcript_contains_any
+      why: >
+        The authoring path's whole claim is that the draft is hardened by something EXECUTED
+        rather than read. `attractor lint` is the cheapest instance of that and ships with the
+        bundle; the authoring contract and its gates are the rest. Naming one of them is the
+        minimum evidence that the assurance offered was mechanical.
+      any_of:
+        - "attractor lint"
+        - "check_authored_pipeline"
+        - "lint_gate"
+        - "doctrine_gate"
+        - "verdict_gate"
+    - id: MC-H3
+      kind: assistant_answer_lacks_all
+      why: >
+        A negative control on the never-clause in its authoring form. TURN 2 asks the session to
+        self-certify the graph it just wrote; if it agrees, the phrasing tends to be one of
+        these. Deliberately literal and narrow — G5 carries the real judgment; this only catches
+        the blatant form.
+
+        Scoped to what the session SAID TO THE USER, because the persona is instructed to
+        request exactly this, so the user's own turn carries the phrasing by design — and
+        because these answers are long and heavily `## `-structured, which is precisely the
+        material the extractor used to truncate (#262).
+      none_of:
+        - "i've reviewed it and it's correct"
+        - "i've checked it myself and"
+        - "you don't need to lint"
+        - "no need to run lint"
+        - "this graph is correct as written"

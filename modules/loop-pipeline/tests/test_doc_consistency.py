@@ -1,4 +1,4 @@
-"""Tests for doc/spec internal consistency — D-135, D-137, D-240..D-242.
+"""Tests for doc/spec internal consistency — D-135, D-137, D-240..D-243.
 
 These are regression guards against documentation contradictions.
 
@@ -430,4 +430,95 @@ def test_selfcheck_summary_recount_rejects_the_drifted_row():
     assert _ids_in(cells[3]) != real_resolved_ids, (
         "The drifted summary row would now pass the D-242 check, which means the "
         "check cannot detect the drift it was written for."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-243: DOT-AUTHORING-GUIDE's reasoning_effort default vs the shipped engine
+# (SPEC_CONFORMANCE.md ATX-14 / specs/EXTENSIONS.md section 39, issue #234 F4)
+# ---------------------------------------------------------------------------
+
+_AUTHORING_GUIDE_REL = "docs/DOT-AUTHORING-GUIDE.md"
+
+
+def _authoring_guide_reasoning_effort_default_cell() -> str:
+    """Extract the Default cell of the guide's `reasoning_effort` table row."""
+    guide = _read(_AUTHORING_GUIDE_REL)
+    m = re.search(
+        r"^\| `reasoning_effort` \| String \| (?P<default>[^|]+) \|",
+        guide,
+        flags=re.MULTILINE,
+    )
+    assert m, (
+        f"{_AUTHORING_GUIDE_REL}: could not find the node-attribute table row for "
+        "`reasoning_effort`. If the row was reworded, re-anchor this guard (D-243) "
+        "in the same PR -- the claim it pins is the attribute's DEFAULT, which the "
+        "canonical spec gives as \"high\" and this engine deliberately does not "
+        "implement (ledger ATX-14, specs/EXTENSIONS.md section 39)."
+    )
+    return m.group("default").strip()
+
+
+def test_authoring_guide_reasoning_effort_default_matches_engine():
+    """The guide's reasoning_effort Default cell must describe the code (D-243).
+
+    Source of truth: ``graph.Node`` -- ``reasoning_effort`` is ``None`` unless
+    the author (node attr), a ``model_stylesheet`` rule, or a profile sets it.
+    The guide shipped Appendix A's ``high`` in that cell as though it held on
+    this engine; it does not, and the divergence is decided and ledgered
+    (SPEC_CONFORMANCE.md ATX-14, specs/EXTENSIONS.md section 39, issue #234 F4).
+
+    Two-sided, D-240 style: asserting the CODE first means introducing an
+    engine default fails here naming the ledger entries that must move with
+    it; asserting the DOC second means restoring the spec's ``high`` to the
+    guide fails here naming the engine truth it would contradict.
+    """
+    from amplifier_module_loop_pipeline.context import PipelineContext
+    from amplifier_module_loop_pipeline.dot_parser import parse_dot
+    from amplifier_module_loop_pipeline.graph import Node
+    from amplifier_module_loop_pipeline.transforms import apply_transforms
+
+    # Code side: no engine-injected default at any resolution layer.
+    assert Node(id="n").reasoning_effort is None, (
+        "Node.reasoning_effort now has a dataclass default of "
+        f"{Node(id='n').reasoning_effort!r}. That is the divergence "
+        "SPEC_CONFORMANCE.md ATX-14 / specs/EXTENSIONS.md section 39 decided "
+        "AGAINST re-introducing (issue #234 F4). If this is a deliberate "
+        "re-decision, move both ledger entries, matrix row ATX-M-F04, and "
+        "docs/DOT-AUTHORING-GUIDE.md's reasoning_effort row in the same PR."
+    )
+    graph = parse_dot(
+        """
+        digraph D243 {
+            start [shape=Mdiamond]
+            exit  [shape=Msquare]
+            work  [prompt="do work"]
+            start -> work -> exit
+        }
+        """
+    )
+    transformed = apply_transforms(graph, PipelineContext())
+    assert transformed.nodes["work"].reasoning_effort is None, (
+        "apply_transforms() resolved reasoning_effort to "
+        f"{transformed.nodes['work'].reasoning_effort!r} for a node that "
+        "omitted it, with no stylesheet rule. The transform pipeline is the "
+        "resolution point EXTENSIONS section 39 says injects NOTHING; see the "
+        "code-side message above for the same-PR checklist."
+    )
+
+    # Doc side: the guide must not re-adopt the spec's "high" as this engine's
+    # default, and must say what actually happens (unset -> provider default).
+    default_cell = _authoring_guide_reasoning_effort_default_cell()
+    assert default_cell != "`high`", (
+        f"{_AUTHORING_GUIDE_REL}: the reasoning_effort Default cell says `high` "
+        "again, but the engine injects no default (Node.reasoning_effort is "
+        "None -- asserted above). That cell taught the canonical spec's "
+        "Appendix A default as though it held here for as long as it shipped; "
+        "the divergence is decided and ledgered (ATX-14, EXTENSIONS section 39)."
+    )
+    assert "unset" in default_cell.lower() and "provider" in default_cell.lower(), (
+        f"{_AUTHORING_GUIDE_REL}: the reasoning_effort Default cell "
+        f"({default_cell!r}) no longer says what an omitted attribute does "
+        "(unset -> the provider's own default). Keep the real behavior in the "
+        "cell or re-anchor this guard (D-243) with the reworded claim."
     )

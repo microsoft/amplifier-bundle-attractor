@@ -57,7 +57,7 @@ Maintainer ruling, 2026-08-14. The four rules that decide every disposition in t
 |------|----------------|---------------|----------|------|
 | unified-llm | ~35 | 13 | 4 (structured output, all providers) | 9 |
 | coding-agent-loop | ~17 | 9 | 2 (bugs CAL-1, CAL-2) | 7 |
-| attractor | ~30 | 10 | 7 (ATX-1, ATX-2, ATX-4, ATX-5, ATX-10, ATX-11, ATX-12) | 3 (ATX-3, ATX-6, ATX-7) |
+| attractor | ~30 | 12 | 9 (ATX-1, ATX-2, ATX-4, ATX-5, ATX-10, ATX-11, ATX-12, ATX-13, ATX-14) | 3 (ATX-3, ATX-6, ATX-7) |
 
 The engine layer (attractor) is the strongest — substantially a **superset** of the spec. The
 material weaknesses are concentrated in the LLM client's per-provider metadata and a small set
@@ -124,6 +124,8 @@ keys. Do not mark "live" until exercised against real providers (e.g. in a DTU w
 | ATX-10 | Multi-match fan-out: non-component nodes with ≥2 simultaneously-matching conditional edges routed to ALL targets in parallel (unledgered dialect; never in spec §3.3) | `§3.3 :421-458` (`best_by_weight_then_lexical`) | `engine.py` (retired `select_all_matching_edges` gate; now routes through `select_edge()` only) | **DONE** | ALIGN — conformance restored (T0-4) |
 | ATX-11 | Main-loop no-matching-edge hard-fail: a dead end with no matching outgoing edge always terminates the pipeline with `status=FAIL` + `PIPELINE_ERROR error_type=no_matching_edge`, regardless of the last outcome's status | `§3.2 step 6 :388-393` (dead end + non-FAIL outcome ⇒ `Outcome(status=SUCCESS)`) | `engine.py:853-867` (`terminate_pipeline()` + `PIPELINE_ERROR` emission); shipped since the engine's initial commit | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §33) |
 | ATX-12 | `loop_restart` is an **in-process reset**, not a terminate-and-relaunch: `$iteration`/`$loop_count` increment, completed nodes are cleared, the run directory is retained (gaining `iteration_N/`), and `context_updates` **survive** | `§2.7 :177` ("terminates the current run and re-launches with a fresh log directory"); `§3.2 step 7 :395-398` (`restart_run(...)` then `RETURN`) | `engine.py` `run()` loop-restart branch; design decision recorded at `docs/plans/2026-02-24-engine-enhancements-design.md:95-102` | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §24) |
+| ATX-13 | Unknown node shape hard-fails at dispatch instead of falling back to the default handler: `HandlerRegistry.get()` raises `ValueError` naming the shape, the node, the supported set, and the remedy | `§4.2 :603-607` (resolution order ends "3. Default handler (the codergen/LLM handler)"); `:628-629` (`RETURN default_handler`) | `handlers/__init__.py:116-121`; behavior contract `tests/test_no_silent_fallback.py`; both halves asserted by matrix row `ATX-M-F01` (`specs/conformance/attractor-matrix.yaml`) | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §38; closes issue #234 F1) |
+| ATX-14 | `reasoning_effort` unset-passthrough: no engine-injected default anywhere, so Appendix A's `"high"` does not hold — an omitted attribute reaches the provider as no reasoning parameter at all, and node attr / `model_stylesheet` / profile are the only value sources | `§2.6 :162` and Appendix A `:2020` (default `"high"`) | `graph.py:251` (`Node.reasoning_effort = None`), `backend.py:244` + `__init__.py:114` (None passthrough; spawn path omits the key), `transforms.py`/`stylesheet.py` (explicit resolution surface); asserted by matrix row `ATX-M-F04`; authoring-guide claim pinned by `tests/test_doc_consistency.py` D-243 | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §39; closes issue #234 F4) |
 
 **Shipped extensions (IMPROVE — fold into `specs/EXTENSIONS.md`):** fail-fast edge routing with
 `runs_on`/`continue_on_fail`; skip-propagation contracts (`requires=`/`outputs=`/`failed_outputs`,
@@ -208,6 +210,36 @@ are the current state; these are the reasoning behind it.
 ---
 
 ## Changelog
+
+### 2026-08-16 — issue #234 decided: ATX-13 + ATX-14 ledgered as divergences (F1/F4 from the matrix build)
+
+- **ATX-13 NEW — DECIDED — DIVERGE** — unknown node shape hard-fails at dispatch
+  (`handlers/__init__.py:116-121`) where canonical §4.2's resolve() falls through to the default
+  codergen handler. First ruling made under the decision matrix (`docs/QUALITY_PROTOCOL.md` §3):
+  drift tier, full toll paid — named safety property (no silent execution-class substitution),
+  measured evidence (PR #19 / `aa44fca`: the spec-literal fallback silently ran `shape=diamond`
+  conditional nodes as full LLM sessions when the shape was missing from the table; plus the
+  in-process demonstration that lint emits 0 ERRORs for a typo'd shape, so dispatch is the only
+  tripwire — spec-literal resolution would run a typo'd tool/human node as an LLM session that
+  reports SUCCESS), loud behavior (the raise names shape, node, valid set, remedy), and
+  `specs/EXTENSIONS.md` §38 + matrix row `ATX-M-F01` flipped OPEN-PINNED → DIVERGE-DECIDED in
+  the same PR. No behavior change — the entry records the decision.
+- **ATX-14 NEW — DECIDED — DIVERGE** — `reasoning_effort` has no engine-injected default;
+  canonical §2.6 `:162` and Appendix A `:2020` say `"high"`. Drift tier, full toll paid — named
+  safety property (no hidden engine default on a provider-mode-switching surface: a baked-in
+  `high` would flip every Anthropic node into extended thinking with `temperature` force-set to
+  1.0 and a 16000-token budget, send `reasoning` params to non-reasoning OpenAI models — live
+  400s for graphs that run clean today — and defeat ULM-7's live-proven "only when explicitly
+  set" wiring from above), honest absence rather than substitution (unset-in is unset-out: the
+  spawn path omits the key; the direct path sends no reasoning field; `Response.raw` shows the
+  request), and `specs/EXTENSIONS.md` §39 + matrix row `ATX-M-F04` flipped OPEN-PINNED →
+  DIVERGE-DECIDED in the same PR. `docs/DOT-AUTHORING-GUIDE.md`'s node-attribute table — which
+  repeated the spec's `high` as if it held here — corrected and pinned two-sided by
+  `tests/test_doc_consistency.py` D-243. No behavior change — the entry records the decision.
+- Both were OPEN-PINNED by the matrix (tranche 1) explicitly so this decision would be
+  deliberate: the rows pinned today's behavior, refused to launder it into DIVERGE-DECIDED, and
+  cited issue #234 as the pending decision. This PR is that decision landing; the issue closes
+  with it.
 
 ### 2026-08-15 — ATX-4 / ATX-5 status cells reconciled with the conformance matrix (PR #235)
 

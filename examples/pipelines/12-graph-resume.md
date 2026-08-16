@@ -205,7 +205,8 @@ Graph-level resume is not a substitute for `attractor resume`, and `attractor re
 not retire this pattern. They coexist by design -- that is the ratified ruling, not a
 compromise (`docs/designs/2026-08-14-engine-checkpoint-resume.md` §0: *"Engine resume must
 be built per §5.3 and must **coexist** with the graph-owned file-guard idempotency
-pattern. Neither disables the other."*). They answer different questions:
+pattern (`examples/pipelines/12-graph-resume.dot`, AC-5). Neither disables the other."*
+-- the ruling names this very example). They answer different questions:
 
 | | Answers | Reach for it when |
 |---|---|---|

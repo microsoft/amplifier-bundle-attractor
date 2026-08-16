@@ -4,9 +4,12 @@ Validates parsed Graph models against the rules defined in
 spec Section 7 (Validation and Linting). Produces Diagnostic objects
 with severity ERROR (blocks execution) or WARNING (informational).
 
-Spec coverage: LINT-001–018.  TOPO-001–007 are topological basin-lint rules
+Spec coverage: LINT-001–018.  TOPO-001–008 are topological basin-lint rules
 implemented here beyond the canonical spec; they are lint-only (exposed via
 ``lint()``, not ``validate()``) and do not change run-time behaviour.
+TOPO-008 is the ``attractor lint`` sibling of the authoring checker's A10
+(``examples/authoring/check_authored_pipeline.py``): an evidence gate routing
+two different answers into the exit is structurally inert.
 
 CMD-001–002 are command-content lint rules that inspect ``tool_command``
 strings for two specific hazard shapes: pipe-masked exit codes (CMD-001) and
@@ -24,7 +27,7 @@ from dataclasses import dataclass
 from .conditions import evaluate_condition, parse_condition
 from .context import PipelineContext
 from .fidelity import VALID_FIDELITY_MODES
-from .graph import Graph, Node, resolve_bool_attr
+from .graph import Edge, Graph, Node, resolve_bool_attr
 from .outcome import Outcome, StageStatus
 from .stylesheet import parse_stylesheet
 
@@ -116,8 +119,8 @@ def lint(graph: Graph) -> list[Diagnostic]:
     """Run topological (basin-lint) and command-content rules in addition to structural rules.
 
     This is the entry point for the ``attractor lint`` CLI command.  It runs
-    the full structural ``validate()`` suite plus the seven topological rules
-    (TOPO-001–007) that reason about cycle structure, handler semantics, and
+    the full structural ``validate()`` suite plus the eight topological rules
+    (TOPO-001–008) that reason about cycle structure, handler semantics, and
     evidence-routing patterns, plus the two command-content rules (CMD-001–002)
     that inspect ``tool_command`` strings for hazard shapes.
 
@@ -139,6 +142,7 @@ def lint(graph: Graph) -> list[Diagnostic]:
     _check_cycle_no_deterministic_exit(graph, diags)
     _check_fail_routed_to_exit(graph, diags)
     _check_gate_retry_budget_dead(graph, diags)
+    _check_inert_evidence_gate(graph, diags)
     _check_pipe_masked_exit_code(graph, diags)
     _check_always_true_sentinel(graph, diags)
     return diags
@@ -726,7 +730,7 @@ def _check_response_schema(graph: Graph, diags: list[Diagnostic]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Topological (basin-lint) rules — TOPO-001 through TOPO-006
+# Topological (basin-lint) rules — TOPO-001 through TOPO-008
 #
 # These rules reason about cycle structure and handler semantics, not just
 # graph topology.  They are exposed via ``lint()`` (not ``validate()``) so
@@ -1752,6 +1756,307 @@ def _check_gate_retry_budget_dead(graph: Graph, diags: list[Diagnostic]) -> None
                 ),
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# TOPO-008 — an evidence gate whose answer cannot change where the run goes
+#
+# The authoring checker (``examples/authoring/check_authored_pipeline.py``)
+# grew this rule as **A10** after issue #245: a pipeline that satisfied every
+# other doctrine check while routing BOTH of its evidence gate's answers into
+# the exit, so the run ended green whether the tests passed or failed.  A10
+# lives in the authoring layer, which only machine-authored graphs pass
+# through; a hand-authored graph with the identical shape got nothing.  This is
+# the same question, asked by ``attractor lint``, so hand-authored graphs are
+# covered too (issue #254 item 2).
+#
+# The semantics are A10's, deliberately — same evidence-gate definition, same
+# ``context.tool.last_line`` token extraction, same relay-transparent landing
+# chase, same exit-only scope — so the two layers cannot drift into disagreeing
+# about the same graph.  Two narrowings carry over unchanged, and both were
+# measured rather than assumed:
+#
+#   • **Only the exit.**  The general "two distinct tokens into ANY node" form
+#     was REJECTED on measurement: it fires on three of this repository's own
+#     deliberate ``.github/`` patterns, where several distinct diagnoses
+#     converge on one node that WRITES THEM UP rather than routes on them.
+#     Recording a token is legitimate; ending the run green either way is not.
+#   • **Only through relay no-ops.**  The landing chase sees through a node
+#     that merely forwards (a ``diamond``/``point`` with a single unconditional
+#     outgoing edge decides nothing, so entering and leaving it is
+#     indistinguishable from taking the edge directly).  It stops at any node
+#     that DOES something: if the two answers ran different work before
+#     converging, the gate's answer demonstrably changed what happened, and
+#     whether that path should still end green is a judgement this rule does
+#     not have.
+#
+# Severity: WARNING — joins the TOPO-002–007 / CMD-001–002 family.  The hazard
+# is real but intent is not statically provable, and ERROR would hard-fail
+# graphs through ``validate_or_raise``.  Calibrated over every ``.dot`` in the
+# repository (``examples/``, ``patterns/``, ``.github/``, and the test
+# fixtures): it fires on the issue-#245 B1 construction and on ZERO shipped
+# graphs.
+# ---------------------------------------------------------------------------
+
+#: Shapes that route without doing anything.  A node of one of these shapes
+#: with exactly one unconditional outgoing edge is a pure relay: the DOT
+#: authoring guide documents ``diamond`` as a no-op whose "outgoing edges do
+#: the deciding", so a diamond with nothing to decide forwards and no more.
+#: TOPO-008 sees through exactly these and nothing else, so "both answers
+#: landed in the same place" can never quietly mean "the two branches ran
+#: different work and then converged".
+_RELAY_SHAPES: frozenset[str] = frozenset({"diamond", "point"})
+
+#: Shell head-words that emit a constant or rearrange files without checking
+#: anything.  A ``tool_command`` whose every command position is one of these
+#: cannot come back with an answer the author did not already write, so the
+#: node is not an evidence gate and TOPO-008 has no opinion about it.
+_CONSTANT_EMITTER_WORDS: frozenset[str] = frozenset(
+    {
+        "printf", "echo", "exit", "return", "true", "false", ":", "cd", "mkdir",
+        "touch", "sleep", "shift", "set", "umask", "export", "unset", "break",
+        "continue", "rm", "cp", "mv", "chmod",
+    }
+)
+
+#: Shell keywords and grouping tokens — skipped past to reach the real head word.
+_SHELL_KEYWORD_WORDS: frozenset[str] = frozenset(
+    {
+        "if", "then", "else", "elif", "fi", "while", "until", "do", "done",
+        "case", "esac", "for", "select", "function", "time", "!", "in",
+    }
+)
+
+_GATE_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
+_GATE_REDIRECT_RE = re.compile(r"^\d*[<>]")
+
+#: The context key an evidence gate publishes its verdict on.
+_TOOL_LAST_LINE_KEY = "context.tool.last_line"
+
+
+def _gate_command_segments(command: str) -> list[str]:
+    """Split a shell command into command positions, respecting quotes.
+
+    Deliberately approximate — a lint-grade reader in the same spirit as
+    CMD-001's, not a shell.  It errs toward MORE segments, which can only make
+    the substantive-command search more generous, never less.
+    """
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if quote:
+            if ch == "\\" and i + 1 < n:
+                current.append(ch)
+                current.append(command[i + 1])
+                i += 2
+                continue
+            current.append(ch)
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            current.append(ch)
+            i += 1
+            continue
+        if command.startswith("&&", i) or command.startswith("||", i):
+            segments.append("".join(current))
+            current = []
+            i += 2
+            continue
+        if ch in (";", "|", "&", "\n", "(", ")", "{", "}", "`"):
+            segments.append("".join(current))
+            current = []
+            i += 1
+            continue
+        current.append(ch)
+        i += 1
+    segments.append("".join(current))
+    return segments
+
+
+def _gate_head_word(segment: str) -> str:
+    """The command word a segment actually runs, or '' if it runs nothing."""
+    for word in segment.split():
+        if word in _SHELL_KEYWORD_WORDS:
+            continue
+        if _GATE_ASSIGNMENT_RE.match(word) or _GATE_REDIRECT_RE.match(word):
+            continue
+        return word.strip('"').strip("'")
+    return ""
+
+
+def _runs_a_substantive_command(command: str) -> bool:
+    """Does *command* check or compute something real, anywhere in it?
+
+    ``[``, ``test``, ``grep``, ``pytest``, ``python3``, ``git`` — anything that
+    is not purely an emitter or a file arrangement.  ``printf gate_pass`` is
+    not a gate: it cannot fail, so nothing behind it is gated.
+    """
+    return any(
+        head and head not in _CONSTANT_EMITTER_WORDS
+        for head in (_gate_head_word(seg) for seg in _gate_command_segments(command))
+    )
+
+
+def _reachable_node_ids(graph: Graph) -> set[str]:
+    """Node ids reachable from any start node by following edges."""
+    visited: set[str] = set()
+    queue: deque[str] = deque(n.id for n in graph.nodes.values() if n.is_start_node())
+    while queue:
+        node_id = queue.popleft()
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        for edge in graph.outgoing_edges(node_id):
+            if edge.to_node in graph.nodes and edge.to_node not in visited:
+                queue.append(edge.to_node)
+    return visited
+
+
+def _is_evidence_gate(graph: Graph, node: Node, reachable: set[str]) -> bool:
+    """Is this a reachable tool node that runs a real command AND routes on it?
+
+    Three conditions, each load-bearing (A10's definition, unchanged):
+
+    * **a tool node** — one carrying a ``tool_command``.  An LLM node's opinion
+      of its own work is not evidence, however confidently it is phrased, and
+      ``_check_tool_command_handler`` already ERRORs when a recognized non-tool
+      handler carries a command, so the command IS the tool-node test here.
+    * **a substantive command** — something that can come back with an answer
+      the author did not already write.
+    * **it routes** — at least two outgoing edges, at least one conditional.
+      A node whose result changes nothing is not deciding anything.
+    """
+    if node.id not in reachable:
+        return False
+    command = str(node.attrs.get("tool_command") or "").strip()
+    if not command or not _runs_a_substantive_command(command):
+        return False
+    out = graph.outgoing_edges(node.id)
+    if len(out) < 2:
+        return False
+    return any(e.condition and e.condition.strip() for e in out)
+
+
+def _routed_last_line_token(condition: str) -> str | None:
+    """The ``tool.last_line`` value this edge condition selects ON, if any.
+
+    ``context.tool.last_line=green && outcome=success`` yields ``green``.
+    Parsed through ``conditions.parse_condition`` — the same grammar entry
+    point the engine routes with — so lint and routing cannot drift.
+
+    An INEQUALITY deliberately yields nothing: TOPO-008 reasons about which
+    ANSWER sends the run where, and "anything but green" is not an answer.
+    """
+    for key, op, value in parse_condition(condition or ""):
+        if key == _TOOL_LAST_LINE_KEY and op == "=":
+            return value.strip().strip('"').strip("'")
+    return None
+
+
+def _relay_forward_edge(graph: Graph, node_id: str) -> Edge | None:
+    """The single edge out of a pure routing no-op, or ``None`` if not one."""
+    node = graph.nodes.get(node_id)
+    if node is None or node.is_exit_node() or node.is_start_node():
+        return None
+    if node.shape not in _RELAY_SHAPES:
+        return None
+    out = graph.outgoing_edges(node_id)
+    if len(out) != 1 or (out[0].condition and out[0].condition.strip()):
+        return None
+    return out[0]
+
+
+def _token_landing(graph: Graph, edge: Edge) -> str:
+    """Where a token edge actually puts the run, seeing through relay no-ops."""
+    node_id = edge.to_node
+    seen = {edge.from_node}
+    while node_id not in seen:
+        seen.add(node_id)
+        relay = _relay_forward_edge(graph, node_id)
+        if relay is None:
+            break
+        node_id = relay.to_node
+    return node_id
+
+
+def _check_inert_evidence_gate(graph: Graph, diags: list[Diagnostic]) -> None:
+    """TOPO-008: an evidence gate that answers into the exit no matter what it finds.
+
+    The shape::
+
+        gate -> done [condition="context.tool.last_line=green"]
+        gate -> done [condition="context.tool.last_line=red"]
+
+    The command is real, the exit is reached only through the gate, and no
+    FAILURE outcome is routed anywhere near the exit — so TOPO-004, TOPO-005
+    and TOPO-006 are all green while the run ends successfully whether the
+    tests passed or not.  The gate is decorative: it runs, it prints a verdict,
+    and the graph goes to the exit either way.
+
+    This is the ``attractor lint`` sibling of the authoring checker's A10
+    (``examples/authoring/check_authored_pipeline.py``), which protects
+    machine-authored graphs only.  Same reach semantics, so a graph cannot pass
+    one layer and fail the other.
+
+    Severity: WARNING.  See the section header above for the calibration and
+    for the two narrowings (exit-only; relay-no-ops-only) that were measured
+    against this repository's own shipped graphs.
+    """
+    reachable = _reachable_node_ids(graph)
+    for node in sorted(graph.nodes.values(), key=lambda n: n.id):
+        if not _is_evidence_gate(graph, node, reachable):
+            continue
+
+        # landing node id -> token -> the edge as written
+        landed: dict[str, dict[str, str]] = {}
+        for edge in graph.outgoing_edges(node.id):
+            token = _routed_last_line_token(edge.condition)
+            if token is None:
+                continue
+            landing_id = _token_landing(graph, edge)
+            landing = graph.nodes.get(landing_id)
+            if landing is None or not landing.is_exit_node():
+                continue
+            landed.setdefault(landing_id, {})[token] = (
+                f"{node.id} -> {edge.to_node} [condition=\"{edge.condition}\"]"
+            )
+
+        for landing_id, by_token in sorted(landed.items()):
+            if len(by_token) < 2:
+                continue
+            tokens = sorted(by_token)
+            written = "; ".join(by_token[t] for t in tokens)
+            diags.append(
+                Diagnostic(
+                    rule="inert_evidence_gate",
+                    severity="WARNING",
+                    message=(
+                        f"Evidence gate '{node.id}' routes {len(tokens)} different "
+                        f"answers ({', '.join(repr(t) for t in tokens)}) into the "
+                        f"terminal success node '{landing_id}': {written}. Every one "
+                        f"of those answers ends the run green, so the gate's answer "
+                        f"decided nothing — it runs, it prints a verdict, and the "
+                        f"graph reaches the exit either way (TOPO-008)."
+                    ),
+                    node_id=node.id,
+                    fix=(
+                        f"Route the failing token somewhere that is not the success "
+                        f"door — back into the corrective loop, to a postmortem, or "
+                        f"to a LOUD escalation. If '{node.id}' is genuinely not a "
+                        f"decision point, drop the conditions and let it record "
+                        f"instead of routing on it. Same rule as the authoring "
+                        f"checker's A10 "
+                        f"(examples/authoring/check_authored_pipeline.py)."
+                    ),
+                )
+            )
 
 
 # ---------------------------------------------------------------------------

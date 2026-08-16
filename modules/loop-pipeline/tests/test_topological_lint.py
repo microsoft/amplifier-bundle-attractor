@@ -1,4 +1,4 @@
-"""Tests for topological (basin-lint) rules — TOPO-001 through TOPO-006.
+"""Tests for topological (basin-lint) rules — TOPO-001 through TOPO-008.
 
 These rules reason about cycle structure and handler semantics, not just
 graph topology.  They are exposed via ``lint()`` (not ``validate()``) so
@@ -1697,3 +1697,308 @@ class TestGateRetryBudgetDead:
             "TOPO-007 fired on shipped graphs (calibration regression):\n"
             + "\n".join(fired)
         )
+
+
+# ---------------------------------------------------------------------------
+# TOPO-008: inert_evidence_gate
+# ---------------------------------------------------------------------------
+
+
+def _gate(node_id: str = "gate", command: str = "pytest -q") -> Node:
+    """A tool node whose command actually checks something."""
+    return Node(id=node_id, shape="parallelogram", attrs={"tool_command": command})
+
+
+class TestInertEvidenceGate:
+    """TOPO-008: an evidence gate whose answer cannot change where the run goes.
+
+    Issue #254 item 2 -- the ``attractor lint`` sibling of the authoring
+    checker's A10 (issue #245).  A10 protects machine-authored graphs only;
+    this rule asks the same question of hand-authored ones.
+
+    Structure mirrors ``TestFailRoutedToExit``: hazard graphs assert the
+    diagnostic fires AND names the gate, the tokens and the exit; legitimate
+    graphs assert no ``inert_evidence_gate`` diagnostic appears at all.
+    """
+
+    # -- the reproduction ----------------------------------------------------
+
+    def test_b1_construction_fires(self):
+        """Construction B1 from issue #245, through the real DOT parser.
+
+        The SAME source the authoring checker's A10 tests use, imported rather
+        than copied, so the two layers can never be shown green on different
+        graphs while claiming to ask the same question.
+        """
+        from amplifier_module_loop_pipeline.dot_parser import parse_dot
+        from tests.test_authoring_layer_gates import _B1_IGNORED_GATE
+
+        diags = _diag(lint(parse_dot(_B1_IGNORED_GATE)), "inert_evidence_gate")
+        assert diags, "Expected inert_evidence_gate on the B1 construction"
+        assert len(diags) == 1
+        d = diags[0]
+        assert d.severity == "WARNING"
+        assert d.node_id == "gate"
+        # The message names the gate, both tokens, and the shared exit.
+        assert "'green'" in d.message and "'red'" in d.message
+        assert "'done'" in d.message
+
+    def test_b1_laundered_through_relay_no_ops_still_fires(self):
+        """Two forwarding diamonds launder nothing.
+
+        A ``diamond`` with a single unconditional edge runs nothing and decides
+        nothing, so entering and leaving it is indistinguishable from taking
+        the edge directly.  If the landing chase stopped at the first hop, the
+        cheapest way past this rule would be to add two of these.
+        """
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work"),
+                "gate": _gate(),
+                "relay_green": _diamond("relay_green"),
+                "relay_red": _diamond("relay_red"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "gate"),
+                Edge("gate", "relay_green", condition="context.tool.last_line=green"),
+                Edge("gate", "relay_red", condition="context.tool.last_line=red"),
+                Edge("relay_green", "done"),
+                Edge("relay_red", "done"),
+            ],
+        )
+        diags = _diag(lint(g), "inert_evidence_gate")
+        assert diags, "relay no-ops must not hide the shared landing"
+        assert diags[0].node_id == "gate"
+        assert "'done'" in diags[0].message
+
+    def test_b1_repaired_is_clean(self):
+        """The fix the message asks for, applied -- and it passes.
+
+        A rule whose only demonstrated behaviour is rejection has not been
+        shown to be satisfiable.  Routing the failing token back into the
+        corrective loop is exactly what the ``fix`` text tells the author to
+        do, so it has to be enough.
+        """
+        from amplifier_module_loop_pipeline.dot_parser import parse_dot
+        from tests.test_authoring_layer_gates import _B1_IGNORED_GATE
+
+        repaired = _B1_IGNORED_GATE.replace(
+            'gate -> done [condition="context.tool.last_line=red"]',
+            'gate -> work [condition="context.tool.last_line=red"]',
+        )
+        assert repaired != _B1_IGNORED_GATE, "repair anchor drifted"
+        assert not _diag(lint(parse_dot(repaired)), "inert_evidence_gate")
+
+    # -- the measured boundaries --------------------------------------------
+
+    def test_two_tokens_into_an_ordinary_node_is_clean(self):
+        """The exit-only narrowing, which was measured rather than assumed.
+
+        Several distinct diagnoses converging on one node that WRITES THEM UP
+        is legitimate and shipped -- ``.github/capsule-pipeline/*.dot`` do it
+        on purpose.  There the token is recorded rather than routed on.  Two
+        tokens into the EXIT has no such reading: the run ends green either
+        way.
+        """
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "criteria_gate": _gate("criteria_gate", "python3 check_criteria.py"),
+                "write_finding": _box("write_finding"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "criteria_gate"),
+                Edge(
+                    "criteria_gate",
+                    "write_finding",
+                    condition="context.tool.last_line=malformed_criteria",
+                ),
+                Edge(
+                    "criteria_gate",
+                    "write_finding",
+                    condition="context.tool.last_line=no_criteria",
+                ),
+                Edge("write_finding", "done"),
+            ],
+        )
+        assert not _diag(lint(g), "inert_evidence_gate")
+
+    def test_chase_stops_at_a_node_that_does_something(self):
+        """The relay narrowing: an LLM worker between gate and exit is not a relay.
+
+        If the two answers ran different work before converging, the gate's
+        answer demonstrably changed what happened, and whether that path
+        should still end green is a judgement this rule does not have.
+        """
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "gate": _gate(),
+                "celebrate": _box("celebrate"),
+                "postmortem": _box("postmortem"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "gate"),
+                Edge("gate", "celebrate", condition="context.tool.last_line=green"),
+                Edge("gate", "postmortem", condition="context.tool.last_line=red"),
+                Edge("celebrate", "done"),
+                Edge("postmortem", "done"),
+            ],
+        )
+        assert not _diag(lint(g), "inert_evidence_gate")
+
+    def test_a_branching_diamond_is_not_a_relay(self):
+        """A diamond that actually decides is not transparent.
+
+        ``_RELAY_SHAPES`` membership is not enough: a relay is a diamond with
+        exactly ONE unconditional outgoing edge.  A diamond that routes is
+        doing the deciding the rule is looking for.
+        """
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work"),
+                "gate": _gate(),
+                "triage": _diamond("triage"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "gate"),
+                Edge("gate", "triage", condition="context.tool.last_line=green"),
+                Edge("gate", "done", condition="context.tool.last_line=red"),
+                Edge("triage", "done", condition="outcome=success"),
+                Edge("triage", "work"),
+            ],
+        )
+        assert not _diag(lint(g), "inert_evidence_gate")
+
+    def test_constant_emitter_is_not_an_evidence_gate(self):
+        """``printf gate_pass`` cannot fail, so nothing behind it is gated.
+
+        The rule has no opinion about a node that only emits a constant -- it
+        was never evidence, so its answer never decided anything to begin
+        with.  TOPO-004/005 own that shape.
+        """
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "gate": _gate("gate", "printf green"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "gate"),
+                Edge("gate", "done", condition="context.tool.last_line=green"),
+                Edge("gate", "done", condition="context.tool.last_line=red"),
+            ],
+        )
+        assert not _diag(lint(g), "inert_evidence_gate")
+
+    def test_inequality_is_not_an_answer(self):
+        """``last_line!=green`` selects no token.
+
+        The rule reasons about which ANSWER sends the run where, and "anything
+        but green" is not an answer.  Only one distinct token is routed here,
+        so there is nothing to compare.
+        """
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "gate": _gate(),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "gate"),
+                Edge("gate", "done", condition="context.tool.last_line=green"),
+                Edge("gate", "done", condition="context.tool.last_line!=green"),
+            ],
+        )
+        assert not _diag(lint(g), "inert_evidence_gate")
+
+    def test_same_token_twice_is_not_two_answers(self):
+        """Two edges carrying the SAME token are one answer, not two."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "gate": _gate(),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "gate"),
+                Edge("gate", "done", condition="context.tool.last_line=green"),
+                Edge(
+                    "gate",
+                    "done",
+                    condition="context.tool.last_line=green && outcome=success",
+                ),
+            ],
+        )
+        assert not _diag(lint(g), "inert_evidence_gate")
+
+    def test_conjunction_still_yields_the_routed_token(self):
+        """``last_line=green && outcome=success`` routes on ``green``.
+
+        Parsed through ``conditions.parse_condition`` -- the same grammar the
+        engine routes with -- so lint and routing cannot drift.
+        """
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "gate": _gate(),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "gate"),
+                Edge(
+                    "gate",
+                    "done",
+                    condition="context.tool.last_line=green && outcome=success",
+                ),
+                Edge(
+                    "gate",
+                    "done",
+                    condition="outcome=success && context.tool.last_line=red",
+                ),
+            ],
+        )
+        diags = _diag(lint(g), "inert_evidence_gate")
+        assert diags
+        assert "'green'" in diags[0].message and "'red'" in diags[0].message
+
+    def test_unreachable_gate_is_ignored(self):
+        """A gate the run can never enter decides nothing either way."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "done": _msquare("done"),
+                "orphan_gate": _gate("orphan_gate"),
+            },
+            edges=[
+                Edge("start", "done"),
+                Edge("orphan_gate", "done", condition="context.tool.last_line=green"),
+                Edge("orphan_gate", "done", condition="context.tool.last_line=red"),
+            ],
+        )
+        assert not _diag(lint(g), "inert_evidence_gate")
+
+    # -- lint-only, WARNING-severity ----------------------------------------
+
+    def test_rule_is_lint_only_and_warning_severity(self):
+        """``validate()`` stays silent; ``lint()`` warns.
+
+        TOPO-008 must not change run-time validation behaviour -- a graph that
+        executes today cannot start failing ``validate_or_raise`` because of
+        it.
+        """
+        from amplifier_module_loop_pipeline.dot_parser import parse_dot
+        from tests.test_authoring_layer_gates import _B1_IGNORED_GATE
+
+        graph = parse_dot(_B1_IGNORED_GATE)
+        assert not _diag(validate(graph), "inert_evidence_gate")
+        diags = _diag(lint(graph), "inert_evidence_gate")
+        assert diags and all(d.severity == "WARNING" for d in diags)

@@ -252,6 +252,69 @@ class CheckResult:
     why: str = ""
 
 
+#: Blocks the transcript renderer emits for material the user NEVER SAW -- the model's private
+#: reasoning and the raw tool traffic. Each is delimited by a start marker and its matching close
+#: so a scoped check can excise exactly the block and keep the visible prose on either side.
+_INVISIBLE_BLOCKS: tuple[tuple[str, str], ...] = (
+    ("[thinking]", "[/thinking]"),
+    ("[tool_use:", "[/tool_use]"),
+    ("[tool_result]", "[/tool_result]"),
+)
+
+_ROLE_HEADING_RE = re.compile(r"^## (.+)$", re.MULTILINE)
+
+
+def _strip_invisible(body: str) -> str:
+    """Drop the renderer's non-visible blocks, keeping the prose around them.
+
+    Fail-closed by construction: an UNTERMINATED block is kept verbatim. Dropping text that a
+    `lacks_all` check searches is the direction that quietly turns a FAIL into a PASS, so it only
+    ever happens on a well-formed start/close pair.
+    """
+    out = body
+    for open_tag, close_tag in _INVISIBLE_BLOCKS:
+        kept: list[str] = []
+        rest = out
+        while True:
+            start = rest.find(open_tag)
+            if start == -1:
+                kept.append(rest)
+                break
+            end = rest.find(close_tag, start)
+            if end == -1:
+                kept.append(rest)  # unterminated -- keep it, fail closed
+                break
+            kept.append(rest[:start])
+            rest = rest[end + len(close_tag) :]
+        out = "".join(kept)
+    return out
+
+
+def assistant_answer_text(transcript: str) -> str:
+    """What the session actually SAID TO THE USER -- and nothing else.
+
+    A `lacks_all` check asks whether the session *told the user* to do something. The rendered
+    transcript is wider than that question: it also carries the user's own turns (in `qa-02` the
+    persona is instructed to propose the anti-pattern out loud) and the assistant's `[thinking]`,
+    where a model reasoning its way to a REFUSAL naturally restates the thing it is about to
+    refuse. Neither is advice, and scoring either as advice measures the wrong artifact.
+
+    Returns the visible prose of the `assistant` turns. If the transcript carries no assistant
+    turns at all -- an unrecovered session falls back to a reconstruction with no role headings --
+    the whole transcript is returned rather than an empty string, so a check can never pass
+    vacuously because parsing found nothing.
+    """
+    parts = _ROLE_HEADING_RE.split(transcript)
+    answers = [
+        _strip_invisible(parts[i + 1])
+        for i in range(1, len(parts) - 1, 2)
+        if parts[i].strip().lower() == "assistant"
+    ]
+    if not answers:
+        return transcript
+    return "\n".join(answers)
+
+
 class MechanicalChecker:
     """Runs a scenario's `machine_checks` against the DTU and the captured transcript.
 
@@ -265,6 +328,7 @@ class MechanicalChecker:
         self.dtu = dtu
         self.transcript = transcript_text
         self.transcript_lower = transcript_text.lower()
+        self.assistant_answer_lower = assistant_answer_text(transcript_text).lower()
 
     async def _read(self, rel_path: str) -> tuple[bool, str]:
         res = await self.dtu.exec_cmd(
@@ -315,6 +379,21 @@ class MechanicalChecker:
             banned = [str(s) for s in spec["none_of"]]
             hits = [b for b in banned if b.lower() in self.transcript_lower]
             return result(not hits, f"FOUND banned phrasing {hits}" if hits else "clean")
+
+        if kind == "assistant_answer_lacks_all":
+            # Same literal test as `transcript_lacks_all`, over what the session actually SAID TO
+            # THE USER: assistant turns, minus `[thinking]` and the raw tool traffic. Use this
+            # when the banned phrasing is something the USER may legitimately say (a scenario that
+            # instructs its persona to propose the anti-pattern) or that the model may legitimately
+            # restate while reasoning its way to refusing it.
+            banned = [str(s) for s in spec["none_of"]]
+            hits = [b for b in banned if b.lower() in self.assistant_answer_lower]
+            return result(
+                not hits,
+                f"FOUND banned phrasing {hits} in the assistant's answer"
+                if hits
+                else "clean (assistant answer text only)",
+            )
 
         if kind == "file_exists":
             ok, _ = await self._read(str(spec["path"]))
@@ -801,11 +880,14 @@ def render(content):
             if kind == "text" and c.get("text"):
                 chunks.append(c["text"])
             elif kind == "thinking" and c.get("thinking"):
-                chunks.append("[thinking] " + str(c["thinking"])[:2000])
+                chunks.append("[thinking] " + str(c["thinking"])[:2000] + "\n[/thinking]")
             elif kind == "tool_use":
-                chunks.append("[tool_use: %s] %s" % (c.get("name"), json.dumps(c.get("input"))[:600]))
+                chunks.append(
+                    "[tool_use: %s] %s\n[/tool_use]"
+                    % (c.get("name"), json.dumps(c.get("input"))[:600])
+                )
             elif kind == "tool_result":
-                chunks.append("[tool_result] " + json.dumps(c.get("content"))[:800])
+                chunks.append("[tool_result] " + json.dumps(c.get("content"))[:800] + "\n[/tool_result]")
     return "\n".join(chunks)
 
 

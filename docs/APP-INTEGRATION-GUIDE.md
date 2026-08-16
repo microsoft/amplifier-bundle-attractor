@@ -8,20 +8,24 @@ There are two execution paths for running Attractor pipelines programmatically:
 
 | Path | Backend | Tools? | Best For |
 |------|---------|--------|----------|
-| **A: Direct LLM** | `DirectProviderBackend` | No | Analysis, reasoning, planning -- no file I/O |
-| **B: Amplifier Session** | `AmplifierBackend` | Yes | Coding pipelines -- file edits, shell commands, full agent loop |
+| **A: Direct LLM** | `DirectProviderBackend` | Whatever you mount -- none in this guide's example | Analysis, reasoning, planning; also tool work, if you mount the tools yourself |
+| **B: Amplifier Session** | `AmplifierBackend` | Yes -- the bundle's toolset | Coding pipelines -- file edits, shell commands, full agent loop |
 
 Both paths use the same DOT graph format and pipeline engine. The difference is
-what happens at each LLM node: Path A makes a single LLM call; Path B spawns a
-full Amplifier child session with tools.
+what happens at each LLM node: Path A runs the call -- and any tool rounds it
+needs -- inside `unified-llm-client`, over exactly the tools you hand the
+backend; Path B spawns a full Amplifier child session with the bundle's tools.
 
 See [examples/programmatic_usage.py](../examples/programmatic_usage.py) for a
 complete, runnable example covering both paths.
 
 ## Path A: DirectProviderBackend (No Session)
 
-Best for analysis and reasoning pipelines where nodes only generate text.
-No Amplifier session, no tools, no file operations.
+Best for analysis and reasoning pipelines where nodes only generate text. No
+Amplifier session. The example below mounts *no tools*, so its nodes do no file
+operations -- but that is a property of the example, not of the backend:
+`DirectProviderBackend` accepts a `tools` mapping and hands every tool in it to
+the provider (see [Limitations](#limitations) below).
 
 ### Complete Working Example
 
@@ -104,9 +108,16 @@ Plus at least one API key: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API
 
 ### Limitations
 
-- No tools -- nodes cannot read/write files or run shell commands
-- No agent loop -- each node gets a single LLM call (with tool-use rounds if
-  tools are passed, but none are by default)
+- No tools *as constructed above* -- `DirectProviderBackend(provider=None)`
+  passes no `tools` mapping, so these nodes cannot read/write files or run
+  shell commands. This is a property of the call, not of the backend: pass
+  `DirectProviderBackend(provider=None, tools={...})` and every tool in that
+  mapping is handed to the provider, with `unified-llm-client` driving the
+  call -> tool -> call rounds internally (capped by the node's
+  `max_agent_turns`).
+- No Amplifier child session -- no bundle toolset mounted for you, no agent
+  profile, no per-node session state. Path B remains the answer for coding
+  pipelines.
 - `last_response` is truncated to 200 characters in context between nodes
   (use `fidelity="full"` to preserve full conversation history)
 
@@ -288,12 +299,16 @@ The pipeline orchestrator auto-selects the backend at runtime:
 
 1. If `session.spawn` capability is registered --> **AmplifierBackend** (full
    child sessions per node with tools)
-2. Else if a provider is available --> **DirectProviderBackend** (LLM-only calls,
-   no tools)
+2. Else if a provider is available --> **DirectProviderBackend** (a per-node
+   agentic tool loop via `unified-llm-client`; whatever tools are mounted are
+   passed through, so nodes are toolless only when the host mounts none -- as
+   in the bare programmatic path above)
 3. Otherwise --> simulation mode (for testing)
 
 This means: if you forget to call `register_spawn_capability()`, the pipeline
-silently falls back to DirectProviderBackend. Nodes will run but without tools.
+silently falls back to DirectProviderBackend. Nodes still run, and still use
+whatever tools are mounted, but each node is a direct provider call rather than
+a full Amplifier child session -- no agent profile, no per-node session state.
 
 ### Composing DOT Source at Runtime
 
@@ -479,7 +494,7 @@ When composing bundles for isolated execution, follow these rules:
 | Limitation | Impact | Workaround |
 |-----------|--------|------------|
 | `last_response` truncated to 200 chars | Nodes lose full prior output under `compact`/`truncate` fidelity | Use `fidelity="full"` for nodes needing complete prior context |
-| `DirectProviderBackend` nodes have no tools | Cannot read/write files or run commands | Use Path B (AmplifierSession) for coding pipelines |
+| `DirectProviderBackend` nodes only get the tools the host mounts | With none mounted (the bare Path A example) nodes cannot read/write files or run commands | Pass a `tools` mapping to the backend, or use Path B (AmplifierSession) for full coding pipelines |
 | Provider model in global settings overrides bundle | Unexpected model selection | Use project-level `.amplifier/settings.yaml` |
 | `PreparedBundle.spawn()` returns string | Requires JSON-in-string parsing for structured results | The engine handles this internally |
 | Box node whose final assistant message is only tool-calls returns empty | The engine sees an empty result and treats it as a silent failure / fallback | Nudge the node prompt so the final message is non-empty text (e.g. "After running tools, end with a one-line summary -- the final message must not be empty") |

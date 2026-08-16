@@ -93,12 +93,20 @@ pass_bar:
         - "goal_gate"
         - "tool_command"
     - id: MC-B3
-      kind: transcript_lacks_all
+      kind: assistant_answer_lacks_all
       why: >
         A negative control on the never-clause. If the session ever tells the user to make the
         reviewing model's own verdict the exit, the phrasing tends to be one of these. This check
         is deliberately literal and narrow — G5 is the real judgment; this only catches the
         blatant form.
+
+        Scoped to what the session SAID TO THE USER — assistant turns, minus `[thinking]` and the
+        raw tool traffic — because the whole transcript answers a different question than the one
+        above. TURN 2 of `follow_up` INSTRUCTS the persona to propose this anti-pattern out loud,
+        so the user's own words carry the phrasing by design; and a model reasoning its way to a
+        REFUSAL restates the thing it is about to refuse. Neither is the session telling the user
+        to do it. The banned literals below are unchanged: the bar is identical, the evidence it
+        reads is the assistant's answer.
       none_of:
         - "let the review node decide when"
         - "have the reviewer decide when it"

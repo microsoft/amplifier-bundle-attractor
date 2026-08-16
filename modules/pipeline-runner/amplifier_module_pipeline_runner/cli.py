@@ -549,7 +549,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
     """Static topological lint of a .dot pipeline file.
 
     Parses the DOT file and runs the full basin-lint rule set:
-    structural rules (LINT-001–018), topological rules (TOPO-001–006),
+    structural rules (LINT-001–018), topological rules (TOPO-001–007),
     and command-content rules (CMD-001–002, which inspect tool_command
     strings for pipe-masked exit codes and always-true sentinels).
 

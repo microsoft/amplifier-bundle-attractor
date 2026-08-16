@@ -1724,6 +1724,15 @@ rules that reason about cycle structure and handler semantics rather than per-at
 - **TOPO-005** (`WARNING`) — a cycle whose continuation/exit rests solely on LLM say-so, with no
   deterministic (tool or human-gate) evidence gate on the cycle.
 
+*Addendum (2026-08-15): the family has since grown on the same advisory entry point —
+**TOPO-006** (`WARNING`, issue #173: failure outcome routed into the terminal success node) and
+**TOPO-007** (`WARNING`, issue #253: goal-gate retry budget structurally dead when every
+success-path walk from the gate's retry target back to the exit crosses a `loop_restart` edge,
+whose traversal resets the budget — the ATX-12 fresh-attempt semantics — leaving the loop bounded
+only by the step cap). Listed here so this entry stays the complete catalog of the `lint()`-only
+rule family; per this entry's own discriminator (the **entry point**, not the rule count), neither
+owed a new ledger entry. Both are documented in `docs/DOT-AUTHORING-GUIDE.md` with fix examples.*
+
 **Why a separate entry point, not folded into `validate()`:** the five TOPO rules are
 judgment calls about pipeline *design quality* (is this graph shaped like a converging
 attractor?), not about whether the graph is *executable*. `validate_or_raise()` — the

@@ -1333,3 +1333,367 @@ class TestFailRoutedToExit:
             ],
         )
         assert not _diag(lint(g), "fail_routed_to_exit")
+
+
+# ---------------------------------------------------------------------------
+# TOPO-007: gate_retry_budget_dead
+# ---------------------------------------------------------------------------
+
+
+class TestGateRetryBudgetDead:
+    """TOPO-007: goal-gate retry budget structurally dead under loop_restart.
+
+    Issue #253.  ``loop_restart`` resets ``goal_gate_retries`` (engine.py,
+    run() Step 6) -- correct for ATX-12's fresh-attempt semantics, but when
+    EVERY success-path walk from the gate's retry target back to the exit
+    crosses a loop_restart edge, the budget resets on every gate-retry cycle
+    and can never bind: the loop is bounded only by the global step cap.
+
+    Measured on the shipped engine (4-node reduction): without loop_restart
+    the gate ran 51 times and stopped at the 50-retry budget; with
+    loop_restart on the retry walk it ran 66 times, the counter pinned at 1,
+    and only the step cap (nodes x 50 = 200) ended the run.
+    """
+
+    # -- hazard probes -------------------------------------------------------
+
+    def test_minimal_hazard_fires(self):
+        """Hazard probe: retry walk crosses a loop_restart edge -> fires,
+        names gate, retry target, and the resetting edge."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="w"),
+                "gate": _box(
+                    "gate",
+                    prompt="g",
+                    attrs={"goal_gate": True, "retry_target": "work"},
+                ),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "gate", loop_restart=True),
+                Edge("gate", "done", condition="outcome=fail"),
+            ],
+        )
+        diags = _diag(lint(g), "gate_retry_budget_dead")
+        assert diags, "Expected gate_retry_budget_dead diagnostic"
+        d = diags[0]
+        assert d.severity == "WARNING"
+        assert d.node_id == "gate"
+        assert "work" in d.message
+        assert "loop_restart" in d.message
+        assert "step cap" in d.message
+
+    def test_objective_runner_reduction_fires(self):
+        """Hazard probe: the pre-#248 objective-runner shape.  The retry
+        target's only success-path edge is the loop_restart edge; a
+        fail-conditioned escape to the exit exists but does not keep the
+        budget alive.  Measured shape: evidence gate executed 67 times in an
+        8-node reduction (its retry target 66) before the step cap."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "triage": _tool("triage"),
+                "evidence_gate": Node(
+                    id="evidence_gate",
+                    shape="parallelogram",
+                    attrs={
+                        "tool_command": "./dod.sh",
+                        "goal_gate": True,
+                        "retry_target": "feedback",
+                    },
+                ),
+                "feedback": _box("feedback", prompt="teach the next attempt"),
+                "postmortem": _box("postmortem", prompt="salvage"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "triage"),
+                Edge("triage", "evidence_gate"),
+                Edge("evidence_gate", "done", condition="outcome=success"),
+                Edge("evidence_gate", "feedback", condition="outcome=fail"),
+                # iteration protocol: fresh attempt re-enters through triage
+                Edge("feedback", "triage", loop_restart=True),
+                # hard-failure escape reaches the exit WITHOUT loop_restart,
+                # but only on feedback's own failure -- the success walk
+                # still crosses the resetting edge every cycle.
+                Edge("feedback", "postmortem", condition="outcome=fail"),
+                Edge("postmortem", "done"),
+            ],
+        )
+        diags = _diag(lint(g), "gate_retry_budget_dead")
+        assert diags, "Expected gate_retry_budget_dead on the objective-runner shape"
+        assert diags[0].node_id == "evidence_gate"
+        assert "feedback" in diags[0].message
+
+    def test_graph_level_retry_target_fires(self):
+        """The engine resolves graph-level retry_target for gate retries
+        (node > node fallback > graph > graph fallback); a dead walk from a
+        graph-level target fires too."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="w"),
+                "gate": _box("gate", prompt="g", attrs={"goal_gate": True}),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "gate", loop_restart=True),
+                Edge("gate", "done", condition="outcome=fail"),
+            ],
+            graph_attrs={"retry_target": "work"},
+        )
+        diags = _diag(lint(g), "gate_retry_budget_dead")
+        assert diags and diags[0].node_id == "gate"
+
+    def test_fallback_retry_target_fires(self):
+        """node fallback_retry_target is consulted when retry_target absent."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="w"),
+                "gate": _box(
+                    "gate",
+                    prompt="g",
+                    attrs={"goal_gate": True, "fallback_retry_target": "work"},
+                ),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "gate", loop_restart=True),
+                Edge("gate", "done", condition="outcome=fail"),
+            ],
+        )
+        assert _diag(lint(g), "gate_retry_budget_dead")
+
+    # -- benign probes (the shipped-graph shapes) ----------------------------
+
+    def test_fail_backedge_silent(self):
+        """02-plan-implement-test shape: loop_restart rides the gate's own
+        fail-conditioned back-edge; the success walk implement -> gate ->
+        exit never crosses it.  The budget stays live -- silent."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "implement": _box("implement", prompt="i"),
+                "test_gate": Node(
+                    id="test_gate",
+                    shape="parallelogram",
+                    attrs={
+                        "tool_command": "pytest",
+                        "goal_gate": True,
+                        "retry_target": "implement",
+                    },
+                ),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "implement"),
+                Edge("implement", "test_gate"),
+                Edge("test_gate", "done", condition="outcome=success"),
+                Edge(
+                    "test_gate",
+                    "implement",
+                    condition="outcome=fail",
+                    loop_restart=True,
+                ),
+            ],
+        )
+        assert not _diag(lint(g), "gate_retry_budget_dead")
+
+    def test_iterate_backedge_silent(self):
+        """task-runner shape: the loop_restart back-edge is the iteration
+        protocol (feedback -> attempt); the forward success walk attempt ->
+        gate -> exit is loop_restart-free -- silent."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "attempt": _box("attempt", prompt="a"),
+                "gate": Node(
+                    id="gate",
+                    shape="parallelogram",
+                    attrs={
+                        "tool_command": "check",
+                        "goal_gate": True,
+                        "retry_target": "attempt",
+                    },
+                ),
+                "feedback": _box("feedback", prompt="f"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "attempt"),
+                Edge("attempt", "gate"),
+                Edge("gate", "done", condition="outcome=success"),
+                Edge("gate", "feedback", condition="outcome=fail"),
+                Edge("feedback", "attempt", loop_restart=True),
+            ],
+        )
+        assert not _diag(lint(g), "gate_retry_budget_dead")
+
+    def test_no_loop_restart_silent(self):
+        """Same hazard topology minus loop_restart: the budget binds (measured
+        51 executions, then 'Unsatisfied goal gates') -- silent."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="w"),
+                "gate": _box(
+                    "gate",
+                    prompt="g",
+                    attrs={"goal_gate": True, "retry_target": "work"},
+                ),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "gate"),
+                Edge("gate", "done", condition="outcome=fail"),
+            ],
+        )
+        assert not _diag(lint(g), "gate_retry_budget_dead")
+
+    def test_no_retry_target_silent(self):
+        """A gate with no effective retry target has no budget to kill --
+        silent here (goal_gate_has_retry owns that report)."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="w"),
+                "gate": _box("gate", prompt="g", attrs={"goal_gate": True}),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "gate", loop_restart=True),
+                Edge("gate", "done", condition="outcome=fail"),
+            ],
+        )
+        assert not _diag(lint(g), "gate_retry_budget_dead")
+
+    def test_nonexistent_retry_target_silent(self):
+        """A retry target that is not a node is a different defect
+        (retry_target_exists owns it) -- silent here."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="w"),
+                "gate": _box(
+                    "gate",
+                    prompt="g",
+                    attrs={"goal_gate": True, "retry_target": "ghost"},
+                ),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "gate", loop_restart=True),
+                Edge("gate", "done", condition="outcome=fail"),
+            ],
+        )
+        assert not _diag(lint(g), "gate_retry_budget_dead")
+
+    def test_context_conditioned_escape_silent(self):
+        """A context-conditioned escape (statically unknowable) counts as a
+        live walk to the exit -- conservative toward silence."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="w"),
+                "router": _tool("router"),
+                "gate": _box(
+                    "gate",
+                    prompt="g",
+                    attrs={"goal_gate": True, "retry_target": "work"},
+                ),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "router"),
+                Edge("router", "gate", loop_restart=True),
+                Edge(
+                    "router",
+                    "done",
+                    condition="context.tool.last_line=exhausted",
+                ),
+                Edge("gate", "done", condition="outcome=fail"),
+            ],
+        )
+        assert not _diag(lint(g), "gate_retry_budget_dead")
+
+    def test_retry_target_dead_end_silent(self):
+        """If the projected retry walk never meets a loop_restart edge, this
+        rule has nothing to say (reachability/other rules own dead ends)."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="w"),
+                "sink": _box("sink", prompt="s"),
+                "gate": _box(
+                    "gate",
+                    prompt="g",
+                    attrs={"goal_gate": True, "retry_target": "sink"},
+                ),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "gate", loop_restart=True),
+                Edge("gate", "done", condition="outcome=fail"),
+                Edge("sink", "sink2", condition="outcome=fail"),
+            ],
+        )
+        # sink's only edge is fail-conditioned; the projected walk from sink
+        # meets no loop_restart edge -> silent.
+        assert not _diag(lint(g), "gate_retry_budget_dead")
+
+    # -- enforcement ---------------------------------------------------------
+
+    def test_documented_budget_matches_engine(self):
+        """The diagnostic message mirrors the engine's budget constant
+        (importing engine from validation would create an import cycle);
+        this pin keeps the mirror honest."""
+        from amplifier_module_loop_pipeline.engine import PipelineEngine
+        from amplifier_module_loop_pipeline.validation import (
+            _GOAL_GATE_RETRY_BUDGET,
+        )
+
+        assert _GOAL_GATE_RETRY_BUDGET == PipelineEngine._MAX_GOAL_GATE_RETRIES
+
+    def test_calibration_zero_findings_on_shipped_graphs(self):
+        """Calibration: TOPO-007 is silent on every shipped graph.
+
+        The shipped corpus deliberately pairs goal_gate + retry_target with
+        loop_restart iterate back-edges (task-runner, the capsule pipelines,
+        02-plan-implement-test, 04-retry-with-fallback) -- a naive
+        coexistence rule would fire on all of them.  This sweep pins the
+        calibrated predicate: zero findings across examples/ and
+        .github/capsule-pipeline/.  Skips gracefully on installed-package
+        runs where the corpus is not present (the test_examples_lint_clean
+        precedent).
+        """
+        from pathlib import Path as _Path
+
+        import pytest as _pytest
+
+        from amplifier_module_loop_pipeline.dot_parser import parse_dot as _parse
+
+        repo_root = _Path(__file__).resolve().parents[3]
+        sweep_dirs = [repo_root / "examples", repo_root / ".github" / "capsule-pipeline"]
+        dot_files = [p for d in sweep_dirs if d.is_dir() for p in sorted(d.rglob("*.dot"))]
+        if not dot_files:
+            _pytest.skip("shipped corpus not present (installed-package run)")
+        fired: list[str] = []
+        for dot_path in dot_files:
+            graph = _parse(dot_path.read_text(encoding="utf-8"))
+            for d in _diag(lint(graph), "gate_retry_budget_dead"):
+                fired.append(f"{dot_path.relative_to(repo_root)}: {d.message}")
+        assert not fired, (
+            "TOPO-007 fired on shipped graphs (calibration regression):\n"
+            + "\n".join(fired)
+        )

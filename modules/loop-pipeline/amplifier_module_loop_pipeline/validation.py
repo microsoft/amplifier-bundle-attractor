@@ -4,7 +4,7 @@ Validates parsed Graph models against the rules defined in
 spec Section 7 (Validation and Linting). Produces Diagnostic objects
 with severity ERROR (blocks execution) or WARNING (informational).
 
-Spec coverage: LINT-001–018.  TOPO-001–006 are topological basin-lint rules
+Spec coverage: LINT-001–018.  TOPO-001–007 are topological basin-lint rules
 implemented here beyond the canonical spec; they are lint-only (exposed via
 ``lint()``, not ``validate()``) and do not change run-time behaviour.
 
@@ -116,8 +116,8 @@ def lint(graph: Graph) -> list[Diagnostic]:
     """Run topological (basin-lint) and command-content rules in addition to structural rules.
 
     This is the entry point for the ``attractor lint`` CLI command.  It runs
-    the full structural ``validate()`` suite plus the six topological rules
-    (TOPO-001–006) that reason about cycle structure, handler semantics, and
+    the full structural ``validate()`` suite plus the seven topological rules
+    (TOPO-001–007) that reason about cycle structure, handler semantics, and
     evidence-routing patterns, plus the two command-content rules (CMD-001–002)
     that inspect ``tool_command`` strings for hazard shapes.
 
@@ -138,6 +138,7 @@ def lint(graph: Graph) -> list[Diagnostic]:
     _check_cycle_no_conditional_exit(graph, diags)
     _check_cycle_no_deterministic_exit(graph, diags)
     _check_fail_routed_to_exit(graph, diags)
+    _check_gate_retry_budget_dead(graph, diags)
     _check_pipe_masked_exit_code(graph, diags)
     _check_always_true_sentinel(graph, diags)
     return diags
@@ -1597,6 +1598,160 @@ def _check_fail_routed_to_exit(graph: Graph, diags: list[Diagnostic]) -> None:
                         ),
                     )
                 )
+
+
+# Documented engine constant, mirrored for the diagnostic message.  The
+# engine's budget lives at ``engine.py::PipelineEngine._MAX_GOAL_GATE_RETRIES``;
+# importing engine here would create a validation -> engine import cycle, so
+# the message cites the mirrored value instead (kept honest by
+# test_topological_lint.py::TestGateRetryBudgetDead::
+# test_documented_budget_matches_engine).
+_GOAL_GATE_RETRY_BUDGET = 50
+
+
+def _effective_gate_retry_target(node: Node, graph: Graph) -> str | None:
+    """Resolve the retry target the exit-time gate check would use.
+
+    Mirrors ``engine.py::_check_goal_gates()`` exactly: first truthy of
+    node ``retry_target`` > node ``fallback_retry_target`` > graph
+    ``retry_target`` > graph ``fallback_retry_target``, counted only if it
+    names a real node (the engine fails instead of retrying otherwise;
+    ``retry_target_exists`` owns reporting that).
+    """
+    target = (
+        node.attrs.get("retry_target")
+        or node.attrs.get("fallback_retry_target")
+        or graph.graph_attrs.get("retry_target")
+        or graph.graph_attrs.get("fallback_retry_target")
+    )
+    if target and target in graph.nodes:
+        return str(target)
+    return None
+
+
+def _check_gate_retry_budget_dead(graph: Graph, diags: list[Diagnostic]) -> None:
+    """TOPO-007: goal-gate retry budget structurally dead under loop_restart.
+
+    The engine bounds exit-time goal-gate retries with a budget
+    (``engine.py::_MAX_GOAL_GATE_RETRIES``, 50) — but every traversal of a
+    ``loop_restart`` edge resets that counter to zero (``run()`` Step 6),
+    which is the fresh-attempt semantics ledgered as ATX-12
+    (``specs/EXTENSIONS.md`` §24: a restart is an in-process stand-in for
+    terminate-and-relaunch, so per-run budgets start over).  The two
+    interact badly in one specific shape: when EVERY success-path walk from
+    the gate's retry target back to the exit crosses a ``loop_restart``
+    edge, the budget resets on every gate-retry cycle and can never bind.
+    The retry loop is then bounded only by the global step cap
+    (nodes × 50), the counter stays pinned at 1, and the author's
+    belt-and-suspenders budget is silently dead (issue #253).
+
+    Measured on the shipped engine (issue #253, 4-node reduction): without
+    ``loop_restart`` on the retry walk the gate executed 51 times and the
+    run stopped at the 50-retry budget ("Unsatisfied goal gates"); with
+    ``loop_restart`` on the retry walk the gate executed 66 times, the
+    retry counter never advanced past 1, and only the step cap (200) ended
+    the run.  The same shape shipped in ``objective-runner.dot`` until
+    PR #248 dropped its ``retry_target`` (its in-file note records 51/50
+    executions measured on a 5-node reduction; #248's review measured 67
+    on an 8-node one).
+
+    Detection is the success projection of the graph: drop ``loop_restart``
+    edges and failure-conditioned edges (``outcome=fail`` /
+    ``outcome=error`` / ``outcome!=success`` — the TOPO-006 classifier,
+    ``_condition_matches_fail``), then ask whether any exit node is
+    reachable from the retry target.  Context-conditioned and
+    success-conditioned edges stay in the projection — statically
+    unknowable routing counts as a live escape (conservative toward
+    silence).  If no exit is reachable AND the projected walk meets at
+    least one ``loop_restart`` edge, the budget is dead: whenever the
+    retried nodes succeed at their jobs, the walk crosses the resetting
+    edge before it can reach the exit's gate check again.
+
+    What this rule deliberately does NOT flag: the shipped convergence
+    pattern where ``loop_restart`` rides a fail-conditioned or iterate
+    back-edge (task-runner, 02-plan-implement-test, the capsule pipelines)
+    — there the forward success walk re-reaches the exit without a reset,
+    so the budget stays live for the exit-time retry loop even though an
+    explicit iterate cycle also exists.  A run that keeps CHOOSING the
+    iterate back-edge also keeps resetting the counter, but that cycle is
+    the author's declared iteration protocol — bounded by its own budget
+    wall per the design doctrine — not the gate-retry loop this budget
+    exists to bound.
+
+    Severity: WARNING — same reasoning as TOPO-006: the hazard is real and
+    was measured on a shipped graph, but run-time routing is not statically
+    provable, and the engine still terminates (at the step cap), so ERROR
+    would hard-fail deliberate designs.
+    """
+    loop_edges = [
+        e for e in graph.edges if resolve_bool_attr(e.loop_restart, "loop_restart")
+    ]
+    if not loop_edges:
+        return
+    exit_ids = {n.id for n in graph.nodes.values() if n.is_exit_node()}
+    if not exit_ids:
+        return
+
+    # Success projection: adjacency over edges that are neither
+    # loop_restart nor failure-conditioned.
+    projected: dict[str, list[str]] = {}
+    for e in graph.edges:
+        if resolve_bool_attr(e.loop_restart, "loop_restart"):
+            continue
+        cond = e.condition.strip() if e.condition else ""
+        if cond and _condition_matches_fail(cond):
+            continue
+        projected.setdefault(e.from_node, []).append(e.to_node)
+
+    for node in graph.nodes.values():
+        if not resolve_bool_attr(node.attrs.get("goal_gate"), "goal_gate"):
+            continue
+        retry_target = _effective_gate_retry_target(node, graph)
+        if retry_target is None:
+            continue
+
+        reachable = {retry_target}
+        stack = [retry_target]
+        while stack:
+            for nxt in projected.get(stack.pop(), []):
+                if nxt not in reachable:
+                    reachable.add(nxt)
+                    stack.append(nxt)
+
+        if reachable & exit_ids:
+            continue  # a reset-free success walk back to the exit exists
+
+        crossing = [e for e in loop_edges if e.from_node in reachable]
+        if not crossing:
+            continue  # projected retry walk never meets a resetting edge
+
+        edge = crossing[0]
+        diags.append(
+            Diagnostic(
+                rule="gate_retry_budget_dead",
+                severity="WARNING",
+                message=(
+                    f"Node '{node.id}' (goal_gate=true) retries from "
+                    f"'{retry_target}', but every success-path walk from "
+                    f"'{retry_target}' back to the exit crosses a "
+                    f"loop_restart edge ({edge.from_node} -> {edge.to_node}), "
+                    f"and loop_restart resets the goal-gate retry counter. "
+                    f"The {_GOAL_GATE_RETRY_BUDGET}-retry budget can never "
+                    f"bind: the retry loop is bounded only by the global "
+                    f"step cap (nodes × {_GOAL_GATE_RETRY_BUDGET}) "
+                    f"(TOPO-007)."
+                ),
+                node_id=node.id,
+                edge=(edge.from_node, edge.to_node),
+                fix=(
+                    "Point retry_target at a node whose success path reaches "
+                    "the exit without crossing a loop_restart edge, bound the "
+                    "loop_restart cycle with an explicit budget wall, or drop "
+                    "the retry_target if the gate's failure cause survives "
+                    "retries (the PR #248 resolution)"
+                ),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

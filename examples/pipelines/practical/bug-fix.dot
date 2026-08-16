@@ -22,8 +22,31 @@
 //     max_pipeline_duration is a safety ceiling that terminates the engine
 //     directly (bare FAIL, no graph traversal); it is NOT a postmortem trigger.
 //     default_max_retries bounds only implement_fix hard failures.
+//   BROKEN INSTRUMENT as a decision point: test_gate -[no_target]-> postmortem
+//     A gate that collects no tests can never go green. That is not a red the
+//     fixer can patch, so it does not re-enter the fix loop; it goes where
+//     budget exhaustion goes. See test_gate below.
+//   ONE EXIT NODE, TWO HONEST TERMINALS: `done` opens GREEN only through
+//     verdict_gate's ship verdict, and RED only through `escalated`, whose own
+//     nonzero exit becomes the run's status. Both reach the single exit node --
+//     the convergence-factory.dot idiom, and the reason this file consciously
+//     carries ONE TOPO-006 warning (see the last edge in this file).
 //
 // VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON:
+//   THE MAIN LOOP HAS NO DESIGNED-TERMINUS CONCEPT. `run_subgraph()`
+//   distinguishes "no outgoing edges at all" (a designed terminus) from a
+//   conditional-mismatch dead end; `run()` does NOT. Any node the main loop
+//   finishes with no matching outgoing edge -- WHATEVER its exit status --
+//   terminates through `terminate_pipeline()` and emits PIPELINE_ERROR
+//   `error_type=no_matching_edge`. A deliberate loud terminal must therefore
+//   ROUTE somewhere; it cannot dead-end (issue #252; issue #243 defect (a),
+//   fixed in objective-runner.dot by #248).
+//   AT THE EXIT NODE, WITH EVERY GOAL GATE SATISFIED, THE RUN'S STATUS IS THE
+//   LAST COMPLETED NODE'S OUTCOME (`engine.py::_check_goal_gates` ->
+//   `node_outcomes[completed_nodes[-1]]`). That is the whole mechanism behind
+//   `escalated -> done [outcome=fail]`: escalated's own nonzero exit becomes the
+//   run's status=fail / CLI exit 1, with no routing error. This graph declares
+//   no goal_gate, so nothing else is consulted at the exit.
 //   STALE-LABEL RULE (general case): a tool node that exits nonzero does NOT
 //   refresh tool.last_line. On a second visit after a failure, a stale label
 //   can simultaneously match a last_line edge AND an outcome=fail edge.
@@ -49,14 +72,19 @@ digraph BugFix {
 
     start     [shape=Mdiamond, label="Start"]
     done      [shape=Msquare,  label="Done"]
-    // Escalation is a deterministic non-terminal handoff, not a second
-    // successful pipeline exit. It writes a minimal fallback handoff even if
-    // the postmortem LLM itself failed, so every LLM-node hard failure is
-    // absorbed before the run reports failure. It then exits 1 DELIBERATELY:
-    // the run's failure is carried by the node's own exit code, portable
-    // under either dead-end semantics (the canonical spec treats a no-edge
-    // dead-end as SUCCESS; this engine hard-fails). max_retries=0 because
-    // the failure is the point, not a flake to retry.
+    // Escalation is a deterministic handoff, not a second successful pipeline
+    // exit. It writes a minimal fallback handoff even if the postmortem LLM
+    // itself failed, so every LLM-node hard failure is absorbed before the run
+    // reports failure. It then exits 1 DELIBERATELY (max_retries=0, because the
+    // failure is the point, not a flake to retry) and ROUTES that nonzero exit
+    // to the single exit node -- see the last edge in this file.
+    // The comment that used to sit here claimed the failure was "portable under
+    // either dead-end semantics (the canonical spec treats a no-edge dead-end as
+    // SUCCESS; this engine hard-fails)". That was wrong about the engine that
+    // actually ships: a dead-ended node is reported as PIPELINE_ERROR
+    // `error_type=no_matching_edge`, which is the vocabulary of an AUTHORING
+    // BUG, not of a loud red. Portability across dead-end semantics is not
+    // achievable by dead-ending; it is achieved by routing.
     escalated [
         shape=parallelogram,
         label="Escalated",
@@ -93,17 +121,54 @@ digraph BugFix {
     // shape=parallelogram runs the tool_command directly (not via LLM).
     // Increments .ai/iter on every entry (inner loop + outer loop). When the
     // count exceeds .ai/budget (default 5), emits "exhausted" and routes to
-    // postmortem -- a decision point, not a bare FAIL. Otherwise runs pytest
-    // and saves output to .ai/test.log for the triage node's signature check.
-    // All three branches end with printf (exit 0), so tool.last_line is always
-    // fresh. The `&& outcome=success` on pass/exhausted edges is general-case
-    // discipline (STALE-LABEL RULE): if the tool ever exits nonzero, a stale
-    // last_line could be the deterministic pick on a FAIL visit. Edges condition
-    // on context.tool.last_line.
+    // postmortem -- a decision point, not a bare FAIL.
+    //
+    // WHERE THE TESTS ACTUALLY ARE (issue #252, issue #243's live failure).
+    // This gate used to run a bare `pytest -q` from the workspace root. For any
+    // workspace whose package sits one level down -- its own pyproject/conftest,
+    // its own rootdir, often its own environment -- that command collects
+    // nothing or dies on import, and pytest's "no tests collected" is exit 5,
+    // which the old `[ $? -eq 0 ] && pass || fail` reported as an ordinary RED.
+    // The fixer was then sent to patch code against a gate that could not go
+    // green under any patch; it oscillated to its own budget wall. That is not
+    // a hypothetical -- it is what the 2026-08-15 exemplar-01 lane child did.
+    // Three changes, in order of how much they matter:
+    //   1. THE TARGET IS DISCOVERED, NOT ASSUMED. With no `test_command` param,
+    //      the gate asks pytest itself where the tests are: it tries the
+    //      workspace root first, then each directory within two levels that
+    //      owns a `tests/` dir (lexically ordered, so the choice is
+    //      deterministic), and takes the first that actually COLLECTS. Flat and
+    //      nested layouts both work with no configuration.
+    //   2. "NOTHING TO RUN" IS NOT "RED". Exit 5, and a discovery sweep that
+    //      finds no collecting target at all, both emit `no_target`, which
+    //      routes to `postmortem` -- a decision point about a broken
+    //      instrument, never another lap of the fix loop. A gate that cannot
+    //      go green must say so, not fail quietly forever.
+    //   3. THE ESCAPE HATCH IS A PARAM, AND IT IS RUN AS GIVEN. `--param
+    //      test_command=<...>` is handed to `bash -c` verbatim, so a compound
+    //      command (`cd pkg && uv run pytest -q`, an env prefix, an `&&` chain)
+    //      runs exactly as passed. It stays an EVIDENCE gate, not a recipe:
+    //      the graph still decides what the result MEANS, and the node still
+    //      runs outside the fixer's context.
+    // The chosen target is cached in .ai/test-target (discovery is paid once)
+    // and .ai/test.log opens with `RAN: <command>` -- so "the gate tested
+    // something other than what you think" is visible on iteration 1 instead of
+    // being reconstructed from a postmortem at budget exhaustion.
+    //
+    // All four branches end with printf (exit 0), so tool.last_line is always
+    // fresh. The `&& outcome=success` on pass/exhausted/no_target edges is
+    // general-case discipline (STALE-LABEL RULE): if the tool ever exits
+    // nonzero, a stale last_line could be the deterministic pick on a FAIL
+    // visit. Edges condition on context.tool.last_line.
+    // PARAM NAMESPACE: substitution rewrites $name/${name} for any context key
+    // and leaves absent keys as literals, which the shell then expands to
+    // empty -- that is exactly how `test_command` gets its honest default. The
+    // shell variables here (n, B, tc, d, rc, sig, prev) are safe only because
+    // no param shares their name. Never add a param named like a shell var.
     test_gate [
         shape=parallelogram,
         label="Tests Pass?",
-        tool_command="mkdir -p .ai; n=$(($(cat .ai/iter 2>/dev/null || echo 0)+1)); echo $n > .ai/iter; B=$(cat .ai/budget 2>/dev/null || echo 5); if [ \"$n\" -gt \"$B\" ]; then printf exhausted; else pytest -q > .ai/test.log 2>&1; [ $? -eq 0 ] && printf pass || printf fail; fi"
+        tool_command="mkdir -p .ai; n=$(($(cat .ai/iter 2>/dev/null || echo 0)+1)); echo $n > .ai/iter; B=$(cat .ai/budget 2>/dev/null || echo 5); if [ \"$n\" -gt \"$B\" ]; then printf exhausted; else tc=\"$test_command\"; [ -z \"$tc\" ] && [ -s .ai/test-target ] && tc=$(cat .ai/test-target); if [ -z \"$tc\" ]; then for d in . $(find . -maxdepth 2 -type d -name tests -not -path './.*' 2>/dev/null | sed 's|/tests$||' | LC_ALL=C sort); do (cd \"$d\" && pytest -q --collect-only) >/dev/null 2>&1 || continue; if [ \"$d\" = . ]; then tc='pytest -q'; else tc=\"cd '$d' && pytest -q\"; fi; break; done; fi; if [ -z \"$tc\" ]; then echo 'FATAL: no pytest target collects a single test -- not here, and not in any tests/ directory within two levels. This gate can never go green, so the fixer must not be sent to grind against it. Re-run with --param test_command=<how this project actually runs its tests>, e.g. --param \"test_command=cd mypkg && uv run pytest -q\".' >&2; printf no_target; else echo \"$tc\" > .ai/test-target; { echo \"RAN: $tc\"; echo; bash -c \"$tc\"; } > .ai/test.log 2>&1; rc=$?; if [ $rc -eq 0 ]; then printf pass; elif [ $rc -eq 5 ]; then printf no_target; else printf fail; fi; fi; fi"
     ]
 
     // Triage: deterministic root-cause wall.
@@ -142,12 +207,13 @@ digraph BugFix {
         prompt="Read .ai/critique.md. Distill the single highest-leverage change for the next iteration into a new file in .ai/feedback/ (name it by iteration, e.g. 1-next.md). Format: Key finding (1 sentence) / What to change (3-5 bullets) / Why it matters. Be precise -- this is the descent signal the next attempt will read."
     ]
 
-    // Postmortem: budget exhaustion or a single LLM-node hard failure produces
-    // a decision point, not a bare FAIL. A deterministic fallback path below
-    // still reaches escalated if this LLM cannot write the detailed report.
+    // Postmortem: budget exhaustion, a test gate with no target, or a single
+    // LLM-node hard failure produces a decision point, not a bare FAIL. A
+    // deterministic fallback path below still reaches escalated if this LLM
+    // cannot write the detailed report.
     postmortem [
         label="Postmortem",
-        prompt="The fix loop has exhausted its budget without converging. Read .ai/feedback/, .ai/critique.md (if it exists), .ai/test.log, and the current state of the code. Write .ai/postmortem/report.md: what was attempted each iteration, whether the loop was descending or oscillating, your best hypothesis for why it has not converged, and the options (change approach / split the task / escalate to a human). Be honest -- this report is the value salvaged from a non-converging run."
+        prompt="The fix loop reached a decision point without converging -- either the iteration budget is spent, or the test gate reported that it has no target to run (read the first line of .ai/test.log and .ai/test-target: if the gate found nothing to collect, the instrument is wrong, not the fix, and no further patching can turn it green). Read .ai/feedback/, .ai/critique.md (if it exists), .ai/test.log, .ai/test-target, and the current state of the code. Write .ai/postmortem/report.md: what was attempted each iteration, whether the loop was descending or oscillating, WHICH of the two decision points was reached and on what evidence, your best hypothesis for why it has not converged, and the options (name the right test command / change approach / split the task / escalate to a human). Be honest -- this report is the value salvaged from a non-converging run."
     ]
 
     // ===== edges =====
@@ -159,6 +225,12 @@ digraph BugFix {
     // exhausted-path intent explicit and prevents a stale "exhausted" from being
     // the deterministic pick on a FAIL visit).
     test_gate -> postmortem [label="budget exhausted", condition="context.tool.last_line=exhausted && outcome=success"]
+
+    // Broken-instrument wall: the gate found nothing to run. This is NOT a red
+    // test and must never re-enter the fix loop -- no patch can make a
+    // non-existent or uncollectable test suite go green. It is a decision point
+    // about the gate itself, so it goes where budget exhaustion goes.
+    test_gate -> postmortem [label="no test target -- the gate cannot go green", condition="context.tool.last_line=no_target && outcome=success"]
 
     // Inner loop: red enters triage for root-cause classification.
     // `&& outcome=success` on the pass edge: general-case STALE-LABEL discipline.
@@ -195,4 +267,23 @@ digraph BugFix {
     feedback      -> postmortem [condition="outcome=fail", label="hard failure"]
     postmortem   -> escalated  [condition="outcome=fail", label="postmortem failed"]
     postmortem   -> escalated  [label="escalate"]
+
+    // ...and then the loud terminal ROUTES to the single exit node CARRYING its
+    // nonzero exit. Without this edge `escalated` dead-ends, and the main loop
+    // -- which has no designed-terminus concept -- reports this pipeline's most
+    // important honest outcome in the vocabulary of an authoring bug:
+    // `[PIPELINE] X Error at escalated (no_matching_edge)`, with the run's
+    // machine-readable `notes` reading "No matching edge from node 'escalated'".
+    // With it, `_check_goal_gates` returns the LAST COMPLETED node's outcome --
+    // escalated's own FAIL -- so the run ends status=fail / CLI exit 1 with no
+    // routing error and the escalation handoff on disk. `escalated` exits
+    // nonzero on EVERY path, so `outcome=fail` is the total case.
+    // THE ONE TOPO-006 WARNING THIS FILE CARRIES IS THIS EDGE, ON PURPOSE: "a
+    // budget-exhaustion exit that deliberately ends at the single exit node with
+    // a genuine FAIL outcome" is the named, sanctioned deliberate design
+    // (docs/DOT-AUTHORING-GUIDE.md, TOPO-006). The hazard the rule guards -- a
+    // failure leaving through the success door as `status: success`, exit 0 --
+    // cannot happen here: `escalated` is the last node to complete and its FAIL
+    // is what the exit returns.
+    escalated -> done [condition="outcome=fail", label="loud exit -- status is escalated's own nonzero exit"]
 }

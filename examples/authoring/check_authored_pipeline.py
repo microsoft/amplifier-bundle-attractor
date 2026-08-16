@@ -428,6 +428,65 @@ def _is_failure_condition(condition: str) -> bool:
     return bool(_IS_FAIL_RE.search(condition) or _NOT_SUCCESS_RE.search(condition))
 
 
+#: The last statement of a command that ends the process nonzero, deliberately.
+#: Anchored at the end because what matters is the EXIT STATUS THE NODE LEAVES
+#: WITH -- an `exit 1` on some interior branch says nothing about the others.
+_TERMINAL_NONZERO_EXIT_RE = re.compile(r"(?:^|;|&&|\|\||\n)\s*exit\s+[1-9][0-9]*\s*;?\s*$")
+
+
+def _is_loud_terminal(graph: DotGraph, node_id: str) -> bool:
+    """Is this node a DESIGNED LOUD TERMINAL, whose own FAIL becomes the status?
+
+    A8's hazard is a failure being CONVERTED into a successful run -- classically
+    by putting one succeeding bookkeeping step (a recorder, a notifier, a
+    cleanup) between the failed gate and the exit, so the run's final status
+    comes from that step and not from the failure.  There is exactly one shape
+    where routing a failure into the exit does NOT do that, and the engine
+    settles it: at the exit node, with every goal gate satisfied,
+    ``_check_goal_gates()`` returns ``node_outcomes[completed_nodes[-1]]`` -- the
+    LAST COMPLETED node's outcome.  So if the node that routes into the exit is
+    itself the last thing that runs and it exits nonzero, the run's status IS
+    that failure: ``status=fail``, CLI exit 1.  That is the convergence-factory
+    idiom -- "a budget-exhaustion exit that deliberately ends at the single exit
+    node with a genuine FAIL outcome" (docs/DOT-AUTHORING-GUIDE.md, TOPO-006),
+    shipped in ``examples/patterns/convergence-factory.dot`` and adopted by
+    ``examples/objective/objective-runner.dot`` in #248 -- and it is the ONLY
+    way a deliberately loud terminal can exist on this engine at all, because
+    the main loop has no designed-terminus concept: a terminal that dead-ends
+    is reported as PIPELINE_ERROR ``error_type=no_matching_edge`` (issue #252).
+
+    Blocking it was therefore not strictness, it was a miscalibration: A8
+    rejected the repo's own merged flagship.  A gate that rejects
+    ``objective-runner.dot`` is a wrong gate, not a strict one -- the same rule
+    this contract's calibration suite applies to ``task-runner.dot``.
+
+    The exemption is deliberately narrow, so it cannot be worn as a costume by
+    the shape A8 exists to catch.  ALL FOUR must hold:
+
+    1. It is a TOOL node.  A worker's "failure" is a provider verdict, not a
+       process exit status; only a shell command can guarantee the exit code.
+    2. Its command's LAST statement exits NONZERO -- so it fails on EVERY path,
+       not just some branch.  A node that can exit 0 could hand the exit a
+       SUCCESS and turn the escalation green: precisely the A8 hazard.
+    3. ``max_retries=0``.  The failure is the point, not a flake to retry.
+    4. The edge into the exit is its ONLY outgoing edge.  A node with somewhere
+       else to go is a step on a path, and a step on a path is the bookkeeping
+       intermediary A8 is looking for.
+
+    A recorder that exits 0, a notifier with a second route, or an LLM node all
+    still block -- see the mutation tests in ``test_authoring_layer_gates.py``.
+    """
+    if not _is_tool(graph, node_id):
+        return False
+    command = graph.attr(graph_node_id := node_id, "tool_command")
+    if not command or not _TERMINAL_NONZERO_EXIT_RE.search(command.strip()):
+        return False
+    if graph.attr(graph_node_id, "max_retries").strip().strip('"') != "0":
+        return False
+    outgoing = graph.outgoing(node_id)
+    return len(outgoing) == 1 and _is_exit(graph, outgoing[0].dst)
+
+
 def _is_truthy(value: str) -> bool:
     return value.strip().strip('"').lower() in ("true", "1", "yes", "on")
 
@@ -726,7 +785,18 @@ def run_checks(graph: DotGraph, companion: Path | None) -> list[CheckResult]:
     # and that path is the one a bad day will find.
     if len(exits) == 1 and starts:
         exit_id = exits[0]
-        bypass = exit_id in _reachable(graph, starts, blocked=set(gates))
+        # Designed loud terminals are blocked alongside the gates. A4 asks
+        # whether the run can FINISH WITHOUT EVIDENCE; a loud terminal cannot
+        # finish at all in the sense A4 means -- it is the last node to
+        # complete, it exits nonzero, and the exit therefore returns its FAIL
+        # (status=fail, CLI exit 1). Counting that as a "bypass" would mean
+        # the only shape in which a deliberately red terminal can exist on this
+        # engine (see _is_loud_terminal) is also the shape A4 forbids, which
+        # would leave an author with no legal way to fail loudly at all.
+        # The green door is unchanged: every path that ends SUCCESSFULLY still
+        # has to pass a gate, which is the whole of what A4 was protecting.
+        loud = {n for n in graph.nodes if _is_loud_terminal(graph, n)}
+        bypass = exit_id in _reachable(graph, starts, blocked=set(gates) | loud)
         results.append(
             CheckResult(
                 "A4",
@@ -842,7 +912,9 @@ def run_checks(graph: DotGraph, companion: Path | None) -> list[CheckResult]:
     fail_to_exit = sorted(
         f"{e.src} -> {e.dst} [condition={e.attrs.get('condition', '')!r}]"
         for e in graph.edges
-        if _is_exit(graph, e.dst) and _is_failure_condition(e.attrs.get("condition", ""))
+        if _is_exit(graph, e.dst)
+        and _is_failure_condition(e.attrs.get("condition", ""))
+        and not _is_loud_terminal(graph, e.src)
     )
     results.append(
         CheckResult(
@@ -855,7 +927,13 @@ def run_checks(graph: DotGraph, companion: Path | None) -> list[CheckResult]:
                 if not fail_to_exit
                 else " -- this converts a failure into a successful run. A failure belongs on a "
                 "salvage path (postmortem, escalation) that ends LOUD, not through the success "
-                "door. The engine's own lint calls this TOPO-006 and warns; here it blocks"
+                "door. The engine's own lint calls this TOPO-006 and warns; here it blocks. "
+                "The ONE exemption is a designed loud terminal: a tool node with max_retries=0 "
+                "whose command's last statement exits nonzero and whose only outgoing edge is "
+                "this one. It is then the last node to complete, so the exit returns ITS fail "
+                "and the run ends status=fail / exit 1 -- the convergence-factory idiom, and "
+                "the only way a loud terminal can exist on an engine whose main loop reports a "
+                "dead end as no_matching_edge"
             ),
         )
     )

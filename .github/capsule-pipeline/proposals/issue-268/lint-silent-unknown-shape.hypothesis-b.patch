@@ -1,0 +1,65 @@
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+index 6c29cef..5107070 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+@@ -592,10 +592,58 @@ def _check_stylesheet_syntax(graph: Graph, diags: list[Diagnostic]) -> None:
+ 
+ 
+ def _check_type_known(graph: Graph, diags: list[Diagnostic]) -> None:
+-    """LINT: type_known -- node type values should be recognized handler types."""
++    """LINT: type_known -- node type values should be recognized handler types.
++
++    CRUDE STUB (hypothesis C): this function is also used to detect unknown-shape
++    nodes (no explicit type, shape not in SHAPE_TO_HANDLER) and emit an ERROR.
++    This is NOT a correct fix -- the shape check is piggybacked inside the
++    type-checking function rather than living in its own dedicated rule.
++    The mechanism differs from hypothesis A (inline loop at end of lint()) and
++    hypothesis B (piggyback inside _check_prompt_on_llm_nodes) because:
++      - it operates inside _check_type_known() (called from validate(), not lint()),
++      - it REPLACES the unconditional `continue` for empty-type nodes with a
++        shape-membership test: empty-type + unknown-shape + not start/exit => ERROR;
++        empty-type + known-shape => continue (existing behavior preserved),
++      - the ERROR rule name is 'shape_resolvable_type_check' (different from A and B),
++      - the call path is validate() -> _check_type_known() (not lint() directly,
++        not _check_prompt_on_llm_nodes).
++    Observable outcome is identical: lint() returns an ERROR diagnostic for any
++    node with an unknown shape and no explicit type, regardless of prompt or
++    tool_command, because the condition is purely shape-based.
++    """
+     for node in graph.nodes.values():
+         if not node.type:
+-            continue  # empty type uses shape-based resolution, always valid
++            # CRUDE STUB: when no explicit type is set, the engine uses shape-based
++            # dispatch. If the shape is not in SHAPE_TO_HANDLER, dispatch will raise
++            # a ValueError at runtime. Detect this here and emit an ERROR instead of
++            # silently continuing. This inverts the existing skip: instead of
++            # "empty type => always valid => continue", it becomes
++            # "empty type + unknown shape + not start/exit => ERROR;
++            #  empty type + known shape => continue".
++            # Skip start and exit nodes: they are always valid regardless of shape,
++            # as the engine identifies them by id/attrs in addition to shape.
++            if (
++                not node.is_start_node()
++                and not node.is_exit_node()
++                and node.shape not in SHAPE_TO_HANDLER
++            ):
++                diags.append(
++                    Diagnostic(
++                        rule="shape_resolvable_type_check",
++                        severity="ERROR",
++                        message=(
++                            f"Node '{node.id}' has no explicit type and its shape "
++                            f"'{node.shape}' is not in SHAPE_TO_HANDLER; "
++                            f"shape-based dispatch will raise ValueError at runtime."
++                        ),
++                        node_id=node.id,
++                        fix=(
++                            f"Correct the shape typo or add type=<handler>. "
++                            f"Known shapes: {', '.join(sorted(SHAPE_TO_HANDLER))}."
++                        ),
++                    )
++                )
++            continue  # empty type with known shape uses shape-based resolution
+         if node.type not in _KNOWN_HANDLER_TYPES:
+             diags.append(
+                 Diagnostic(

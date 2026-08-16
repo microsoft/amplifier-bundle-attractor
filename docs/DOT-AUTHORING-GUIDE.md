@@ -1437,6 +1437,56 @@ node, and (for the indirect form) the pass-through path.
 
 ---
 
+### TOPO-007 — Goal-gate retry budget dead under `loop_restart`
+
+**What it detects:** A `goal_gate=true` node whose effective retry target
+(node `retry_target` > node `fallback_retry_target` > graph `retry_target` >
+graph `fallback_retry_target`) can only get back to the exit node by crossing
+a `loop_restart` edge — measured on the graph's *success projection*
+(`loop_restart` edges and failure-conditioned edges removed).
+
+**Why it matters:** The engine bounds exit-time goal-gate retries at 50
+(`_MAX_GOAL_GATE_RETRIES`), but every `loop_restart` traversal resets that
+counter to zero — the fresh-attempt semantics ledgered as ATX-12
+(`specs/EXTENSIONS.md` §24).  When every success-path walk from the retry
+target back to the exit crosses a `loop_restart` edge, the budget resets on
+*every* gate-retry cycle: the counter stays pinned at 1 and the loop is
+bounded only by the global step cap (nodes × 50).  Measured on the shipped
+engine (issue #253, 4-node reduction): without `loop_restart` on the retry
+walk the gate executed 51 times and stopped at the budget; with it, 66
+times, ended only by the step cap.  The same shape shipped in
+`objective-runner.dot` until PR #248 dropped the gate's `retry_target`.
+
+```dot
+// WRONG — the gate's retry walk crosses the loop_restart edge every cycle:
+// the 50-retry budget resets each time and can never bind
+gate [shape=parallelogram, tool_command="./dod.sh", goal_gate=true, retry_target="feedback"]
+gate -> feedback [condition="outcome=fail"]
+feedback -> triage [loop_restart=true]   // feedback's only success-path edge
+```
+
+**What is NOT flagged:** the shipped convergence pattern where
+`loop_restart` rides a fail-conditioned or iterate back-edge
+(`examples/patterns/task-runner.dot`, `02-plan-implement-test.dot`, the
+capsule pipelines) — there the forward success walk re-reaches the exit
+without a reset, so the budget stays live for the exit-time retry loop.  The
+iterate cycle also resets the counter when a run keeps choosing it, but that
+cycle is the author's declared iteration protocol, bounded by its own budget
+wall (section 3's doctrine), not the gate-retry loop.  Context-conditioned
+escapes count as live — statically unknowable routing is conservative
+toward silence.
+
+**Severity:** WARNING — the run still terminates (at the step cap), and
+run-time routing is not statically provable.
+
+**Fix:** Point `retry_target` at a node whose success path reaches the exit
+without crossing a `loop_restart` edge; or bound the `loop_restart` cycle
+with an explicit budget wall; or — if the gate's failure cause survives
+retries (an altered pinned check, a missing artifact) — drop the
+`retry_target` and let the failure be terminal, the PR #248 resolution.
+
+---
+
 ### CMD-001 — Pipe-masked exit code
 
 **What it detects:** A `parallelogram` (tool) node whose `tool_command` ends
@@ -1484,7 +1534,7 @@ If you need to see the last N lines, write to a file and read it separately
 from the routing logic.
 
 **Severity:** WARNING — consistent with the WARNING-severity TOPO rules
-(TOPO-002 through TOPO-006; note TOPO-001 is `ERROR`, not this family's
+(TOPO-002 through TOPO-007; note TOPO-001 is `ERROR`, not this family's
 default).  The hazard is real but static analysis cannot prove the command is
 a meaningful gate; conservative analysis may miss complex cases.
 
@@ -1546,7 +1596,7 @@ influence either the exit code or the emitted token?  The hazard shapes
 destroy that influence.  The honest idioms preserve it.
 
 **Severity:** WARNING — consistent with CMD-001 and the WARNING-severity TOPO
-rules (TOPO-002 through TOPO-006; TOPO-001 is `ERROR`).
+rules (TOPO-002 through TOPO-007; TOPO-001 is `ERROR`).
 
 **What this rule does NOT catch:** sentinels inside `$(...)` substitutions,
 sentinels after non-pipe-masked commands (where `&& echo TOKEN` is the honest

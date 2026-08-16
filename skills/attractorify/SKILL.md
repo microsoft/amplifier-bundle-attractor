@@ -360,7 +360,7 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    ```
    bash -c "attractor lint <path>"
    ```
-   A `.dot` that fails `attractor lint` (TOPO-001 through TOPO-006, documented in
+   A `.dot` that fails `attractor lint` (TOPO-001 through TOPO-007, documented in
    `docs/DOT-AUTHORING-GUIDE.md`) is not a runnable artifact. Fix lint findings
    before handing back.
 
@@ -389,7 +389,7 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
 
 - `docs/PIPELINE_DESIGN_PRINCIPLES.md` §0 — one-sentence rule, control-plane vs
   recipe-plane line, **three-question test**, design order
-- `docs/DOT-AUTHORING-GUIDE.md` — node contract, DOT syntax, TOPO-001..005 lint
+- `docs/DOT-AUTHORING-GUIDE.md` — node contract, DOT syntax, TOPO-001..007 lint
   rules, `attractor lint` CLI
 - `attractor:attractor-expert` — the consultable expert agent; delegate to it
   for any pipeline design or debugging question (source prompt:

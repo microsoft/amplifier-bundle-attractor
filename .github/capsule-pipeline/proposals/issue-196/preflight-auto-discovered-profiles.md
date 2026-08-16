@@ -1,7 +1,7 @@
 ---
 id: preflight-auto-discovered-profiles
 title: "Provider preflight false refusal on auto-discovered profiles"
-red_signal: no provider module or profile is mounted for it (credential: OPENAI_API_KEY)
+red_signal: no provider module or profile is mounted for it
 base_sha: da8ffd1faa87128573bd9872e12aa4f4f7747f0b
 target_repo: microsoft/amplifier-bundle-attractor
 verify: DEFINITION.verify.sh
@@ -55,12 +55,29 @@ is factually wrong: the run CAN serve the declared provider.
    dependencies). A regression test for the auto-discovery path may be placed
    in any file in the test suite.
 
-The verify script checks items 1-4 mechanically. Part 1 uses a runtime-generated
-agent/provider name with no domain vocabulary, so a fix that special-cases any
-known provider name (e.g., "openai") stays red -- the fix must implement the
-general auto-discovery rule. Part 2 additionally checks that the refusal
-message from the mixed-graph run does not name the matched provider, proving
-per-item selectivity rather than whole-scope suppression.
+The verify script checks items 1-4 mechanically. Every provider name it uses --
+in the must-ACCEPT scenarios and the must-REFUSE scenarios alike -- comes from
+ONE runtime generator producing identically shaped, semantically neutral names
+(nine uniformly random lowercase letters, the first letter included, plus the
+run's shared numeric suffix). There is no fixed prefix and no shape difference
+between an accept-case name and a refuse-case name, and each generated name is
+additionally required to be ACCEPTED in one scenario and REFUSED in another,
+with only the presence of a matching agent changed between them. The name
+therefore carries no information about the expected verdict: a fix that
+special-cases a known provider name (e.g. "openai"), a fixed probe name, or any
+name pattern whatsoever is forced to get one of the two scenarios wrong. The fix
+must implement the general auto-discovery rule. Part 2 additionally checks that
+the refusal message from the mixed-graph run does not name the matched provider,
+proving per-item selectivity rather than whole-scope suppression.
+
+The declared red_signal is the substring the preflight's refusal message
+produces ORGANICALLY for an unknown provider -- a provider outside
+`PROVIDER_KEY_ENV` gets no credential parenthetical, so the organic text ends at
+"...mounted for it". The gate never prints that substring itself: it reaches the
+RED log only because Part 1 echoes the caught `ProviderPreflightError` verbatim.
+A red produced by anything else -- an over-broad patch, a failing regression
+suite -- therefore cannot carry the signal, which is what makes checking for it
+evidence rather than ceremony.
 
 ## Non-goals
 

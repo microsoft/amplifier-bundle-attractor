@@ -68,8 +68,9 @@
 # --------------------------------------------------------------- tranche ----
 #
 # Tranche 1 (this file): every decided divergence, every OPEN ledger item
-# pinned, the two unledgered findings this matrix's construction surfaced
-# (F1 / F4, issue #234), the load-bearing conformances a community `.dot`
+# pinned, the two findings this matrix's construction surfaced (F1 / F4 --
+# born OPEN-PINNED citing issue #234, decided 2026-08-16 as ATX-13/ATX-14),
+# the load-bearing conformances a community `.dot`
 # stakes its correctness on, and the SYNC row. Tranche 2+ (the remaining
 # rows by section) and tranche 3 (ULM/CAL matrices) are named in the
 # design, section 6 and section 12.
@@ -438,11 +439,15 @@ rows:
           - modules/pipeline-runner/amplifier_module_pipeline_runner
 
   # ==========================================================================
-  # D. Findings surfaced by building this matrix -- unledgered today
+  # D. Findings surfaced by building this matrix -- DECIDED (issue #234)
   #
-  # NOT decided divergences. These are behaviors that contradict the canonical
-  # spec with no ledger entry licensing them. Filed as issue #234. The rows pin
-  # actual behavior so that the decision, when it comes, is deliberate.
+  # These two rows were born OPEN-PINNED: behaviors that contradicted the
+  # canonical spec with no ledger entry licensing them, pinned to actual
+  # behavior so the decision would be deliberate rather than accidental.
+  # The decision landed (issue #234, 2026-08-16): both are decided
+  # divergences under the QUALITY_PROTOCOL.md section 3 drift tier, ledgered
+  # as SPEC_CONFORMANCE.md ATX-13/ATX-14 + EXTENSIONS.md sections 38/39.
+  # IDs stay stable per the schema note above; only dispositions moved.
   # ==========================================================================
 
   - id: ATX-M-F01
@@ -458,26 +463,29 @@ rows:
         - section: "4.2"
           quote: |
             3. **Default handler** (the codergen/LLM handler)
-    disposition: OPEN-PINNED
+    disposition: DIVERGE-DECIDED
     ledger:
-      issue: 234
-    justification: >
-      F1. Canonical section 4.2's resolve() pseudocode falls through to the
-      DEFAULT HANDLER when a shape is unrecognized; HandlerRegistry.get() instead
-      raises ValueError naming the bad shape and listing the supported ones. That
-      is the right behavior under doctrine rule 4 (a typo'd shape silently
-      becoming a full LLM session is a real footgun, argued from section 2.8's
-      finite table in test_no_silent_fallback.py's docstring) -- but it is
-      ATX-11's exact biography: correct, load-bearing, and undocumented. No ATX
-      row and no EXTENSIONS entry licenses it today. Pinned here; decision filed
-      as issue #234, whose two resolution shapes are ledger-it-as-DIVERGE or
-      conform to section 4.2.
+      conformance: ATX-13
+      extensions: 38
     assertion:
       kind: probe
       probe: test_row_atx_m_f01
       indexed:
         - modules/loop-pipeline/tests/test_no_silent_fallback.py::test_unknown_shape_raises_value_error
         - modules/loop-pipeline/tests/test_no_silent_fallback.py::test_known_shapes_still_dispatch_correctly
+    notes: >
+      DECIDED 2026-08-16 (issue #234, F1): keep the raise. Named safety
+      property: no silent execution-class substitution -- a shape decides WHO
+      executes a node (human gate / shell tool / LLM), and the spec-literal
+      fall-through re-classes any unrecognized shape as a full LLM session
+      that reports SUCCESS. Measured evidence: PR #19 (aa44fca) -- the
+      spec-literal fallback silently ran shape=diamond conditional nodes as
+      codergen LLM sessions while the shape was missing from the table; and
+      lint emits ZERO ERRORs for a typo'd shape, so dispatch is the only
+      tripwire. The refusal is loud: names the shape, the node, the supported
+      set, and the remedy. Explicit type= still works with any shape, so
+      decorative shapes remain achievable conformantly. Probe asserts both
+      halves: the refusal occurs AND the fall-through does not.
 
   - id: ATX-M-F04
     title: reasoning_effort has no built-in default -- Appendix A's high does not hold
@@ -491,22 +499,28 @@ rows:
         - section: "Appendix A"
           quote: |
             | `reasoning_effort`      | String   | `"high"`      | Reasoning depth: low/medium/high |
-    disposition: OPEN-PINNED
+    disposition: DIVERGE-DECIDED
     ledger:
-      issue: 234
-    justification: >
-      F4, verified empirically rather than assumed. Both the section 2.6
-      attribute table and Appendix A give `reasoning_effort` a default of
-      `"high"`. Parsing a node that omits the attribute yields
-      `Node.reasoning_effort is None`, and None is what reaches the backend -- so
-      the provider's own default applies, not "high". A community graph written
-      to the canonical spec therefore gets a different reasoning depth here than
-      the spec promises. Unledgered; filed together with F1 as issue #234 (same
-      class, same two resolution shapes, one maintainer sitting). Pinned to
-      actual behavior in the meantime.
+      conformance: ATX-14
+      extensions: 39
     assertion:
       kind: probe
       probe: test_row_atx_m_f04
+    notes: >
+      DECIDED 2026-08-16 (issue #234, F4): keep unset-as-unset -- the engine
+      injects no default at any layer; node attr, model_stylesheet, and
+      profile are the only value sources, and an omitted attribute reaches
+      the provider as NO reasoning parameter (spawn path omits the key
+      entirely). Named safety property: no hidden engine default on a
+      provider-mode-switching surface. Measured from the shipped adapters, a
+      baked-in "high" would flip every Anthropic node into extended thinking
+      (16000-token budget) with temperature FORCE-SET to 1.0, send reasoning
+      params to non-reasoning OpenAI models (live 400s for graphs that run
+      clean today), and defeat ULM-7's live-proven only-when-explicitly-set
+      wiring from above. The absence is honest, not hidden: unset-in is
+      unset-out, inspectable in Response.raw. Paired doc guard:
+      test_doc_consistency.py D-243 pins DOT-AUTHORING-GUIDE.md's
+      node-attribute row to the code truth, two-sided.
 
   # ==========================================================================
   # E. Load-bearing conformances

@@ -882,7 +882,7 @@ Every node in a DOT pipeline can have these attributes:
 | `class` | String | `""` | Comma-separated CSS classes for model stylesheet targeting. |
 | `llm_model` | String | inherited | LLM model identifier. Overrides stylesheet. |
 | `llm_provider` | String | auto | Provider key (`anthropic`, `openai`, `gemini`). |
-| `reasoning_effort` | String | `high` | `low`, `medium`, or `high`. |
+| `reasoning_effort` | String | unset (provider default) | `low`, `medium`, or `high`. No engine default is injected: unset means the provider's own default applies. The canonical spec's `high` default deliberately does not hold here — set it per node, via `model_stylesheet`, or in a profile (`specs/EXTENSIONS.md` §39, ledger ATX-14). |
 | `timeout` | Duration | unset | Max execution time (e.g., `900s`, `15m`). |
 | `auto_status` | Boolean | `false` | Auto-generate SUCCESS if handler writes no status. |
 | `allow_partial` | Boolean | `false` | Accept PARTIAL_SUCCESS when retries exhausted. |

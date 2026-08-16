@@ -2213,3 +2213,174 @@ Design record and probe evidence:
 [`docs/designs/2026-08-15-composition-fix.md`](../docs/designs/2026-08-15-composition-fix.md),
 including §8's "two resolution classes" finding — the empirical reason the self-pin sweep is
 split rather than blanket.
+
+---
+
+## 38. Unknown Node Shape Hard-Fails at Dispatch (No Default-Handler Fallback)
+
+> **This extension DIVERGES from canonical spec §4.2.** Canonical spec §4.2 "Handler
+> Registry" (`attractor-spec-canonical.md:603-607`, `:628-629`) resolves a node in three
+> steps — explicit `type`, shape-based resolution (§2.8), then "3. **Default handler** (the
+> codergen/LLM handler)" — so a shape outside §2.8's finite table falls through and runs as a
+> full LLM session. Our engine instead refuses at dispatch: `HandlerRegistry.get()` raises
+> `ValueError` naming the offending shape, the node id, the complete supported-shape list, and
+> the remedy (`shape=box` for an LLM node). See `SPEC_CONFORMANCE.md` ATX-13 for the ledger
+> entry and conformance-matrix row `ATX-M-F01` for the executable assertion.
+>
+> **depends-on:** none
+>
+> **upstream action:** declining, reason: `strongdm/attractor` has had no commits since
+> 2026-03-17, has issues disabled, and its own open community spec-correction PRs (#9, #10)
+> have sat unmerged for 4+ months — filing there would not land. The divergence is tracked
+> here instead.
+
+### The decision
+
+**Keep the raise. A shape selects an execution class; an unrecognized shape must not silently
+select the most powerful one.** (Maintainer's standing doctrine applied — Compatibility
+doctrine rule 4; decision closes issue #234, F1.)
+
+The named safety property: **no silent execution-class substitution.** A node's shape decides
+*who* executes it — a human gate (`hexagon`), a shell command (`parallelogram`), an LLM session
+(`box`), a no-op terminal (`Mdiamond`/`Msquare`). Under the spec-literal fallback, any
+unrecognized shape — in practice a typo'd semantic shape — silently re-classes the node as a
+full LLM session that then reports SUCCESS. The failure is invisible by construction: the run
+goes green while the wrong class of thing executed.
+
+The measured evidence that the spec-literal behavior actually failed:
+
+- **The recorded incident (PR #19, commit `aa44fca`).** `shape=diamond` — a *canonical* §2.8
+  shape — was missing from the engine's table, and the then-spec-literal
+  `SHAPE_TO_HANDLER.get(shape, "codergen")` ran conditional routing points as full codergen
+  LLM sessions, silently, until the optimize_bundle investigation caught it. The fallback did
+  not merely tolerate a typo; it masked a missing canonical handler for the engine's own
+  dispatch table. That commit removed the fallback deliberately ("any unrecognized shape
+  (typo, spec mismatch, future shape) would silently run as a full LLM agent").
+- **Measured on current main (in-process, no LLM).** Lint emits **zero ERROR diagnostics**
+  for a typo'd shape (`deploy [shape=parallelgram, tool_command="./deploy.sh"]` → 0 ERRORs),
+  so dispatch is the only tripwire that can catch it. Under spec-literal resolution, the probe
+  typos `parallelgram`, `hexagonn`, `Mdaimond`, and `trapezium` all land on codergen: a typo'd
+  human-approval gate becomes an unattended LLM node; a typo'd tool node runs an LLM session
+  instead of `./deploy.sh`, with `tool_command` silently ignored and the prompt falling back
+  to the node label. The lint layer's own message for that node — "LLM node 'deploy' has no
+  prompt" — is the reclassification happening live (`validation.py` still classifies with the
+  spec-literal fallback for diagnostic purposes; dispatch does not).
+
+The divergence is loud in exactly the doctrine's sense: the refusal names the shape, the node,
+the full valid set, and the fix. The spec-literal behavior is the quiet resolution toward
+"success" that doctrine rule 4 exists to prevent — same decision shape as §33 (no-matching-edge
+hard-fail) and §36 (no-fallback profile resolution), and the same biography as ATX-11: correct,
+load-bearing, and (until now) undocumented.
+
+**What conforming would cost, stated honestly.** The fallback is not purposeless: it makes
+unmapped decorative shapes (e.g. `shape=ellipse` for a cosmetic LLM node) runnable. A
+canonical-conformant graph doing that is refused here. The cost is bounded: the refusal is
+loud with a one-line fix, and an explicit `type=` attribute still works with *any* shape —
+every decorative rendering remains achievable conformantly (`type=codergen` +
+whatever shape the author likes). Weighed against green runs executing the wrong class of
+node, the bounded loud refusal wins.
+
+**No behavior change in this entry.** The engine has behaved this way since PR #19; this entry
+and ATX-13 record the decision that was made, not a code change.
+
+**Implementation locations:**
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/handlers/__init__.py` —
+  `HandlerRegistry.get()`: the unknown-shape `ValueError` (names shape, node id, supported
+  set, remedy) and the unregistered-handler-type `ValueError` (engine misconfiguration)
+- `modules/loop-pipeline/tests/test_no_silent_fallback.py` — the behavior contract (raise,
+  message contents, and the regression guard that every §2.8 shape still dispatches)
+- `specs/conformance/attractor-matrix.yaml` row `ATX-M-F01` + its probe in
+  `modules/loop-pipeline/tests/test_spec_conformance_matrix.py` — asserts both halves: the
+  refusal occurs AND the spec's fall-through does not, so silently un-diverging fails CI
+  naming this entry
+
+---
+
+## 39. `reasoning_effort` Has No Engine-Injected Default (Appendix A's `"high"` Does Not Hold)
+
+> **This extension DIVERGES from canonical spec §2.6 and Appendix A.** Canonical spec §2.6
+> (`attractor-spec-canonical.md:162`) and Appendix A (`:2020`) both give `reasoning_effort` a
+> default of `"high"`. Our engine injects no default at any layer: a node that omits the
+> attribute (and matches no `model_stylesheet` rule and no profile setting) reaches the
+> provider with **no reasoning parameter at all**, so the provider's own documented default
+> governs. See `SPEC_CONFORMANCE.md` ATX-14 for the ledger entry and conformance-matrix row
+> `ATX-M-F04` for the executable assertion.
+>
+> **depends-on:** none
+>
+> **upstream action:** declining, reason: `strongdm/attractor` has had no commits since
+> 2026-03-17, has issues disabled, and its own open community spec-correction PRs (#9, #10)
+> have sat unmerged for 4+ months — filing there would not land. The divergence is tracked
+> here instead.
+
+### The decision
+
+**Keep unset-as-unset. The engine never injects a cost- and behavior-bearing LLM parameter the
+author did not write; explicit resolution surfaces (node attr → `model_stylesheet` → profile)
+are the only sources of a value.** (Decision closes issue #234, F4.)
+
+The named safety property: **no hidden engine default on a provider-mode-switching surface.**
+On this engine's shipped provider wiring, `reasoning_effort` is not a mild tuning dial — any
+set value switches request *modes*. An engine-injected `"high"` on every node that omitted the
+attribute would mean, measured from the shipped adapters:
+
+- **Anthropic** (`unified_llm/adapters/anthropic.py:449-467`): flips every request into
+  extended-thinking mode — `thinking={enabled, budget_tokens=16000}` — and **force-overrides
+  `temperature` to 1.0** ("Override any caller-specified value; the constraint is absolute"),
+  silently rewriting the sampling behavior of every Anthropic node in every community graph.
+  Where `max_tokens` is small the budget is silently clamped or thinking silently skipped
+  (`max_tokens <= 1024`) — a defaulted "high" that sometimes means "nothing" is a second
+  silent substitution on top of the first.
+- **OpenAI** (`unified_llm/adapters/openai.py:446-447`): forwards `reasoning={"effort": ...}`
+  whenever set — the adapter comments "for o-series models" but nothing gates it by model, so
+  a baked-in default sends reasoning parameters to non-reasoning models on every node: live
+  400s for graphs that run clean today (the same unconditional-request-shape failure class
+  ULM-16 hit live).
+- **Gemini** (`unified_llm/adapters/gemini.py:344-351`): `ThinkingConfig(thinking_budget=16000)`
+  on every call.
+- **Cost**: a 16000-token thinking budget per node call as the *engine's* default, imposed on
+  every existing graph that never asked for it. `ULM-7` shipped effort→budget wiring
+  live-proven and deliberately **"only when explicitly set"** at the client layer; a
+  loop-pipeline default of `"high"` would defeat that decision wholesale from above.
+
+Why the absence is honest rather than a hidden default: a hidden default would be the engine
+*writing a value the author cannot see* into the request. This is the opposite — the engine
+writes **nothing**. The direct-LLM path sends no reasoning field
+(`backend.py`/`__init__.py`: `node.attrs.get("reasoning_effort")` → `None` → adapters send
+nothing), the spawn path *omits the key entirely* ("Omitting a key lets the child orchestrator
+use its own default", `backend.py` orchestrator_config), and the request actually sent is
+inspectable in `Response.raw` (ULM-5). Nothing resolves toward success: no outcome, status,
+routing, or gate decision is affected — the author's request reaches the provider exactly as
+authored. The spec's own design agrees about where this control belongs: §8's
+`model_stylesheet` exists to "centralize model selection so that individual nodes do not need
+to specify `llm_model`, `llm_provider`, and `reasoning_effort` on every node"
+(`:1449`, `:1561`) — and that surface works here (`* { reasoning_effort: low }` resolves onto
+nodes; verified in-process). What does not exist is an unconditional engine constant
+underneath it.
+
+**What conforming would cost, stated honestly.** A community author who read Appendix A and
+*relied* on omitted-means-high gets shallower provider-default reasoning here — a real, silent
+under-delivery relative to the spec's promise. The cure for that author is one stylesheet line
+(`* { reasoning_effort: high }`), which this engine honors on every node. The reverse cure —
+un-breaking every graph that a baked-in "high" would have flipped into extended-thinking /
+temp-1.0 / reasoning-param-400 territory — does not exist. Asymmetric costs; the divergence
+takes the recoverable one.
+
+**No behavior change in this entry.** The engine has behaved this way since the attribute was
+wired; this entry and ATX-14 record the decision, not a code change.
+
+**Implementation locations:**
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/graph.py` — `Node.reasoning_effort:
+  str | None = None` (promoted attr; no parser default)
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py` +
+  `__init__.py` — `node.attrs.get("reasoning_effort")` passed through as-is on the direct-LLM
+  path; spawn path's orchestrator_config drops `None` keys entirely
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/stylesheet.py` /
+  `transforms.py` — the explicit resolution surface (`model_stylesheet`), which sets the value
+  only when a rule matches
+- `docs/DOT-AUTHORING-GUIDE.md` node-attribute table — documents the real default (none;
+  provider decides) instead of repeating the spec's `high`; pinned two-sided by
+  `modules/loop-pipeline/tests/test_doc_consistency.py` (D-243)
+- `specs/conformance/attractor-matrix.yaml` row `ATX-M-F04` + its probe in
+  `modules/loop-pipeline/tests/test_spec_conformance_matrix.py` — asserts unset stays unset
+  through parse *and* transforms, so a silently-introduced default fails CI naming this entry

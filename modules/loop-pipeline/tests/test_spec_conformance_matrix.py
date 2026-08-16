@@ -1227,14 +1227,36 @@ def test_row_atx_m_007o():
 
 
 def test_row_atx_m_f01():
-    """F1 (issue #234): an unknown shape hard-errors; it does NOT fall through."""
+    """ATX-13 / EXTENSIONS 38 (decided via issue #234, F1): an unknown shape
+    hard-errors at dispatch; the section 4.2 default-handler fall-through does
+    NOT occur.  Both halves asserted, per the DIVERGE-DECIDED contract."""
     r = row("ATX-M-F01")
     registry = HandlerRegistry(HandlerContext())
 
-    with pytest.raises(ValueError) as exc_info:
-        registry.get(Node(id="broken_gate", shape="trapezium"))
-    message = str(exc_info.value)
+    # Half 1: the spec's behavior does not occur.  Section 4.2's resolve()
+    # would fall through to the default codergen handler; if get() RETURNS
+    # anything for an unknown shape, the engine has silently un-diverged.
+    fell_through: object | None = None
+    message = ""
+    try:
+        fell_through = registry.get(Node(id="broken_gate", shape="trapezium"))
+    except ValueError as exc:
+        message = str(exc)
+    assert fell_through is None, flip(
+        r,
+        observed=(
+            f"an unknown shape fell through to {type(fell_through).__name__} "
+            "instead of raising -- the section 4.2 default-handler fallback is back"
+        ),
+        expected=(
+            "the ledgered refusal: ValueError at dispatch (ATX-13, EXTENSIONS 38). "
+            "A typo'd semantic shape must never silently become an LLM session"
+        ),
+        direction="UN-DIVERGENCE",
+    )
 
+    # Half 2: our ledgered behavior occurs, and is LOUD in the doctrine-rule-4
+    # sense -- names the shape, lists the valid set (remediation, not just refusal).
     assert "trapezium" in message, flip(
         r,
         observed=f"the error does not name the offending shape: {message!r}",
@@ -1256,7 +1278,13 @@ def test_row_atx_m_f01():
 
 
 def test_row_atx_m_f04():
-    """F4 (issue #234): `reasoning_effort` has no built-in default."""
+    """ATX-14 / EXTENSIONS 39 (decided via issue #234, F4): `reasoning_effort`
+    has no engine-injected default -- Appendix A's "high" deliberately does not
+    hold.  Unset stays unset through parse AND transforms (the stylesheet
+    resolution point), so the provider's own default governs.  Any value
+    appearing where the author wrote nothing is a hidden default -- the exact
+    substitution EXTENSIONS 39 rules out -- whether it is the spec's "high" or
+    anything else."""
     r = row("ATX-M-F04")
     graph = parse_dot(
         """
@@ -1273,19 +1301,41 @@ def test_row_atx_m_f04():
         r,
         observed=(
             f"a node omitting reasoning_effort now resolves to "
-            f"{node.reasoning_effort!r}"
+            f"{node.reasoning_effort!r} at parse time"
         ),
         expected=(
-            "today's pinned behavior: the attribute is UNSET, so the provider's own "
-            "default applies -- Appendix A's `\"high\"` does not hold here"
+            "the ledgered behavior (ATX-14, EXTENSIONS 39): the attribute stays "
+            "UNSET so the provider's own default applies -- the engine injects "
+            "no value the author did not write"
         ),
-        direction="UNDECIDED-MOVEMENT",
+        direction="UN-DIVERGENCE",
     )
     assert node.attrs.get("reasoning_effort") is None, flip(
         r,
         observed="node.attrs surfaced a default reasoning_effort",
         expected="the attrs proxy agrees with the first-class field: unset is unset",
-        direction="UNDECIDED-MOVEMENT",
+        direction="UN-DIVERGENCE",
+    )
+
+    # Through the transform pipeline too: apply_transforms() is where the
+    # stylesheet -- the spec's own centralizing surface for this attribute
+    # (section 8) -- resolves values onto nodes.  With no stylesheet rule, the
+    # engine must leave the attribute alone; this is the resolution point a
+    # conforming implementation would have to inject "high" at.
+    from amplifier_module_loop_pipeline.transforms import apply_transforms
+
+    transformed = apply_transforms(graph, PipelineContext())
+    assert transformed.nodes["work"].reasoning_effort is None, flip(
+        r,
+        observed=(
+            "apply_transforms() resolved reasoning_effort to "
+            f"{transformed.nodes['work'].reasoning_effort!r} with no stylesheet rule"
+        ),
+        expected=(
+            "the transform pipeline injects nothing: node attr, model_stylesheet, "
+            "and profile are the ONLY value sources (EXTENSIONS 39)"
+        ),
+        direction="UN-DIVERGENCE",
     )
 
 

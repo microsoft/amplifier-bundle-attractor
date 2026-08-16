@@ -16,13 +16,11 @@ command, a test, an exit status.
    - **`/attractorify`** -- applies the three-question test, designs the shape.
    - **`attractor:attractor-expert`** -- design and authoring detail.
    - **`@attractor:examples/objective/objective-runner.dot`** -- the shipped
-     objective layer: hand it the objective as `goal`; it triages, then routes
-     or redirects with a diagnosis.
+     objective layer: hand it the objective as `goal`; it triages and routes.
 
 **Say the names**, even when another mode is the right host: end-state and
-definition-of-done first, before any step list. It may also end in **"no"** --
-if no machine check could prove the end-state, say so and name where work
-belongs.
+definition-of-done first, before any step list. It may also end in **"no"**:
+if no machine check could prove the end-state, name where the work belongs.
 
 ## The three-question test -- run it on the REQUEST
 
@@ -56,10 +54,11 @@ claim on an edge condition changes the mechanism, not the authority.
   not an error -- it is **silently dropped**, and the graph runs with the prompt
   missing. Full vocabulary: `@attractor:context/dot-reference.md`.
 - **The file is not delivered until `attractor lint <file>` has run and its
-  verdict is in your reply.** Lint not relayed is lint not run: what you hand
-  over is an unverified file.
+  verdict is in your reply.** Lint not relayed is lint not run: you hand over
+  an unverified file.
 
 ## Depth, on demand
 
 - Patterns, fidelity, stylesheets: `@attractor:context/pipeline-awareness.md`
+- Runtime semantics, routing, debugging: `attractor:attractor-expert`
 - Running one: `attractor run x.dot`, or `attractor-pipeline-runner`.

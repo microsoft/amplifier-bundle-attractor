@@ -1,9 +1,18 @@
 digraph simple_test {
     graph [goal="Create a hello world Python script"]
-    
+
+    // `implement` carries goal_gate=true, so EXTENSIONS.md §25's fail-closed
+    // contract requires it to ASSERT a verdict (report_outcome / JSON).  A
+    // plain-prose answer resolves to RETRY with is_explicit=false; the retry
+    // budget is then spent and the node's outcome becomes FAIL -- at which
+    // point spec §3.7 fail-fast refuses to traverse the plain
+    // `implement -> done` edge (`done` is a default runs_on=success target)
+    // and the run dies with "No matching edge from node 'implement'"
+    // (issue #250).  The edge is fine; the prompt has to ask for the verdict
+    // the gate demands.
     start     [shape=Mdiamond]
-    implement [shape=box, prompt="Create a file called hello.py that prints 'Hello World'. Use only the tools available to you.", goal_gate=true]
+    implement [shape=box, prompt="Create a file called hello.py that prints 'Hello World'. Use only the tools available to you. Then call the report_outcome tool to assert your verdict: status=success once hello.py exists, or status=fail with a failure_reason if you could not create it. This node is a goal gate -- a plain-text answer is not a verdict and will not satisfy it.", goal_gate=true]
     done      [shape=Msquare]
-    
+
     start -> implement -> done
 }

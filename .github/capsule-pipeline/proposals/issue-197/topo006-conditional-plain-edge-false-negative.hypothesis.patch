@@ -1,0 +1,41 @@
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+index 6c29cef..232be3e 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py
+@@ -1415,9 +1415,19 @@ def _node_regates(graph: Graph, node_id: str) -> bool:
+     node = graph.nodes.get(node_id)
+     if node is not None and _is_human_gate(node):
+         return True
+-    return any(
+-        e.condition and e.condition.strip() for e in graph.outgoing_edges(node_id)
++    # A node only truly re-gates if ALL its outgoing edges are conditional.
++    # If it has a plain (unconditional) edge to an exit node, that plain edge
++    # is a silent escape route -- not a re-gate, even if other edges are conditional.
++    outgoing = list(graph.outgoing_edges(node_id))
++    has_any_conditional = any(e.condition and e.condition.strip() for e in outgoing)
++    if not has_any_conditional:
++        return False
++    exit_ids = {n.id for n in graph.nodes.values() if n.is_exit_node()}
++    has_plain_exit = any(
++        not (e.condition and e.condition.strip()) and e.to_node in exit_ids
++        for e in outgoing
+     )
++    return not has_plain_exit
+ 
+ 
+ def _unmarked_passthrough_path_to_exit(
+diff --git a/modules/loop-pipeline/tests/test_topological_lint.py b/modules/loop-pipeline/tests/test_topological_lint.py
+index 74d7bd3..6fe3069 100644
+--- a/modules/loop-pipeline/tests/test_topological_lint.py
++++ b/modules/loop-pipeline/tests/test_topological_lint.py
+@@ -1188,7 +1188,9 @@ class TestFailRoutedToExit:
+                 Edge("triage", "done"),
+             ],
+         )
+-        assert not _diag(lint(g), "fail_routed_to_exit")
++        # triage has a plain edge to done (exit) -- this IS the hazard shape.
++        # The old assertion encoded the bug; after the fix, a diagnostic is expected.
++        assert _diag(lint(g), "fail_routed_to_exit")
+ 
+     def test_indirect_multihop_one_unmarked_flagged(self):
+         """Multi-hop path with one unmarked intermediary among marked ones

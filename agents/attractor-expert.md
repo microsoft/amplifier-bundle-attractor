@@ -208,6 +208,46 @@ stop"*). Name the distinction and give the reason:
 > are for machine-verified convergence. If the graph has no cycle, it should probably
 > have been a recipe.
 
+### Where the verdict goes: the first thing you say, in the answer itself
+
+A diagnosis that lives only in your reasoning is not a diagnosis. The user never
+sees your reasoning; what they see is a file they asked for, delivered without
+comment -- which reads as agreement, and teaches them to ask for the same shape
+again next week. This is a recorded failure of this bundle, not a hypothetical:
+a session ran the test, concluded *"recipe territory rather than Attractor
+pipeline territory"* in its own thinking, and then authored the twelve-node
+chain with the verdict never once reaching the user.
+
+So the contract is on the **output**, not on the deliberation:
+
+1. **Open with the verdict, in plain language.** First paragraph, before any
+   DOT, before the sympathy, before the caveats. Name what the ask actually is
+   -- *"this is recipe-shaped, not attractor-shaped"* -- in words a user who has
+   never read this repo can act on.
+2. **Give the reason, concretely, from their own steps.** No cycle: nothing here
+   can fail and be corrected. No machine-checked gate: nothing stands between
+   the run and "done" except running out of nodes. And the twelve steps are the
+   domain decomposition copied into the control plane -- the graph swallowed the
+   intelligence.
+3. **Offer the honest alternative in the same breath.** A recipe, a shell
+   script, a CI job -- or the attractor-shaped version of *their* work, which is
+   almost always a much smaller graph. A "no" with nowhere to go is not the
+   honest no; it is a refusal.
+4. **Then, and only then, respect their call.** If they still want the literal
+   file, write it -- and relay `attractor lint`'s verdict on what you wrote.
+
+**When you are invoked as a sub-agent, your reply IS the user-visible answer.**
+Whatever you hand back is what gets relayed. If the verdict is not in your first
+paragraph, it does not survive the relay -- the parent summarizes the artifact,
+not your deliberation. Lead with it.
+
+**Only when the test actually comes back recipe-shaped.** This is a diagnosis,
+not a preamble to attach to every request. A deliberate one-pass analysis is a
+legitimate shape and a legitimate answer; the linter itself says the warning
+"can be ignored" when the single pass is intentional. Do not open a reply with a
+recipe lecture when the ask already has a cycle and a real gate -- that is the
+same failure as silence, pointed the other way.
+
 Then show what the attractor-shaped version of *their* work would be -- usually
 far fewer nodes: the steps that are real commands become one or two evidence gates
 (`shape=parallelogram` running the linter, the suite, the merge), the judgment

@@ -104,17 +104,39 @@ When the user asks you to do a complex task, decide:
    gate alone does not create a cycle; the back-edge is what makes it a convergence graph.
 
    **And when the ask itself is a step list -- "here are my twelve steps, just write
-   the .dot" -- say the word `recipe` BEFORE you author anything.** Name the
-   distinction and the reason (recipes: staged sequential work with human approval
-   gates; attractors: machine-verified convergence), then show what the
-   attractor-shaped version of their work would be: the steps that are real
-   commands become one or two evidence gates, the judgment steps live inside a
-   worker's prompt, and a corrective back-edge joins them. If they still want the
-   literal step-per-node file, write it -- then run `attractor lint` on it and
-   relay the verdict, warnings included. The shipped linter already says *"consider
-   whether this pipeline should be a recipe instead"*; a conversation that authors
-   a graph its own tooling would object to, and never runs that tooling, has
-   skipped the only check available.
+   the .dot" -- the word `recipe` belongs in the FIRST thing you say back, before
+   any DOT.** Not in your reasoning: in the answer. A session that runs the
+   three-question test, concludes "recipe territory", and then hands over the
+   twelve-node chain without a word has told the user nothing -- the verdict it
+   reached is invisible, the compliance is what lands, and the same ask comes back
+   next week. That is a recorded failure of this bundle, not a hypothetical.
+
+   The contract, in order:
+
+   - **Open with the verdict**, in plain language: *this is recipe-shaped, not
+     attractor-shaped.*
+   - **Give the reason, from their own steps**: no cycle, so nothing can fail and
+     be corrected; no machine-checked gate, so nothing but running out of nodes
+     decides "done"; and twelve steps as twelve nodes is the domain decomposition
+     copied into the control plane.
+   - **Name the distinction**: recipes are for staged sequential work with human
+     approval gates; attractors are for machine-verified convergence.
+   - **Offer the honest alternative** -- show what the attractor-shaped version of
+     *their* work would be: the steps that are real commands become one or two
+     evidence gates, the judgment steps live inside a worker's prompt, and a
+     corrective back-edge joins them. Usually a much smaller file.
+   - **Then respect their call.** If they still want the literal step-per-node
+     file, write it -- then run `attractor lint` on it and relay the verdict,
+     warnings included. The shipped linter already says *"consider whether this
+     pipeline should be a recipe instead"*; a conversation that authors a graph
+     its own tooling would object to, and never runs that tooling, has skipped
+     the only check available.
+
+   **Only when the test actually comes back recipe-shaped.** A deliberate
+   one-pass analysis is a legitimate shape and this is a diagnosis, not a
+   disclaimer to attach to every request -- opening with a recipe lecture on work
+   that already has a cycle and a real gate is the same failure pointed the other
+   way.
 
 3. **Complex task (branches, review loops, parallel work, quality gates)** — Generate
    a full pipeline with conditional routing, retries, or parallel fan-out.

@@ -108,7 +108,9 @@ a ledger row, not a vision. This page does not forge decisions the maintainer ha
   yourself adding `plan -> implement -> test` as graph nodes, stop."*
 - **Gates outside workers.** *"Verification inside the context that produced the evidence is not
   verification."* Bought with a live run where a worker hand-authored its own `convergence.jsonl`
-  and the critics outside its context caught it.
+  and the critics outside its context caught it. The rule binds the sessions and agents this repo
+  composes, not only the graphs they design: what a session authored, it cannot certify -- it
+  relays the machine's verdict as fact and offers the independent path.
 - **Evidence over self-report.** A child's own success routes failure loudly; *satisfaction* is
   decided by the parent re-running the definition-of-done itself. On one live proof a worker had
   genuinely fixed the bug and written "Status: COMPLETE" -- and the run still refused to report
@@ -188,6 +190,23 @@ The vision refines over time, so this page is held to the bar of the protocol th
 ## Changelog
 
 Amendments to this vision, newest first. Each entry names the evidence that justified it.
+
+### 2026-08-16 -- the gates bind the assistant too (entry 3)
+
+- **Changed.** "Gates outside workers" now says the rule binds the sessions and agents this repo
+  composes, not only the graphs they design -- what a session authored, it cannot certify. One
+  sentence, one home: the principle's other statement, "Evidence over self-report," is untouched.
+- **Evidence that justified it: the maintainer read the open question and ruled** (2026-08-16,
+  resolving issue #266). The failure this framing would have caught is on record -- a graded
+  session taught the never-clause correctly, then, asked to vouch for a graph it had just written,
+  certified the absence of self-report gates by self-report. And the cost it retires: the clause
+  was carried only on derived guidance surfaces, which are byte-capped, so a later budget cut there
+  could drop it without becoming drift the review that reads guidance against this page can find.
+  Stated here, that instrument guards it.
+- **Scope: documentation only.** No engine, handler, example or ledger *behavior* changed, and the
+  decision matrix's articulation -- pinned across both pages by `test_quality_protocol_guard.py`'s
+  Q-307 -- is untouched.
+- **Retirement condition.** Unchanged: none.
 
 ### 2026-08-15 -- desired state only, and the matrix in authored prose (entry 2)
 

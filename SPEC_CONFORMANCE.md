@@ -140,7 +140,7 @@ substitution beyond `$goal`.
 | SYNC-1 | Re-sync vendored `specs/canonical/` to upstream byte-for-byte | **DONE** (canonical @ `fb57a55`) | ALIGN |
 | DEAD-1 | Dead `SessionConfig` fields implying coverage that isn't wired (`tool_output_limits`, `tool_line_limits`, `default_command_timeout_ms`, `max_command_timeout_ms`, `get_max_tool_rounds`) | **DONE** | DIVERGE (all deleted + documented) |
 | ATX-8 | DOT `response_schema` node attribute → per-provider structured output (NOT in canonical spec; §4.5 keeps output format at backend) | **DONE — LIVE-PROVEN** (all 3 providers via DOT pipeline) | IMPROVE (extension §23) |
-| ATX-9 | DOT backends didn't recover Anthropic structured output from the `__structured_output__` tool call (only read `result.text`, which is empty on the tool-extraction path) | live: `outcome.notes=''` | `loop-pipeline/__init__.py`, `backend.py` | **DONE** (live-found + fixed) | ALIGN |
+| ATX-9 | DOT backends didn't recover Anthropic structured output from the `__structured_output__` tool call (only read `result.text`, which is empty on the tool-extraction path); live symptom `outcome.notes=''`; fixed in `loop-pipeline/__init__.py`, `backend.py` | **DONE** (live-found + fixed) | ALIGN |
 
 ---
 

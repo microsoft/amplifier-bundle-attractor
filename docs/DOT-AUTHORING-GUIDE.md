@@ -1487,6 +1487,72 @@ retries (an altered pinned check, a missing artifact) — drop the
 
 ---
 
+### TOPO-008 — Inert evidence gate (both answers end the run green)
+
+**What it detects:** A reachable *evidence gate* — a `parallelogram` (tool)
+node carrying a substantive `tool_command` and routing on its result (at
+least two outgoing edges, at least one of them conditional) — whose edges
+select on two or more **different** `context.tool.last_line` values that all
+land on the same terminal exit node.  Landing is measured through relay
+no-ops: a `diamond`/`point` with exactly one unconditional outgoing edge
+decides nothing, so passing through it is indistinguishable from taking the
+edge directly.
+
+**Why it matters:** The gate runs, it prints a verdict, and the graph reaches
+the exit either way — so the answer decided nothing.  This shape is green on
+every other rule in the family: the exit is reached only through the gate, no
+failure outcome is routed near the exit, and the cycle has a deterministic
+conditional exit, so TOPO-004, TOPO-005 and TOPO-006 all pass while the run
+ends successfully whether the tests passed or not.  Only equality is read:
+`context.tool.last_line!=green` selects on no particular answer and is
+deliberately ignored.
+
+```dot
+// WRONG — the gate's verdict routes both ways into the success door:
+// the run ends green whether the tests passed or failed
+gate [shape=parallelogram, tool_command="pytest -q && echo green || echo red"]
+gate -> done [condition="context.tool.last_line=green"]
+gate -> done [condition="context.tool.last_line=red"]
+
+// CORRECT — the failing answer goes back into the corrective loop
+gate -> done [condition="context.tool.last_line=green"]
+gate -> work [condition="context.tool.last_line=red"]
+```
+
+**Lineage:** This is the `attractor lint` sibling of the authoring checker's
+**A10** (`examples/authoring/check_authored_pipeline.py`, issue #245), which
+caught the shape on a graph that satisfied every other doctrine check.  A10
+only sees machine-authored graphs; TOPO-008 asks the same question of
+hand-authored ones.  The semantics are A10's verbatim in kind — same
+evidence-gate definition, same token extraction (through
+`conditions.parse_condition`, the grammar entry point the engine itself
+routes with), same relay-transparent landing chase, same exit-only scope —
+and a test asserts the two layers never disagree on a shipped graph.
+
+**What is NOT flagged:** two answers converging on an *ordinary* node that
+writes them up rather than routes on them — the general "two tokens into ANY
+node" form was rejected on measurement, because it fires on this
+repository's own deliberate `.github/` capsule patterns where several
+distinct diagnoses legitimately converge on one recording node.  Also not
+flagged: a chase that stops at a node which does real work (if the two
+answers ran different work before converging, the gate's answer demonstrably
+changed what happened), a branching diamond, a constant emitter such as
+`printf gate_pass` (it cannot fail, so nothing behind it is gated), an
+inequality condition, the same token twice, and an unreachable gate.
+
+**Severity:** WARNING — consistent with the rest of the family (TOPO-002
+through TOPO-007; TOPO-001 is `ERROR`).  The hazard is real but the author's
+intent is not statically provable, and it is `lint()`-only: `validate()` and
+`validate_or_raise()` stay silent, so no graph that executes today starts
+failing at run time.
+
+**Fix:** Route the failing token somewhere that is not the success door —
+back into the corrective loop, to a postmortem, or to a LOUD escalation.  If
+the node is genuinely not a decision point, drop the conditions and let it
+record instead of routing on it.
+
+---
+
 ### CMD-001 — Pipe-masked exit code
 
 **What it detects:** A `parallelogram` (tool) node whose `tool_command` ends
@@ -1534,7 +1600,7 @@ If you need to see the last N lines, write to a file and read it separately
 from the routing logic.
 
 **Severity:** WARNING — consistent with the WARNING-severity TOPO rules
-(TOPO-002 through TOPO-007; note TOPO-001 is `ERROR`, not this family's
+(TOPO-002 through TOPO-008; note TOPO-001 is `ERROR`, not this family's
 default).  The hazard is real but static analysis cannot prove the command is
 a meaningful gate; conservative analysis may miss complex cases.
 
@@ -1596,7 +1662,7 @@ influence either the exit code or the emitted token?  The hazard shapes
 destroy that influence.  The honest idioms preserve it.
 
 **Severity:** WARNING — consistent with CMD-001 and the WARNING-severity TOPO
-rules (TOPO-002 through TOPO-007; TOPO-001 is `ERROR`).
+rules (TOPO-002 through TOPO-008; TOPO-001 is `ERROR`).
 
 **What this rule does NOT catch:** sentinels inside `$(...)` substitutions,
 sentinels after non-pipe-masked commands (where `&& echo TOKEN` is the honest

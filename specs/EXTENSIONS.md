@@ -1725,13 +1725,17 @@ rules that reason about cycle structure and handler semantics rather than per-at
   deterministic (tool or human-gate) evidence gate on the cycle.
 
 *Addendum (2026-08-15): the family has since grown on the same advisory entry point —
-**TOPO-006** (`WARNING`, issue #173: failure outcome routed into the terminal success node) and
+**TOPO-006** (`WARNING`, issue #173: failure outcome routed into the terminal success node),
 **TOPO-007** (`WARNING`, issue #253: goal-gate retry budget structurally dead when every
 success-path walk from the gate's retry target back to the exit crosses a `loop_restart` edge,
 whose traversal resets the budget — the ATX-12 fresh-attempt semantics — leaving the loop bounded
-only by the step cap). Listed here so this entry stays the complete catalog of the `lint()`-only
-rule family; per this entry's own discriminator (the **entry point**, not the rule count), neither
-owed a new ledger entry. Both are documented in `docs/DOT-AUTHORING-GUIDE.md` with fix examples.*
+only by the step cap), and **TOPO-008** (`WARNING`, issue #254: inert evidence gate — a tool node
+that runs a real check and routes on it, but sends two or more distinct `context.tool.last_line`
+answers into the terminal success node, so the run ends green whichever answer it got; the
+`attractor lint` sibling of the authoring checker's A10, issue #245). Listed here so this entry
+stays the complete catalog of the `lint()`-only rule family; per this entry's own discriminator
+(the **entry point**, not the rule count), none of them owed a new ledger entry. All three are
+documented in `docs/DOT-AUTHORING-GUIDE.md` with fix examples.*
 
 **Why a separate entry point, not folded into `validate()`:** the five TOPO rules are
 judgment calls about pipeline *design quality* (is this graph shaped like a converging

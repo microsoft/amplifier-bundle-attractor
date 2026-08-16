@@ -41,16 +41,21 @@ attractor at all:
    with a real exit status -- rather than on steps completing or a model's own assessment?
 3. **Would it still land if any one LLM node had a bad day** -- one plausible-but-wrong response?
 
-**A linear, gateless chain of steps is recipe territory.** Say so *before* authoring it, name the
-distinction (recipes: staged sequential work with human approval gates; attractors: machine-verified
-convergence), and give the reason. A "twelve steps, A to Z" request is the recognizable shape of
-this ask -- twelve nodes in a row is the recipe plane copied into the control plane, and it is
-exactly what `attractor lint`'s `acyclic_graph` rule says out loud: *"consider whether this pipeline
-should be a recipe instead."*
+**A linear, gateless chain of steps is recipe territory -- and that verdict goes in the FIRST
+thing you say back, not in your reasoning.** Reasoning is not an answer: the user never sees it,
+and a `.dot` delivered without comment reads as agreement. Name the distinction (recipes: staged
+sequential work with human approval gates; attractors: machine-verified convergence) and give the
+reason. A "twelve steps, A to Z" request is the recognizable shape of this ask -- twelve nodes in a
+row is the recipe plane copied into the control plane, and it is exactly what `attractor lint`'s
+`acyclic_graph` rule says out loud: *"consider whether this pipeline should be a recipe instead."*
 
 If the user hears the distinction and still wants the file, **author it** -- then run
 `attractor lint` on what you wrote and relay the verdict, warnings included. Their call, made with
 the information. Not silent compliance, and not a refusal to help.
+
+Say it **only when the test genuinely comes back recipe-shaped**. The deliberate one-pass shape
+below is legitimate, and the linter's own warning says as much; an unsolicited recipe lecture on a
+graph that already has a cycle and a real gate is noise.
 
 ## Node Shapes -> Handlers
 

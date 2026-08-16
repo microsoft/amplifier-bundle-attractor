@@ -1,4 +1,4 @@
-"""Tests for topological (basin-lint) rules — TOPO-001 through TOPO-008.
+"""Tests for topological (basin-lint) rules — TOPO-001 through TOPO-009.
 
 These rules reason about cycle structure and handler semantics, not just
 graph topology.  They are exposed via ``lint()`` (not ``validate()``) so
@@ -2002,3 +2002,333 @@ class TestInertEvidenceGate:
         assert not _diag(validate(graph), "inert_evidence_gate")
         diags = _diag(lint(graph), "inert_evidence_gate")
         assert diags and all(d.severity == "WARNING" for d in diags)
+
+
+# ---------------------------------------------------------------------------
+# TOPO-009: outcome_label_shadowing (issue #226)
+# ---------------------------------------------------------------------------
+
+
+def _hazard_graph() -> Graph:
+    """The issue-#226 shape: an `outcome=retry` edge on a label-steered node."""
+    return _graph(
+        nodes={
+            "start": _mdiamond(),
+            "review": _box("review", prompt="review it"),
+            "fix": _box("fix", prompt="fix it"),
+            "rework": _box("rework", prompt="rework it"),
+            "done": _msquare("done"),
+        },
+        edges=[
+            Edge("start", "review"),
+            Edge("review", "fix", condition="outcome=retry"),
+            Edge("review", "rework", label="retry"),
+            Edge("review", "done", condition="outcome=success"),
+            Edge("fix", "review"),
+            Edge("rework", "review"),
+        ],
+    )
+
+
+class TestOutcomeLabelShadowing:
+    """TOPO-009 -- `outcome=` reads preferred_label before status (EXTENSIONS §22)."""
+
+    # -- fires ---------------------------------------------------------------
+
+    def test_fires_on_the_constructed_hazard(self):
+        diags = _diag(lint(_hazard_graph()), "outcome_label_shadowing")
+        assert len(diags) == 1
+        d = diags[0]
+        assert d.node_id == "review"
+        assert d.edge == ("review", "fix")
+
+    def test_message_names_the_rule_the_ledger_and_both_edges(self):
+        d = _diag(lint(_hazard_graph()), "outcome_label_shadowing")[0]
+        assert "TOPO-009" in d.message
+        assert "EXTENSIONS.md §22" in d.message
+        assert "ATX-5" in d.message
+        assert 'review -> fix [condition="outcome=retry"]' in d.message
+        assert 'review -> rework [label="retry"]' in d.message
+
+    def test_fix_offers_both_unambiguous_keys(self):
+        d = _diag(lint(_hazard_graph()), "outcome_label_shadowing")[0]
+        assert 'condition="status=retry"' in d.fix
+        assert 'condition="preferred_label=retry"' in d.fix
+
+    def test_one_diagnostic_per_node_not_per_edge(self):
+        """`review` carries two `outcome=` edges; the node is warned about once."""
+        assert len(_diag(lint(_hazard_graph()), "outcome_label_shadowing")) == 1
+
+    def test_inequality_counts_too(self):
+        """`outcome!=success` resolves the same overloaded key."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "review": _box("review", prompt="r"),
+                "fix": _box("fix", prompt="f"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "review"),
+                Edge("review", "fix", condition="outcome!=success"),
+                Edge("review", "done", label="success"),
+                Edge("fix", "review"),
+            ],
+        )
+        assert _diag(lint(g), "outcome_label_shadowing")
+
+    def test_accelerator_stripped_label_still_collides(self):
+        """The engine strips accelerators before matching; so does this rule."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "review": _box("review", prompt="r"),
+                "fix": _box("fix", prompt="f"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "review"),
+                Edge("review", "fix", condition="outcome=retry"),
+                Edge("review", "done", label="[R] Retry"),
+                Edge("fix", "review"),
+            ],
+        )
+        assert _diag(lint(g), "outcome_label_shadowing")
+
+    # -- the narrowings, each load-bearing -----------------------------------
+
+    def test_silent_on_an_outcome_condition_with_no_labelled_edge(self):
+        """Routing on `outcome=success` in a label-free graph is normal and correct.
+
+        This is the shape the issue's condition (1) would have flagged; it is
+        23 of this repository's 63 shipped graphs.
+        """
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "review": _box("review", prompt="r"),
+                "fix": _box("fix", prompt="f"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "review"),
+                Edge("review", "done", condition="outcome=success"),
+                Edge("review", "fix", condition="outcome=fail"),
+                Edge("fix", "review"),
+            ],
+        )
+        assert not _diag(lint(g), "outcome_label_shadowing")
+
+    def test_silent_when_the_status_word_label_is_on_a_conditional_edge(self):
+        """Spec §3.3 Step 2 skips conditional edges, so such a label is inert.
+
+        This is the shipped convention -- `gate -> fix
+        [condition="context.tool.last_line=fail", label="fail"]` -- and is why
+        the issue's own suggested conservative form still fires on 6 graphs.
+        """
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "review": _box("review", prompt="r"),
+                "fix": _box("fix", prompt="f"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "review"),
+                Edge("review", "done", condition="outcome=success"),
+                Edge("review", "fix", condition="outcome=fail", label="fail"),
+                Edge("fix", "review"),
+            ],
+        )
+        assert not _diag(lint(g), "outcome_label_shadowing")
+
+    def test_silent_when_the_label_is_outside_the_status_vocabulary(self):
+        """`label="needs_work"` cannot be confused with a status value."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "review": _box("review", prompt="r"),
+                "fix": _box("fix", prompt="f"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "review"),
+                Edge("review", "done", condition="outcome=success"),
+                Edge("review", "fix", label="needs_work"),
+                Edge("fix", "review"),
+            ],
+        )
+        assert not _diag(lint(g), "outcome_label_shadowing")
+
+    def test_silent_when_the_label_edge_belongs_to_a_different_node(self):
+        """`select_edge` resolves a node's outcome against THAT node's out-edges."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "review": _box("review", prompt="r"),
+                "other": _box("other", prompt="o"),
+                "fix": _box("fix", prompt="f"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "review"),
+                Edge("review", "done", condition="outcome=retry"),
+                Edge("review", "other"),
+                Edge("other", "fix", label="retry"),
+                Edge("fix", "review"),
+            ],
+        )
+        assert not _diag(lint(g), "outcome_label_shadowing")
+
+    def test_silent_on_a_non_outcome_condition_key(self):
+        """`context.tool.last_line=fail` does not go through the overloaded key."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "gate": _gate("gate"),
+                "fix": _box("fix", prompt="f"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "gate"),
+                Edge("gate", "done", condition="context.tool.last_line=green"),
+                Edge("gate", "fix", label="fail"),
+                Edge("fix", "gate"),
+            ],
+        )
+        assert not _diag(lint(g), "outcome_label_shadowing")
+
+    def test_silent_on_an_unlabelled_unconditional_edge(self):
+        """An unconditional edge with no label is not evidence of label steering."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "review": _box("review", prompt="r"),
+                "fix": _box("fix", prompt="f"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "review"),
+                Edge("review", "done", condition="outcome=success"),
+                Edge("review", "fix"),
+                Edge("fix", "review"),
+            ],
+        )
+        assert not _diag(lint(g), "outcome_label_shadowing")
+
+    # -- lint-only, WARNING severity ----------------------------------------
+
+    def test_rule_is_lint_only_and_warning_severity(self):
+        """`validate()` stays silent; `lint()` warns. No graph starts failing at run time."""
+        g = _hazard_graph()
+        assert not _diag(validate(g), "outcome_label_shadowing")
+        diags = _diag(lint(g), "outcome_label_shadowing")
+        assert diags and all(d.severity == "WARNING" for d in diags)
+
+    # -- vocabulary is derived, not hand-copied ------------------------------
+
+    def test_status_vocabulary_tracks_stage_status(self):
+        """A new StageStatus value cannot silently leave TOPO-009 behind."""
+        from amplifier_module_loop_pipeline.edge_selection import _normalize_label
+        from amplifier_module_loop_pipeline.outcome import StageStatus
+        from amplifier_module_loop_pipeline.validation import _STATUS_WORDS
+
+        assert _STATUS_WORDS == {_normalize_label(s.value) for s in StageStatus}
+
+
+class TestOutcomeLabelShadowingCalibration:
+    """TOPO-009 must be silent on every graph this repository ships.
+
+    A lint rule that fires on shipped, correct graphs is wolf-crying: authors
+    learn to ignore it and it stops protecting anything.  This sweep pins the
+    measurement the rule's narrowing was derived from, over EVERY `.dot` in the
+    repository -- `examples/`, `.github/`, `skills/`, and every test fixture --
+    not just the `examples/` corpus `test_examples_lint_clean.py` covers.
+    """
+
+    @staticmethod
+    def _repo_dots() -> list:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        if not (root / "examples").is_dir():
+            return []
+        return sorted(p for p in root.rglob("*.dot") if ".git/" not in str(p))
+
+    def test_silent_on_every_shipped_dot(self):
+        import pytest
+
+        from amplifier_module_loop_pipeline.dot_parser import parse_dot
+
+        dots = self._repo_dots()
+        if not dots:
+            pytest.skip("repository .dot corpus not present (installed-package run)")
+
+        fired = []
+        for path in dots:
+            graph = parse_dot(path.read_text(encoding="utf-8"))
+            for d in _diag(lint(graph), "outcome_label_shadowing"):
+                fired.append(f"{path}: {d.message}")
+
+        assert not fired, (
+            f"TOPO-009 fired on {len(fired)} of {len(dots)} shipped graphs -- it is "
+            f"wolf-crying and must be narrowed until it is silent on all of them:\n"
+            + "\n".join(fired)
+        )
+
+    def test_the_corpus_is_actually_large_enough_to_mean_something(self):
+        """Guard the guard: a sweep over an empty corpus proves nothing."""
+        import pytest
+
+        dots = self._repo_dots()
+        if not dots:
+            pytest.skip("repository .dot corpus not present (installed-package run)")
+        assert len(dots) >= 60, f"only {len(dots)} .dot files found; corpus shrank?"
+
+    def test_the_rejected_broader_shapes_really_do_fire_on_shipped_graphs(self):
+        """Why the narrowing exists, measured rather than asserted.
+
+        The issue proposed keying on an `outcome=<status word>` condition plus a
+        status-word edge `label=` anywhere in the graph.  Both of those broader
+        forms are demonstrably noisy on this repository's own corpus -- that
+        measurement is what moved the rule to per-node, Step-2-eligible label
+        edges.  If a future change ever makes the broad forms silent too, this
+        test goes red and the narrowing should be revisited.
+        """
+        import pytest
+
+        from amplifier_module_loop_pipeline.conditions import parse_condition
+        from amplifier_module_loop_pipeline.dot_parser import parse_dot
+        from amplifier_module_loop_pipeline.edge_selection import _normalize_label
+        from amplifier_module_loop_pipeline.validation import _STATUS_WORDS
+
+        dots = self._repo_dots()
+        if not dots:
+            pytest.skip("repository .dot corpus not present (installed-package run)")
+
+        condition_only = 0
+        plus_any_status_label = 0
+        for path in dots:
+            graph = parse_dot(path.read_text(encoding="utf-8"))
+            has_cond = any(
+                key == "outcome"
+                and op in ("=", "!=")
+                and _normalize_label(val) in _STATUS_WORDS
+                for e in graph.edges
+                for key, op, val in parse_condition(e.condition or "")
+            )
+            has_label = any(
+                e.label and _normalize_label(e.label) in _STATUS_WORDS
+                for e in graph.edges
+            )
+            condition_only += 1 if has_cond else 0
+            plus_any_status_label += 1 if (has_cond and has_label) else 0
+
+        assert condition_only >= 20, (
+            f"the issue's condition (1) alone fires on only {condition_only} graphs now "
+            f"(was 23 of 63) -- recheck whether TOPO-009 still needs narrowing"
+        )
+        assert plus_any_status_label >= 5, (
+            f"the issue's suggested conservative form fires on only "
+            f"{plus_any_status_label} graphs now (was 6 of 63) -- recheck the narrowing"
+        )

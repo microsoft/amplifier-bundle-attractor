@@ -1,0 +1,34 @@
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
+index 15ff2cf..2375924 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
+@@ -565,12 +565,26 @@ class PipelineOrchestrator:
+             # always checked.
+             if kwargs.get("backend") is None:
+                 explicit_profiles = self.config.get("profiles")
++                # CRUDE STUB: pull agent names from coordinator so preflight
++                # sees the same profiles _build_backend would auto-discover.
++                # Not a correct abstraction -- just enough to unblock the gate.
++                _stub_profiles: dict | None = None
++                if isinstance(explicit_profiles, dict):
++                    _stub_profiles = explicit_profiles
++                else:
++                    _c = kwargs.get("coordinator")
++                    if _c is not None:
++                        try:
++                            _cfg = getattr(_c, "config", None) or {}
++                            _agents = _cfg.get("agents", {}) if isinstance(_cfg, dict) else {}
++                            if _agents:
++                                _stub_profiles = {k: k for k, v in _agents.items() if isinstance(v, dict)}
++                        except Exception:
++                            pass
+                 check_provider_preflight(
+                     graph,
+                     mounted_providers=tuple(providers) if providers else (),
+-                    profiles=explicit_profiles
+-                    if isinstance(explicit_profiles, dict)
+-                    else None,
++                    profiles=_stub_profiles,
+                 )
+ 
+             # 6. Set up logs directory

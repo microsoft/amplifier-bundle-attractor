@@ -1,0 +1,84 @@
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
+index 15ff2cf..e2fd2b1 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py
+@@ -397,6 +397,7 @@ def _build_backend(
+     hooks: Any,
+     coordinator: Any | None,
+     orchestrator_config: dict[str, Any] | None = None,
++    graph: Any | None = None,
+ ) -> Any | None:
+     """Auto-construct a backend from the available providers.
+ 
+@@ -455,6 +456,18 @@ def _build_backend(
+                     "to the bundle."
+                 )
+ 
++            # HYPOTHESIS PATCH C: run preflight HERE where profiles are already
++            # resolved (auto-discovered from coordinator.config["agents"]).
++            # CRUDE: moves preflight call site to where profile data lives, rather
++            # than lifting profile data up to the original call site (Shape A) or
++            # passing coordinator into check_provider_preflight (Shape B).
++            if graph is not None:
++                from .preflight import check_provider_preflight
++                check_provider_preflight(
++                    graph,
++                    mounted_providers=tuple(providers) if providers else (),
++                    profiles=profiles or None,
++                )
+             return AmplifierBackend(
+                 coordinator,
+                 profiles=profiles,
+@@ -466,6 +479,19 @@ def _build_backend(
+     # Fall back to direct provider tool loop
+     if first_provider is not None:
+         logger.info("Using DirectProviderBackend (direct provider tool loop)")
++        # HYPOTHESIS PATCH C: also call preflight here for the DirectProviderBackend
++        # path, using only explicit profiles (no auto-discovery without coordinator).
++        # CRUDE: this is a second call site for preflight -- the clean fix would
++        # extract preflight into a shared helper called once, not twice.
++        if graph is not None:
++            from .preflight import check_provider_preflight
++            cfg = orchestrator_config or {}
++            explicit_profiles = cfg.get("profiles")
++            check_provider_preflight(
++                graph,
++                mounted_providers=tuple(providers) if providers else (),
++                profiles=explicit_profiles if isinstance(explicit_profiles, dict) else None,
++            )
+         return DirectProviderBackend(first_provider, tools, hooks, coordinator)
+ 
+     logger.warning(
+@@ -563,15 +589,15 @@ class PipelineOrchestrator:
+             # mock-backend tests honest -- they are not making provider
+             # claims).  The auto-constructed backend path (production) is
+             # always checked.
++            # HYPOTHESIS PATCH C: preflight moved into _build_backend() where
++            # profiles are fully resolved (including auto-discovered ones).
++            # The original call here is suppressed -- the check now runs inside
++            # _build_backend() after both explicit and auto-discovered profiles
++            # are available.  CRUDE: opposite direction from A/B -- instead of
++            # lifting profile data UP to this call site, we MOVE the call site
++            # DOWN to where profile data already lives.
+             if kwargs.get("backend") is None:
+-                explicit_profiles = self.config.get("profiles")
+-                check_provider_preflight(
+-                    graph,
+-                    mounted_providers=tuple(providers) if providers else (),
+-                    profiles=explicit_profiles
+-                    if isinstance(explicit_profiles, dict)
+-                    else None,
+-                )
++                pass  # preflight now runs inside _build_backend (see Shape C comment)
+ 
+             # 6. Set up logs directory
+             logs_root = self.config.get(
+@@ -592,7 +618,7 @@ class PipelineOrchestrator:
+             coordinator = kwargs.get("coordinator")
+             backend = kwargs.get("backend")
+             if backend is None:
+-                backend = _build_backend(providers, tools, hooks, coordinator, self.config)
++                backend = _build_backend(providers, tools, hooks, coordinator, self.config, graph=graph)
+ 
+             # 7b. Environment setup (if configured)
+             env_config: dict[str, Any] | None = self.config.get("execution_environment")

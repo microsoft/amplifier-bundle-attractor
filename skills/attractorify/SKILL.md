@@ -355,23 +355,44 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    artifact first — naming the evidence gate that justifies the extra
    machinery — re-run the gate, and only then grow the graph.
 
-5. **Write the artifact and lint it.** Write the `.dot` file to a named path in
-   the target repo (e.g. `<task-id>.dot`), then run:
+5. **Write the artifact in the engine's own vocabulary.** Write the `.dot` file
+   to a named path in the target repo (e.g. `<task-id>.dot`), using the attribute
+   names the parser actually reads: `prompt=` (never `instruction=`, never a
+   node-level `goal=`), `shape=box` for an LLM node (never `agent=`, never
+   `handler=`), `shape=Mdiamond` / `shape=Msquare` for start and exit (never
+   `circle` / `doublecircle`), and one of the six real `fidelity=` values
+   (`full`, `truncate`, `compact`, `summary:low`, `summary:medium`,
+   `summary:high`). An attribute the engine does not read is **not** an error:
+   the parser keeps it on the node, no handler ever looks at it, and the graph
+   runs as though it were never written -- so a graph authored with
+   `instruction=` has no prompts at all while looking fully specified.
+   `context/dot-reference.md` is the whole vocabulary and there is no other.
+
+6. **Lint it, and put the verdict in the handback.** Run, verbatim:
    ```
    bash -c "attractor lint <path>"
    ```
-   A `.dot` that fails `attractor lint` (TOPO-001 through TOPO-009, documented in
-   `docs/DOT-AUTHORING-GUIDE.md`) is not a runnable artifact. Fix lint findings
-   before handing back.
+   **The artifact is not delivered until this has been RUN on it and its output
+   is in what you hand back.** Not "lint before handing back" -- an obligation
+   you can discharge inside your own reasoning is not an obligation, which is
+   why this one names where the result lands. A `.dot` that fails
+   `attractor lint` (TOPO-001 through TOPO-009, documented in
+   `docs/DOT-AUTHORING-GUIDE.md`) is not a runnable artifact: fix the findings,
+   re-run, and relay the final verdict with any surviving warnings quoted. If
+   the linter cannot be run here, say that in the handback, in those words, and
+   give the user the exact command -- an unrun lint reported as unrun is honest;
+   an unrun lint left unmentioned is how an inert graph ships.
 
-6. **Hand back:** the `.dot` file path, the exact invocation command, and a
+7. **Hand back:** the `.dot` file path, the exact invocation command, and a
    one-line summary of why each structural choice was made. The chosen target
    must appear as a working directory / path / parameter in both the graph's
    deterministic gate commands and the invocation, and both caps — iterations
    AND wall-clock duration — must be machine-encoded in graph attributes or
    invocation parameters; scoping or a budget stated only in prose is neither.
+   The lint verdict from Step 6 travels with the file; a handback without it is
+   an unverified artifact regardless of how the design reads.
 
-7. **Offer the authoring attractor.** This skill's design is reviewed by a
+8. **Offer the authoring attractor.** This skill's design is reviewed by a
    verifier and linted; it is not converged under executed gates. When the
    design step has produced a validated intent — a named sink, a machine
    check, and the caps — offer `examples/authoring/pipeline-author.dot`, which
@@ -391,6 +412,9 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
   recipe-plane line, **three-question test**, design order
 - `docs/DOT-AUTHORING-GUIDE.md` — node contract, DOT syntax, TOPO-001..009 lint
   rules, `attractor lint` CLI
+- `context/dot-reference.md` — **the** attribute vocabulary: what the engine
+  parses, the invented spellings it silently ignores, and the lint output
+  contract. Consult it while writing the `.dot`, not after
 - `attractor:attractor-expert` — the consultable expert agent; delegate to it
   for any pipeline design or debugging question (source prompt:
   `agents/attractor-expert.md`; read directly only when delegation is unavailable)

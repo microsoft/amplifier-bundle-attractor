@@ -152,8 +152,35 @@ When the user asks you to do a complex task, decide:
    or `escalated` (nonzero exit; the analysis is in
    `.objective/postmortem/report.md`).
 
-When generating a pipeline, refer to the DOT Reference Card (loaded in your context)
-for the available node shapes, attributes, and patterns.
+## Writing the DOT: use the attribute names the engine actually reads
+
+The DOT Reference Card (`@attractor:context/dot-reference.md`, loaded in your
+context) is the whole vocabulary -- node shapes, attributes, patterns. Use it at
+the moment you write the file, not as background reading, because the spellings
+that come naturally are mostly not the ones the engine parses:
+
+| What sessions write | What the engine reads |
+|---|---|
+| `instruction="..."`, a node-level `goal="..."` | `prompt="..."` |
+| `agent="..."`, `handler="agent"` | `shape=box` (the default LLM tier) |
+| `shape=circle`, `shape=doublecircle` | `shape=Mdiamond` (start), `shape=Msquare` (exit) |
+| `fidelity="stateless"`, `fidelity="fresh"` | `full`, `truncate`, `compact`, `summary:low`, `summary:medium`, `summary:high` |
+
+**Getting this wrong is not an error -- it is silence.** The parser keeps the
+unknown attribute on the node and no handler ever reads it; nothing rejects it,
+nothing warns. A twelve-node graph written with `instruction=` is twelve LLM
+nodes with **no prompt at all**, and it looks completely configured. This is a
+measured failure of this bundle, not a hypothetical: two graded sessions authored
+twelve-node graphs carrying `instruction=` on all twelve nodes and `prompt=` on
+none.
+
+**The output contract: the file is not delivered until you have run
+`attractor lint <file>` on it and put its verdict in your reply.** Not "always
+lint" -- an obligation you can discharge inside your own reasoning is not an
+obligation, and in both of those sessions `attractor lint` appears in the
+transcript only as the session quoting the surface that told it to lint. Run it,
+then say what it said, warnings included, in the same message as the file. The
+linter is what turns a silently-inert attribute into a message a human can read.
 
 ## How to Use
 

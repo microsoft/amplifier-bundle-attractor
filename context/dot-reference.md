@@ -21,15 +21,27 @@ one of them is inert:
 | `attractor_retry_limit=3` | `max_retries=3` |
 | `shape=circle`, `shape=doublecircle`, `shape=square` | `shape=Mdiamond` (start), `shape=Msquare` (exit) |
 | an invented `verdict` variable in a condition | `condition="outcome=success"`, or `condition="context.tool.last_line=<token>"` from a real command |
+| `fidelity="stateless"`, `fidelity="fresh"` -- a real attribute, an invented value | one of the six modes below: `full`, `truncate`, `compact`, `summary:low`, `summary:medium`, `summary:high` |
 
 An unrecognized `shape=` falls back to the **codergen (LLM)** handler -- so a node you meant as a
 gate quietly becomes another model call, and the graph looks gated while nothing is being checked.
 
-**So: lint what you author, every time.** `attractor lint <file.dot>` is the fail-loud step that
-turns a silently-inert attribute into a message you can read -- a node carrying an invented
-`instruction=` surfaces as `[prompt_on_llm_nodes] LLM node 'x' has no prompt and no explicit
-label`. Author, lint, relay what it said. Handing someone a `.dot` you never linted is handing
-them a file you have not read.
+## The output contract: a `.dot` is not delivered until you have linted it
+
+**The file is not delivered until `attractor lint <file.dot>` has been RUN on it and its verdict
+is in your reply.** Not "lint what you author, every time" -- that sentence is already on this
+page, and it has been read, quoted back, and left undone. In two graded sessions `attractor lint`
+appears in the transcript *only* as the session citing the surface that told it to lint, never as
+an invocation; both then handed over a twelve-node graph carrying `instruction=` on all twelve
+nodes and `prompt=` on none. An obligation you can discharge inside your own reasoning is not an
+obligation, which is why this one names **where the result lands**: in the reply, next to the file.
+
+So: author, run the linter, relay what it said -- warnings included, in the same message as the
+file. The linter is what turns a silently-inert attribute into a message a human can read: a node
+carrying an invented `instruction=` surfaces as `[prompt_on_llm_nodes] LLM node 'x' has no prompt
+and no explicit label`. Handing someone a `.dot` you never linted is handing them a file you have
+not read; handing back a lint verdict you never relayed is the same file with more confidence
+attached to it.
 
 ## Before you author: run the three-question test on the REQUEST
 

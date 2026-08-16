@@ -877,11 +877,16 @@ def test_the_shipped_graph_keeps_its_layer_three_contract():
     # Zero ERROR diagnostics -- the bar every shipped example is held to.
     assert [d for d in lint(graph) if d.severity == "ERROR"] == []
 
-    # Exactly one exit, and it is reachable only through the report gate.
+    # Exactly one exit node, with exactly two doors into it: the report gate is
+    # the only GREEN one, and `escalated` is the only RED one (issue #252 -- a
+    # designed loud terminal has to route, because the main loop has no
+    # designed-terminus concept).
     exits = [n for n in graph.nodes.values() if n.is_exit_node()]
     assert len(exits) == 1
     into_exit = graph.incoming_edges(exits[0].id)
-    assert [e.from_node for e in into_exit] == ["report_gate"]
+    assert sorted(e.from_node for e in into_exit) == ["escalated", "report_gate"]
+    green = [e for e in into_exit if e.from_node == "report_gate"]
+    assert all("outcome=success" in str(e.condition or "") for e in green), green
 
     # The verdict is owned by a code-tier node, never by a worker.
     gates = [
@@ -920,7 +925,118 @@ def test_the_shipped_graph_keeps_its_layer_three_contract():
         node_id = "review_" + cls.replace("-", "_")
         assert graph.nodes[node_id].attrs.get("must_write") == f".drift-review/raw/{cls}.json"
 
-    # No outcome=fail edge may reach the exit: a machinery failure leaves loudly.
-    for edge in graph.edges:
-        if edge.to_node == exits[0].id:
-            assert "outcome=fail" not in str(edge.condition or "")
+    # Exactly ONE outcome=fail edge reaches the exit, and it is the loud
+    # terminal's own (issue #252).  Before that edge existed the invariant here
+    # was "no failure edge may reach the exit" -- which read as a safety
+    # property but was actually the bug: `escalated` dead-ended, and the main
+    # loop, which has no designed-terminus concept, reported the review's most
+    # important honest outcome as PIPELINE_ERROR error_type=no_matching_edge.
+    # The property that actually matters is preserved and asserted below: the
+    # failure that reaches the exit is the LAST node to complete and exits
+    # nonzero, so `_check_goal_gates` returns ITS fail -- status=fail, exit 1 --
+    # rather than a machinery failure leaving through the success door green.
+    fail_into_exit = [
+        edge
+        for edge in graph.edges
+        if edge.to_node == exits[0].id and "outcome=fail" in str(edge.condition or "")
+    ]
+    assert [e.from_node for e in fail_into_exit] == ["escalated"], fail_into_exit
+    escalated_command = str(graph.nodes["escalated"].attrs["tool_command"])
+    assert escalated_command.rstrip().endswith("exit 1"), escalated_command
+    assert graph.outgoing_edges("escalated") == fail_into_exit, (
+        "the loud terminal must have nowhere else to go -- a node with another "
+        "route is a step on a path, not a terminal"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Issue #252 -- the dead-end designed terminal, and its goal-gate corollary
+#
+# The engine's MAIN loop has no designed-terminus concept.  `run_subgraph()`
+# distinguishes "no outgoing edges at all" (a designed terminus) from a
+# conditional-mismatch dead end; `run()` does NOT -- it reports
+# `error_type=no_matching_edge` as a PIPELINE_ERROR whatever the exit status.
+# So `escalated` -- a tool node that exits 1 on purpose, having just written the
+# handoff -- was reported as an authoring bug when it was reached.  Measured on
+# the shipped CLI against this very file, with a blocked preflight:
+#
+#     [PIPELINE] X Error at escalated (no_matching_edge): Command exited with
+#     code 1: escalated
+#     notes: No matching edge from node 'escalated'
+#
+# Read through the engine's own parser, not a paraphrase of the file.
+# ---------------------------------------------------------------------------
+
+
+def _drift_graph():
+    from amplifier_module_loop_pipeline.dot_parser import parse_dot
+
+    return parse_dot(_DOT_PATH.read_text(encoding="utf-8"))
+
+
+def test_escalated_routes_to_the_exit_instead_of_dead_ending():
+    """A loud terminal must ROUTE; the main loop has no designed terminus.
+
+    One edge -- `escalated -> done [outcome=fail]` -- is the convergence-factory
+    idiom proven in #248.  `_check_goal_gates` then returns the LAST COMPLETED
+    node's outcome, so `escalated`'s own nonzero exit becomes the run's
+    status=fail / CLI exit 1, with no routing error, and
+    `.drift-review/disposition` still says which terminal it was.
+    """
+    graph = _drift_graph()
+    exits = [n.id for n in graph.nodes.values() if n.is_exit_node()]
+    assert exits == ["done"], exits
+
+    outgoing = graph.outgoing_edges("escalated")
+    assert outgoing, (
+        "`escalated` has no outgoing edge, so the engine reports the designed "
+        "escalation as PIPELINE_ERROR error_type=no_matching_edge (issue #252)"
+    )
+    assert [e.to_node for e in outgoing] == ["done"]
+    assert "outcome=fail" in (outgoing[0].condition or ""), outgoing[0].condition
+
+
+def test_escalated_still_exits_nonzero_so_the_exit_it_reaches_is_red():
+    """The routing fix must not turn the loud terminal into a quiet one."""
+    node = _drift_graph().nodes["escalated"]
+    command = str(node.attrs["tool_command"])
+    assert command.rstrip().endswith("exit 1"), command
+    assert str(node.attrs.get("max_retries")) == "0"
+    assert ".drift-review/disposition" in command
+
+
+def test_no_node_in_the_drift_review_graph_dead_ends():
+    """The whole-graph form of the rule, so a future terminal cannot regress."""
+    graph = _drift_graph()
+    exits = {n.id for n in graph.nodes.values() if n.is_exit_node()}
+    dead_ends = [n for n in graph.nodes if n not in exits and not graph.outgoing_edges(n)]
+    assert dead_ends == [], dead_ends
+
+
+def test_the_report_gate_carries_no_retry_target():
+    """#252's corollary, which #252 does not mention and #248 discovered.
+
+    `retry_target` on a goal gate is consulted in exactly one place --
+    `_check_goal_gates()` at the exit node.  While `escalated` dead-ended, the
+    exit was unreachable with `report_gate` unsatisfied, so the attribute was
+    dead.  `escalated -> done` makes it reachable -- and in THIS graph
+    `report_gate -> escalated [outcome=fail]` is the shortest path there, so the
+    attribute becomes live on the very route it must not fire on.  Measured on
+    the shipped engine with a faithful reduction of exactly that shape:
+    `consolidate`, `report_gate` and `escalated` executed 51 times each before
+    the step cap with `retry_target="consolidate"`, and once each without it.
+    `no_corpus` means the findings gate never admitted a corpus -- a cause no
+    number of re-consolidations can change.
+
+    The corrective cycle is untouched: it is the `report_bad` edge back to
+    `consolidate`, walled by $max_reports.
+    """
+    graph = _drift_graph()
+    gate = graph.nodes["report_gate"]
+    assert str(gate.attrs.get("goal_gate", "")).lower() == "true"
+    assert not gate.attrs.get("retry_target"), gate.attrs.get("retry_target")
+    assert not gate.attrs.get("fallback_retry_target")
+    assert "retry_target" not in graph.graph_attrs
+
+    pairs = {(e.from_node, e.to_node) for e in graph.edges}
+    assert ("report_gate", "consolidate") in pairs

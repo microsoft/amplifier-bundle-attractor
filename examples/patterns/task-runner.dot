@@ -45,6 +45,13 @@
 //     No diamond+outcome= routing (dead-edge trap). Cheap gate (DoD script)
 //     before expensive gate (LLM critique). goal_gate on both gates makes
 //     the exit unearnable without evidence.
+//   - ONE EXIT NODE, THREE HONEST TERMINALS. `done` opens GREEN only through
+//     ship_check, and RED through `bad_input` (the run was never given a
+//     runnable task) or `abandon` (the human gate chose to stop). All three
+//     ROUTE to the single exit node; the two red ones carry their own nonzero
+//     exit, which becomes the run's status. That is the convergence-factory
+//     idiom, and the reason this file consciously carries TWO TOPO-006
+//     warnings (see the last edges in this file).
 //
 // VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON (see task-runner.md):
 //   - STALE-LABEL RULE: a failing tool node does NOT refresh tool.last_line
@@ -74,6 +81,63 @@
 //   - On a human-gate timeout/auto-approve, the FIRST edge is chosen:
 //     Abandon is listed first so unattended runs fail safe (honest FAIL +
 //     postmortem) instead of looping on budget bumps.
+//   - THE MAIN LOOP HAS NO DESIGNED-TERMINUS CONCEPT. `run_subgraph()`
+//     distinguishes "no outgoing edges at all" (a designed terminus) from a
+//     conditional-mismatch dead end; `run()` does NOT. Any node the main
+//     loop finishes with no matching outgoing edge — WHATEVER its exit
+//     status — terminates through `terminate_pipeline()` and emits
+//     PIPELINE_ERROR `error_type=no_matching_edge`. Measured on the shipped
+//     CLI against this very file before the terminal edges below existed: a
+//     missing task_file produced `[PIPELINE] X Error at bad_input
+//     (no_matching_edge)` and `notes: No matching edge from node
+//     'bad_input'` — a plain "you did not give me a task" reported in the
+//     vocabulary of an authoring bug (issue #252; issue #243 defect (a),
+//     fixed in objective-runner.dot by #248).
+//   - AT THE EXIT NODE, WITH EVERY GOAL GATE SATISFIED, THE RUN'S STATUS IS
+//     THE LAST COMPLETED NODE'S OUTCOME (`engine.py::_check_goal_gates` ->
+//     `node_outcomes[completed_nodes[-1]]`). That is the whole mechanism
+//     behind `bad_input -> done` and `abandon -> done`: each terminal's own
+//     nonzero exit becomes the run's status=fail / CLI exit 1, with no
+//     routing error.
+//   - GOAL-GATE COROLLARY — WHY NEITHER GATE CARRIES retry_target ANY MORE,
+//     AND WHY THE GRAPH-LEVEL ONE NOW POINTS AT `abandon`. `retry_target` on
+//     a goal gate is consulted in exactly ONE place — `_check_goal_gates()`
+//     AT THE EXIT NODE — and the graph-level attribute is that same
+//     mechanism's fallback (spec §3.4). It is deliberately NOT consulted on
+//     per-node failure (spec §3.7,
+//     `engine.py::_resolve_failure_retry_target`), so it never was a
+//     corrective loop; the corrective loops here are and always were the
+//     graph's own edges (triage -> attempt, feedback -> attempt with
+//     loop_restart). The one question it actually answers is: "the run is
+//     trying to LEAVE with a goal gate unsatisfied — where does it go
+//     instead?"
+//     While `abandon` dead-ended, the exit was unreachable with a gate
+//     unsatisfied, so the answer never mattered. Routing `abandon` to `done`
+//     makes it matter, and `attempt` became the WRONG answer: `abandon` is
+//     reached with `verify` red (verify -> triage -> postmortem) or with
+//     `verdict` red (verdict -> feedback -> ...), so an abandonment a HUMAN
+//     had just chosen would be overruled and sent back to the maker for more
+//     paid iterations, with `completed_nodes` cleared. Measured on the
+//     shipped engine with a faithful reduction of this shape:
+//       retry_target="attempt"  -> attempt/verify/postmortem/abandon each
+//                                  executed 51 times before the step cap
+//       retry_target="abandon"  -> 1 / 1 / 1 / 2
+//     The right answer to "where does a run go when it tries to leave with
+//     an unsatisfied gate" is the abandonment terminal, which is where it
+//     already was. `abandon` runs a second time (an echo and `exit 1`,
+//     idempotent), the exit-time check then finds no unsatisfied gate — a
+//     goal-gate retry clears `node_outcomes` — and the run ends on
+//     `abandon`'s own FAIL. The node-level `retry_target="attempt"` on
+//     `verify` and `verdict` is gone because a node-level value would take
+//     precedence and re-open the 51-lap hazard.
+//     HONEST NOTE ON WHAT THIS ATTRIBUTE DOES *NOT* BUY: it is not a failure
+//     route for the box nodes. `orient`, `attempt`, `diagnose` and
+//     `postmortem` still have no per-node failure route, because the engine
+//     does not consult the graph-level attribute there. That is a separate,
+//     pre-existing question (and `check_authored_pipeline.py`'s A6 counts
+//     this attribute as if it were such a route, which is a false negative in
+//     the checker, not a property of this graph). Recorded here rather than
+//     quietly fixed under an unrelated issue.
 //   - SHIP-PATH TRANSIENT RECOVERY + BUDGET WALL AT VERIFY: critique/
 //     feedback/package carry outcome=fail edges back to verify (see the
 //     edge block below). verify increments .ai/iter FIRST and checks the
@@ -110,7 +174,7 @@ digraph TaskRunner {
         default_max_retries=2,
         default_fidelity="compact",
         max_pipeline_duration="14400s",
-        retry_target="attempt"
+        retry_target="abandon"
     ]
 
     start [shape=Mdiamond]
@@ -120,6 +184,12 @@ digraph TaskRunner {
     setup [shape=parallelogram, class="glue", max_retries=0,
         tool_command="rm -rf .ai && mkdir -p .ai/feedback .ai/postmortem && B=$max_iterations; echo ${B:-6} > .ai/budget && VF=\"$task_file\"; VF=\"${VF%.md}.verify.sh\"; [ -f \"$task_file\" ] && [ -f \"$VF\" ] && printf ok || printf missing"]
 
+    // Loud refusal terminal: the run was never given a runnable task. Exits 1
+    // DELIBERATELY (max_retries=0) and ROUTES that nonzero exit to the single
+    // exit node — see the terminal edges at the end of this file. It does NOT
+    // dead-end: the main loop has no designed-terminus concept, so a dead-ended
+    // terminal is reported as PIPELINE_ERROR `no_matching_edge` rather than as
+    // the plain refusal it is.
     bad_input [shape=parallelogram, class="glue", max_retries=0,
         tool_command="echo 'FATAL: task_file or its sibling .verify.sh not found' >&2; exit 1"]
 
@@ -133,7 +203,7 @@ digraph TaskRunner {
 
     // ---------- verify: CHEAP deterministic gate (the task's own DoD) ----------
     verify [shape=parallelogram, class="gate", max_retries=0,
-        goal_gate=true, retry_target="attempt",
+        goal_gate=true,
         tool_command="n=$(grep -c '"gate": "verify"' .ai/convergence.jsonl 2>/dev/null); n=$((${n:-0}+1)); echo $n > .ai/iter; B=$(cat .ai/budget 2>/dev/null); B=${B:-6}; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"verify\", \"budget\": \"exhausted\"}\n' \"$n\" >> .ai/convergence.jsonl; printf exhausted; else VF=\"$task_file\"; VF=\"${VF%.md}.verify.sh\"; timeout 1800 bash \"$VF\" > .ai/verify.log 2>&1; rc=$?; [ $rc -eq 124 ] && echo 'VERIFY TIMEOUT after 1800s' >> .ai/verify.log; printf '{\"iteration\": %s, \"gate\": \"verify\", \"pass\": %s}\n' \"$n\" \"$([ $rc -eq 0 ] && echo true || echo false)\" >> .ai/convergence.jsonl; [ $rc -eq 0 ] && printf green || { printf red; exit 1; }; fi"]
 
     // ---------- triage: root-cause wall + budget check (deterministic) ----------
@@ -167,7 +237,7 @@ digraph TaskRunner {
     // finding something new each cycle. After 3 total refusals the verdict
     // routes to postmortem->human: budget-as-decision-point on the OUTER loop.
     verdict [shape=parallelogram, class="gate", max_retries=0,
-        goal_gate=true, retry_target="attempt",
+        goal_gate=true,
         tool_command="n=$(cat .ai/iter 2>/dev/null || echo 0); grep -E '^VERDICT:' .ai/critique.md | tail -1 | grep -q 'SHIP'; ok=$?; printf '{\"iteration\": %s, \"gate\": \"critique\", \"ship\": %s}\n' \"$n\" \"$([ $ok -eq 0 ] && echo true || echo false)\" >> .ai/convergence.jsonl; [ $ok -eq 0 ] && printf ship || { sc=$(($(cat .ai/stall-count 2>/dev/null || echo 0)+1)); echo $sc > .ai/stall-count; if [ \"$sc\" -ge 3 ]; then printf stall; else printf iterate; exit 1; fi; }"]
 
     // ---------- feedback: accumulate critique -> descent, not re-flip ----------
@@ -201,6 +271,11 @@ digraph TaskRunner {
     bump_budget [shape=parallelogram, class="glue", max_retries=0,
         tool_command="B=$(cat .ai/budget 2>/dev/null); B=${B:-6}; N=$((B+3)); [ $N -gt 15 ] && N=15; echo $N > .ai/budget; rm -f .ai/last-fail-sig; printf continue"]
 
+    // Loud abandonment terminal: a human (or an unattended fail-safe) chose to
+    // stop, and the postmortem is the salvage. Exits 1 DELIBERATELY
+    // (max_retries=0) and ROUTES that nonzero exit to the single exit node —
+    // see the terminal edges at the end of this file. Same reason as bad_input:
+    // a dead-end here is reported as an authoring bug, not as an abandonment.
     abandon [shape=parallelogram, class="glue", max_retries=0,
         tool_command="echo 'ABANDONED: see .ai/postmortem/report.md and .ai/convergence.jsonl' >&2; exit 1"]
 
@@ -269,4 +344,28 @@ digraph TaskRunner {
     escalate -> abandon     [label="[A] Abandon — keep the postmortem"]
     escalate -> bump_budget [label="[C] Continue — raise the budget"]
     bump_budget -> attempt
+
+    // ---------- the two loud terminals ROUTE, they do not dead-end ----------
+    // Each carries its own nonzero exit into the single exit node. Without
+    // these edges the main loop — which has no designed-terminus concept —
+    // reports this graph's two honest red outcomes in the vocabulary of an
+    // authoring bug: `[PIPELINE] X Error at bad_input (no_matching_edge)` /
+    // `... at abandon (no_matching_edge)`, with the run's machine-readable
+    // `notes` reading "No matching edge from node '<terminal>'". With them,
+    // `_check_goal_gates` returns the LAST COMPLETED node's outcome — the
+    // terminal's own FAIL — so the run ends status=fail / CLI exit 1 with no
+    // routing error and the postmortem still on disk. Both terminals exit
+    // nonzero on EVERY path, so `outcome=fail` is the total case, not a
+    // partial one.
+    // THE TWO TOPO-006 WARNINGS THIS FILE CARRIES ARE THESE EDGES, ON PURPOSE:
+    // "a budget-exhaustion exit that deliberately ends at the single exit node
+    // with a genuine FAIL outcome" is the named, sanctioned deliberate design
+    // (docs/DOT-AUTHORING-GUIDE.md, TOPO-006), and objective-runner.dot and
+    // convergence-factory.dot carry the identical diagnostic for the identical
+    // reason. The hazard the rule guards — a failure leaving through the
+    // success door as `status: success`, exit 0 — cannot happen here: the
+    // terminal is the last node to complete and its FAIL is what the exit
+    // returns.
+    bad_input -> done [condition="outcome=fail", label="loud exit — status is bad_input's own nonzero exit"]
+    abandon   -> done [condition="outcome=fail", label="loud exit — status is abandon's own nonzero exit"]
 }

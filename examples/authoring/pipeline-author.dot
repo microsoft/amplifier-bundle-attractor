@@ -79,13 +79,51 @@
 //     goal and run id only. It never sees the author's reasoning about why the
 //     graph was right; it sees the artifact and the two gate reports. That
 //     isolation is the property being purchased, not an optimisation.
-//   - ONE GREEN EXIT. `validate_or_raise` requires exactly one exit node, so the
-//     two honest terminals are `done` (Msquare, reachable only through
-//     `finalize`, which refuses to open without a disposition artifact) and
-//     `escalated` (a tool node that exits 1 with max_retries=0 and no
-//     fail-route -- the bug-fix.dot idiom, a LOUD red).
+//   - ONE EXIT NODE, TWO HONEST TERMINALS. `validate_or_raise` requires exactly
+//     one exit node, so BOTH terminals reach it: `done` opens GREEN only
+//     through `finalize` (which refuses to open without a disposition
+//     artifact), and RED only through `escalated`, whose own nonzero exit
+//     becomes the run's status. That is the convergence-factory.dot idiom --
+//     "a budget-exhaustion exit that deliberately ends at the single exit node
+//     with a genuine FAIL outcome" (docs/DOT-AUTHORING-GUIDE.md, TOPO-006) --
+//     and it is why this file consciously carries ONE TOPO-006 WARNING, for the
+//     same reason and in the same way examples/objective/objective-runner.dot
+//     and examples/patterns/convergence-factory.dot do. Letting `escalated`
+//     dead-end instead does NOT work: see the engine semantics below.
 //
 // VERIFIED ENGINE SEMANTICS THIS FILE DEPENDS ON:
+//   - THE MAIN LOOP HAS NO DESIGNED-TERMINUS CONCEPT. `run_subgraph()`
+//     distinguishes "no outgoing edges at all" (a designed terminus) from a
+//     conditional-mismatch dead end; `run()` does NOT. Any node the main loop
+//     finishes with no matching outgoing edge -- WHATEVER its exit status --
+//     terminates through `terminate_pipeline()` and emits PIPELINE_ERROR
+//     `error_type=no_matching_edge`. Measured on the shipped CLI against this
+//     very file before the `escalated -> done` edge below existed: a blocked
+//     preflight produced `[PIPELINE] X Error at escalated (no_matching_edge)`
+//     and `notes: No matching edge from node 'escalated'` -- the graph's most
+//     important honest outcome reported in the vocabulary of an authoring bug
+//     (issue #252; issue #243 defect (a), fixed in objective-runner.dot by
+//     #248).
+//   - AT THE EXIT NODE, WITH EVERY GOAL GATE SATISFIED, THE RUN'S STATUS IS THE
+//     LAST COMPLETED NODE'S OUTCOME (`engine.py::_check_goal_gates` ->
+//     `node_outcomes[completed_nodes[-1]]`). That is the whole mechanism behind
+//     `escalated -> done [outcome=fail]`: `escalated`'s own nonzero exit becomes
+//     the run's status=fail / CLI exit 1, with no routing error.
+//   - GOAL-GATE COROLLARY, AND THE REASON `verdict_gate` CARRIES NO
+//     `retry_target`: `retry_target` on a goal gate is consulted in exactly one
+//     place -- `_check_goal_gates()` AT THE EXIT NODE. While `escalated`
+//     dead-ended, the exit was unreachable with `verdict_gate` red, so the
+//     attribute was dead. Routing `escalated` to `done` makes it reachable,
+//     which turns the attribute live and wrong: an escalation that already
+//     wrote its postmortem and its handoff would be sent back to `author` for
+//     another paid iteration, with `completed_nodes` cleared. Measured on the
+//     shipped engine with a faithful reduction of this shape: with the
+//     attribute present the retry target, the gate and the loud terminal each
+//     executed 51 times before the step cap; with it removed, once each.
+//     `verdict_gate`'s teeth are unchanged -- an unsatisfied goal gate at the
+//     exit is still a hard FAIL, and its `loop_restart` back-edge to `author`
+//     is still the corrective loop (which is also why `goal_gate_has_retry`
+//     stays quiet here).
 //   - STALE-LABEL RULE: a tool node that exits nonzero does NOT refresh
 //     tool.last_line, so a stale label can match at the same time as an
 //     outcome=fail edge. Every last_line edge below whose source also carries a
@@ -259,9 +297,21 @@ digraph PipelineAuthor {
     // deliberately so goal_gate=true has real teeth here rather than being a
     // declaration: a red verdict is a genuine FAIL the engine's exit-time check
     // can see.
+    // ON THE ABSENCE OF retry_target, HONESTLY: the corrective loop for a red
+    // verdict is the `loop_restart` back-edge to `author` below -- that is what
+    // actually iterates, and it is what keeps `goal_gate_has_retry` satisfied.
+    // `retry_target` is a DIFFERENT mechanism: it is consulted only by
+    // `_check_goal_gates()` at the exit node, and it means "if this gate is
+    // unsatisfied when the run tries to leave, go back to X instead." While
+    // `escalated` dead-ended, the exit was unreachable with this gate red, so
+    // the attribute was dead. `escalated -> done` makes it reachable, which
+    // turns it live and wrong -- an escalation that has already written its
+    // postmortem and its handoff would be sent back to `author` to be paid for
+    // again, with `completed_nodes` cleared. See the goal-gate corollary in the
+    // engine-semantics list at the top of this file for the measurement.
     verdict_gate [
         shape=parallelogram, class="gate", label="Ship or Iterate?", max_retries=0,
-        goal_gate=true, retry_target="author",
+        goal_gate=true,
         tool_command="n=$(cat .authoring/iter 2>/dev/null || echo 0); v=noverdict; if [ -s .authoring/critique.md ]; then tail -n 1 .authoring/critique.md > .authoring/verdict-line.txt; if grep -qix 'VERDICT: SHIP' .authoring/verdict-line.txt; then v=ship; elif grep -qix 'VERDICT: ITERATE' .authoring/verdict-line.txt; then v=iterate; fi; fi; printf '{\"iteration\": %s, \"gate\": \"critique\", \"verdict\": \"%s\"}\\n' \"$n\" \"$v\" >> .authoring/convergence.jsonl; if [ \"$v\" = ship ]; then printf ship; else echo \"critique verdict: $v -- another iteration\" >&2; printf %s \"$v\"; exit 1; fi"
     ]
 
@@ -297,8 +347,11 @@ digraph PipelineAuthor {
     ]
 
     // Deterministic salvage terminal. Writes a handoff even when the postmortem
-    // node itself failed, then exits 1 DELIBERATELY: max_retries=0 and no
-    // fail-route, so the engine hard-fails LOUD (run status=fail, CLI exit 1).
+    // node itself failed, then exits 1 DELIBERATELY (max_retries=0), and ROUTES
+    // that nonzero exit to the single exit node -- see the last edge in this
+    // file. It does NOT dead-end: the main loop has no designed-terminus
+    // concept, so a dead-ended terminal is reported as PIPELINE_ERROR
+    // `no_matching_edge`, not as the loud red it is.
     escalated [
         shape=parallelogram, class="glue", label="Escalated", max_retries=0,
         tool_command="mkdir -p .authoring/postmortem; if [ -s .authoring/postmortem/report.md ]; then echo 'Read .authoring/postmortem/report.md and .authoring/convergence.jsonl, then choose: change the brief, raise the budget, redirect instead, or take it to a human.' > .authoring/postmortem/escalation.md; else echo 'Postmortem could not be produced. Preserve the run logs and escalate to a human.' > .authoring/postmortem/escalation.md; fi; echo escalated > .authoring/disposition; printf escalated; exit 1"
@@ -356,4 +409,26 @@ digraph PipelineAuthor {
 
     postmortem -> escalated [condition="outcome=fail", label="postmortem failed"]
     postmortem -> escalated [label="escalate"]
+
+    // ...and then the loud terminal ROUTES to the single exit node CARRYING its
+    // nonzero exit. Without this edge `escalated` dead-ends, and the main loop
+    // -- which has no designed-terminus concept -- reports this graph's most
+    // important honest outcome in the vocabulary of an authoring bug:
+    // `[PIPELINE] X Error at escalated (no_matching_edge)`, with the run's
+    // machine-readable `notes` reading "No matching edge from node
+    // 'escalated'". With it, `_check_goal_gates` returns the LAST COMPLETED
+    // node's outcome -- `escalated`'s own FAIL -- so the run ends status=fail /
+    // CLI exit 1 with no routing error, and `.authoring/disposition` =
+    // escalated says which terminal it was. `escalated` exits nonzero on EVERY
+    // path, so `outcome=fail` is the total case, not a partial one.
+    // THE ONE TOPO-006 WARNING THIS FILE CARRIES IS THIS EDGE, ON PURPOSE: "a
+    // budget-exhaustion exit that deliberately ends at the single exit node
+    // with a genuine FAIL outcome" is the named, sanctioned deliberate design
+    // (docs/DOT-AUTHORING-GUIDE.md, TOPO-006), and objective-runner.dot and
+    // convergence-factory.dot carry the identical diagnostic for the identical
+    // reason. The hazard the rule guards -- a failure leaving through the
+    // success door as `status: success`, exit 0 -- cannot happen here:
+    // `escalated` is the last node to complete and its FAIL is what the exit
+    // returns.
+    escalated -> done [condition="outcome=fail", label="loud exit -- status is escalated's own nonzero exit"]
 }

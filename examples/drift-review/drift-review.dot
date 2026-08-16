@@ -65,9 +65,14 @@
 //     repairs unshaped findings ($max_revisions); consolidate <-> report_gate
 //     repairs a report that dropped an admitted finding ($max_reports). Both
 //     counters are files owned by the gates, so they survive every re-entry.
-//   - ONE GREEN EXIT. `done` is reachable only through `report_gate`, which
-//     re-derives the finding ids from findings.json and refuses to open if the
-//     report is missing any of them.
+//   - ONE EXIT NODE, TWO HONEST TERMINALS. `done` opens GREEN only through
+//     `report_gate`, which re-derives the finding ids from findings.json and
+//     refuses to open if the report is missing any of them. It opens RED only
+//     through `escalated`, whose own nonzero exit becomes the run's status --
+//     the convergence-factory.dot idiom, "a budget-exhaustion exit that
+//     deliberately ends at the single exit node with a genuine FAIL outcome"
+//     (docs/DOT-AUTHORING-GUIDE.md, TOPO-006). Letting `escalated` dead-end
+//     instead does NOT work: see the engine semantics below.
 //
 // WHY THE BACK-EDGES DO NOT CARRY loop_restart: both cycles re-enter a GATE to
 // re-judge an artifact that was just repaired, not a fresh attempt at the whole
@@ -91,6 +96,35 @@
 //     The shell variables here (rd, f, c, t, n, B, mr, mv, id, fc, miss) are
 //     safe only because no param shares their name. Never add a param named
 //     like a shell var.
+//   - THE MAIN LOOP HAS NO DESIGNED-TERMINUS CONCEPT. `run_subgraph()`
+//     distinguishes "no outgoing edges at all" (a designed terminus) from a
+//     conditional-mismatch dead end; `run()` does NOT. Any node the main loop
+//     finishes with no matching outgoing edge -- WHATEVER its exit status --
+//     terminates through `terminate_pipeline()` and emits PIPELINE_ERROR
+//     `error_type=no_matching_edge`. Measured on the shipped CLI against this
+//     very file before the `escalated -> done` edge existed: a blocked
+//     preflight produced `[PIPELINE] X Error at escalated (no_matching_edge)`
+//     and `notes: No matching edge from node 'escalated'` -- this graph's most
+//     important honest outcome reported in the vocabulary of an authoring bug
+//     (issue #252; issue #243 defect (a), fixed in objective-runner.dot by
+//     #248).
+//   - AT THE EXIT NODE, WITH EVERY GOAL GATE SATISFIED, THE RUN'S STATUS IS THE
+//     LAST COMPLETED NODE'S OUTCOME (`engine.py::_check_goal_gates` ->
+//     `node_outcomes[completed_nodes[-1]]`). That is the whole mechanism behind
+//     `escalated -> done [outcome=fail]`: `escalated`'s own nonzero exit becomes
+//     the run's status=fail / CLI exit 1, with no routing error.
+//   - GOAL-GATE COROLLARY, AND THE REASON `report_gate` CARRIES NO
+//     `retry_target`: `retry_target` on a goal gate is consulted in exactly one
+//     place -- `_check_goal_gates()` AT THE EXIT NODE. While `escalated`
+//     dead-ended, the exit was unreachable with `report_gate` unsatisfied, so
+//     the attribute was dead. Routing `escalated` to `done` makes it reachable
+//     -- `report_gate -> escalated [outcome=fail]` is the shortest path in this
+//     graph -- which turns the attribute live and wrong. Measured on the
+//     shipped engine with a faithful reduction of exactly that shape: with
+//     retry_target="consolidate" the `no_corpus` path executed `consolidate`,
+//     `report_gate` and `escalated` 51 times each before the step cap; with the
+//     attribute removed, once each. `no_corpus` means the findings gate never
+//     admitted a corpus -- a cause no number of re-consolidations can change.
 // ============================================================================
 
 digraph DriftReview {
@@ -260,9 +294,18 @@ digraph DriftReview {
     // examples/objective/objective-runner.dot records about its evidence_gate.
     // The enforcement that really holds is structural: `done` has exactly one
     // incoming edge and it is this node's report_ok.
+    // ON THE ABSENCE OF retry_target, HONESTLY: the corrective loop for a report
+    // that dropped a finding is the `report_bad` edge back to `consolidate`
+    // below -- that is what actually iterates, and its wall is $max_reports.
+    // `retry_target` is a DIFFERENT mechanism, consulted only by
+    // `_check_goal_gates()` at the exit node; see the goal-gate corollary at
+    // the top of this file for why it is now a hazard rather than a spare tyre.
+    // Consequence, stated plainly: this node carries a deliberate
+    // `goal_gate_has_retry` WARNING, exactly as objective-runner.dot's
+    // evidence_gate does, for the same reason.
     report_gate [
         shape=parallelogram, label="Report Complete?", max_retries=0,
-        goal_gate=true, retry_target="consolidate",
+        goal_gate=true,
         tool_command="mr=$max_reports; B=${mr:-2}; n=$(($(cat .drift-review/report-iter 2>/dev/null || echo 0)+1)); echo $n > .drift-review/report-iter; if [ ! -s .drift-review/findings.json ]; then echo 'FATAL: .drift-review/findings.json is absent -- the findings gate never admitted a corpus, so there is nothing to report on' >&2; printf no_corpus; exit 1; fi; if [ ! -s .drift-review/coverage.txt ]; then echo 'FATAL: .drift-review/coverage.txt is absent -- the findings gate writes it beside findings.json on admission, and without it this gate cannot check that report.md carries the coverage that was measured' >&2; printf no_corpus; exit 1; fi; fc=$(grep -o '\"finding_count\": [0-9]*' .drift-review/findings.json | head -1 | tr -cd '0-9'); if [ \"${fc:-0}\" -gt 0 ]; then echo findings > .drift-review/disposition; else echo clean > .drift-review/disposition; fi; : > .drift-review/report-gate.txt; miss=0; if [ ! -s .drift-review/report.md ]; then echo 'report.md is missing or empty' >> .drift-review/report-gate.txt; miss=1; else for id in $(grep -o '\"id\": \"[^\"]*\"' .drift-review/findings.json | cut -d'\"' -f4); do grep -qF \"$id\" .drift-review/report.md || { echo \"admitted finding $id never appears in report.md\" >> .drift-review/report-gate.txt; miss=1; }; done; for c in core-docs examples guidance ledgers; do grep -qF \"$c\" .drift-review/report.md || { echo \"report.md never names the swept surface class $c\" >> .drift-review/report-gate.txt; miss=1; }; done; while IFS= read -r cl; do [ -n \"$cl\" ] || continue; grep -qF \"$cl\" .drift-review/report.md || { echo \"report.md never carries the measured coverage line: $cl -- the swept number in the deliverable must be the one check_findings.py reconciled against the inventory\" >> .drift-review/report-gate.txt; miss=1; }; done < .drift-review/coverage.txt; fi; if [ \"$miss\" -eq 0 ]; then printf report_ok; elif [ \"$n\" -gt \"$B\" ]; then printf report_exhausted; else printf report_bad; fi"
     ]
 
@@ -273,10 +316,12 @@ digraph DriftReview {
         prompt="This Layer-3 review reached a decision point without producing a report: $goal\n\nRead .drift-review/findings-report.txt, .drift-review/report-gate.txt (if it exists), .drift-review/inventory/summary.txt, and whatever is in .drift-review/raw/. Write .drift-review/postmortem/report.md: which stage stalled, what each round attempted, and -- specifically -- whether the failure was in the REVIEWERS (could not cite what they claimed), in the CONTRACT (the shape rules reject findings that are actually sound), in the MACHINERY (a gate or the inventory), or in the SCOPE (the classes are too large for one pass). Then state the options: relax nothing, but say whether to re-run, re-scope, raise a budget, or take it to a human.\n\nBe honest, and be specific about what was salvageable: if some classes produced admitted findings and one did not, say which, because a partial sweep is worth more to a human than a discarded run. This report is the value salvaged from a non-converging review."
     ]
 
-    // Escalation is a deterministic non-terminal handoff, not a second
-    // successful exit. It writes a handoff even if the postmortem LLM itself
-    // failed, then exits 1 DELIBERATELY: max_retries=0 and no fail-route, so
-    // the engine hard-fails LOUD (run status=fail, CLI exit 1).
+    // Escalation is a deterministic handoff, not a second successful exit. It
+    // writes a handoff even if the postmortem LLM itself failed, then exits 1
+    // DELIBERATELY (max_retries=0), and ROUTES that nonzero exit to the single
+    // exit node -- see the last edge in this file. It does NOT dead-end: the
+    // main loop has no designed-terminus concept, so a dead-ended terminal is
+    // reported as PIPELINE_ERROR `no_matching_edge`, not as the loud red it is.
     escalated [
         shape=parallelogram, label="Escalated", max_retries=0,
         tool_command="mkdir -p .drift-review/postmortem; if [ -s .drift-review/postmortem/report.md ]; then echo 'Read .drift-review/postmortem/report.md and .drift-review/findings-report.txt, then choose: re-run, re-scope the classes, raise a budget, or review by hand.' > .drift-review/postmortem/escalation.md; else echo 'The Layer-3 review could not run. Preserve .drift-review/ and escalate to a human.' > .drift-review/postmortem/escalation.md; fi; echo escalated > .drift-review/disposition; printf escalated; exit 1"
@@ -322,4 +367,22 @@ digraph DriftReview {
 
     postmortem -> escalated [condition="outcome=fail", label="postmortem failed"]
     postmortem -> escalated [label="escalate"]
+
+    // ...and then the loud terminal ROUTES to the single exit node CARRYING its
+    // nonzero exit. Without this edge `escalated` dead-ends and the main loop
+    // reports `[PIPELINE] X Error at escalated (no_matching_edge)`, with the
+    // run's machine-readable `notes` reading "No matching edge from node
+    // 'escalated'" -- an authoring-bug vocabulary for the review's most
+    // important honest outcome. With it, the run ends status=fail / CLI exit 1
+    // with no routing error, and `.drift-review/disposition` = escalated says
+    // which terminal it was. `escalated` exits nonzero on EVERY path, so
+    // `outcome=fail` is the total case, not a partial one.
+    // THE ONE TOPO-006 WARNING THIS FILE CARRIES IS THIS EDGE, ON PURPOSE: "a
+    // budget-exhaustion exit that deliberately ends at the single exit node
+    // with a genuine FAIL outcome" is the named, sanctioned deliberate design
+    // (docs/DOT-AUTHORING-GUIDE.md, TOPO-006). The hazard the rule guards -- a
+    // failure leaving through the success door as `status: success`, exit 0 --
+    // cannot happen here: `escalated` is the last node to complete and its FAIL
+    // is what the exit returns.
+    escalated -> done [condition="outcome=fail", label="loud exit -- status is escalated's own nonzero exit"]
 }

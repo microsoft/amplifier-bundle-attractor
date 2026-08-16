@@ -1541,7 +1541,7 @@ changed what happened), a branching diamond, a constant emitter such as
 inequality condition, the same token twice, and an unreachable gate.
 
 **Severity:** WARNING — consistent with the rest of the family (TOPO-002
-through TOPO-007; TOPO-001 is `ERROR`).  The hazard is real but the author's
+through TOPO-009; TOPO-001 is `ERROR`).  The hazard is real but the author's
 intent is not statically provable, and it is `lint()`-only: `validate()` and
 `validate_or_raise()` stay silent, so no graph that executes today starts
 failing at run time.
@@ -1550,6 +1550,72 @@ failing at run time.
 back into the corrective loop, to a postmortem, or to a LOUD escalation.  If
 the node is genuinely not a decision point, drop the conditions and let it
 record instead of routing on it.
+
+---
+
+### TOPO-009 — `outcome=` shadowed by a status-word label
+
+**What it detects:** One node carrying **both** halves of a vocabulary
+collision: an outgoing edge whose condition routes on the `outcome` key
+against a status word (`success`, `fail`, `partial_success`, `retry`,
+`skipped` — via `=` or `!=`), **and** an outgoing *unconditional, labelled*
+edge whose label is one of those same words.
+
+**Why it matters:** `outcome=` does not mean here what canonical §10.4 says it
+means.  Canonical defines it as `outcome.status` only; this engine resolves it
+to **`preferred_label` first**, falling back to `status` only when no label is
+set.  That divergence is deliberate and ledgered — `specs/EXTENSIONS.md` §22,
+`SPEC_CONFORMANCE.md` ATX-5 (disposition DIVERGE, decided) — because it is how
+a node steers its own routing through `report_outcome`.  The trap is that
+`preferred_label` is free-form and the status words are exactly the words an
+author reaches for as a label.  When they overlap, the label silently wins:
+
+```dot
+// WRONG — `review` steers by label AND is routed on `outcome=retry`
+review -> fix    [condition="outcome=retry"]   // author means the STATUS
+review -> rework [label="retry"]               // node steers by LABEL
+
+// A node reporting status="success", preferred_label="retry" takes the edge
+// to `fix` anyway — its status is SUCCESS.
+// A node reporting status="retry", preferred_label="needs_work" does not take
+// it at all — its status is RETRY.  Neither case is logged.
+
+// CORRECT — say which key you mean; both are exact
+review -> fix    [condition="status=retry"]           // the status
+review -> fix    [condition="preferred_label=retry"]  // ...or the label
+```
+
+**Calibration:** measured over every `.dot` in this repository (63 files:
+`examples/`, `.github/`, `skills/`, and every test fixture).  Flagging *any*
+`outcome=<status word>` edge — the shape issue #226 first proposed — fires on
+**23 of 63** shipped graphs; routing on `outcome=success` in a graph whose
+nodes never emit labels is ordinary and correct.  Adding "…and a status-word
+`label=` anywhere in the graph" still fires on **6**.  What ships — the
+collision scoped to one node's own out-edges, and to the edges
+`preferred_label` can actually select — fires on **zero** shipped graphs.
+
+**What is NOT flagged:** an `outcome=` condition on a node with no labelled
+edges (the common, correct case); a status word on a *conditional* edge —
+spec §3.3 Step 2 considers only unconditional edges when matching
+`preferred_label`, so such a label is documentation the label matcher can
+never select, and it is this repository's own shipped convention
+(`gate -> fix [condition="context.tool.last_line=fail", label="fail"]`); a
+label outside the status vocabulary (`label="needs_work"`); a labelled edge
+belonging to a *different* node (`select_edge` resolves a node's outcome
+against that node's own out-edges); and conditions on any other key
+(`context.tool.last_line=fail` never goes through the overloaded key).  A node
+that emits a colliding `preferred_label` with no labelled edge to reveal it is
+not statically visible and is not detected.
+
+**Severity:** WARNING — the pattern is legal and sometimes exactly what the
+author wants, so this is advisory and `lint()`-only; `validate()` and
+`validate_or_raise()` stay silent and no graph that runs today starts failing.
+
+**Fix:** Use the unambiguous key.  `status=<word>` matches the status and
+nothing else; `preferred_label=<word>` matches the label and nothing else.  If
+the node is not meant to steer itself by label, take the status word off its
+labelled edge instead.  Background: `docs/ROUTING-REFERENCE.md` §3 ("Engine
+delta: `outcome` resolves `preferred_label` first").
 
 ---
 
@@ -1600,7 +1666,7 @@ If you need to see the last N lines, write to a file and read it separately
 from the routing logic.
 
 **Severity:** WARNING — consistent with the WARNING-severity TOPO rules
-(TOPO-002 through TOPO-008; note TOPO-001 is `ERROR`, not this family's
+(TOPO-002 through TOPO-009; note TOPO-001 is `ERROR`, not this family's
 default).  The hazard is real but static analysis cannot prove the command is
 a meaningful gate; conservative analysis may miss complex cases.
 
@@ -1662,7 +1728,7 @@ influence either the exit code or the emitted token?  The hazard shapes
 destroy that influence.  The honest idioms preserve it.
 
 **Severity:** WARNING — consistent with CMD-001 and the WARNING-severity TOPO
-rules (TOPO-002 through TOPO-008; TOPO-001 is `ERROR`).
+rules (TOPO-002 through TOPO-009; TOPO-001 is `ERROR`).
 
 **What this rule does NOT catch:** sentinels inside `$(...)` substitutions,
 sentinels after non-pipe-masked commands (where `&& echo TOKEN` is the honest

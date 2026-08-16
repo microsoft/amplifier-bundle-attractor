@@ -4,9 +4,12 @@ Validates parsed Graph models against the rules defined in
 spec Section 7 (Validation and Linting). Produces Diagnostic objects
 with severity ERROR (blocks execution) or WARNING (informational).
 
-Spec coverage: LINT-001–018.  TOPO-001–008 are topological basin-lint rules
+Spec coverage: LINT-001–018.  TOPO-001–009 are topological basin-lint rules
 implemented here beyond the canonical spec; they are lint-only (exposed via
 ``lint()``, not ``validate()``) and do not change run-time behaviour.
+TOPO-009 warns when an ``outcome=<status word>`` edge condition shares a
+vocabulary with a ``preferred_label`` the same node can emit -- ``outcome``
+resolves the label BEFORE the status here (EXTENSIONS.md §22 / ATX-5).
 TOPO-008 is the ``attractor lint`` sibling of the authoring checker's A10
 (``examples/authoring/check_authored_pipeline.py``): an evidence gate routing
 two different answers into the exit is structurally inert.
@@ -26,6 +29,11 @@ from dataclasses import dataclass
 
 from .conditions import evaluate_condition, parse_condition
 from .context import PipelineContext
+
+# `_normalize_label` is edge_selection's own label normaliser -- imported (not
+# reimplemented) so TOPO-009 asks "is this label a status word?" exactly the
+# way spec §3.3 Step 2 asks it at run time, and the two cannot drift.
+from .edge_selection import _normalize_label
 from .fidelity import VALID_FIDELITY_MODES
 from .graph import Edge, Graph, Node, resolve_bool_attr
 from .outcome import Outcome, StageStatus
@@ -119,9 +127,10 @@ def lint(graph: Graph) -> list[Diagnostic]:
     """Run topological (basin-lint) and command-content rules in addition to structural rules.
 
     This is the entry point for the ``attractor lint`` CLI command.  It runs
-    the full structural ``validate()`` suite plus the eight topological rules
-    (TOPO-001–008) that reason about cycle structure, handler semantics, and
-    evidence-routing patterns, plus the two command-content rules (CMD-001–002)
+    the full structural ``validate()`` suite plus the nine topological rules
+    (TOPO-001–009) that reason about cycle structure, handler semantics,
+    evidence-routing patterns and condition-key hazards, plus the two
+    command-content rules (CMD-001–002)
     that inspect ``tool_command`` strings for hazard shapes.
 
     All lint-only rules do not change run-time validation behaviour.  Existing
@@ -143,6 +152,7 @@ def lint(graph: Graph) -> list[Diagnostic]:
     _check_fail_routed_to_exit(graph, diags)
     _check_gate_retry_budget_dead(graph, diags)
     _check_inert_evidence_gate(graph, diags)
+    _check_outcome_label_shadowing(graph, diags)
     _check_pipe_masked_exit_code(graph, diags)
     _check_always_true_sentinel(graph, diags)
     return diags
@@ -730,7 +740,7 @@ def _check_response_schema(graph: Graph, diags: list[Diagnostic]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Topological (basin-lint) rules — TOPO-001 through TOPO-008
+# Topological (basin-lint) rules — TOPO-001 through TOPO-009
 #
 # These rules reason about cycle structure and handler semantics, not just
 # graph topology.  They are exposed via ``lint()`` (not ``validate()``) so
@@ -2057,6 +2067,216 @@ def _check_inert_evidence_gate(graph: Graph, diags: list[Diagnostic]) -> None:
                     ),
                 )
             )
+
+
+# ---------------------------------------------------------------------------
+# TOPO-009 — an `outcome=` condition whose word the node can also emit as a label
+#
+# `outcome=` does not mean what canonical §10.4 says it means here.  Canonical
+# defines it as `outcome.status` only; this engine resolves it to
+# `preferred_label` FIRST and falls back to `status.value` only when no label
+# is set (`conditions.py::_resolve_key`).  That divergence is deliberate,
+# load-bearing (it is how a node steers its own routing through
+# `report_outcome`) and ledgered — `specs/EXTENSIONS.md` §22, `SPEC_CONFORMANCE`
+# ATX-5 (disposition DIVERGE, decided).  The ledger is explicit that it is not
+# behaviour-neutral.  What it has never had is a way for an author to find out
+# they walked into it (issue #226).
+#
+# The hazard is a vocabulary overlap.  `preferred_label` is free-form, and the
+# status words are exactly the words an author reaches for as a label, so on a
+# node that emits labels an `outcome=<status word>` edge answers a question the
+# author did not ask:
+#
+#   * a node reporting `status="success", preferred_label="retry"` MATCHES
+#     `condition="outcome=retry"` — its status is SUCCESS; and
+#   * a node reporting `status="retry", preferred_label="needs_work"` does NOT
+#     match it — its status is RETRY.
+#
+# Nothing is logged either way.  The condition is well-formed, the graph lints
+# clean, and the route is simply not the one on the page.
+#
+# **Calibration — the narrowing is measured, not asserted.**  Run over every
+# `.dot` in this repository (63 files: `examples/`, `.github/`, `skills/`, and
+# every test fixture), scoring the shapes the issue proposed:
+#
+#   * the issue's condition (1) alone — *any* `outcome=<status word>` edge —
+#     fires on **23 of 63** shipped graphs.  `outcome=success` is the ordinary,
+#     correct way to route a graph whose nodes never emit labels; flagging it
+#     is wolf-crying.
+#   * the issue's own suggested conservative form — condition (1) plus *any*
+#     status-word edge `label=` anywhere in the graph — still fires on **6**.
+#     Shipped graphs put status words on CONDITIONAL edges as documentation
+#     (`gate -> fix [condition="context.tool.last_line=fail", label="fail"]`),
+#     where `preferred_label` matching cannot reach them at all.
+#   * what ships below — the collision scoped to ONE node's own out-edges, and
+#     to the edges `preferred_label` can actually select — fires on **ZERO**
+#     shipped graphs, and on the issue's constructed hazard.
+#
+# The scoping is not a fudge to reach zero; it is the routing semantics.
+# `select_edge` resolves a node's outcome against THAT node's out-edges, and
+# its Step 2 (`preferred_label` match) considers only UNCONDITIONAL labelled
+# edges.  So an unconditional labelled edge out of a node is the documented,
+# statically-visible evidence that the node is steered by `preferred_label`;
+# a label on a conditional edge is inert decoration that no label can select.
+# The sweep test `test_topological_lint.py::TestOutcomeLabelShadowing::
+# test_silent_on_every_shipped_dot` pins the zero.
+#
+# Severity: WARNING — joins the TOPO-002–008 / CMD-001–002 family.  The pattern
+# is legal and sometimes exactly what the author wants; ERROR would hard-fail
+# deliberate graphs through `validate_or_raise`.  `lint()`-only.
+# ---------------------------------------------------------------------------
+
+#: The status vocabulary `outcome=` falls back to, derived from `StageStatus`
+#: itself (not a hand-copied list) so a new status value cannot silently leave
+#: this rule behind.  Normalised through the engine's own label normaliser so
+#: "what counts as a status word" is asked exactly once, the same way routing
+#: asks it.
+_STATUS_WORDS: frozenset[str] = frozenset(
+    _normalize_label(s.value) for s in StageStatus
+)
+
+
+def _outcome_status_words(condition: str) -> set[str]:
+    """Status words this condition routes on via the `outcome` key.
+
+    Parsed through ``conditions.parse_condition`` — the same grammar entry
+    point the engine routes with — so lint and routing cannot drift.  Both
+    ``=`` and ``!=`` count: an inequality resolves the same overloaded key and
+    is shadowed by a label just as silently.
+    """
+    words: set[str] = set()
+    for key, op, value in parse_condition(condition or ""):
+        if key != "outcome" or op not in ("=", "!="):
+            continue
+        word = _normalize_label(value.strip().strip('"').strip("'"))
+        if word in _STATUS_WORDS:
+            words.add(word)
+    return words
+
+
+def _label_selectable_edges(graph: Graph, node_id: str) -> list[Edge]:
+    """Out-edges ``preferred_label`` can actually select — spec §3.3 Step 2.
+
+    Step 2 considers only UNCONDITIONAL labelled edges: a conditional edge
+    whose condition failed in Step 1 must not then be picked by label.  A
+    status word on a conditional edge is therefore documentation, not a
+    routing target, and is deliberately not evidence here.
+    """
+    return [
+        e
+        for e in graph.outgoing_edges(node_id)
+        if not (e.condition or "").strip() and (e.label or "").strip()
+    ]
+
+
+def _check_outcome_label_shadowing(graph: Graph, diags: list[Diagnostic]) -> None:
+    """TOPO-009: an `outcome=<status word>` edge on a node that also routes by label.
+
+    The shape::
+
+        review -> fix    [condition="outcome=retry"]   // author means STATUS
+        review -> rework [label="retry"]               // node steers by LABEL
+
+    Both edges leave the same node, and `outcome=` reads `preferred_label`
+    before `status` (EXTENSIONS §22 / ATX-5).  So `review` emitting
+    ``preferred_label="retry"`` takes the *condition* edge to `fix` whatever
+    its status was — Step 1 runs before Step 2 — and `review` emitting
+    ``status="retry"`` with any other label does not take it at all.
+
+    Fires only when one node carries both halves, and only when the label is
+    on an edge ``preferred_label`` can actually select.  See the section
+    header above for the measurement behind that scoping.
+
+    Severity: WARNING, ``lint()``-only.  Routing on ``outcome=success`` in a
+    graph whose nodes never emit labels is normal and correct; this rule has
+    no opinion about it.
+    """
+    for node in sorted(graph.nodes.values(), key=lambda n: n.id):
+        condition_edges: list[tuple[Edge, set[str]]] = []
+        for edge in graph.outgoing_edges(node.id):
+            words = _outcome_status_words(edge.condition)
+            if words:
+                condition_edges.append((edge, words))
+        if not condition_edges:
+            continue
+
+        label_edges = [
+            e
+            for e in _label_selectable_edges(graph, node.id)
+            if _normalize_label(e.label) in _STATUS_WORDS
+        ]
+        if not label_edges:
+            continue
+
+        labels = sorted({_normalize_label(e.label) for e in label_edges})
+        label_written = "; ".join(
+            f'{node.id} -> {e.to_node} [label="{e.label}"]'
+            for e in sorted(label_edges, key=lambda e: (e.to_node, e.label))
+        )
+        condition_written = "; ".join(
+            f'{node.id} -> {e.to_node} [condition="{e.condition}"]'
+            for e, _ in sorted(condition_edges, key=lambda pair: pair[0].to_node)
+        )
+        all_words = sorted(set().union(*(w for _, w in condition_edges)))
+        collisions = sorted(set(all_words).intersection(labels))
+
+        # Report against the edge that actually collides when one does; that is
+        # the edge whose route the label decides.  Otherwise the first by
+        # target id, so the diagnostic is always pinpointed at a real edge.
+        by_target = sorted(condition_edges, key=lambda pair: pair[0].to_node)
+        primary = next(
+            (e for e, w in by_target if w.intersection(labels)),
+            by_target[0][0],
+        )
+        word = (collisions or all_words)[0]
+
+        if collisions:
+            overlap = (
+                f"'{word}' is in both vocabularies at once, so "
+                f"'{node.id}' reporting status=success with "
+                f"preferred_label=\"{word}\" matches "
+                f"'{node.id}' -> '{primary.to_node}' anyway, while "
+                f"'{node.id}' reporting status={word} under any other label "
+                f"does not match it at all."
+            )
+        else:
+            overlap = (
+                f"The label vocabulary here ({', '.join(repr(x) for x in labels)}) "
+                f"is drawn from the status vocabulary, so any label "
+                f"'{node.id}' emits is what these conditions compare against - "
+                f"'{node.id}' reporting status={word} under one of those labels "
+                f"does not match '{node.id}' -> '{primary.to_node}' at all."
+            )
+
+        diags.append(
+            Diagnostic(
+                rule="outcome_label_shadowing",
+                severity="WARNING",
+                message=(
+                    f"Node '{node.id}' routes on the 'outcome' key against "
+                    f"status words ({condition_written}) while also steering "
+                    f"itself by label ({label_written}). 'outcome' resolves "
+                    f"preferred_label BEFORE status (EXTENSIONS.md §22 / "
+                    f"SPEC_CONFORMANCE ATX-5) - not status alone, as canonical "
+                    f"§10.4 defines it. {overlap} Neither case is logged: the "
+                    f"condition is well-formed and the graph is otherwise clean "
+                    f"(TOPO-009)."
+                ),
+                node_id=node.id,
+                edge=(primary.from_node, primary.to_node),
+                fix=(
+                    f"Say which one you mean - both keys are exact and "
+                    f"unambiguous. For the status, write "
+                    f'condition="status={word}" on '
+                    f"'{node.id}' -> '{primary.to_node}'; for the label, write "
+                    f'condition="preferred_label={word}". If \'{node.id}\' is '
+                    f"not meant to steer itself by label, take the status word "
+                    f"off its labelled edge instead. See "
+                    f"DOT-AUTHORING-GUIDE.md (TOPO-009) and "
+                    f"docs/ROUTING-REFERENCE.md §3."
+                ),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

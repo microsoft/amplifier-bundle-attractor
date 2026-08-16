@@ -1732,10 +1732,23 @@ whose traversal resets the budget — the ATX-12 fresh-attempt semantics — lea
 only by the step cap), and **TOPO-008** (`WARNING`, issue #254: inert evidence gate — a tool node
 that runs a real check and routes on it, but sends two or more distinct `context.tool.last_line`
 answers into the terminal success node, so the run ends green whichever answer it got; the
-`attractor lint` sibling of the authoring checker's A10, issue #245). Listed here so this entry
+`attractor lint` sibling of the authoring checker's A10, issue #245), and **TOPO-009**
+(`WARNING`, issue #226: an `outcome=<status word>` edge condition on a node that also steers
+itself by an unconditional status-word `label=` — `outcome` resolves `preferred_label` before
+`status` here, the §22 divergence above, so the label silently decides a route the author read
+as a status). Listed here so this entry
 stays the complete catalog of the `lint()`-only rule family; per this entry's own discriminator
-(the **entry point**, not the rule count), none of them owed a new ledger entry. All three are
-documented in `docs/DOT-AUTHORING-GUIDE.md` with fix examples.*
+(the **entry point**, not the rule count), none of them owed a new ledger entry. All four are
+documented in `docs/DOT-AUTHORING-GUIDE.md` with fix examples.
+
+TOPO-009 is the first rule in the family whose whole subject is a ledgered divergence rather than
+a topology defect: §22 / ATX-5 is deliberate and load-bearing, and the rule does not argue with
+it — it makes the choice visible to an author who never read the ledger. Its scope was set by
+measurement, not by taste: the shape issue #226 first proposed fires on 23 of this repository's
+63 shipped `.dot` graphs and the issue's own suggested conservative form on 6, while the shipped
+form (the collision scoped to one node's out-edges, and to the unconditional labelled edges spec
+§3.3 Step 2 can actually select) fires on zero. That zero is pinned by
+`test_topological_lint.py::TestOutcomeLabelShadowingCalibration`.*
 
 **Why a separate entry point, not folded into `validate()`:** the five TOPO rules are
 judgment calls about pipeline *design quality* (is this graph shaped like a converging

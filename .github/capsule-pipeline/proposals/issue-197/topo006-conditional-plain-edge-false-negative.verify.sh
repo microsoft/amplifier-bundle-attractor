@@ -30,25 +30,72 @@ if [ ! -f "$MODULE_DIR/pyproject.toml" ]; then
     exit 2
 fi
 
-# Generate semantically neutral runtime names for probe nodes so they cannot
-# be enumerated by a name-specific dodge.  Names are random alphanumeric
-# sequences with no domain vocabulary from the issue's subject space.
+# Every name these probes expose to the code under test -- both GRAPH names and
+# every NODE id -- is drawn fresh on each run.  A fix must green this gate by
+# recognizing the hazard SHAPE; it cannot green it by recognizing a name.
+#
+# SUFFIX_A / SUFFIX_B are random per-run tokens.  They name the two probe
+# graphs (`g$SUFFIX_A` / `g$SUFFIX_B`) and supply the random tail of probe 1's
+# condition literal, so neither the graph names nor the condition text is a
+# constant a fix can key on.  Both graph names share ONE shape, so a predicate
+# broad enough to match probe 1's name also matches probe 2's -- and flagging
+# probe 2 fails the false-positive check below.
 SUFFIX_A="${RANDOM}${RANDOM}"
 SUFFIX_B="${RANDOM}${RANDOM}"
 
-NODE_ENTRY="nd${SUFFIX_A}e"
-NODE_ALPHA="nd${SUFFIX_A}a"
-NODE_BETA="nd${SUFFIX_A}b"
-NODE_GAMMA="nd${SUFFIX_A}g"
-NODE_EXIT="nd${SUFFIX_A}x"
+# Node ids are re-drawn per node, per run, out of the ordinary identifier
+# space: a random lowercase-alpha prefix followed by characters drawn from
+# [a-z0-9], at a random length.  There is deliberately NO fixed skeleton left
+# -- no constant prefix, no constant digit run (an id may carry no digit at
+# all), no constant trailing role letter -- so no fixed regex separates a probe
+# node id from an author-written one like `start` or `triage`.  A predicate
+# broad enough to match every probe id must also match ordinary ids, which
+# makes it a general rule rather than a name-specific dodge.
+#
+# The alphabets are ARRAYS of single characters rather than one packed string
+# on purpose: a 36-character run of [A-Za-z0-9] is precisely the shape this
+# repo's capsule-artifact scan blocks as `high-entropy-token`, and a capsule
+# artifact is never redacted in place (see scrub_secrets.py).
+_ALPHA=(a b c d e f g h i j k l m n o p q r s t u v w x y z)
+_DIGIT=(0 1 2 3 4 5 6 7 8 9)
 
-NODE_RG_ENTRY="nd${SUFFIX_B}e"
-NODE_RG_WORK="nd${SUFFIX_B}w"
-NODE_RG_CHECK="nd${SUFFIX_B}c"
-NODE_RG_GATE="nd${SUFFIX_B}g"
-NODE_RG_BACK="nd${SUFFIX_B}k"
-NODE_RG_ALT="nd${SUFFIX_B}l"
-NODE_RG_EXIT="nd${SUFFIX_B}x"
+_rand_id() {
+    local len=$((6 + RANDOM % 6))
+    local plen=$((2 + RANDOM % 3))
+    local out=""
+    local i
+    for ((i = 0; i < len; i++)); do
+        if [ "$i" -lt "$plen" ] || [ $((RANDOM % 4)) -gt 0 ]; then
+            out="${out}${_ALPHA[$((RANDOM % 26))]}"
+        else
+            out="${out}${_DIGIT[$((RANDOM % 10))]}"
+        fi
+    done
+    printf '%s' "$out"
+}
+
+# Draw DISTINCT ids into the named shell variables.  Distinctness is not
+# cosmetic: a collision would silently merge two nodes in the graph dict and
+# make the probe's verdict depend on the draw.
+_draw_ids() {
+    local seen=" "
+    local name id
+    for name in "$@"; do
+        while :; do
+            id="$(_rand_id)"
+            case "$seen" in
+                *" $id "*) continue ;;
+            esac
+            break
+        done
+        seen="$seen$id "
+        printf -v "$name" '%s' "$id"
+    done
+}
+
+_draw_ids NODE_ENTRY NODE_ALPHA NODE_BETA NODE_GAMMA NODE_EXIT
+_draw_ids NODE_RG_ENTRY NODE_RG_WORK NODE_RG_CHECK NODE_RG_GATE \
+          NODE_RG_BACK NODE_RG_ALT NODE_RG_EXIT
 
 # Use a temp file to capture probe output without triggering set -e on rc=1.
 PROBE_TMP="$(mktemp)"
@@ -82,9 +129,14 @@ except Exception as exc:
 #   - one plain unconditional outgoing edge (to EXIT)
 # The plain edge is the silent escape: if the condition does not match,
 # the failure exits green.  lint() must flag this.
+#
+# GAMMA's conditional edge carries the issue's OWN condition shape
+# (context.tool.last_line=..., as in issue #197's triage -> work edge) with a
+# random per-run tail, so the probe is faithful to the reported repro and the
+# literal is not a constant a fix can special-case.
 
 hazard = Graph(
-    name="hazard",
+    name="g$SUFFIX_A",
     nodes={
         "$NODE_ENTRY": Node(id="$NODE_ENTRY", shape="Mdiamond", label="Start"),
         "$NODE_ALPHA": Node(id="$NODE_ALPHA", shape="box", prompt="step"),
@@ -97,7 +149,7 @@ hazard = Graph(
         Edge("$NODE_ALPHA", "$NODE_BETA"),
         Edge("$NODE_BETA",  "$NODE_EXIT",  condition="outcome=success"),
         Edge("$NODE_BETA",  "$NODE_GAMMA", condition="outcome=fail"),
-        Edge("$NODE_GAMMA", "$NODE_ALPHA", condition="outcome=success"),
+        Edge("$NODE_GAMMA", "$NODE_ALPHA", condition="context.tool.last_line=r$SUFFIX_B"),
         Edge("$NODE_GAMMA", "$NODE_EXIT"),
     ],
 )
@@ -114,7 +166,7 @@ except Exception as exc:
 # lint() must NOT flag this.
 
 true_regate = Graph(
-    name="true_regate",
+    name="g$SUFFIX_B",
     nodes={
         "$NODE_RG_ENTRY": Node(id="$NODE_RG_ENTRY", shape="Mdiamond", label="Start"),
         "$NODE_RG_WORK":  Node(id="$NODE_RG_WORK",  shape="box", prompt="step"),

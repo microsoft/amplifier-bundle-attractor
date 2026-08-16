@@ -69,9 +69,20 @@ for the defect to be considered fixed:
    in full. The existing test `test_indirect_regating_intermediary_not_flagged`
    currently asserts `not _diag(lint(g), "fail_routed_to_exit")` for the
    hazard graph — that assertion encodes the wrong expectation and must be
-   corrected (or split into two tests) as part of the fix. The gate enforces
-   this by running the full class: if the wrong assertion remains, the class
-   will fail after the behavioral fix, and the gate will exit 1.
+   corrected (or split into two tests) as part of the fix.
+
+   What running the full class enforces, stated exactly: a fix that flags that
+   test's own hazard graph leaves the stale assertion failing, so the class
+   fails and the gate exits 1 — the correction cannot be skipped. It does not,
+   by itself, bind a fix narrow enough to green the behavioral probe while
+   leaving that graph unflagged; such a fix would satisfy the stale assertion
+   untouched. What closes that gap is the probe: probe 1's re-gating node
+   carries the issue's own condition shape (`context.tool.last_line=…`, as in
+   the hazard graph above) with a per-run random tail, and the probe graph
+   names and node ids are likewise re-drawn every run. A fix therefore cannot
+   green the probe by recognizing a constant name or a constant condition
+   literal; it has to handle the issue's own shape — which is the shape of the
+   test's hazard graph, so the stale assertion fails and must be corrected.
 
 The fix may refine `_node_regates`, change how
 `_unmarked_passthrough_path_to_exit` handles plain edges out of re-gating

@@ -4,12 +4,14 @@
 # reads them from here and prints them into run.json, so a run always records the bar it was
 # judged against rather than the bar in force when someone later reads the results.
 
-# All six scenarios, in the order the README presents them.
+# All eight scenarios, in the order the README presents them.
 scenarios:
   - qa-01-what-is-an-attractor
   - qa-02-never-converges
   - work-01-stale-release-notes
   - work-02-twelve-step-pipeline
+  - work-03-docs-drifted-from-spec
+  - work-04-reusable-pipeline-authoring
   - exemplar-01-sloppy-routable
   - exemplar-02-honest-redirect
 

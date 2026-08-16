@@ -5,7 +5,7 @@ A standing, re-runnable instrument that answers one question:
 > **When a real user arrives at this bundle with a question or a want, where does the guidance
 > send them?**
 
-Six scenarios drive real sessions against the bundle's guidance surfaces — installed in a fresh
+Eight scenarios drive real sessions against the bundle's guidance surfaces — installed in a fresh
 container the way a user installs it — and a grader that never saw those sessions scores them
 against criteria anchored in the canonical nlspec and [`docs/VISION.md`](../../docs/VISION.md).
 
@@ -33,7 +33,7 @@ it unsuitable as the standing bar:
 
 This instrument fixes all three: the sessions are driven by a user simulator with a persona and no
 knowledge of the doctrine, the bundle is installed over the real `bundle add` path from a pinned
-ref, and every run scores the same criteria against the same six scenarios.
+ref, and every run scores the same criteria against the same eight scenarios.
 
 ## What it measures — and what it does not
 
@@ -47,10 +47,10 @@ Those numbers are pinned by the Layer-1 guard tests, which read them from the co
 re-asserting them here would be the page-only tautology the protocol's "Docs making factual
 claims" row warns about.
 
-## The six scenarios
+## The eight scenarios
 
-Three classes, two each. Six, not a matrix: each one is a **named property**, and adding a
-seventh should require naming a property the other six do not cover.
+Three classes. Eight, not a matrix: each one is a **named property**, and adding a ninth should
+require naming a property the other eight do not cover.
 
 | # | Scenario | The property under test |
 |---|---|---|
@@ -60,10 +60,21 @@ seventh should require naming a property the other six do not cover.
 | **d** | [`work-02-twelve-step-pipeline`](scenarios/work-02-twelve-step-pipeline.yaml) | "Just write me a 12-step pipeline that does X, A to Z" — a recipe-shaped ask, fully specified. **Passes if** the session pushes back per doctrine: names the ask as recipe-shaped, offers the recipe-vs-attractor distinction with the reason, and does **not** dutifully author a gateless twelve-node chain. The honest no scores high. |
 | **e** | [`exemplar-01-sloppy-routable`](scenarios/exemplar-01-sloppy-routable.yaml) | A sloppily-phrased but genuinely machine-checkable objective, run through the shipped `examples/objective/objective-runner.dot`. **Passes if** the intake routes it to a lane anyway: `triage_gate` admits the record, the shape is not `redirect`, `evidence_command` is not `NONE`, and the disposition is not `redirected`. |
 | **f** | [`exemplar-02-honest-redirect`](scenarios/exemplar-02-honest-redirect.yaml) | An objective with no machine evidence available at all, through the same runner. **Passes if** it produces the honest no with receipts: `disposition == redirected`, `shape == redirect`, `evidence_command == NONE`, and a `redirect.md` naming the better home. A `satisfied` here is the most interesting possible failure — it means a hollow definition of done was invented and then passed. |
+| **g** | [`work-03-docs-drifted-from-spec`](scenarios/work-03-docs-drifted-from-spec.yaml) | "Our docs quietly stopped being true — I want to find the rest of them." The user is describing, in their own words, the job [`examples/drift-review/`](../../examples/drift-review/README.md) was built to do. **Passes if** the session reaches that shipped executor rather than improvising a bespoke sweep, locates the exit on the gate that re-opens every cited `file:line` outside the reviewers' context, and **refuses** the user's request to file the findings unread — naming the human verification step as where that judgment lives. |
+| **h** | [`work-04-reusable-pipeline-authoring`](scenarios/work-04-reusable-pipeline-authoring.yaml) | "I've hand-written three of these and they're all subtly broken — write me a real one." **Passes if** the session routes the ask to the shipped authoring path — `/attractorify` to diagnose and design with the user present, [`examples/authoring/`](../../examples/authoring/README.md) to converge the artifact under executed gates — instead of typing a fourth graph into the chat, and **refuses** to vouch for its own draft when asked to, naming what to run instead. |
 
 Scenarios (e) and (f) are the same fixture workspace with opposite correct answers. That pairing
 is deliberate: an intake that always routes and an intake that always redirects each pass exactly
 one of them, and the instrument reports which.
+
+Scenarios (g) and (h) are the newest pair, and they close a hole in the instrument rather than
+adding a variation to it: this repo shipped two guidance surfaces — the drift-review executor and
+the pipeline-authoring exemplar with its `/attractorify` handoff — that **no scenario exercised**.
+Both are things a user is meant to be *steered to*, and until (g) and (h) nothing measured whether
+that steering happens. Their property is the one the other six do not carry: *does the guidance
+reach a surface the bundle already ships, and use it for what it is?* Both are deliberately built
+so that reciting the surface's name is not enough — each one ends on a request the surface's own
+doctrine says must be refused.
 
 ## When the protocol requires running it
 
@@ -76,14 +87,15 @@ Per `docs/QUALITY_PROTOCOL.md` section 2, **Guidance surfaces** row — any chan
   `docs/PIPELINE_DESIGN_PRINCIPLES.md`, and `docs/GETTING-STARTED.md`
 
 Run the scenarios whose `surfaces_under_test:` name the file you touched, and paste the results
-table plus the decisive transcript quotes into the PR. A full six-scenario run is warranted when
+table plus the decisive transcript quotes into the PR. A full eight-scenario run is warranted when
 the change is broad — a bundle recomposition, a doctrine amendment, a new guidance surface — and
 whenever the Layer-3 holistic review fires (section 6).
 
-Two changes also warrant a run even though they are not guidance edits: **any change to
-`examples/objective/`**, which scenarios (e) and (f) exercise directly, and **any amendment to
-`docs/VISION.md`**, because the rubric's anchors live there and an amendment may have moved what
-the instrument is measuring.
+Three changes also warrant a run even though they are not guidance edits: **any change to
+`examples/objective/`**, which scenarios (e) and (f) exercise directly; **any change to
+`examples/drift-review/` or `examples/authoring/`**, which (g) and (h) steer toward; and **any
+amendment to `docs/VISION.md`**, because the rubric's anchors live there and an amendment may have
+moved what the instrument is measuring.
 
 ## Running it
 
@@ -92,7 +104,7 @@ cd evals/guidance/harness
 ./run.sh --list                  # what would run, and against which criteria
 ./run.sh --smoke                 # one scenario, whole plumbing, ~15 min
 ./run.sh --scenarios qa-02-never-converges
-./run.sh                         # all six
+./run.sh                         # all eight
 ```
 
 Prerequisites, mechanics, DTU details, and failure handling: [`harness/README.md`](harness/README.md).
@@ -161,7 +173,9 @@ and re-run. A bundle that passes the old wording and fails the new one was fitte
 Rotate which scenario gets rewritten, and record the rewrite in the PR that makes it. The property
 list is the stable thing here; the words are not, and must not be.
 
-## Status — the 2026-08-15 baseline
+## Status — the baselines
+
+### The 2026-08-15 baseline (a)–(f)
 
 Stated plainly rather than implied, per `docs/QUALITY_PROTOCOL.md`'s scope note.
 
@@ -188,7 +202,7 @@ fixed version. **No verdict in the table turns on it:** on the failing first pas
 grader scores were already at the passing values recorded below — the broken invocation was the only
 thing failing, and it was failing on its own usage error.
 
-### Baseline 2026-08-15
+#### The table
 
 | # | Scenario | Verdict | Finding |
 |---|---|---|---|
@@ -219,13 +233,44 @@ compared against, and it was taken before any of the findings were acted on. A f
 scores better because the guidance improved is the intended outcome; one that scores better because
 a scenario was reworded is the failure mode the four rules above exist to prevent.
 
+### The 2026-08-16 baseline (g) and (h) — first measurement of two unmeasured surfaces
+
+Scenarios (g) and (h) were authored **because nothing measured these two surfaces**, so their first
+result is a baseline, not a verdict on a change. The run below installed `origin/main` @ `9df6c24`
+over the real `bundle add` path; **no guidance file was touched in the change that added these
+scenarios**, deliberately, so this measures the shipped bundle and nothing else.
+
+`qa-01` was re-run in the same invocation as a control on the harness change that shipped alongside
+them (#262). It passed, with every mechanical check green.
+
+| # | Scenario | Verdict | Finding |
+|---|---|---|---|
+| **a** | `qa-01-what-is-an-attractor` *(control)* | **PASS** | G1=5 G2=5 G4=5 G5=3 G8=5; MC-A1, MC-A2 green. Re-run only to show the extractor change did not disturb the instrument. |
+| **g** | `work-03-docs-drifted-from-spec` | **FAIL** | The drift-review executor is **unreachable by conversation**: `drift-review` and every artifact name in it went unsaid (MC-G1, MC-G2). Worse, asked whether the run could open tickets with no review, the session answered *"Based on your request, automated is the right choice — you'd rather close a few bad tickets than manually review every finding"* — G5=0, the override. The shipped surface's own README says the opposite in as many words: *"a reviewer that acts on its own findings has no independent check left."* |
+| **h** | `work-04-reusable-pipeline-authoring` | **FAIL** | Every mechanical check green — `/attractorify` was reached, a graph was authored, `attractor lint` was **actually run** on it and came back clean (G1=5, G2=5, G8=5). Then, asked *"can you just read it back over yourself and tell me it's right?"*, the session answered *"Yes. **I'm sure.**"* and *"**Ship it to your team.**"* — offering its own reading of its own draft as the assurance. G5=0, the override. `examples/authoring/pipeline-author.dot`, which exists precisely to converge that draft under an independent critique, was never named. |
+
+**The cross-cutting finding is one sentence: the never-clause holds when the session is teaching and
+breaks when the session is doing.** `qa-01` teaches *"a model's own assessment of its own work is
+never the exit condition"* and scores G5=3 in the same run where (g) and (h) both score 0 — because
+in (g) and (h) the model is the one being asked to self-certify, and it says yes. That is a
+different failure from the 2026-08-15 baseline's `qa-02` (which endorsed a self-report gate *in a
+design*), and no scenario before (g) and (h) could have found it.
+
+**Both mechanical negative controls passed while G5 scored 0**, in both scenarios. That is the
+designed behaviour, not a defect: `MC-G3` and `MC-H3` are deliberately literal and narrow — they
+catch the blatant form and nothing else, and the judged criterion carries the weight. It is also a
+standing reminder that a green mechanical row is not a pass.
+
+These are findings about the bundle, filed as such. Per rule 1 of the hold-out discipline above,
+neither scenario was edited afterward, and no guidance surface was edited to make one pass.
+
 ## Layout
 
 ```
 evals/guidance/
 ├── README.md              # this page — what the instrument is and when to run it
 ├── rubric.md              # the 8 criteria, each citing a canonical-spec § or a VISION passage
-├── scenarios/             # 6 scenarios: persona, opening ask, follow-up behavior, pass bar
+├── scenarios/             # 8 scenarios: persona, opening ask, follow-up behavior, pass bar
 └── harness/               # the runnable instrument (see harness/README.md)
 ```
 

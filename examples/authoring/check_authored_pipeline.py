@@ -461,7 +461,7 @@ def _is_loud_terminal(graph: DotGraph, node_id: str) -> bool:
     this contract's calibration suite applies to ``task-runner.dot``.
 
     The exemption is deliberately narrow, so it cannot be worn as a costume by
-    the shape A8 exists to catch.  ALL FOUR must hold:
+    the shape A8 exists to catch.  ALL FIVE must hold:
 
     1. It is a TOOL node.  A worker's "failure" is a provider verdict, not a
        process exit status; only a shell command can guarantee the exit code.
@@ -472,9 +472,22 @@ def _is_loud_terminal(graph: DotGraph, node_id: str) -> bool:
     4. The edge into the exit is its ONLY outgoing edge.  A node with somewhere
        else to go is a step on a path, and a step on a path is the bookkeeping
        intermediary A8 is looking for.
+    5. That edge carries a FAILURE CONDITION (``outcome=fail`` /
+       ``outcome!=success``).  Clauses 1-4 are read off the TEXT of the graph,
+       and clause 2 is the weakest of them: the regex matches the *shape* of a
+       terminal ``exit 1``, which a command like ``rm -f scratch.tmp || exit 1``
+       wears while exiting 0 at runtime.  Wired to the exit UNCONDITIONALLY,
+       such a node is not a loud terminal at all -- it is an ungated fast path
+       to a GREEN finish, and blocking it in A4 would launder exactly the
+       evidence-free finish A4 exists to catch.  The condition is what makes
+       this exemption RUNTIME-SOUND rather than textual: an edge that only
+       fires on ``outcome=fail`` can never carry a SUCCESS into the exit,
+       whatever the command turns out to do.  Every shipped exemplar terminal
+       and ``objective-runner.dot`` already route on ``condition="outcome=fail"``.
 
-    A recorder that exits 0, a notifier with a second route, or an LLM node all
-    still block -- see the mutation tests in ``test_authoring_layer_gates.py``.
+    A recorder that exits 0, a notifier with a second route, an LLM node, or a
+    node whose edge into the exit is unconditional all still block -- see the
+    mutation tests in ``test_authoring_layer_gates.py``.
     """
     if not _is_tool(graph, node_id):
         return False
@@ -484,7 +497,11 @@ def _is_loud_terminal(graph: DotGraph, node_id: str) -> bool:
     if graph.attr(graph_node_id, "max_retries").strip().strip('"') != "0":
         return False
     outgoing = graph.outgoing(node_id)
-    return len(outgoing) == 1 and _is_exit(graph, outgoing[0].dst)
+    return (
+        len(outgoing) == 1
+        and _is_exit(graph, outgoing[0].dst)
+        and _is_failure_condition(outgoing[0].attrs.get("condition", ""))
+    )
 
 
 def _is_truthy(value: str) -> bool:

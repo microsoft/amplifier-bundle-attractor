@@ -1177,6 +1177,71 @@ def test_a4_is_not_bypassed_by_a_path_that_can_only_end_red(checker, tmp_path, c
     assert "[PASS] A4" in text, text
 
 
+#: The reviewer's laundering shape (PR #259 adversarial review): a node whose
+#: command only TEXTUALLY ends in `exit 1` -- `rm -f scratch.tmp || exit 1` exits
+#: 0 whenever the `rm` succeeds, which is almost always -- wired to the exit off
+#: an ungated fast path.  Clauses 1-4 all match it on the text of the graph, so
+#: without clause 5 A4 blocks it as a "loud terminal" and reports the exit as
+#: unreachable-without-evidence.  The reviewer ran this shape on the live engine:
+#: it finished `status=success`, CLI exit 0 -- an evidence-free GREEN finish that
+#: main's A4 catches and the un-hardened exemption laundered.
+_LAUNDERING_SNEAK = (
+    '    escalated [shape=parallelogram, max_retries=0, tool_command="printf escalated; exit 1"]',
+    (
+        '    escalated [shape=parallelogram, max_retries=0, tool_command="printf escalated; exit 1"]\n'
+        '    sneak [shape=parallelogram, max_retries=0, tool_command="rm -f scratch.tmp || exit 1"]'
+    ),
+)
+
+
+def _sneak_wired(edge: str) -> tuple[str, str]:
+    """Put `sneak` on the ungated fast path, reaching the exit via `edge`."""
+    return ("    work -> dod_gate", f"    work -> dod_gate\n    work -> sneak\n{edge}")
+
+
+@pytest.mark.parametrize(
+    ("edge", "verdict", "a4", "why"),
+    [
+        pytest.param(
+            "    sneak -> done",
+            "doctrine_bad",
+            "[FAIL] A4",
+            "an UNCONDITIONAL edge into the exit can carry the node's SUCCESS -- "
+            "`rm -f scratch.tmp || exit 1` exits 0, so this is an evidence-free green finish",
+            id="unconditional-edge-is-laundering",
+        ),
+        pytest.param(
+            '    sneak -> done [condition="outcome=fail"]',
+            "doctrine_ok",
+            "[PASS] A4",
+            "an outcome=fail edge can never carry a SUCCESS into the exit, whatever "
+            "the command does -- this is the shipped exemplars' own shape",
+            id="outcome-fail-edge-stays-exempt",
+        ),
+    ],
+)
+def test_a4_exempts_a_loud_terminal_only_when_its_edge_is_conditioned_on_failure(
+    checker, tmp_path, capsys, edge, verdict, a4, why
+):
+    """Clause 5: the exemption is RUNTIME-sound, not merely textual.
+
+    These two cases differ in exactly ONE character sequence -- the condition on
+    `sneak -> done`.  The node, its command, its `max_retries=0` and its single
+    outgoing edge are identical, and clauses 1-4 therefore cannot tell them
+    apart: clause 2's regex matches `|| exit 1` on the text while the command
+    exits 0 at runtime.  Only the edge's condition distinguishes a terminal
+    whose FAIL becomes the run's status from a fast path that quietly finishes
+    green without ever touching a gate.
+    """
+    dot = _with_loud_terminal(_LAUNDERING_SNEAK, _sneak_wired(edge))
+    pipeline, companion = _write_draft(tmp_path, dot)
+    rc, text = _run_checker(checker, pipeline, companion, tmp_path / "report.txt")
+
+    assert rc == 0
+    assert capsys.readouterr().out == verdict, (why, text)
+    assert a4 in text, (why, text)
+
+
 def test_a8_admits_the_shape_248_merged_into_the_objective_runner(checker, tmp_path, capsys):
     """Calibration, stated against the real file rather than a fixture.
 

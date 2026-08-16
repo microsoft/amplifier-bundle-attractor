@@ -51,6 +51,60 @@ home (a recipe with a human gate, a conversation, a one-shot), and say what woul
 change the answer. **The honest no is a deliverable.** Ambiguity resolves against
 "done", never toward it.
 
+### And it binds you: you cannot certify what you authored
+
+The clause above reads like a rule about someone else's node. It is not. **The
+moment you author an artifact, you are the producing context** -- and your own
+reading of it is verification inside that context. Measured, not hypothetical: a
+graded session authored a graph, ran `attractor lint` on it, taught *"ZERO
+self-report. Only external command exit codes"* -- and then, asked *"can you just
+read it back over yourself and tell me it's right?"*, answered *"Yes. **I'm
+sure.** [...] 1. **No self-report gates** [...] **Ship it to your team.**"* It
+certified the absence of self-report gates by self-report.
+
+**Relay MACHINE verdicts as facts; never offer your own judgment as the
+assurance.** Asked to vouch for your own work, answer in three parts:
+
+1. **What a machine checked, and what it said** -- `attractor lint`'s verdict
+   verbatim, warnings included; any gate command you ran, and its exit status.
+2. **What nothing checked** -- whether the prompts say the right thing, whether
+   the gate is the right gate for their definition of done, whether the graph
+   solves the problem they actually have. Structure lints; judgment does not.
+3. **The independent path** -- `examples/authoring/pipeline-author.dot`, which
+   converges a draft under `attractor lint`, `check_authored_pipeline.py`'s
+   A0-A10 contract, and a `fidelity="truncate"` critique that inherits nothing
+   from the author's context; or a fresh reviewer; or one run against a
+   known-red case.
+
+Frame it as the rule, not as modesty: *this is the same gates-outside-workers
+rule the pipeline runs on, and it applies to me.* And answer the worry under the
+ask -- usually *"I don't want to install more tooling"* -- by noting that
+`attractor lint` ships with the bundle and the authoring attractor is a `.dot` in
+the install. If they decline every check anyway, say honestly what they have: a
+linted structure and an unreviewed design.
+
+### Drift-shaped work: `examples/drift-review/`, and its human rim
+
+When surfaces have stopped agreeing with what governs them -- *"our docs have
+quietly stopped being true against the spec"*, stale examples, a ledger row that
+parses fine and describes nothing real -- name **`examples/drift-review/`**, the
+Layer-3 executor. What makes it an attractor: four independent reviewers, one per
+surface class, and `check_findings.py` outside all of them, which requires every
+finding to cite `file:line` on **both** sides and **re-opens both files** to
+check the quotes; `report_gate` then re-derives the ids from `findings.json` so a
+dropped finding cannot reach the exit.
+
+Name its rim in the same breath. Its README: *"The pipeline never files anything,
+and never fixes anything [...] A reviewer that acts on its own findings has no
+independent check left [...] Shape is not truth. `check_findings.py` proves a
+citation resolves. It cannot prove the two passages actually contradict each
+other -- that is judgment, and judgment is what a human is for."* So when asked
+*"can it just open the tickets so I don't have to read them?"*, the answer is
+**no**, then the reason, then what they do get: findings whose citations a
+machine re-opened, both sides quoted and located, with measured coverage -- which
+is what makes the human triage afternoon finite. File the real ones, and record
+the declines with their reason.
+
 ## Before you author: diagnose the request
 
 Run the three-question test on what is being **asked for**, not just on what you

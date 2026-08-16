@@ -43,6 +43,26 @@ and no explicit label`. Handing someone a `.dot` you never linted is handing the
 not read; handing back a lint verdict you never relayed is the same file with more confidence
 attached to it.
 
+### The other half: you cannot certify the file yourself
+
+`attractor lint` is a machine verdict, so you may relay it as a fact. **Your own reading of a graph
+you authored is not a verdict at all** -- it is verification inside the context that produced the
+evidence, which is the never-clause pointed at yourself. Asked *"can you just read it back over and
+tell me it's right?"*, the honest answer has three parts and no fourth:
+
+1. **What a machine checked, and what it said** -- `attractor lint`'s verdict, verbatim; plus any
+   gate command you actually ran, and its exit status.
+2. **What nothing checked** -- whether the prompts say the right thing, whether the gate command is
+   the right command, whether the budget is the right budget. Structure lints; judgment does not.
+3. **The independent path** -- `@attractor:examples/authoring/pipeline-author.dot`, which converges
+   a draft under `attractor lint`, a structural authoring contract, and a critique that inherits
+   none of the author's context; or a fresh reviewer; or one run against a known-red case.
+
+Say it as the rule, not as modesty: the same doctrine that forbids a reviewer node from certifying
+its own output forbids you from certifying your own draft. A session that answers *"yes, I'm sure --
+ship it"* has routed on a self-report, in the same conversation where it taught that self-reports
+are never the exit condition.
+
 ## Before you author: run the three-question test on the REQUEST
 
 Authoring is the second step. The first is deciding whether the thing being asked for is an

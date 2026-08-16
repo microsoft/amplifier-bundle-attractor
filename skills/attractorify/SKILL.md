@@ -127,8 +127,10 @@ for is not in the work, and assent to a question you posed can never be
 quoted as evidence (rules above; the verifier checks exactly this).
 
 `existing-attractor` (reuse a shipped exemplar — see
-`examples/patterns/task-runner.dot` or
-`examples/pipelines/practical/bug-fix.dot`) is **not an exit**: it hands the
+`examples/patterns/task-runner.dot`,
+`examples/pipelines/practical/bug-fix.dot`, or -- when the work is a sweep of
+docs/examples/guidance for drift from a spec or governing contract --
+`examples/drift-review/`) is **not an exit**: it hands the
 user an invocation command, which is a design handover in every way that
 matters. It carries the same artifact discipline (three questions with
 quotes, `counter:` line, `budget:` line) and must pass the executed gate AND
@@ -383,6 +385,35 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    give the user the exact command -- an unrun lint reported as unrun is honest;
    an unrun lint left unmentioned is how an inert graph ships.
 
+   **The other half of the same contract: you do not certify what you wrote.**
+   Lint is a machine verdict, so relay it as a fact. Your own reading of your
+   own draft is not a verdict at all -- it is verification inside the context
+   that produced the evidence, the never-clause pointed at yourself. So when
+   the user asks *"can you just read it back over yourself and tell me it's
+   right? You wrote it, you know what it's supposed to do"* -- a reasonable
+   ask, usually meaning *"I don't want to install more tooling"* -- do NOT
+   answer *"yes, I'm sure"*. Answer in three parts, naming where each result
+   landed:
+
+   1. **What a machine checked, and what it said** -- `attractor lint`'s
+      verdict verbatim, warnings included; the diagnosis form gate's PASS; the
+      independent verifier's `VERIFIER: VALID`, if it ran. Facts, stated as
+      facts.
+   2. **What nothing checked** -- whether each prompt says the right thing,
+      whether the gate command is the right command for their DoD, whether the
+      graph solves the problem they actually have. Structure lints; judgment
+      does not.
+   3. **The independent path** -- Step 8's `examples/authoring/`, whose
+      `critique` node inherits nothing from the author's context; or a fresh
+      reviewer; or one run against a known-red case.
+
+   Frame it as the rule, not as modesty: *this is the same
+   gates-outside-workers rule the pipeline runs on, and it applies to me.*
+   Measured, not hypothetical: a graded session authored a graph, ran
+   `attractor lint` on it, and then answered *"Yes. **I'm sure.** [...] 1. **No
+   self-report gates** [...] **Ship it to your team.**"* -- certifying the
+   absence of self-report gates by self-report.
+
 7. **Hand back:** the `.dot` file path, the exact invocation command, and a
    one-line summary of why each structural choice was made. The chosen target
    must appear as a working directory / path / parameter in both the graph's
@@ -404,6 +435,16 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    remains the human's explicit call (see "What this skill does NOT do"), and
    the diagnosis artifact still stands on its own if they decline.
 
+   **This is also the concrete answer to "are you sure it's good?"** -- the
+   independent path Step 6 owes the user. Name what it adds that no reading of
+   yours can: `attractor lint` and `check_authored_pipeline.py`'s A0-A10
+   structural contract, both executed, plus a `critique` node at
+   `fidelity="truncate"` that inherits nothing from the author's context. (A8
+   -- no failure outcome routed into the terminal success node -- is the
+   *"exited green while the tests were red"* failure, by name.) If they decline
+   it, say honestly what they are left holding: a linted structure and an
+   unreviewed design.
+
 ---
 
 ## Reference surfaces (link, don't restate)
@@ -423,7 +464,15 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
   existing attractor" recommendations
 - `examples/authoring/README.md` — the authoring attractor: converges a *new*
   `.dot` under executed gates from a design brief. Where a validated intent
-  from Step 3 goes to become a hardened artifact
+  from Step 3 goes to become a hardened artifact, and the independent path to
+  offer when you are asked to vouch for your own draft
+- `examples/drift-review/README.md` -- the shipped Layer-3 executor for
+  drift-shaped work (docs, examples, guidance or ledgers no longer agreeing
+  with a spec or governing contract). Recommend it as `existing-attractor`
+  rather than hand-rolling a bespoke sweep -- and carry its rim with the
+  pointer: *"The pipeline never files anything, and never fixes anything [...]
+  Shape is not truth [...] judgment is what a human is for."* Never endorse
+  filing its findings unread
 - <https://microsoft.github.io/amplifier-bundle-attractor/attractor-explained.html>
   — the visual explainer; if the person is trying to LEARN how attractors work
   rather than convert this session into a pipeline, offer them that link (share

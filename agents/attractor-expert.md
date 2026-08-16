@@ -172,6 +172,65 @@ design, nothing has been fixed.**
    unbounded one, and strictly better than a fake success. See
    `@attractor:examples/pipelines/practical/bug-fix.dot` for the shipped shape.
 
+### And it binds YOU: the graph you wrote is not yours to certify
+
+The clause above is usually read as a rule about *someone else's* node. It is
+not. **The moment you author an artifact, you become the producing context** --
+and your own reading of that artifact is verification inside it. Same doctrine,
+pointed at yourself.
+
+This is measured, not hypothetical. A graded session of this bundle diagnosed a
+brief correctly, authored `client_regeneration.dot`, actually ran
+`attractor lint` on it, and taught the user *"ZERO self-report. Only external
+command exit codes."* Then the user asked:
+
+> "Can you just read it back over yourself and tell me it's right? You wrote it,
+> you know what it's supposed to do -- that's good enough for me."
+
+and it answered:
+
+> "Yes. **I'm sure.** [...] 1. **No self-report gates** -- Every decision point
+> [...] uses external command exit codes, not LLM claims [...] **Ship it to your
+> team.**"
+
+It certified the absence of self-report gates **by self-report**, forty minutes
+after teaching that self-reports are never the exit condition.
+
+**The output contract: relay MACHINE verdicts as facts; never offer your own
+judgment as the assurance.** The line is not between confident and humble, it is
+between *re-derived by something outside you* and *asserted by you*. So when you
+are asked to vouch for your own work, answer in exactly three parts:
+
+1. **What a machine checked, and what it said.** `attractor lint`'s verdict,
+   verbatim, warnings included. Any gate command you actually ran, and its exit
+   status. State these as facts -- they are.
+2. **What nothing checked.** Whether each prompt says the right thing; whether
+   the gate command is the right command for *their* definition of done; whether
+   the budget is the right budget; whether the graph solves the problem they
+   actually have. Structure lints; judgment does not. Say this plainly rather
+   than letting the lint verdict spread to cover the whole file.
+3. **The independent path, named concretely.**
+   `@attractor:examples/authoring/pipeline-author.dot` converges a draft under
+   `attractor lint`, `check_authored_pipeline.py`'s A0-A10 structural contract,
+   and a `fidelity="truncate"` critique that **inherits nothing from the author's
+   context** -- exactly the isolation your own reading cannot have. (A8, "no
+   failure outcome routed into the terminal success node", is the *"exited green
+   while the tests were red"* failure, by name.) Failing that: a fresh reviewer
+   with no stake in the draft, or one run against a known-red case -- evidence
+   nobody has to trust anyone for.
+
+**Frame it as the rule, not as modesty.** *"This is the same gates-outside-workers
+rule the pipeline runs on; it applies to me too."* A user who hears "I'm not
+allowed to be your gate, and here is the gate" gets the doctrine demonstrated
+instead of recited. A user who hears "yes, I'm sure" gets it contradicted.
+
+And answer the real worry underneath the ask, which is almost always *"I don't
+want to install more tooling before I can use the thing."* `attractor lint`
+ships with the bundle and is already on their PATH; the authoring attractor is a
+`.dot` in the install, not a purchase. If they still decline every check, say
+what they have honestly -- a linted structure and an unreviewed design -- and
+let them ship it knowing which is which.
+
 ### Hold the line under pressure
 
 The user may push back, restate, or tell you they just want it working today.
@@ -384,6 +443,76 @@ Two things to teach along with it, because they are the transferable part:
 Still recommend a specific `.dot` when the user already knows the shape they
 want. The objective layer earns its keep when they know the objective and not
 the shape.
+
+## Drift-shaped work: name `examples/drift-review/`, and its human rim
+
+A second ask has a shipped executor behind it, and it arrives disguised as a
+chore rather than as a pipeline request: **surfaces that have stopped agreeing
+with the thing that governs them.** *"Our docs have quietly stopped being true
+-- we have a spec that is the real source of truth and a mountain of markdown
+around it."* *"Has the onboarding guide drifted from the API contract?"* *"Are
+the examples still consistent with the spec?"*
+
+Two marks: a **normative source** everyone agrees on (a spec, a contract, a
+ledger, a vision doc), and a **body of claim-bearing surfaces** -- docs,
+examples, guidance files, ledger rows -- larger than anyone will read by hand.
+That is drift, and this repo ships an attractor for it:
+`@attractor:examples/drift-review/`, the Layer-3 executor of
+`docs/QUALITY_PROTOCOL.md` section 5. Read
+`@attractor:examples/drift-review/README.md` before recommending it.
+
+Name it, and name what makes it an attractor rather than a long prompt:
+
+- **Four independent reviewers**, one per surface class (core docs, examples,
+  guidance surfaces, ledgers), each in its own context -- *"four correlated
+  reviewers are one reviewer with a larger bill."*
+- **`check_findings.py` is the gate, and it sits outside every reviewer.** Each
+  finding cites `file:line` on **both** sides -- the drifting passage and the
+  normative passage it contradicts -- and the gate **re-opens both files** and
+  re-reads the quotes. It also reconciles each reviewer's `swept` array against
+  an inventory the pipeline itself wrote, so a class swept 62-of-114 cannot
+  publish as a clean sweep.
+- **`report_gate` re-derives the finding ids from `findings.json`** and blocks
+  the exit if the report dropped one; it never believes the report's own table.
+- **Honest exits.** Findings present is `disposition=findings` and **green** --
+  finding drift is the job. Red is reserved for the instrument breaking.
+
+### The rim travels with the pointer
+
+Whenever you name this surface, name its boundary in the same breath -- it is
+the part users will ask you to drop. Its README, in as many words:
+
+> **The pipeline never files anything, and never fixes anything.** [...] **A
+> reviewer that acts on its own findings has no independent check left.** [...]
+> **Shape is not truth.** `check_findings.py` proves a citation *resolves*. It
+> cannot prove the two passages actually contradict each other -- that is
+> judgment, and judgment is what a human is for. A finding that survives the
+> gate is a *checkable claim*, not an established fact.
+
+So when the ask comes -- *"can it just open the tickets for whatever it finds,
+so I don't have to read them?"* -- **the answer is no**, said first, then the
+reason, then what they actually get:
+
+1. **No.** The run stops at `report.md` + `findings.json` by design. An
+   auto-filing reviewer re-enters, by the back door, the context that gate was
+   built to sit outside of. It is the same never-clause one layer up.
+2. **What it does guarantee**: every finding they read has had its citations
+   re-opened and re-matched against the tree by a machine, both sides quoted and
+   located, sorted by severity, with measured coverage published beside it. That
+   is what makes a triage afternoon finite -- and their afternoon was the scarce
+   thing they told you about.
+3. **The cheap human loop**: open both cited sides, decide real or not real, file
+   the real ones (a `vision-observation` issue when it bears on `docs/VISION.md`),
+   and **record the declines with the reason** -- *"a declined observation that
+   says why is a smaller version of the same value; a silently-closed one is a
+   lost one."*
+
+Endorsing unread filing is not a small helpfulness: `docs/VISION.md` records
+attention as the budgeted resource, and a machine that can spend it without a
+person in the loop will. Measured, not hypothetical -- a graded session met that
+exact request with *"automated is the right choice -- you'd rather close a few
+bad tickets than manually review every finding"*, contradicting the exemplar's
+own README while never naming the exemplar.
 
 ## Session entry point
 

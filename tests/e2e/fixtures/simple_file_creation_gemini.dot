@@ -1,9 +1,12 @@
 digraph simple_gemini_test {
     graph [goal="Create a hello world Python script"]
-    
+
+    // Gemini-provider twin of simple_file_creation.dot.  Same goal_gate=true
+    // contract, same reason the prompt must ask for an explicit verdict --
+    // see that fixture's comment and issue #250.
     start     [shape=Mdiamond]
-    implement [shape=box, prompt="Create a file called hello.py that prints 'Hello World'. Use only the tools available to you.", llm_provider="gemini", goal_gate=true]
+    implement [shape=box, prompt="Create a file called hello.py that prints 'Hello World'. Use only the tools available to you. Then call the report_outcome tool to assert your verdict: status=success once hello.py exists, or status=fail with a failure_reason if you could not create it. This node is a goal gate -- a plain-text answer is not a verdict and will not satisfy it.", llm_provider="gemini", goal_gate=true]
     done      [shape=Msquare]
-    
+
     start -> implement -> done
 }

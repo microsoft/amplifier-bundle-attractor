@@ -1,11 +1,16 @@
 digraph plan_implement_review {
     graph [goal="Create and validate a Python script"]
-    
+
+    // `implement` carries goal_gate=true and therefore owes an ASSERTED
+    // verdict (EXTENSIONS.md §25).  Without the report_outcome instruction
+    // below, a prose answer resolves to RETRY -> FAIL and the plain
+    // `implement -> validate` edge is refused by §3.7 fail-fast, so the run
+    // dead-ends at `implement` -- the same defect as issue #250.
     start     [shape=Mdiamond]
     plan      [shape=box, prompt="List the steps needed to create a Python script that defines an add(a,b) function and tests it. Be brief - just list 2-3 steps."]
-    implement [shape=box, prompt="Create test_math.py with a function add(a,b) that returns a+b, and a main block that asserts add(1,2)==3 and prints 'Tests passed'", goal_gate=true]
+    implement [shape=box, prompt="Create test_math.py with a function add(a,b) that returns a+b, and a main block that asserts add(1,2)==3 and prints 'Tests passed'. Then call the report_outcome tool to assert your verdict: status=success once test_math.py exists, or status=fail with a failure_reason if you could not create it. This node is a goal gate -- a plain-text answer is not a verdict and will not satisfy it.", goal_gate=true]
     validate  [shape=box, prompt="Run 'python3 test_math.py' and report whether it passed or failed"]
     done      [shape=Msquare]
-    
+
     start -> plan -> implement -> validate -> done
 }

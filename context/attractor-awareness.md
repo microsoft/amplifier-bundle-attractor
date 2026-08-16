@@ -3,7 +3,7 @@
 ## FIRST: is this an objective? Say so in the FIRST reply
 
 **Trigger:** an *end-state the user wants true in the world* -- a recurring pain
-plus a bare "build me something" -- that a machine could plausibly check.
+plus a bare "build me something" -- that a machine could check.
 
 **In the first reply, all three:**
 
@@ -18,9 +18,9 @@ plus a bare "build me something" -- that a machine could plausibly check.
    - **Docs/examples/guidance drifted from a spec?**
      **`@attractor:examples/drift-review/`** -- `check_findings.py` re-opens
      every `file:line` citation. Shape is not truth: a finding is a claim a
-     **human** verifies -- never file them unread.
+     **human** verifies, never filed unread.
 
-**Say the names**, even when another mode is the right host: end-state and
+**Say the names**, even when another mode hosts it: end-state and
 definition-of-done before any step list. It may end in **"no"**: if no machine
 check could prove it, name where the work belongs.
 
@@ -31,7 +31,7 @@ check could prove it, name where the work belongs.
 3. **Would it still land if any one LLM node had a bad day?**
 
 Short of three yeses it is **recipe territory, and that verdict OPENS your
-visible reply.** A verdict left in your reasoning lands as silent compliance.
+visible reply.** A verdict left in your reasoning lands as compliance.
 Name it, give the reason (no cycle; no machine-checked gate; the steps are the
 domain decomposition copied into the control plane), and the honest
 alternative. If they still want it, author it. Delegating does not discharge
@@ -46,13 +46,13 @@ machine evidence from outside the context that did the work. Putting that claim
 on an edge changes the mechanism, not the authority. **And it binds YOUR OWN
 work in this conversation, not just pipelines you design:** what you authored,
 you cannot certify. Relay MACHINE verdicts as facts; never your own judgment.
-Asked to vouch anyway, say what was machine-checked, what was not, and offer
+Asked to vouch, say what was machine-checked, what was not, and offer
 the independent path: `@attractor:examples/authoring/`, or a fresh reviewer.
 
 ## Before authoring or editing ANY `.dot`
 
-- **Delegate to `attractor:attractor-expert` first** -- authoring, runtime
-  semantics, routing, debugging; generic builders carry no engine semantics.
+- **Delegate to `attractor:attractor-expert` first.** Generic builders carry no
+  engine semantics.
 - **The engine reads `prompt=`, not `instruction=`; `shape=Mdiamond`/`Msquare`,
   not `circle`/`doublecircle`; there is no `agent=`.** An invented attribute is
   not an error -- it is **silently dropped**, and the graph runs with no prompt.
@@ -60,3 +60,7 @@ the independent path: `@attractor:examples/authoring/`, or a fresh reviewer.
 - **The file is not delivered until `attractor lint <file>` has run and its
   verdict is in your reply.** Lint not relayed is lint not run: you hand over
   an unverified file.
+
+## Depth, on demand
+
+- Runtime semantics, routing, debugging: `attractor:attractor-expert`

@@ -1447,3 +1447,183 @@ def test_readme_shape_table_matches_shape_to_handler():
         f"  omitted: {sorted(set(SHAPE_TO_HANDLER) - documented)}\n"
         f"  phantom: {sorted(documented - set(SHAPE_TO_HANDLER))}"
     )
+
+
+# --- shape_resolvable rule (issue #268) ---
+# lint() must produce an ERROR for any node whose type is empty and whose
+# shape is not in SHAPE_TO_HANDLER.  The rule fires per-node and must not
+# flag nodes that have an explicit type= attribute or a known shape.
+
+
+def test_unknown_shape_no_type_produces_error_via_lint():
+    """Regression: lint() must emit ERROR for a node with a typo'd shape and no type.
+
+    Issue #268: a node with shape=parallelgram (typo) and no explicit type
+    silently fell through to the codergen handler class at lint time, then
+    raised ValueError at runtime dispatch.  The rule must surface the error
+    before any node executes.
+    """
+    graph = _make_graph(
+        nodes_extra=[
+            Node(id="bad", shape="parallelgram"),  # typo: missing 'o'
+        ],
+        edges_extra=[
+            Edge(from_node="work", to_node="bad"),
+            Edge(from_node="bad", to_node="done"),
+        ],
+    )
+    diags = lint(graph)
+    errors = [d for d in diags if d.severity == "ERROR" and d.rule == "shape_resolvable"]
+    assert errors, (
+        f"Expected at least one ERROR with rule='shape_resolvable' for node 'bad' "
+        f"(shape='parallelgram', no explicit type), got: {diags}"
+    )
+    assert any(d.node_id == "bad" or "bad" in d.message for d in errors), (
+        f"ERROR must be associated with node 'bad', got: {errors}"
+    )
+
+
+def test_unknown_shape_with_tool_command_produces_error():
+    """lint() must emit ERROR for unknown-shape node that carries tool_command.
+
+    A node with an unrecognized shape and a tool_command attribute must still
+    produce an ERROR -- the rule is unconditional on the presence of tool_command.
+    """
+    graph = _make_graph(
+        nodes_extra=[
+            Node(id="bad_tc", shape="parallelgram", attrs={"tool_command": "./run.sh"}),
+        ],
+        edges_extra=[
+            Edge(from_node="work", to_node="bad_tc"),
+            Edge(from_node="bad_tc", to_node="done"),
+        ],
+    )
+    diags = lint(graph)
+    errors = [
+        d for d in diags
+        if d.severity == "ERROR" and d.rule == "shape_resolvable"
+        and (d.node_id == "bad_tc" or "bad_tc" in d.message)
+    ]
+    assert errors, (
+        f"Expected ERROR for unknown-shape+tool_command node 'bad_tc', got: {diags}"
+    )
+
+
+def test_unknown_shape_with_prompt_produces_error():
+    """lint() must emit ERROR for unknown-shape node that has a non-empty prompt.
+
+    The rule is unconditional: unknown shape + no explicit type => ERROR,
+    regardless of whether the node has a prompt or label.
+    """
+    graph = _make_graph(
+        nodes_extra=[
+            Node(id="bad_prompt", shape="parallelgram", prompt="do something"),
+        ],
+        edges_extra=[
+            Edge(from_node="work", to_node="bad_prompt"),
+            Edge(from_node="bad_prompt", to_node="done"),
+        ],
+    )
+    diags = lint(graph)
+    errors = [
+        d for d in diags
+        if d.severity == "ERROR" and d.rule == "shape_resolvable"
+        and (d.node_id == "bad_prompt" or "bad_prompt" in d.message)
+    ]
+    assert errors, (
+        f"Expected ERROR for unknown-shape+prompt node 'bad_prompt', got: {diags}"
+    )
+
+
+def test_known_shape_node_not_flagged_by_shape_resolvable():
+    """Known-shape nodes in the same graph as unknown-shape nodes must not be flagged.
+
+    The rule fires per-node: a node with shape=parallelogram (known) must not
+    receive a shape_resolvable ERROR even when sibling nodes have unknown shapes.
+    """
+    graph = _make_graph(
+        nodes_extra=[
+            Node(id="bad", shape="parallelgram"),  # unknown shape
+            Node(id="good", shape="parallelogram", attrs={"tool_command": "./ok.sh"}),
+        ],
+        edges_extra=[
+            Edge(from_node="work", to_node="bad"),
+            Edge(from_node="bad", to_node="good"),
+            Edge(from_node="good", to_node="done"),
+        ],
+    )
+    diags = lint(graph)
+    good_shape_errors = [
+        d for d in diags
+        if d.severity == "ERROR" and d.rule == "shape_resolvable"
+        and (d.node_id == "good" or "good" in d.message)
+    ]
+    assert not good_shape_errors, (
+        f"Known-shape node 'good' (parallelogram) must not be flagged by "
+        f"shape_resolvable, got: {good_shape_errors}"
+    )
+    # The bad node must still be flagged
+    bad_shape_errors = [
+        d for d in diags
+        if d.severity == "ERROR" and d.rule == "shape_resolvable"
+        and (d.node_id == "bad" or "bad" in d.message)
+    ]
+    assert bad_shape_errors, (
+        f"Unknown-shape node 'bad' (parallelgram) must be flagged, got: {diags}"
+    )
+
+
+def test_explicit_type_suppresses_shape_resolvable():
+    """Nodes with an explicit type= attribute must not be flagged by shape_resolvable.
+
+    The existing type_known rule handles unknown type values.  The shape_resolvable
+    rule targets only the shape-based resolution path: node.type is empty AND
+    node.shape is not in SHAPE_TO_HANDLER.
+    """
+    graph = _make_graph(
+        nodes_extra=[
+            # Unknown shape but explicit type -- shape_resolvable must not fire
+            Node(id="typed", shape="parallelgram", type="tool",
+                 attrs={"tool_command": "./run.sh"}),
+        ],
+        edges_extra=[
+            Edge(from_node="work", to_node="typed"),
+            Edge(from_node="typed", to_node="done"),
+        ],
+    )
+    diags = lint(graph)
+    shape_errors = [
+        d for d in diags
+        if d.severity == "ERROR" and d.rule == "shape_resolvable"
+        and (d.node_id == "typed" or "typed" in d.message)
+    ]
+    assert not shape_errors, (
+        f"Node 'typed' has explicit type='tool' and must not be flagged by "
+        f"shape_resolvable (that path belongs to type_known), got: {shape_errors}"
+    )
+
+
+def test_shape_resolvable_also_fires_via_validate():
+    """validate() must also emit the shape_resolvable ERROR (not just lint()).
+
+    The rule lives in validate(), so validate_or_raise() also catches
+    unknown-shape nodes -- consistent with the existing validation architecture.
+    """
+    graph = _make_graph(
+        nodes_extra=[
+            Node(id="bad", shape="parallelgram"),
+        ],
+        edges_extra=[
+            Edge(from_node="work", to_node="bad"),
+            Edge(from_node="bad", to_node="done"),
+        ],
+    )
+    diags = validate(graph)
+    errors = [
+        d for d in diags
+        if d.severity == "ERROR" and d.rule == "shape_resolvable"
+        and (d.node_id == "bad" or "bad" in d.message)
+    ]
+    assert errors, (
+        f"validate() must also emit shape_resolvable ERROR for node 'bad', got: {diags}"
+    )

@@ -110,6 +110,7 @@ def validate(
     _check_condition_syntax(graph, diags)
     _check_stylesheet_syntax(graph, diags)
     _check_type_known(graph, diags)
+    _check_shape_resolvable(graph, diags)
     _check_fidelity_valid(graph, diags)
     _check_retry_target_exists(graph, diags)
     _check_response_schema(graph, diags)
@@ -607,6 +608,58 @@ def _check_type_known(graph: Graph, diags: list[Diagnostic]) -> None:
                     ),
                     node_id=node.id,
                     fix=f"Use a recognized type or register a custom handler for '{node.type}'",
+                )
+            )
+
+
+def _check_shape_resolvable(graph: Graph, diags: list[Diagnostic]) -> None:
+    """LINT: shape_resolvable -- nodes without an explicit type must have a known shape.
+
+    When a node has no explicit ``type`` attribute, the engine resolves its
+    handler via ``SHAPE_TO_HANDLER[node.shape]``.  If the shape is not in
+    that mapping the dispatch layer raises a ``ValueError`` at runtime
+    (``HandlerRegistry.get()`` in ``handlers/__init__.py``).
+
+    This rule surfaces that error at lint time -- before any node executes --
+    so a pipeline author with a typo'd shape (e.g. ``shape=parallelgram``
+    instead of ``shape=parallelogram``) gets an ERROR from ``attractor lint``
+    rather than a ``ValueError`` mid-run.
+
+    Conditions checked (all three must hold to emit an ERROR):
+
+    * ``node.type`` is empty -- nodes with an explicit ``type`` attribute use
+      type-based dispatch; the ``type_known`` rule already handles unknown
+      type values, so this rule must not double-diagnose them.
+    * ``node.shape not in SHAPE_TO_HANDLER`` -- the shape is unrecognised.
+    * Not a start or exit node -- ``is_start_node()`` / ``is_exit_node()``
+      identify these by ``id``, ``type`` attr, or structural shape regardless
+      of the ``shape`` field value; they are always valid.
+
+    Severity: ERROR -- the runtime dispatch raise is unconditional; the
+    pipeline cannot execute the node.
+    """
+    for node in graph.nodes.values():
+        if node.type:
+            continue  # explicit type= uses type-based dispatch; type_known owns that path
+        if node.is_start_node() or node.is_exit_node():
+            continue  # start/exit nodes are always valid regardless of shape
+        if node.shape not in SHAPE_TO_HANDLER:
+            diags.append(
+                Diagnostic(
+                    rule="shape_resolvable",
+                    severity="ERROR",
+                    message=(
+                        f"Node '{node.id}' has no explicit type and its shape "
+                        f"'{node.shape}' is not in SHAPE_TO_HANDLER; "
+                        f"shape-based dispatch will raise ValueError at runtime. "
+                        f"Known shapes: {', '.join(sorted(SHAPE_TO_HANDLER))}."
+                    ),
+                    node_id=node.id,
+                    fix=(
+                        f"Correct the shape typo (e.g. 'parallelogram' not 'parallelgram') "
+                        f"or add an explicit type= attribute. "
+                        f"Known shapes: {', '.join(sorted(SHAPE_TO_HANDLER))}."
+                    ),
                 )
             )
 

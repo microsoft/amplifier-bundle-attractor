@@ -1213,3 +1213,77 @@ against the DENY list) is exercised directly by `leak_gate` in
     alive-fact + verbatim republication, closure under a positive
     round-trip gate, dedupe, reset-proof). `attractor lint`: OK on both
     source and the re-synced vendored copy.
+
+- **2026-08-17 (post-review: HONEST SCOPE for the ratchet)** -- `capsule.dot`
+  re-synced `91f0d84de3fdabe27757eb8d0e8055f9d35a5797` ->
+  `b7b29f9bb42a307dd0abcc29689a72c31d1d6f2b`. ONE source commit, the
+  adversarial review's MERGE-AFTER-FIX close on the entry immediately
+  above (same PR, second sync). The `runner/capsule.dot` diff is `33 4`
+  (numstat), 3 hunks (`nonvacuity_gate` comment + `tool_command`,
+  `critique` prompt), nodes/edges **UNCHANGED at 35/62**:
+  - **HONEST SCOPE (required fix)** -- the reviewer built the attack:
+    `rm .ai/void-archive/*.patch` mid-loop, and the next visit reported
+    `void_archive: 0` / `void_ratchet: none`, byte-indistinguishable from
+    a run that was never dodged; worse, the `critique` prompt asserted to
+    the ONE judge that *"every dodge that EVER greened ... lives verbatim
+    in `.ai/void-archive/` and was re-run against THIS draft this
+    round"* -- one `rm` made the judge's trusted context FALSE. The graph
+    comment now carries the house HONEST SCOPE stanza (precedent:
+    `task-runner.dot`'s `stamp_a` FORGE-STAMP GUARD): the ratchet is
+    **ANTI-FORGETTING, not anti-adversary**; `.ai/void-archive/` and
+    `.ai/convergence.jsonl` are worker-writable (the residual, named);
+    the REOPEN TRIGGER is a ledger whose `void_archive` count REGRESSES
+    across rounds; the RETIREMENT CONDITION is engine session attribution
+    (EXTENSIONS section 29's sibling residual closer -- the same trigger
+    family `stamp_a` carries). The `critique` prompt is reworded to stay
+    TRUE under tampering: the archive is a **FLOOR** on what was
+    re-tested, never proof that every dodge which ever greened is still
+    in it, and a regressing count is itself a red flag to weigh.
+  - **Regression as a FACT (recommended 1)** -- the live archive count at
+    entry is compared against the PRIOR nonvacuity ledger row's
+    `void_archive`; `live < prior` records `void_ratchet: regressed` plus
+    a new `void_archive_prior` ledger field (the comparison, shown) and
+    writes an ARCHIVE REGRESSION stanza at the head of
+    `.ai/findings/void-greened.md` -- even when the archive is now empty
+    and there is nothing left to re-run, the case that previously
+    produced no findings file at all. Never a block: facts only, the ONE
+    judge rules.
+  - **`no_apply` is UNMEASURED, not CLOSED (recommended 2)** -- an
+    archived dodge that no longer applies (`git apply --check` fails) was
+    folded into `clean` AND printed *"All archived dodges are
+    machine-proven CLOSED ... each re-run exited 1"* for a dodge that
+    never ran. Now its own `void_ratchet: no_apply` value plus a
+    `void_noapply` ledger tally; the findings file states NOT-APPLICABLE
+    IS UNMEASURED, NOT CLOSED and the all-closed sentence only fires when
+    `no_apply` and `overbudget` are both zero -- matching how
+    `overbudget` was already honestly unmeasured. THE RATCHET RULING in
+    `critique` gains the reading rules for both new values.
+  - **Fuse UNCHANGED** -- a count comparison adds no timeout leg:
+    `max_pipeline_duration` stays `19800s`, tool_worst 11700s, need
+    19080s <= 19800s; both source arithmetic rigs recompute from the live
+    text and stay green. No workflow change forced.
+  - Body byte-identity: vendored copy below its (now 37-line) header
+    sha256-matches `runner/capsule.dot@b7b29f9`:
+    `a9348ed56f7fec864d6634fdc2314e90ba3402320d690202cd222595c0272c8e`
+    (`9c45d153...` at the prior pin `91f0d84`).
+  - Checker/deny-list/dual-yaml parity: `git log 91f0d84..b7b29f9 --
+    runner/check-existing-tests.py backlog/check-upstream-leaks.sh
+    backlog/fixtures/leak-scan runner/attractor-pipeline-dual.yaml
+    runner/task-runner.dot runner/feature-capsule.dot` is EMPTY (0
+    commits per file -- this source commit touches only
+    `runner/capsule.dot`, its rig, and the design note).
+    `$uplift_dir/...` call-site census IDENTICAL on both sides (2x leak
+    scanner, 1x advisory `check-existing-tests.py`); no new checker, no
+    new call site.
+  - Source rig at `b7b29f9`: **31/31 test files green**;
+    `tests/test_capsule_void_robustness.sh` grew 24 -> **37 checks**, its
+    two new RED halves extracting the ratchet **as shipped at the
+    reviewed pin `91f0d84`** by the same `git show` idiom as the
+    `957293f` control -- THE RM ATTACK (RED: `void_archive: 0` /
+    `void_ratchet: none` / no comparison / a stale round-1
+    `void-greened.md`; GREEN: `void_ratchet: regressed`,
+    `void_archive_prior: 1` beside `void_archive: 0`, findings rewritten)
+    and `no_apply`-vs-`clean` (RED: `void_ratchet: clean` + the false
+    closure claim; GREEN: `void_ratchet: no_apply`, `void_noapply: 1`,
+    closure suppressed). `attractor lint`: OK on both source and the
+    re-synced vendored copy.

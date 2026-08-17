@@ -1094,3 +1094,46 @@ against the DENY list) is exercised directly by `leak_gate` in
   method on vendored and source: 35 node declarations / 62 edges on BOTH
   sides (35/62 at the prior pin -- exactly the zero-topology delta the
   source commit claims).
+
+- **2026-08-17** -- `task-runner.dot` re-synced
+  `b3bcedb5da8d60ce4490ad9ad9e2d547235891f5` ->
+  `fae27d0e1969fd48f9b890b9c9660b10f2489471` (WORK DURABILITY, issue #220).
+  One new deterministic node, `salvage`, and three rewired edges. The defect
+  it closes: `package` was the ONLY node in the graph that composed a commit,
+  reachable by exactly one edge (`verdict=ship`), so every non-shipping exit
+  (stall, budget exhaustion, blocked diagnosis) ran `escalate -> abandon` --
+  `echo ... >&2; exit 1` -- with the run's entire product still uncommitted in
+  the runner's working tree. Incident run 31789137305 destroyed a complete,
+  gate-GREEN implementation that way, and THIS repository's
+  `capsule-implement.yml` was the actor that named the eight files and
+  refused. `salvage` commits the tree AS IT STANDS to the CURRENT branch on
+  the three non-shipping doors into the human gate (`diagnose_gate` blocked,
+  `postmortem`, `pm_gate`), then routes to `escalate` on one unconditional
+  edge. `ship_check`'s dirty leg is deliberately NOT routed through it (that
+  door owes a human the forensic picture the gate just refused).
+  - **Step 2 (`uplift_dir` references):** unchanged in BOTH directions --
+    `grep -n uplift_dir` on the re-synced source and on the prior pin returns
+    the identical two hits (`setup`'s `check-upstream-leaks.sh` preflight is
+    `capsule.dot`'s, not this graph's; `task-runner.dot` itself references no
+    `$uplift_dir` path at all, before or after). No checker added, removed,
+    renamed, or newly called; nothing to vendor and nothing to delete.
+  - **Steps 2a/2b:** no new or newly-vendored Python checker, and no new
+    graph-level call site of any checker -- the new node shells out to `git`
+    and nothing else. Both steps are vacuous for this sync, recorded rather
+    than skipped silently.
+  - **Byte parity:** `tail -n +97 .github/capsule-pipeline/task-runner.dot`
+    is byte-identical to the source's `runner/task-runner.dot` at the pinned
+    commit; that body's sha256
+    (`7c93fe011563c9c13521c178ede6e530ed91bfde13a536b6b745f053d9c49f47`) is
+    now pinned in this file's provenance box, so parity is checkable here
+    without access to the source repository. The prior pin's body sha256 was
+    `62b50b53b87e8fdd0b457145be646f5cc54ab414081b1f321c721b7c45f0d53e`.
+  - **Topology, same comment-stripped count method on both sides:** 23 -> 24
+    node declarations, 36 -> 37 edges. `attractor lint` on the re-synced
+    `.dot`: 0 ERRORs, 1 warning -- the pre-existing `CMD-001` on `ship_check`,
+    byte-identical to the warning at the prior pin.
+  - **Source-side rig:** 30/30 green, including a new control
+    (`runner/tests/test_task_runner_salvage.sh`, 34 assertions) whose engine
+    battery runs the REAL engine over the REAL terminal path in both
+    directions -- a reconstructed PRE-FIX wiring that must lose the work, and
+    the shipped wiring on the identical fixture that must keep it.

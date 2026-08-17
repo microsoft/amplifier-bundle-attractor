@@ -1137,3 +1137,79 @@ against the DENY list) is exercised directly by `leak_gate` in
     battery runs the REAL engine over the REAL terminal path in both
     directions -- a reconstructed PRE-FIX wiring that must lose the work, and
     the shipped wiring on the identical fixture that must keep it.
+
+- **2026-08-17 (THE VOID RATCHET: void-robustness on engine-class
+  subjects)** -- `capsule.dot` re-synced
+  `957293fc5687997b68244b4991a49faf2f293b29` ->
+  `91f0d84de3fdabe27757eb8d0e8055f9d35a5797`. TWO source commits (the
+  ratchet + its fuse sizing); the `runner/capsule.dot` diff is `65 11`
+  (numstat), nodes/edges **UNCHANGED at 35/62** (6 hunks: graph fuse,
+  `setup` comment, `nonvacuity_gate` comment + `tool_command`, `author`
+  prompt, `critique` prompt, `void` prompt):
+  - **THE VOID RATCHET (mechanical, inside `nonvacuity_gate`)** -- the
+    measured residual (heldout-v6 finding 2; issue #231 run 31991897829;
+    issues #165/#166): the critic caught the void dodge EVERY round with
+    machine proof while six-plus rounds never produced the
+    counter-assertion -- and nothing ever RE-TESTED a previously-greening
+    dodge against the revised gate (#231's postmortem hands exactly that
+    re-test to a human; #165's it5 re-green proves holes silently
+    reopen). Now: every greening void patch is archived durably at
+    `.ai/void-archive/it<N>.patch` (content-deduped, capped at 8 with the
+    overflow recorded); every visit re-runs each archived dodge against
+    the CURRENT gate (apply -> `timeout "$VATO"` (900s) -> hard-reset ->
+    PROVE) under a cumulative wall (`VAWALL=1800`s; exhaustion records
+    `void_ratchet: overbudget`, never a silent skip). rc==0 ALIVE /
+    rc==1 CLOSED / rc>=2 loud infra. **New ledger fields** on the
+    nonvacuity row: `void_archive`, `void_alive`, `void_ratchet`. An
+    ALIVE dodge is republished VERBATIM in
+    `.ai/findings/void-greened.md` under a counter-patch obligation;
+    all-closed is stated explicitly. FACTS ONLY: an alive dodge never
+    auto-blocks -- the ONE judge converts alive facts into ITERATE
+    (sabotage-class dodges stay ship-legal).
+  - **Doctrine (prose whose obligation the ratchet re-checks)** --
+    `author` gains THE VOID RATCHET / COUNTER-PATCH OBLIGATION
+    (void-greened.md is mandatory input; every alive diff must run red,
+    never by special-casing bytes) and THE POSITIVE ROUND-TRIP RULE
+    (value-loss defects demand a runtime-random expected value recovered
+    EQUAL through the reported path; absence-only green is dodgeable by
+    construction); `critique` gains THE RATCHET RULING (never
+    non-blocking on the prediction a redesign would reject the dodge --
+    the re-run IS that test; ITERATE prescriptions must name the
+    round-trip assertion concretely; `overbudget` means unmeasured,
+    never closed); the `void` maker hunts holes the archive does not
+    cover (absence-only assertions first).
+  - **Fuse** -- `max_pipeline_duration` `18000s` -> `19800s` (330min):
+    tool_worst 11700s (9900s legs + the 1800s ratchet wall) + 4200s LLM
+    allowance, x1.2 = 19080s <= 19800s, recomputed by the source rigs
+    from the live text (`VAWALL` extraction is a loud failure if the
+    ratchet ever escapes the model). Sized strictly INSIDE this repo's
+    `capsule-specify.yml` 360-minute job ceiling (~30min overhead; the
+    outer wall must outlive the fuse or the job kill pre-empts the
+    fuse's own loud path). The workflow's stale sizing comment (18000s /
+    300min) was updated in the same PR -- comment only, zero behavior;
+    `timeout-minutes: 360` unchanged.
+  - Body byte-identity BEFORE the sync: vendored copy below its header
+    sha256-matched `runner/capsule.dot@957293f` (`6d6243b5...`). AFTER:
+    below its (now 26-line) header sha256-matches
+    `runner/capsule.dot@91f0d84`:
+    `9c45d15336426c8ee0ed32ecbccac2310cfe429ece807161e7e0ec1d46bafd2c`
+  - Checker/deny-list/dual-yaml parity: `git log 957293f..91f0d84 --
+    runner/check-existing-tests.py backlog/check-upstream-leaks.sh
+    backlog/fixtures/leak-scan runner/attractor-pipeline-dual.yaml` is
+    EMPTY (0 commits per file). `$uplift_dir/...` call-site census
+    IDENTICAL on both sides (2x leak scanner, 1x advisory
+    check-existing-tests.py in the critique prompt); no new checker, no
+    new call site, `.ai/void-archive/` lives inside the run scratch. The
+    source range DOES touch `runner/task-runner.dot` and
+    `runner/feature-capsule.dot` (other lanes' work, this same wave);
+    their vendored copies are deliberately NOT re-synced here -- one
+    residual, one re-sync -- and stay at their own pins for their own
+    lanes' PRs.
+  - Source rig at `91f0d84`: 30/30 test files green including the new
+    `tests/test_capsule_void_robustness.sh` (24 checks; RED half runs
+    the pre-ratchet `nonvacuity_gate` verbatim from `957293f` and proves
+    the blind spot -- a prior round's dodge alive against the revised
+    gate with no archive, no re-run, no fact; GREEN half proves archive,
+    alive-fact + verbatim republication, closure under a positive
+    round-trip gate, dedupe, reset-proof). `attractor lint`: OK on both
+    source and the re-synced vendored copy.

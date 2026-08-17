@@ -1400,11 +1400,14 @@ def _condition_matches_fail(cond: str) -> bool:
 def _node_regates(graph: Graph, node_id: str) -> bool:
     """Return True if the node re-gates the flow.
 
-    A node with at least one condition-bearing outgoing edge makes a fresh
-    routing decision (retry-vs-escalate and the like) — flow through it is
-    corrective routing, not a silent pass-through.
+    A node truly re-gates only when ALL its outgoing edges are conditional.
+    If the node has any plain (unconditional) outgoing edge — whether to an
+    exit node directly or to a non-exit intermediary — that plain edge is a
+    potential silent escape route: BFS must be allowed to follow it and
+    evaluate the continuation on its own merits.  Such a node does NOT
+    re-gate, even if other outgoing edges are conditional.
 
-    A human-gate (hexagon / wait.human) node also re-gates: routing beyond
+    A human-gate (hexagon / wait.human) node always re-gates: routing beyond
     it passes through external human judgment, so a failure cannot exit the
     pipeline green without a human seeing it.  This follows the TOPO-004/
     TOPO-005 precedent (a labeled human-gate exit is an explicit gate; a
@@ -1415,9 +1418,15 @@ def _node_regates(graph: Graph, node_id: str) -> bool:
     node = graph.nodes.get(node_id)
     if node is not None and _is_human_gate(node):
         return True
-    return any(
-        e.condition and e.condition.strip() for e in graph.outgoing_edges(node_id)
+    outgoing = list(graph.outgoing_edges(node_id))
+    has_any_conditional = any(e.condition and e.condition.strip() for e in outgoing)
+    if not has_any_conditional:
+        return False
+    has_plain_escape = any(
+        not (e.condition and e.condition.strip())
+        for e in outgoing
     )
+    return not has_plain_escape
 
 
 def _unmarked_passthrough_path_to_exit(
@@ -1457,7 +1466,7 @@ def _unmarked_passthrough_path_to_exit(
             continue
         for edge in graph.outgoing_edges(node_id):
             if edge.condition and edge.condition.strip():
-                continue  # unreachable given the re-gate check; kept for clarity
+                continue  # skip conditional edges — BFS follows only plain edges
             if edge.to_node in exit_ids:
                 if has_unmarked:
                     return path + [edge.to_node]

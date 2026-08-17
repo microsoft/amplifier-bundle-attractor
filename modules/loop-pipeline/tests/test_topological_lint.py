@@ -1168,9 +1168,9 @@ class TestFailRoutedToExit:
         g = self._recorder_graph(recorder_runs_on="sometimes")
         assert _diag(lint(g), "fail_routed_to_exit")
 
-    def test_indirect_regating_intermediary_not_flagged(self):
-        """An intermediary with a condition-bearing outgoing edge re-gates the
-        flow (retry-vs-escalate routing) — corrective, not flagged."""
+    def test_indirect_regating_intermediary_with_plain_exit_flagged(self):
+        """An intermediary with a conditional edge plus a plain edge to the exit
+        is the hazard shape: the plain edge is a silent escape route — flagged."""
         g = _graph(
             nodes={
                 "start": _mdiamond(),
@@ -1188,7 +1188,61 @@ class TestFailRoutedToExit:
                 Edge("triage", "done"),
             ],
         )
+        # triage has a plain edge to done (exit) -- this IS the hazard shape.
+        assert _diag(lint(g), "fail_routed_to_exit")
+
+    def test_indirect_true_regate_all_conditional_not_flagged(self):
+        """An intermediary whose ALL outgoing edges are conditional (no plain
+        escape to exit or anywhere) truly re-gates the flow -- not flagged."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="do it"),
+                "verify": _tool("verify"),
+                "triage": _tool("triage"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "triage", condition="outcome=fail"),
+                Edge("triage", "work", condition="context.tool.last_line=retry"),
+                Edge("triage", "done", condition="context.tool.last_line=escalate"),
+            ],
+        )
+        # triage has ONLY conditional outgoing edges — a true re-gate, not flagged.
         assert not _diag(lint(g), "fail_routed_to_exit")
+
+    def test_indirect_plain_escape_via_nonexit_intermediary_flagged(self):
+        """An intermediary with a plain edge to a non-exit node whose downstream
+        path reaches the exit without a re-gate is still the hazard shape — flagged.
+
+        triage -> record (plain) -> done (plain): the plain escape is one hop
+        away from exit but the silent path still exists.
+        """
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box("work", prompt="do it"),
+                "verify": _tool("verify"),
+                "triage": _tool("triage"),
+                "record": _tool("record"),
+                "done": _msquare("done"),
+            },
+            edges=[
+                Edge("start", "work"),
+                Edge("work", "verify"),
+                Edge("verify", "done", condition="outcome=success"),
+                Edge("verify", "triage", condition="outcome=fail"),
+                Edge("triage", "work", condition="context.tool.last_line=retry"),
+                Edge("triage", "record"),
+                Edge("record", "done"),
+            ],
+        )
+        # triage has a plain edge to record (non-exit), which continues plainly
+        # to done.  The silent exit path exists; must be flagged.
+        assert _diag(lint(g), "fail_routed_to_exit")
 
     def test_indirect_multihop_one_unmarked_flagged(self):
         """Multi-hop path with one unmarked intermediary among marked ones

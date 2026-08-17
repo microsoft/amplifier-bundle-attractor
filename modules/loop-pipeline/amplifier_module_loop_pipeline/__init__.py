@@ -564,13 +564,46 @@ class PipelineOrchestrator:
             # claims).  The auto-constructed backend path (production) is
             # always checked.
             if kwargs.get("backend") is None:
+                # Resolve profiles for the preflight using the same two-source
+                # priority as _build_backend(): explicit config first, then
+                # auto-discovery from coordinator.config["agents"].  Without
+                # this the preflight only sees source 1 and raises a false
+                # ProviderPreflightError when the only profiles come from
+                # auto-discovery (issue #196).
+                preflight_profiles: dict[str, str] | None = None
                 explicit_profiles = self.config.get("profiles")
+                if isinstance(explicit_profiles, dict):
+                    # Source 1: explicit profiles mapping in orchestrator config
+                    preflight_profiles = dict(explicit_profiles)
+                if not preflight_profiles:
+                    # Source 2: auto-discover from coordinator.config["agents"]
+                    # (mirrors _build_backend() lines 438-443 exactly)
+                    _coordinator = kwargs.get("coordinator")
+                    if _coordinator is not None:
+                        try:
+                            _coord_cfg = getattr(_coordinator, "config", None) or {}
+                            _agents = _coord_cfg.get("agents", {})
+                            _spawn_fn = None
+                            if hasattr(_coordinator, "get_capability"):
+                                try:
+                                    _spawn_fn = _coordinator.get_capability(
+                                        "session.spawn"
+                                    )
+                                except Exception:
+                                    pass
+                            if _spawn_fn is not None:
+                                _discovered: dict[str, str] = {}
+                                for _agent_name, _agent_cfg in _agents.items():
+                                    if isinstance(_agent_cfg, dict):
+                                        _discovered[_agent_name] = _agent_name
+                                if _discovered:
+                                    preflight_profiles = _discovered
+                        except Exception:
+                            pass
                 check_provider_preflight(
                     graph,
                     mounted_providers=tuple(providers) if providers else (),
-                    profiles=explicit_profiles
-                    if isinstance(explicit_profiles, dict)
-                    else None,
+                    profiles=preflight_profiles,
                 )
 
             # 6. Set up logs directory

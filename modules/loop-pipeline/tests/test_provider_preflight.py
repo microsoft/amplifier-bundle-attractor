@@ -321,6 +321,198 @@ async def test_orchestrator_execute_serviceable_graph_runs_unaffected(monkeypatc
 
 
 # ---------------------------------------------------------------------------
+# Auto-discovered profiles via coordinator.config["agents"] (issue #196)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_preflight_accepts_auto_discovered_agent_profile():
+    """Regression (issue #196): execute() must NOT raise ProviderPreflightError
+    when the only profiles come from auto-discovery (coordinator.config["agents"]).
+
+    Scenario: no explicit "profiles" key in orchestrator config, coordinator has
+    an agent whose name matches the declared llm_provider, at least one provider
+    is mounted (so simulation mode is NOT triggered).  The preflight must see the
+    auto-discovered profile and accept the run.
+    """
+
+    class _CoordWithAgent:
+        """Coordinator with session.spawn and one agent named 'local-llama'."""
+
+        config: dict = {
+            "agents": {
+                "local-llama": {"session": {"orchestrator": {"module": "loop-agent"}}},
+            }
+        }
+
+        def get_capability(self, name: str):
+            if name == "session.spawn":
+                return self._spawn_fn
+            return None
+
+        async def _spawn_fn(self, **kwargs):
+            return {
+                "output": json.dumps({"status": "success", "notes": "auto-disc probe"}),
+                "session_id": "s-auto",
+            }
+
+    dot = """\
+digraph auto_disc {
+    graph [goal="auto-discovery preflight regression"]
+    start [shape=Mdiamond]
+    work [shape=box, llm_provider="local-llama", prompt="do the thing"]
+    done [shape=Msquare]
+    start -> work -> done
+}
+"""
+    orchestrator = PipelineOrchestrator(
+        config={"dot_source": dot}
+        # Deliberately NO "profiles" key -- auto-discovery path only
+    )
+    coordinator = _CoordWithAgent()
+
+    # providers={"anthropic": object()} ensures simulation mode is NOT triggered
+    # (mounted_providers is non-empty), so the preflight runs.
+    # A ProviderPreflightError here is the bug -- "local-llama" has a matching
+    # agent so _build_backend() would find it; the preflight must find it too.
+    try:
+        await orchestrator.execute(
+            prompt="regression probe",
+            context=None,
+            providers={"anthropic": object()},
+            tools={},
+            hooks=None,
+            coordinator=coordinator,
+        )
+        # Reached here: preflight passed, run proceeded (and may have failed for
+        # another reason -- that's fine, the defect is the false refusal).
+    except ProviderPreflightError as exc:
+        pytest.fail(
+            f"execute() raised ProviderPreflightError for a provider whose agent "
+            f"exists in coordinator.config['agents'] -- auto-discovery is broken "
+            f"in the preflight.  Error: {exc}"
+        )
+    except Exception:
+        # Any other exception means the preflight passed (the bug is absent) and
+        # the pipeline failed for an unrelated reason (e.g. fake provider).
+        pass
+
+
+@pytest.mark.asyncio
+async def test_preflight_still_refuses_provider_with_no_matching_agent():
+    """Negative case (issue #196): a provider with no matching agent and no
+    mounted module must still be refused.  The fix is additive (extends profile
+    sources) -- it must not disable profile binding entirely.
+    """
+
+    class _CoordWithOtherAgent:
+        """Coordinator with session.spawn but an agent for 'anthropic', not 'openai'."""
+
+        config: dict = {
+            "agents": {
+                "anthropic": {"session": {"orchestrator": {"module": "loop-agent"}}},
+            }
+        }
+
+        def get_capability(self, name: str):
+            if name == "session.spawn":
+                return self._spawn_fn
+            return None
+
+        async def _spawn_fn(self, **kwargs):
+            return {"output": json.dumps({"status": "success"}), "session_id": "s-neg"}
+
+    dot = """\
+digraph neg_probe {
+    graph [goal="negative preflight regression"]
+    start [shape=Mdiamond]
+    work [shape=box, llm_provider="openai", prompt="do the thing"]
+    done [shape=Msquare]
+    start -> work -> done
+}
+"""
+    orchestrator = PipelineOrchestrator(
+        config={"dot_source": dot}
+        # No "profiles" -- auto-discovery path only
+    )
+    coordinator = _CoordWithOtherAgent()
+
+    import os
+
+    saved = os.environ.pop("OPENAI_API_KEY", None)
+    try:
+        with pytest.raises(ProviderPreflightError):
+            await orchestrator.execute(
+                prompt="negative probe",
+                context=None,
+                providers={"anthropic": object()},
+                tools={},
+                hooks=None,
+                coordinator=coordinator,
+            )
+    finally:
+        if saved is not None:
+            os.environ["OPENAI_API_KEY"] = saved
+
+
+@pytest.mark.asyncio
+async def test_preflight_explicit_profiles_still_override_auto_discovery():
+    """Priority preservation (issue #196): explicit config["profiles"] must
+    take precedence over auto-discovery.  When both are present, the explicit
+    profiles win and auto-discovery is not consulted.
+    """
+
+    class _CoordWithAgent:
+        config: dict = {
+            "agents": {
+                # Agent for 'local-llama' exists -- but we have explicit profiles
+                # that do NOT include 'local-llama', so it should still be refused.
+                "local-llama": {"session": {"orchestrator": {"module": "loop-agent"}}},
+            }
+        }
+
+        def get_capability(self, name: str):
+            if name == "session.spawn":
+                return self._spawn_fn
+            return None
+
+        async def _spawn_fn(self, **kwargs):
+            return {"output": json.dumps({"status": "success"}), "session_id": "s-prio"}
+
+    dot = """\
+digraph priority_probe {
+    graph [goal="priority preflight regression"]
+    start [shape=Mdiamond]
+    work [shape=box, llm_provider="local-llama", prompt="do the thing"]
+    done [shape=Msquare]
+    start -> work -> done
+}
+"""
+    orchestrator = PipelineOrchestrator(
+        config={
+            "dot_source": dot,
+            # Explicit profiles present but do NOT include 'local-llama'.
+            # Auto-discovery must NOT override this.
+            "profiles": {"anthropic": "attractor-anthropic"},
+        }
+    )
+    coordinator = _CoordWithAgent()
+
+    # The preflight must refuse because explicit profiles are used (and they
+    # don't include 'local-llama'), not auto-discovered ones.
+    with pytest.raises(ProviderPreflightError) as exc_info:
+        await orchestrator.execute(
+            prompt="priority probe",
+            context=None,
+            providers={"anthropic": object()},
+            tools={},
+            hooks=None,
+            coordinator=coordinator,
+        )
+    assert "local-llama" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
 # Backend no-fallback profile resolution (R3 + R5 regression class)
 # ---------------------------------------------------------------------------
 

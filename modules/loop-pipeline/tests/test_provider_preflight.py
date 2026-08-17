@@ -567,3 +567,243 @@ async def test_spawn_path_matching_profile_still_routes_correctly():
     outcome = await backend.run(node, "task", PipelineContext())
     assert coordinator.spawn_called
     assert outcome.status == StageStatus.SUCCESS
+
+
+# ---------------------------------------------------------------------------
+# Adapter-resolvable profiles (issue #195) -- the residual of #155
+#
+# A profile is a STRING naming an agent.  Knowing the string is MAPPED is not
+# knowing the agent it names can be RESOLVED.  Before #195 the preflight only
+# asked the first question, so "profile mounted + credential set" accepted a
+# configuration whose every spawn was guaranteed to fail -- and the run drained
+# its whole budget in the #155 crash loop instead of refusing at startup.
+# ---------------------------------------------------------------------------
+
+_DOT_DRAIN_LOOP = """\
+digraph drain_loop {
+    graph [goal="the #155 shape: a failing node on a recovery loop"]
+    start [shape=Mdiamond]
+    critique_b [shape=box, llm_provider="openai", prompt="dual-family critique"]
+    recover [shape=box, llm_provider="anthropic", prompt="transient recovery"]
+    done [shape=Msquare]
+    start -> critique_b
+    critique_b -> done    [condition="outcome=success"]
+    critique_b -> recover [condition="outcome=fail"]
+    recover -> critique_b [loop_restart="true"]
+}
+"""
+
+
+def test_profile_naming_an_unresolvable_agent_is_unserviceable():
+    """#195: mapped profile + credential SET, but nothing can resolve the agent
+    it names -> refuse, naming the node, the profile, and what is resolvable."""
+    graph = parse_dot(_DOT_DECLARED_OPENAI)
+    with pytest.raises(ProviderPreflightError) as exc_info:
+        check_provider_preflight(
+            graph,
+            mounted_providers=("anthropic",),
+            profiles={"openai": "attractor-agent-openai"},
+            resolvable_profiles={"attractor-agent-anthropic"},
+            env={"OPENAI_API_KEY": "sk-present"},  # credential IS set
+        )
+    msg = str(exc_info.value)
+    assert "critique_b" in msg  # the failing node
+    assert "attractor-agent-openai" in msg  # the profile that cannot resolve
+    assert "attractor-agent-anthropic" in msg  # what CAN be resolved
+
+
+def test_profile_naming_a_resolvable_agent_stays_serviceable():
+    """Control: the same configuration with the agent present is accepted."""
+    graph = parse_dot(_DOT_DECLARED_OPENAI)
+    check_provider_preflight(
+        graph,
+        mounted_providers=(),
+        profiles={"openai": "attractor-agent-openai"},
+        resolvable_profiles={"attractor-agent-openai"},
+        env={"OPENAI_API_KEY": "sk-present"},
+    )  # no raise
+
+
+def test_resolvable_profiles_none_does_not_police_adapter_resolution():
+    """``None`` means "not knowable on this path", never "everything resolves":
+    the check is skipped, preserving every caller that cannot supply the set
+    (no coordinator, no session.spawn, a stub coordinator, drive_engine)."""
+    graph = parse_dot(_DOT_DECLARED_OPENAI)
+    check_provider_preflight(
+        graph,
+        mounted_providers=(),
+        profiles={"openai": "nothing-resolves-this"},
+        resolvable_profiles=None,
+        env={"OPENAI_API_KEY": "sk-present"},
+    )  # no raise -- unchanged pre-#195 behavior
+
+
+def test_adapter_resolution_is_not_waived_for_unknown_providers():
+    """The credential benefit-of-the-doubt for unknown providers does NOT
+    extend to adapter resolution: a profile name is equally checkable for
+    every provider, so an unresolvable one is refused regardless."""
+    dot = """\
+digraph unknown_provider {
+    start [shape=Mdiamond]
+    work [shape=box, llm_provider="local-llama", prompt="x"]
+    done [shape=Msquare]
+    start -> work -> done
+}
+"""
+    graph = parse_dot(dot)
+    with pytest.raises(ProviderPreflightError) as exc_info:
+        check_provider_preflight(
+            graph,
+            mounted_providers=(),
+            profiles={"local-llama": "llama-agent"},
+            resolvable_profiles=frozenset(),  # nothing resolves
+            env={},
+        )
+    assert "llama-agent" in str(exc_info.value)
+
+
+def test_refusal_names_both_the_absent_agent_and_the_missing_credential():
+    """Both defects present -> ONE refusal line naming BOTH, so a maintainer
+    fixing the credential does not then discover the missing agent."""
+    graph = parse_dot(_DOT_DECLARED_OPENAI)
+    with pytest.raises(ProviderPreflightError) as exc_info:
+        check_provider_preflight(
+            graph,
+            mounted_providers=(),
+            profiles={"openai": "attractor-agent-openai"},
+            resolvable_profiles=frozenset(),
+            env={},  # credential absent too
+        )
+    msg = str(exc_info.value)
+    assert "attractor-agent-openai" in msg
+    assert "OPENAI_API_KEY" in msg
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_execute_refuses_key_set_but_adapter_absent(monkeypatch):
+    """#195 end-to-end, on the #155 graph shape.
+
+    Before the fix this configuration passed the preflight and the run drained
+    to the engine's 200-step safety bound (critique_b executed 101 times).  It
+    must now refuse at startup with ZERO spawns.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-present")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-present")
+
+    coordinator = _SpySpawnCoordinator()  # agents: attractor-anthropic ONLY
+    orchestrator = PipelineOrchestrator(
+        config={
+            "dot_source": _DOT_DRAIN_LOOP,
+            "profiles": {
+                "anthropic": "attractor-anthropic",
+                "openai": "attractor-openai",  # names an agent that does not exist
+            },
+        }
+    )
+    with pytest.raises(ProviderPreflightError) as exc_info:
+        await orchestrator.execute(
+            prompt="goal",
+            context=None,
+            providers={},
+            tools={},
+            hooks=None,
+            coordinator=coordinator,
+        )
+    msg = str(exc_info.value)
+    assert "critique_b" in msg
+    assert "attractor-openai" in msg
+    assert not coordinator.spawn_called, "zero spawns -- zero budget spent"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_execute_accepts_resolvable_profiles_on_the_same_graph():
+    """Control for the test above: the SAME graph and the SAME credentials,
+    with the openai profile naming an agent that DOES exist, still runs.  The
+    fix discriminates on adapter resolution, not on the graph shape."""
+    import os
+
+    saved = {k: os.environ.get(k) for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY")}
+    os.environ["OPENAI_API_KEY"] = "sk-present"
+    os.environ["ANTHROPIC_API_KEY"] = "sk-present"
+    try:
+        coordinator = _SpySpawnCoordinator()
+        coordinator.config["agents"]["attractor-openai"] = {
+            "session": {"orchestrator": {"module": "loop-agent"}},
+        }
+        orchestrator = PipelineOrchestrator(
+            config={
+                "dot_source": _DOT_DRAIN_LOOP,
+                "profiles": {
+                    "anthropic": "attractor-anthropic",
+                    "openai": "attractor-openai",
+                },
+            }
+        )
+        result = json.loads(
+            await orchestrator.execute(
+                prompt="goal",
+                context=None,
+                providers={},
+                tools={},
+                hooks=None,
+                coordinator=coordinator,
+            )
+        )
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    assert result["status"] == StageStatus.SUCCESS.value, result
+    assert coordinator.spawn_called
+
+
+@pytest.mark.asyncio
+async def test_auto_discovered_profiles_are_resolvable_by_construction():
+    """#196 must stay green under #195: auto-discovered profile names ARE the
+    keys of coordinator.config["agents"], so they always resolve -- the new
+    check can never refuse an auto-discovered profile."""
+
+    class _CoordWithAgent:
+        def __init__(self) -> None:
+            self.spawn_called = False
+            self.session = None
+            self.config: dict[str, Any] = {
+                "agents": {
+                    "local-llama": {
+                        "session": {"orchestrator": {"module": "loop-agent"}}
+                    },
+                }
+            }
+
+        def get_capability(self, name: str):
+            return self._spawn_fn if name == "session.spawn" else None
+
+        async def _spawn_fn(self, **kwargs):
+            self.spawn_called = True
+            return {"output": json.dumps({"status": "success"}), "session_id": "s-ad"}
+
+    dot = """\
+digraph auto_disc {
+    graph [goal="auto-discovery"]
+    start [shape=Mdiamond]
+    work [shape=box, llm_provider="local-llama", prompt="x"]
+    done [shape=Msquare]
+    start -> work -> done
+}
+"""
+    coordinator = _CoordWithAgent()
+    orchestrator = PipelineOrchestrator(config={"dot_source": dot})  # no "profiles"
+    result = json.loads(
+        await orchestrator.execute(
+            prompt="goal",
+            context=None,
+            providers={"anthropic": object()},
+            tools={},
+            hooks=None,
+            coordinator=coordinator,
+        )
+    )
+    assert result["status"] == StageStatus.SUCCESS.value, result
+    assert coordinator.spawn_called

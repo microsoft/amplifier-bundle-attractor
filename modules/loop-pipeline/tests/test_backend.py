@@ -742,6 +742,94 @@ async def test_spawn_empty_output_with_success_status_does_not_fall_back():
 
 
 @pytest.mark.asyncio
+async def test_spawn_nonempty_output_with_report_outcome_honors_metadata():
+    """Non-empty prose + metadata.report_outcome => metadata verdict wins (spec §35).
+
+    When the child's spawn result carries both non-empty prose output AND a
+    ``metadata.report_outcome`` envelope with a valid status and
+    ``preferred_label``, the parent backend must honor the structured verdict.
+    The returned Outcome must have ``is_explicit=True`` and ``preferred_label``
+    equal to the value from the metadata -- NOT None (which would be the result
+    of falling through to ``_parse_outcome``).
+
+    This is the regression test for the §35 Precedence Policy defect: the
+    previous code only consulted ``_outcome_from_spawn_result`` when
+    ``output.strip()`` was empty, silently discarding the structured verdict
+    for the normal LLM case where the child produces closing prose.
+    """
+    coordinator = MockCoordinator(
+        spawn_result={
+            "output": "The analysis is complete and the findings are documented.",
+            "session_id": "c-precedence",
+            "status": "success",
+            "metadata": {
+                "report_outcome": {
+                    "status": "success",
+                    "preferred_label": "validated",
+                    "notes": "All checks passed.",
+                }
+            },
+        }
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+
+    node = _make_node(attrs={"llm_provider": "anthropic"})
+    result = await backend.run(node, "analyse", _make_context())
+
+    assert isinstance(result, Outcome)
+    assert result.is_explicit is True, (
+        "metadata.report_outcome must set is_explicit=True even when output is non-empty"
+    )
+    assert result.preferred_label == "validated", (
+        f"expected preferred_label='validated', got {result.preferred_label!r} -- "
+        "the structured verdict was discarded in favour of prose-based parsing"
+    )
+    assert result.status == StageStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_spawn_nonempty_output_without_metadata_uses_parse_outcome():
+    """Non-empty prose with no metadata.report_outcome => _parse_outcome path.
+
+    When the child produces non-empty output but no ``metadata.report_outcome``
+    envelope, the backend must fall through to ``_parse_outcome`` as before.
+    This confirms the fix does not suppress the prose-based path when metadata
+    is absent.
+    """
+    coordinator = MockCoordinator(
+        spawn_result={
+            "output": '{"status": "fail", "failure_reason": "validation failed"}',
+            "session_id": "c-prose-fail",
+            "status": "success",  # spawn envelope says success -- must NOT win
+            "metadata": {},       # no report_outcome
+        }
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+
+    node = _make_node(attrs={"llm_provider": "anthropic"})
+    result = await backend.run(node, "validate", _make_context())
+
+    assert isinstance(result, Outcome)
+    assert result.status == StageStatus.FAIL, (
+        "JSON fail output with no metadata should yield FAIL via _parse_outcome, "
+        f"got {result.status!r} -- the spawn envelope's success status must not win"
+    )
+    # _parse_outcome sets is_explicit=True for JSON verdicts; the key assertion
+    # is that status=FAIL (from the JSON) rather than SUCCESS (from the spawn
+    # envelope's status field, which would happen if we always used
+    # _outcome_from_spawn_result unconditionally).
+    assert result.preferred_label is None, (
+        "no preferred_label in the JSON output -- must not inherit one from spawn envelope"
+    )
+
+
+@pytest.mark.asyncio
 async def test_spawn_truly_empty_fails_loud():
     """No text, no report_outcome, no success status => FAIL (fail-loud).
 

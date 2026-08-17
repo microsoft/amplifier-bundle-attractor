@@ -584,9 +584,30 @@ class AmplifierBackend:
             return Outcome(status=StageStatus.FAIL, failure_reason=str(e))
 
         # Parse outcome from result.
-        # If the child produced output, _parse_outcome determines the outcome —
-        # including intentional {"status":"fail"} verdicts from goal_gate nodes.
+        # spec §35 Precedence Policy: a structured report_outcome verdict
+        # supersedes contradicting trailing prose.  Check for an explicit
+        # metadata.report_outcome envelope FIRST, before inspecting the prose
+        # output.  Only when no explicit verdict is present does the output
+        # content (empty-output path or _parse_outcome) determine the outcome.
         output = result.get("output", "") if isinstance(result, dict) else str(result)
+
+        # Hoist the spawn-result verdict check so it applies regardless of
+        # whether output is empty or non-empty (spec §35).
+        spawn_outcome = _outcome_from_spawn_result(result)
+        if spawn_outcome is not None and spawn_outcome.is_explicit:
+            # An explicit metadata.report_outcome verdict was present and
+            # mapped to a valid status.  Honor it unconditionally — the child's
+            # prose output is preserved in the transcript below but does not
+            # override the structured routing signal.
+            session_id = (
+                result.get("session_id") if isinstance(result, dict) else None
+            )
+            if session_id:
+                spawn_outcome.session_id = session_id
+            if fidelity == "full" and graph is not None and thread_key is not None:
+                self._append_to_transcript(thread_key, node.id, instruction, output)
+            return spawn_outcome
+
         if not output.strip():
             # The child's FINAL assistant message was empty — but that does NOT
             # mean the child failed.  A child that did its work via tool calls
@@ -595,7 +616,7 @@ class AmplifierBackend:
             # the SAME outcome sources the direct tool loop already uses: the
             # child's report_outcome args and the orchestrator's completion
             # status (captured in the spawn result, see _prepared.py spawn()).
-            spawn_outcome = _outcome_from_spawn_result(result)
+            # spawn_outcome is already computed above; reuse it here.
             if spawn_outcome is not None:
                 session_id = (
                     result.get("session_id") if isinstance(result, dict) else None

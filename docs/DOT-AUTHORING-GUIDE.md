@@ -1371,8 +1371,8 @@ through a silent pass-through path.  Two forms:
    to mark.
 2. **Indirect:** the failure edge's receiving path reaches the exit with
    every hop unconditional and no re-gating in between, through at least one
-   *unmarked* intermediary (default `runs_on`, only unconditional outgoing
-   edges).
+   *unmarked* intermediary (default `runs_on`, with a plain outgoing edge the
+   flow can follow).
 
 **Why it matters:** This is the graph-topology sibling of the CMD-001/CMD-002
 hazard class — a gate whose failure is structurally converted into a
@@ -1401,9 +1401,23 @@ semantics — `engine.py::_get_runs_on` and `edge_selection.py::select_edge`):
   record_failure [shape=parallelogram, tool_command="echo recorded", runs_on=always]
   ```
 
-- **A re-gating intermediary.**  A node with at least one condition-bearing
-  outgoing edge makes a fresh routing decision (retry-vs-escalate and the
-  like) — corrective routing, not a silent pass-through.
+- **A re-gating intermediary.**  A node whose outgoing edges are **all**
+  condition-bearing makes a fresh routing decision (retry-vs-escalate and the
+  like) — corrective routing, not a silent pass-through.  One conditional
+  edge is not enough: a node that *also* carries a plain (unconditional)
+  outgoing edge does **not** re-gate, because the failure can still take that
+  plain escape to the exit.  To re-gate, make **every** outgoing edge
+  condition-bearing — remove or condition the plain escape:
+
+  ```dot
+  // NOT a re-gate — the plain triage -> done edge is the silent escape
+  triage -> work [condition="context.tool.last_line=retry"]
+  triage -> done
+
+  // A re-gate — every outgoing edge of triage is condition-bearing
+  triage -> work     [condition="context.tool.last_line=retry"]
+  triage -> escalate [condition="context.tool.last_line=escalate"]
+  ```
 
 - **A human-gate intermediary.**  A `hexagon` (`wait.human`) node on the
   failure path is external human judgment — the failure cannot exit green
@@ -1431,9 +1445,11 @@ fix -> verify
 
 Or, if finishing after a handled failure is deliberate, declare it: mark
 every intermediary on the path with `runs_on="always"` or
-`runs_on="failure"`, or re-gate the flow with a condition-bearing edge on an
-intermediary.  The diagnostic names the failure-conditioned edge, its source
-node, and (for the indirect form) the pass-through path.
+`runs_on="failure"`, or genuinely re-gate the flow by making **every**
+outgoing edge of an intermediary condition-bearing (remove or condition its
+plain escape — a node with any plain outgoing edge does not re-gate).  The
+diagnostic names the failure-conditioned edge, its source node, and (for the
+indirect form) the pass-through path.
 
 ---
 

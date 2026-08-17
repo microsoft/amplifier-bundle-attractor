@@ -1522,14 +1522,17 @@ def _check_fail_routed_to_exit(graph: Graph, diags: list[Diagnostic]) -> None:
     and the exit carries ``runs_on="always"`` or ``runs_on="failure"`` is a
     deliberately declared handled-failure termination (e.g. a
     ``runs_on=always`` recorder before ``done``) and is NOT flagged.
-    Likewise, an intermediary with at least one condition-bearing outgoing
-    edge re-gates the flow (retry-vs-escalate routing) — corrective
-    routing, not flagged.  A human-gate (hexagon / wait.human) intermediary
-    likewise re-gates — external human judgment on the failure path, per
-    the TOPO-004/TOPO-005 human-gate precedent.  An UNMARKED pass-through
-    intermediary (default
-    ``runs_on``, only unconditional outgoing edges, exit reachable) is
-    exactly the accident class this rule catches: flagged.
+    Likewise, an intermediary whose outgoing edges are ALL condition-bearing
+    re-gates the flow (retry-vs-escalate routing) — corrective routing, not
+    flagged.  One conditional edge is not enough: a node that ALSO has a
+    plain (unconditional) outgoing edge does NOT re-gate (``_node_regates``)
+    — the plain edge is a silent escape the failure can still take, so such
+    a node stays flagged.  A human-gate (hexagon / wait.human) intermediary
+    always re-gates — external human judgment on the failure path, per the
+    TOPO-004/TOPO-005 human-gate precedent.  An UNMARKED pass-through
+    intermediary (default ``runs_on``, a plain outgoing edge the flow can
+    follow, exit reachable) is exactly the accident class this rule catches:
+    flagged.
 
     The rule fires regardless of the source node's shape.  On a diamond
     source, TOPO-001 (ERROR — the edge is provably dead) additionally
@@ -1609,11 +1612,13 @@ def _check_fail_routed_to_exit(graph: Graph, diags: list[Diagnostic]) -> None:
                         edge=(edge.from_node, edge.to_node),
                         fix=(
                             f"Either route the failure to a corrective target "
-                            f"with a back-edge to retry, add a "
-                            f"condition-bearing edge on an intermediary so the "
-                            f"flow is re-gated, or — if this handled-failure "
-                            f"termination is deliberate — mark every "
-                            f"intermediary on the path ({path_str}) with "
+                            f"with a back-edge to retry; make EVERY outgoing "
+                            f"edge of an intermediary condition-bearing "
+                            f"(remove or condition its plain escape) so the "
+                            f"flow is re-gated — a node with any plain "
+                            f"outgoing edge does not re-gate; or — if this "
+                            f"handled-failure termination is deliberate — "
+                            f"mark every intermediary on the path ({path_str}) with "
                             f'runs_on="always" or runs_on="failure" (the '
                             f"engine's failure-routing opt-in) so the intent "
                             f"is declared. See DOT-AUTHORING-GUIDE.md "

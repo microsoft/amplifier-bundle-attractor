@@ -11,6 +11,17 @@ different provider (Mode B; see the fail-loud guard in ``backend.py``).
 adapter/profile is mounted for the declared provider.  The check is purely
 static -- environment and config inspection only, never a live API call.
 
+Issue #195 closed the residual hole in that definition.  A profile is a
+*string* naming an agent; the original check only asked whether the string
+was MAPPED, never whether the thing it names can be resolved.  A profile
+naming an absent agent satisfies "mounted + credential present" and then
+fails at EVERY spawn (``AmplifierBackend._run_with_spawn`` resolves
+``coordinator.config["agents"][profile]`` and refuses an entry it cannot
+find), so the run drains its budget in exactly the #155 crash loop instead
+of refusing.  ``resolvable_profiles`` carries the set of profile names the
+spawn backend can actually resolve, so that class refuses at startup too --
+still statically, still with no live call and no spawn.
+
 Scope decisions (deliberate, documented):
 
 - **Declared providers only.**  A node with no ``llm_provider`` uses the
@@ -108,6 +119,7 @@ def check_provider_preflight(
     *,
     mounted_providers: Collection[str] = (),
     profiles: Mapping[str, str] | None = None,
+    resolvable_profiles: Collection[str] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> None:
     """Refuse to start when a declared ``llm_provider`` is unserviceable.
@@ -116,12 +128,27 @@ def check_provider_preflight(
 
     - a provider MODULE mounted under that name serves it
       (``mounted_providers`` -- the orchestrator's ``providers`` dict keys);
-    - a PROFILE mapped for that name serves it *if* its credential can be
-      presumed present: for providers with a known credential env var
-      (``PROVIDER_KEY_ENV``) the var must be set -- a profile whose agent can
-      never construct its provider is exactly the issue-#155 crash loop; for
-      unknown providers the profile gets the benefit of the doubt (nothing
-      to check statically).
+    - a PROFILE mapped for that name serves it *if* BOTH
+      (a) the profile NAMES AN ADAPTER THIS RUN CAN RESOLVE -- when
+          ``resolvable_profiles`` is supplied, the profile name must be in it
+          (issue #195); and
+      (b) its credential can be presumed present: for providers with a known
+          credential env var (``PROVIDER_KEY_ENV``) the var must be set -- a
+          profile whose agent can never construct its provider is exactly the
+          issue-#155 crash loop; for unknown providers the credential gets the
+          benefit of the doubt (nothing to check statically).
+
+    ``resolvable_profiles`` is the set of profile names the backend that will
+    actually consume them can resolve to a real adapter -- for the spawn
+    backend, the keys of ``coordinator.config["agents"]``, which is precisely
+    what ``AmplifierBackend._run_with_spawn`` looks the profile up in.  Pass
+    ``None`` (the default) when that is not knowable on this path -- e.g. no
+    coordinator, no ``session.spawn`` capability (profiles are then never
+    consumed at all), or a coordinator whose config is not statically
+    inspectable.  ``None`` means "do not police adapter resolution"; it never
+    means "everything resolves".  Note (b) is NOT waived for unknown
+    providers: adapter resolution is a config lookup that is equally knowable
+    for every provider name, credentials are not.
 
     When NOTHING is mounted (no providers, no profiles) the check is skipped
     entirely: that is simulation mode, a documented degraded mode with its
@@ -129,7 +156,8 @@ def check_provider_preflight(
 
     Raises:
         ProviderPreflightError: naming every failing node, its provider, and
-        the missing credential.  Zero nodes have executed; zero budget spent.
+        what is missing (the unresolvable profile and/or the credential).
+        Zero nodes have executed; zero budget spent.
     """
     profiles = profiles or {}
     env = env if env is not None else os.environ
@@ -141,18 +169,35 @@ def check_provider_preflight(
         return
 
     mounted = set(mounted_providers)
+    resolvable = None if resolvable_profiles is None else set(resolvable_profiles)
     failures: list[str] = []  # one line per failing node
     for provider, node_ids in sorted(declared.items()):
         if provider in mounted:
             continue
         key_env = PROVIDER_KEY_ENV.get(provider)
         if provider in profiles:
-            if key_env is None or env.get(key_env):
-                continue  # profile mounted and credential present/unknowable
-            reason = (
-                f"profile '{profiles[provider]}' is mounted for it, but its "
-                f"credential {key_env} is not set"
-            )
+            profile_name = profiles[provider]
+            problems: list[str] = []
+            # (a) adapter resolution -- issue #195.  A profile is a STRING
+            # naming an agent; a name nothing can resolve fails at EVERY
+            # spawn, which is a drained budget, not a serviceable provider.
+            if resolvable is not None and profile_name not in resolvable:
+                known = ", ".join(sorted(resolvable)) or "none"
+                problems.append(
+                    f"profile '{profile_name}' is mapped for it, but no agent "
+                    f"named '{profile_name}' can be resolved for the spawn "
+                    f"backend (resolvable agents: {known}) -- every spawn for "
+                    f"this node would fail"
+                )
+            # (b) credential presence -- issue #155.
+            if key_env is not None and not env.get(key_env):
+                problems.append(
+                    f"profile '{profile_name}' is mounted for it, but its "
+                    f"credential {key_env} is not set"
+                )
+            if not problems:
+                continue  # profile resolves and credential present/unknowable
+            reason = "; ".join(problems)
         else:
             cred = f" (credential: {key_env})" if key_env else ""
             reason = f"no provider module or profile is mounted for it{cred}"

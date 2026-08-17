@@ -2142,6 +2142,42 @@ disease, not a remedy).
   `modules/pipeline-runner/tests/test_provider_preflight_drive_engine.py` — contract + regression
   tests (including the provider-not-in-profiles class, ruling R5)
 
+*Addendum (2026-08-17): the "never a drained budget" claim above OVERSTATED what change 1
+guaranteed, and issue #195 named the residual. A profile is a STRING naming an agent, and the
+static definition only asked whether that string was MAPPED — never whether the agent it names
+could be RESOLVED. A profile naming an absent agent therefore satisfied "mounted + credential
+present", passed the preflight, and then failed at every single spawn
+(`AmplifierBackend._run_with_spawn` resolves the profile in exactly one place —
+`coordinator.config["agents"]` — and refuses an entry it cannot find). Probed at `37c8f94` on the
+#155 graph shape (a failing node on a transient-recovery loop): the run was ACCEPTED at startup
+and drained to the engine's 200-step safety bound, executing the unserviceable node 101 times.
+Change 1's serviceability definition now has a second, equally static clause: a profile must also
+NAME AN ADAPTER THIS RUN CAN RESOLVE. `check_provider_preflight` takes `resolvable_profiles` — for
+the spawn backend, the keys of `coordinator.config["agents"]`, the very mapping the spawn path
+looks the profile up in — and refuses at startup naming the node, the profile, and what IS
+resolvable. It is still a pure config lookup: no spawn, no live call, no side effect. `None` means
+"not knowable on this path" (no coordinator, no `session.spawn` — profiles are then never consumed
+at all — or a coordinator whose config is not statically inspectable) and skips the clause; it
+never means "everything resolves". The credential benefit-of-the-doubt for unknown providers is
+NOT extended to it: a profile name is equally checkable for every provider name. Auto-discovered
+profiles (§36's own §-neutral extension, issue #196) are resolvable by construction — they ARE the
+keys of that agents map — so the clause can never refuse one. Honest residual, stated plainly
+rather than re-overstated: this closes the STATICALLY DETECTABLE class only. A profile naming an
+agent that exists but whose own provider construction fails inside the spawned child is not visible
+to any startup check, and still surfaces per-visit via change 2's terminal `ValueError` — terminal
+in the RETRY ladder, which is not the same as terminal at the GRAPH level, and a graph that routes
+FAIL onto a recovery loop will still spend its iteration budget on it. Read change 1 as "a
+STATICALLY detectable provider misconfiguration costs one clear error at startup", not as a total
+guarantee against a drained budget. Also in this change (issue #279, structure not semantics): the
+two independent copies of the provider→agent-profile discovery rule — `execute()`'s preflight step
+5b and `_build_backend()` — collapse into one `_resolve_profiles(config, coordinator)`, with the
+preflight's fail-closed outer handling kept at that call site (a discovery crash yields FEWER
+profiles, hence a refusal, never a false accept) and the rot-prone "mirrors `_build_backend()` lines
+438-443 exactly" comment replaced by the function reference.
+`modules/loop-pipeline/tests/test_profile_resolver_parity.py` pins both call sites to the single
+home behaviorally (one monkeypatched resolver must be observed by both in one run), so it is
+enforced rather than promised.*
+
 ---
 
 ## 37. Bundle Composition: Always-On Guidance, Agent Registration, and Ref-Free Same-Repo Sources

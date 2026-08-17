@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -391,6 +392,100 @@ class DirectProviderBackend:
         return None
 
 
+def _spawn_capability(coordinator: Any | None) -> Any | None:
+    """Resolve ``session.spawn`` off a coordinator, tolerating stand-ins.
+
+    One home for the capability gate both profile-resolution call sites use
+    (``_build_backend`` and ``execute()``'s preflight step 5b).  Bare test
+    stubs may not expose ``get_capability`` at all, and a coordinator is free
+    to raise for an unknown capability name; both mean "no spawn backend".
+    """
+    if coordinator is None or not hasattr(coordinator, "get_capability"):
+        return None
+    try:
+        return coordinator.get_capability("session.spawn")
+    except Exception:
+        return None
+
+
+def _resolve_profiles(
+    config: dict[str, Any] | None,
+    coordinator: Any | None,
+) -> dict[str, str]:
+    """THE single home for provider -> agent-profile resolution (issue #279).
+
+    Consumed by BOTH homes that need it -- ``_build_backend()`` (which hands
+    the result to ``AmplifierBackend``) and ``PipelineOrchestrator.execute()``
+    step 5b (which hands the same result to the startup provider preflight).
+    They previously carried two independent copies of this logic with no test
+    pinning them to each other, so a solo edit to either could drift silently;
+    ``tests/test_profile_resolver_parity.py`` now pins both call sites here.
+
+    Resolution order (either/or, by truthiness -- an explicit but EMPTY
+    ``profiles`` mapping therefore falls through to auto-discovery, in both
+    homes, exactly as before):
+
+    1. Explicit ``config["profiles"]`` mapping, e.g.
+       ``{"anthropic": "attractor-anthropic"}``.
+    2. Auto-discovery from ``coordinator.config["agents"]`` -- each dict-valued
+       agent entry maps as ``agent_name -> agent_name``.  Gated on the
+       ``session.spawn`` capability, because auto-discovered profiles are only
+       ever consumed by the spawn backend.
+
+    Raises whatever a malformed coordinator config raises (e.g. a non-mapping
+    ``agents``).  ``_build_backend`` lets that propagate, as it always has;
+    the preflight call site catches it and proceeds with FEWER profiles, so a
+    discovery crash can only ever produce a refusal, never a false accept.
+    """
+    profiles: dict[str, str] = {}
+    cfg = config or {}
+
+    # Source 1: Explicit profiles mapping in orchestrator config
+    explicit_profiles = cfg.get("profiles")
+    if isinstance(explicit_profiles, dict):
+        profiles.update(explicit_profiles)
+
+    # Source 2: Auto-discover from coordinator.config["agents"]
+    if not profiles and _spawn_capability(coordinator) is not None:
+        coordinator_config = getattr(coordinator, "config", None) or {}
+        agents = coordinator_config.get("agents", {})
+        for agent_name, agent_cfg in agents.items():
+            if isinstance(agent_cfg, dict):
+                profiles[agent_name] = agent_name
+
+    return profiles
+
+
+def _spawn_resolvable_agents(coordinator: Any | None) -> frozenset[str] | None:
+    """Profile names the spawn backend can actually resolve (issue #195).
+
+    A profile is a STRING naming an agent.  ``AmplifierBackend._run_with_spawn``
+    resolves it in exactly one place -- ``coordinator.config["agents"]`` -- and
+    refuses an entry it cannot find there.  A profile naming an absent agent is
+    therefore unserviceable no matter how many credentials are set, and every
+    visit to a node declaring that provider fails, draining the budget (the
+    residual #155 crash loop reported in #195).  The keys of that same mapping
+    are the statically knowable answer, read with no spawn and no live call.
+
+    Returns ``None`` -- meaning "not knowable here; do not police it" -- when:
+
+    - there is no ``session.spawn`` capability (the spawn backend is not the
+      one that will run, so profiles are never consumed at all); or
+    - ``coordinator.config`` / its ``agents`` entry is not a mapping we can
+      inspect statically (a stub or proxy coordinator).  The runtime guard in
+      ``backend.py`` still covers those.
+    """
+    if _spawn_capability(coordinator) is None:
+        return None
+    coordinator_config = getattr(coordinator, "config", None)
+    if not isinstance(coordinator_config, Mapping):
+        return None
+    agents = coordinator_config.get("agents", {})
+    if not isinstance(agents, Mapping):
+        return None
+    return frozenset(str(name) for name in agents)
+
+
 def _build_backend(
     providers: dict[str, Any],
     tools: dict[str, Any],
@@ -414,33 +509,18 @@ def _build_backend(
 
     # Try the full spawn-based backend first
     if coordinator is not None:
-        spawn_fn = None
-        if hasattr(coordinator, "get_capability"):
-            try:
-                spawn_fn = coordinator.get_capability("session.spawn")
-            except Exception:
-                pass
+        spawn_fn = _spawn_capability(coordinator)
         if spawn_fn is not None:
             from .backend import AmplifierBackend
 
-            # Resolve profiles: explicit config > auto-discovery from agents
-            cfg = orchestrator_config or {}
-            profiles: dict[str, str] = {}
-
-            # Source 1: Explicit profiles mapping in orchestrator config
-            # e.g. config.profiles = {"anthropic": "attractor-anthropic"}
-            explicit_profiles = cfg.get("profiles")
-            if isinstance(explicit_profiles, dict):
-                profiles.update(explicit_profiles)
-
-            # Source 2: Auto-discover from coordinator.config["agents"]
-            # Each agent entry is mapped as agent_name -> agent_name.
-            if not profiles:
-                coordinator_config = getattr(coordinator, "config", None) or {}
-                agents = coordinator_config.get("agents", {})
-                for agent_name, agent_cfg in agents.items():
-                    if isinstance(agent_cfg, dict):
-                        profiles[agent_name] = agent_name
+            # Resolve profiles: explicit config > auto-discovery from agents.
+            # ONE home for that rule -- _resolve_profiles() (issue #279); the
+            # startup preflight in execute() step 5b consumes the SAME
+            # function, and tests/test_profile_resolver_parity.py pins both
+            # call sites to it so the two can no longer drift apart.
+            profiles: dict[str, str] = _resolve_profiles(
+                orchestrator_config, coordinator
+            )
 
             if profiles:
                 logger.info(
@@ -564,46 +644,40 @@ class PipelineOrchestrator:
             # claims).  The auto-constructed backend path (production) is
             # always checked.
             if kwargs.get("backend") is None:
-                # Resolve profiles for the preflight using the same two-source
-                # priority as _build_backend(): explicit config first, then
-                # auto-discovery from coordinator.config["agents"].  Without
-                # this the preflight only sees source 1 and raises a false
-                # ProviderPreflightError when the only profiles come from
-                # auto-discovery (issue #196).
-                preflight_profiles: dict[str, str] | None = None
-                explicit_profiles = self.config.get("profiles")
-                if isinstance(explicit_profiles, dict):
-                    # Source 1: explicit profiles mapping in orchestrator config
-                    preflight_profiles = dict(explicit_profiles)
-                if not preflight_profiles:
-                    # Source 2: auto-discover from coordinator.config["agents"]
-                    # (mirrors _build_backend() lines 438-443 exactly)
-                    _coordinator = kwargs.get("coordinator")
-                    if _coordinator is not None:
-                        try:
-                            _coord_cfg = getattr(_coordinator, "config", None) or {}
-                            _agents = _coord_cfg.get("agents", {})
-                            _spawn_fn = None
-                            if hasattr(_coordinator, "get_capability"):
-                                try:
-                                    _spawn_fn = _coordinator.get_capability(
-                                        "session.spawn"
-                                    )
-                                except Exception:
-                                    pass
-                            if _spawn_fn is not None:
-                                _discovered: dict[str, str] = {}
-                                for _agent_name, _agent_cfg in _agents.items():
-                                    if isinstance(_agent_cfg, dict):
-                                        _discovered[_agent_name] = _agent_name
-                                if _discovered:
-                                    preflight_profiles = _discovered
-                        except Exception:
-                            pass
+                _coordinator = kwargs.get("coordinator")
+                # Resolve profiles for the preflight through the SAME function
+                # _build_backend() uses -- _resolve_profiles() (issue #279).
+                # Before the extraction this call site carried its own copy of
+                # the two-source rule (explicit config first, then
+                # auto-discovery from coordinator.config["agents"]), pinned to
+                # the other copy only by a line-number comment; the copies
+                # could drift silently, and a preflight that saw FEWER sources
+                # than the backend raised false refusals (issue #196).
+                # Fail-closed: a discovery crash yields FEWER profiles, which
+                # can only ever produce a refusal -- never a false accept.
+                try:
+                    preflight_profiles: dict[str, str] | None = _resolve_profiles(
+                        self.config, _coordinator
+                    )
+                except Exception:
+                    preflight_profiles = None
+                # Issue #195: a profile is a STRING naming an agent.  Knowing
+                # it is MAPPED is not knowing it can be RESOLVED -- a profile
+                # naming an absent agent passes credential presence and then
+                # fails at every spawn, draining the budget instead of
+                # refusing.  Hand the preflight the names the spawn backend
+                # can actually resolve so that class refuses at startup.
+                # Fail-closed here too: unknowable-because-it-crashed becomes
+                # the empty set (refuse), never None (skip the check).
+                try:
+                    _resolvable = _spawn_resolvable_agents(_coordinator)
+                except Exception:
+                    _resolvable = frozenset()
                 check_provider_preflight(
                     graph,
                     mounted_providers=tuple(providers) if providers else (),
                     profiles=preflight_profiles,
+                    resolvable_profiles=_resolvable,
                 )
 
             # 6. Set up logs directory

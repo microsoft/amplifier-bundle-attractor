@@ -77,15 +77,17 @@ jobs:
     env:
       ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
     # Measured capsule.dot runs take ~20-40 minutes; the graph's own
-    # max_pipeline_duration=18000s (5h, the RC-6 rival-lane fuse -- sized by
-    # the TIMEOUT ARITHMETIC in the vendored capsule.dot's header) is the
-    # engine's internal wall, so the job wall must clear that plus
-    # setup/PR-creation time. GitHub-hosted
-    # runners hard-cap a job at 360 minutes, so 360 is the ceiling: that
-    # leaves ~60 minutes of overhead over the 300-minute fuse -- a thinner
-    # buffer than the old 330-over-240, but far above the observed
-    # non-engine overhead (runs 31259303929 and 31113280518: setup steps
-    # ~5s, classify/PR/comment/upload ~6-10s -- seconds, not minutes).
+    # max_pipeline_duration=19800s (330min, the void-ratchet fuse -- sized
+    # by the TIMEOUT ARITHMETIC rig in the vendored capsule.dot's source:
+    # tool_worst 11700s incl. the 1800s void-ratchet wall, + 4200s LLM
+    # allowance, x1.2 = 19080s <= 19800s) is the engine's internal wall,
+    # so the job wall must clear that plus setup/PR-creation time.
+    # GitHub-hosted runners hard-cap a job at 360 minutes, so 360 is the
+    # ceiling: that leaves ~30 minutes of overhead over the 330-minute
+    # fuse -- thinner than the prior 60-over-300, but far above the
+    # observed non-engine overhead (runs 31259303929 and 31113280518:
+    # setup steps ~5s, classify/PR/comment/upload ~6-10s -- seconds, not
+    # minutes).
     timeout-minutes: 360
     steps:
       - name: Checkout

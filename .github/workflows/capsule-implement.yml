@@ -622,6 +622,36 @@ jobs:
 
       - name: Push fix branch and open PR
         id: pr
+        # LOAD-BEARING, AND FRAGILE ON PURPOSE -- READ BEFORE "FIXING" THE
+        # EXIT CAPTURE (issue #220 salvage, both layers).
+        #
+        # This `if:` is the ONLY door the salvage paths have. A non-converged
+        # run reaches this step exclusively through GitHub's absent-output
+        # coercion: the run step above executes under `set -uo pipefail` with
+        # `bash -e` semantics, so when the engine exits non-zero the step
+        # ABORTS BEFORE its `echo "attractor_exit=$?" >> "$GITHUB_OUTPUT"`
+        # line runs at all. The output is therefore never written, and GitHub
+        # coerces a missing output to '0' in an `== '0'` comparison -- which
+        # is precisely why the non-converged path gets in here to salvage and
+        # push. (The `classify` step above exists because that same coercion
+        # makes ABSENT and CONVERGED indistinguishable to an `if:`; it
+        # recovers the truth from checkpoint.json and everything below
+        # branches on `steps.classify.outputs.converged`, not on this value.)
+        #
+        # CONSEQUENCE: if anyone ever makes the run step record
+        # attractor_exit=1 RELIABLY -- an `|| true`, a `set +e`, an explicit
+        # capture into a variable, a composite action -- this condition goes
+        # FALSE on exactly the runs salvage exists for, this step is skipped,
+        # and BOTH salvage layers' commits (task-runner.dot's own `salvage`
+        # node and this step's own Layer-2 commit) strand on a runner that is
+        # about to be destroyed. That is the #220 bug again, reintroduced by a
+        # change that looks like an unambiguous improvement.
+        #
+        # If you fix the exit capture, you MUST widen this condition in the
+        # same commit -- e.g. gate on `steps.locate.outputs.skip != 'true'`
+        # alone and let the `classify` step's `converged` output (already the
+        # sole classifier below) decide converged-vs-salvage. Do not change one
+        # without the other.
         if: always() && steps.locate.outputs.skip != 'true' && steps.run.outputs.attractor_exit == '0'
         # See capsule-specify.yml's "Open capsule PR" step for the
         # confirmed platform limitation this token falls back around:
@@ -713,6 +743,66 @@ jobs:
             # postmortem -- there is simply no branch worth pushing.
             echo "::warning::Non-converged run produced nothing to salvage: HEAD matches origin/main and the tree is clean outside .ai/. No work-in-progress PR is opened, because there is no work to put in one."
             exit 0
+          fi
+
+          # SECRET SCAN GATE ON THE PUSH -- the guarantee this egress never had.
+          #
+          # Everything above this line can put WORKER-WRITTEN bytes onto a
+          # commit that the next line makes PUBLIC, and on the salvage paths
+          # those bytes passed no critic, no gate and no human: task-runner.dot's
+          # own `salvage` node commits the dirty tree on its non-shipping doors
+          # (Layer 1), and the block above commits whatever the engine died
+          # before capturing (Layer 2). The converged path is not exempt either
+          # -- ship_check proves the tree is CLEAN and GATE-GREEN, which is a
+          # different claim from "contains no credential"; that push has always
+          # been unscanned too, and closing it here costs nothing.
+          #
+          # This is not hypothetical for this repo. The scrub step above exists
+          # because a worker agent dumped its environment mid-run and a literal
+          # OPENAI_API_KEY landed in worker-written files on disk (2026-08
+          # incident); GitHub's live-log masking does not touch bytes on disk.
+          # The run-evidence artifact got BOTH a scrub and a scan out of that
+          # incident. A pushed branch is at least as public as an artifact and
+          # cannot be un-pushed the same way -- yet it had NEITHER. Per this
+          # workflow's own doctrine (see the scrub step's comment above): scrub
+          # is best-effort cleaning, the scan is the GUARANTEE. Here is the
+          # guarantee.
+          #
+          # Fail-closed: any finding means no push, a red job, and a refusal
+          # that names the offending files. `scan` prints file:line:shape and
+          # NEVER the matched value (scrub_secrets.py's scan_text returns shapes
+          # and variable names only), so the refusal is safe in a public log.
+          #
+          # ARGUMENT PLUMBING, deliberately:
+          #   -z                NUL-separated, UNQUOTED paths. A bare
+          #                     --name-only would let a filename containing a
+          #                     space split into two bogus roots, and would
+          #                     C-quote non-ASCII names into paths that do not
+          #                     exist. Paired with `xargs -0`.
+          #   --diff-filter=d   drop DELETED paths -- they are not in the
+          #                     worktree, so there are no bytes there to scan.
+          #   xargs -r          an empty diff runs the scanner ZERO times rather
+          #                     than invoking it with no roots (argparse requires
+          #                     at least one and would exit non-zero, turning
+          #                     "nothing changed" into a false refusal).
+          # `origin/main HEAD` is two-dot on purpose (the same idiom as the
+          # GATE_CHANGED measurement below). If main moved during the run this
+          # over-scans by the few files main gained -- over-scanning is the
+          # fail-closed direction, and this checkout was taken from origin/main
+          # at job start, so in practice the two-dot and three-dot sets agree.
+          PUSH_SCAN_LOG="$(mktemp)"
+          if git diff --name-only --diff-filter=d -z origin/main HEAD \
+              | xargs -0 -r python3 .github/capsule-pipeline/scrub_secrets.py scan \
+              > "$PUSH_SCAN_LOG" 2>&1; then
+            cat "$PUSH_SCAN_LOG"
+            echo "push secret gate: clean -- every file this push adds or changes relative to origin/main was scanned, and nothing secret-shaped was found."
+          else
+            cat "$PUSH_SCAN_LOG" >&2
+            SCAN_FILES="$(sed -n 's/^scan FINDING //p' "$PUSH_SCAN_LOG" \
+              | sed -e 's/:[0-9][0-9]*: shape=.*$//' -e 's/: unreadable .*$//' \
+              | sort -u | tr '\n' ' ' || true)"
+            echo "::error::The push secret gate BLOCKED this branch -- secret-shaped material was found in the bytes this job was about to push to the public branch '$BRANCH'. NOTHING WAS PUSHED and no PR was opened. Offending file(s): ${SCAN_FILES:-see the scan findings above}. The findings above give file:line:shape; the values themselves are never printed. This gate covers both salvage layers (task-runner.dot's own \`salvage\` commit and this workflow's Layer-2 commit) and the converged path -- salvaged work is UNREVIEWED by construction, so it is scanned before it can leave the runner. Rotate any credential these findings implicate, then clean the tree before re-running." >&2
+            exit 1
           fi
 
           git push origin "HEAD:refs/heads/$BRANCH"

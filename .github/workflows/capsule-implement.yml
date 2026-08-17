@@ -638,19 +638,81 @@ jobs:
           ISSUE="${{ steps.locate.outputs.issue_number }}"
           CAPSULE_ID="${{ steps.locate.outputs.capsule_id }}"
 
-          # Defensive: task-runner.dot's own ship_check gate already
-          # asserts a clean tree (no tracked .ai/ leakage, no stray
-          # porcelain) before reaching `done` -- a second, independent
-          # check here costs nothing and this push must start from a
-          # genuinely proven tree.
-          if [ -n "$(git status --porcelain | grep -v -E '^\?\? \.ai')" ]; then
-            echo "::error::Workspace has unexpected changes outside .ai/ after a 'done' run -- refusing to push an unproven tree." >&2
+          # WORK DURABILITY, LAYER 2 (issue #220). The converged and the
+          # non-converged paths reach this step for opposite reasons, and a
+          # single porcelain rule served one of them and destroyed the other.
+          #
+          # CONVERGED: unchanged, and deliberately so. task-runner.dot's own
+          # ship_check gate already asserts a clean tree (no tracked .ai/
+          # leakage, no stray porcelain) before reaching `done`; this second,
+          # independent check costs nothing and this push must start from a
+          # genuinely proven tree. That guard is load-bearing -- in run
+          # 31789137305 it was the CORRECT actor and the reason nothing
+          # unproven shipped. It is not weakened, relaxed, or bypassed below.
+          #
+          # NON-CONVERGED: this branch already opens a work-in-progress PR that
+          # claims no gate and no critique, precisely so a non-converging run's
+          # work "is not lost". Refusing it for being dirty is what actually
+          # lost it: in run 31789137305 this guard printed eight files of
+          # finished, gate-GREEN work by name and then the runner was torn down
+          # with all of it still uncommitted. So on THIS path an uncommitted
+          # tree is committed rather than refused.
+          #
+          # Layer 1 is the engine's own `salvage` node, which now commits the
+          # tree on every non-shipping route into its human gate, so on the
+          # ordinary non-convergence path this block finds nothing left to do.
+          # Layer 2 exists because the engine can die BEFORE that node runs at
+          # all -- a crash in the maker/critic lane, the step timeout, an OOM
+          # kill -- and the two layers are independent on purpose.
+          CONVERGED="${{ steps.classify.outputs.converged }}"
+          SALVAGE_NOTE="task-runner.dot's own \`salvage\` node had already committed the run's tree (or there was nothing outside \`.ai/\` to commit); this workflow added no commit of its own."
+          DIRTY="$(git status --porcelain | grep -v -E '^\?\? \.ai' || true)"
+          if [ -n "$DIRTY" ]; then
+            if [ "$CONVERGED" = "true" ]; then
+              echo "::error::Workspace has unexpected changes outside .ai/ after a 'done' run -- refusing to push an unproven tree." >&2
+              git status --porcelain >&2 || true
+              exit 1
+            fi
+            echo "::warning::Non-converged run left an uncommitted tree that task-runner.dot's own salvage node did not capture -- committing it here so the work is not discarded (issue #220). This is work-in-progress, not a proven fix."
             git status --porcelain >&2 || true
-            exit 1
+            # .ai/ is run EVIDENCE, not product: it ships as an uploaded
+            # artifact, never as a commit. Belt and braces, same as the engine
+            # node -- write the repo's own exclude convention BEFORE staging,
+            # then unstage .ai outright in case a worker had already git-added
+            # it (the tracked-.ai leak channel ship_check guards).
+            EXCLUDE="$(git rev-parse --git-common-dir)/info/exclude"
+            mkdir -p "$(dirname "$EXCLUDE")"
+            grep -qxF '.ai/' "$EXCLUDE" 2>/dev/null || printf '.ai/\n' >> "$EXCLUDE"
+            git add -A
+            if [ -n "$(git ls-files -- .ai)" ]; then git reset -q -- .ai; fi
+            if git diff --cached --quiet; then
+              SALVAGE_NOTE="The tree was dirty only under \`.ai/\` (run evidence), so nothing was committed by this workflow."
+            else
+              git commit -q \
+                -m "salvage(workflow): non-converged implement run WIP for #${ISSUE}" \
+                -m "task-runner.dot did not converge and left this tree uncommitted -- committed by capsule-implement.yml so the work survives the runner (issue #220). NOT a proven fix: none of the converged path's gate or critique claims apply. Run evidence is in the workflow run's uploaded artifacts."
+              SALVAGE_NOTE="The engine did not reach its own \`salvage\` node, so THIS WORKFLOW committed the uncommitted tree as \`$(git rev-parse --short HEAD)\` -- see the \`salvage(workflow):\` commit on this branch."
+              echo "workflow-level salvage commit: $(git rev-parse --short HEAD)"
+            fi
+            # Re-assert the invariant the converged guard asserts: whichever
+            # branch ran, nothing outside .ai/ may remain uncommitted at push.
+            if [ -n "$(git status --porcelain | grep -v -E '^\?\? \.ai' || true)" ]; then
+              echo "::error::Workspace is STILL dirty outside .ai/ after the work-in-progress salvage commit -- refusing to push a tree this step cannot account for." >&2
+              git status --porcelain >&2 || true
+              exit 1
+            fi
           fi
           if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
-            echo "::error::task-runner.dot reported success but HEAD matches origin/main -- no fix was actually committed. Refusing to open an empty PR." >&2
-            exit 1
+            if [ "$CONVERGED" = "true" ]; then
+              echo "::error::task-runner.dot reported success but HEAD matches origin/main -- no fix was actually committed. Refusing to open an empty PR." >&2
+              exit 1
+            fi
+            # Honest non-event, not a failure of this step: the run genuinely
+            # produced nothing. The job is still failed for non-convergence by
+            # the final step, and the issue comment still carries the
+            # postmortem -- there is simply no branch worth pushing.
+            echo "::warning::Non-converged run produced nothing to salvage: HEAD matches origin/main and the tree is clean outside .ai/. No work-in-progress PR is opened, because there is no work to put in one."
+            exit 0
           fi
 
           git push origin "HEAD:refs/heads/$BRANCH"
@@ -734,6 +796,8 @@ jobs:
               echo "Measured classification: engine exit code \`${EXIT_RAW:-<absent>}\` (absent means the"
               echo "engine exited non-zero and the run step aborted before recording it), the"
               echo "pipeline's own recorded outcome \`${RECORDED_OUTCOME}\` (checkpoint.json)."
+              echo
+              echo "Where this branch's commits came from (issue #220): ${SALVAGE_NOTE}"
               echo
               echo "$GATE_NOTE"
               echo

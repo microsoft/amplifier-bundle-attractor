@@ -1,13 +1,19 @@
 // ============================================================================
 // VENDORED COPY -- see .github/capsule-pipeline/README.md for provenance,
 // scope, and re-sync instructions. Source: a private working repository
-// (not publicly reachable), pinned at its commit b3bcedb5da8d60ce4490ad9ad9e2d547235891f5
-// (runner/task-runner.dot, 2026-08-09 -- subtraction sweep: source header
-// slimmed 518 -> 419 lines (155 -> 56-line header; doctrine -> primer
-// cites) plus three stale in-body pointer fixes; node/edge declarations
-// UNCHANGED, 24). This copy is byte-identical to the source file below this
-// header -- do not hand-edit the body; re-sync from source and re-apply
-// this header instead.
+// (not publicly reachable), pinned at its commit fae27d0e1969fd48f9b890b9c9660b10f2489471
+// (runner/task-runner.dot, 2026-08-17 -- WORK DURABILITY re-sync, issue #220:
+// one new deterministic `salvage` node commits the run's working tree to the
+// CURRENT branch on the three NON-shipping doors into the human gate
+// (diagnose_gate-blocked, postmortem, pm_gate), so a stalled or
+// budget-exhausted run's product outlives its runner instead of dying as an
+// uncommitted tree; `package`, `ship_check` and the whole verdict=ship path
+// are untouched. Node declarations 23 -> 24, edge declarations 36 -> 37).
+// This copy is byte-identical to the source file below this header -- the
+// body's sha256 is 7c93fe011563c9c13521c178ede6e530ed91bfde13a536b6b745f053d9c49f47
+// (`tail -n +97 task-runner.dot | sha256sum`), so parity is checkable without
+// access to the source repository. Do not hand-edit the body; re-sync from
+// source and re-apply this header instead.
 //
 // WHY THIS FILE IS VENDORED HERE: this is the "implement" stage of the
 // issue->attractor->PR system (see DESIGN-issue-to-attractor-pipeline.md
@@ -127,13 +133,20 @@
 // FILE CONTRACTS (specific to this graph; mechanism details live at the
 // nodes/edges that implement them):
 //   - PARAM NAMESPACE: shell vars in tool_commands (VF, n, rc, sig, B, N,
-//     prev, ok, a, b, la, lb, sc, f, hs, last) are safe ONLY because no param
-//     shares their name. Never add a param named like a shell var (§6.12).
+//     prev, ok, a, b, la, lb, sc, f, hs, last, GD, err) are safe ONLY because
+//     no param shares their name. Never add a param named like a shell var
+//     (§6.12).
 //   - BUDGET: .ai/iter counts TOTAL verify attempts and is LEDGER-DERIVED —
 //     verify recomputes it from .ai/convergence.jsonl (append-only; workers
 //     don't touch it) and writes .ai/iter only as a downstream mirror. The
 //     budget wall lives IN verify, so green-path and transient re-entries
 //     spend iterations too (see the TRANSIENT-RECOVERY edge block).
+//   - WORK DURABILITY: `package` is the ONLY node that composes a shipping
+//     commit, and it is reachable only on verdict=ship. Every OTHER route to
+//     the human gate therefore passes through `salvage` first, which commits
+//     the working tree AS IT STANDS to the CURRENT branch so a non-converging
+//     run outlives its runner. See the node for the .ai/ exclusion rule and
+//     the one door deliberately left un-salvaged.
 //   - CONVERGENCE RECORD: exactly TWO gates append to .ai/convergence.jsonl —
 //     verify ({"gate": "verify", ...} + budget-exhausted records) and verdict
 //     ({"gate": "critique", "ship", "a", "b"}; an unwritten verdict is
@@ -387,8 +400,50 @@ digraph BacklogTaskRunner {
     forge_fail [shape=parallelogram, class="glue", max_retries=0,
         tool_command="echo 'FORGE-GUARD FAIL: .ai/critique.md failed the stamp check at the verdict read - either the file was rewritten after its post-critique stamp (single-actor consensus forge, or an accidental clobber), or the stamp itself (.ai/critique.hash) was absent/truncated at verdict time (stamp_a writes-or-fails, so that is never benign). Inspect .ai/critique.md against .ai/critique.hash and the run events before trusting this round.' >&2; exit 1"]
 
+    // ---------- salvage: the work outlives the runner ----------
+    // WHY THIS NODE EXISTS (issue #220; incident run 31789137305). `package`
+    // is the only node in this graph that composes a commit, and exactly one
+    // edge reaches it (verdict=ship). So every non-shipping exit — stall,
+    // budget exhaustion, blocked diagnosis, a package that could not close
+    // cleanly — used to end with the run's ENTIRE product living only in the
+    // runner's dirty working tree, which dies with the runner. That is not
+    // hypothetical: run 31789137305 built a complete, gate-GREEN feature (6/6
+    // acceptance criteria, 724 + 1836 tests passing, critic A shipping),
+    // stalled on critic B's documentation findings three rounds running, and
+    // eight files of finished work were named in the invoking workflow's own
+    // refusal message and then destroyed.
+    //
+    // PLACED BEFORE THE HEXAGON, NOT ON THE ABANDON LEG. In that same run the
+    // `escalate` hexagon itself RAISED (no interviewer configured) and the run
+    // died AT the decision point — a salvage hanging off `escalate -> abandon`
+    // would never have executed. Making the tree durable BEFORE the gate is
+    // asked also means the [C] Continue leg simply commits a WIP checkpoint and
+    // carries on; `package` composes its own commit on top, and `ship_check` is
+    // unaffected (it asserts a clean tree and a commit at HEAD — both still
+    // true).
+    //
+    // .ai/ IS NEVER IN THE SALVAGE COMMIT, by two independent mechanisms: the
+    // node writes the repo's own `.git/info/exclude` convention (the same one
+    // `package` is told to honor) BEFORE staging, and then unstages `.ai`
+    // outright if the index carries it anyway — which is what covers the
+    // TRACKED-.ai leak channel `ship_check` guards. The salvage commit
+    // therefore contains exactly the paths an invoking workflow's porcelain
+    // guard would have refused to push, and nothing else.
+    //
+    // EXIT-0 GUARANTEED, LOUD ANYWAY (pm_gate's idiom, and for pm_gate's
+    // reason): on a FAIL outcome the engine does not traverse unconditional
+    // edges (spec §3.7 fail-fast), so a non-zero exit here would strand the run
+    // BEFORE the human gate — failure handling must not become a second
+    // failure. Nothing is swallowed to buy that: every branch writes a labeled
+    // record to .ai/salvage.md AND echoes it to stderr, carrying git's own
+    // refusal text verbatim (SALVAGED / NOTHING-TO-SALVAGE / SALVAGE-FAILED /
+    // SALVAGE-IMPOSSIBLE), and `escalate` names that file so the human deciding
+    // [A] vs [C] reads what actually happened rather than assuming it worked.
+    salvage [shape=parallelogram, class="glue", max_retries=0,
+        tool_command="n=$(cat .ai/iter 2>/dev/null || echo '?'); mkdir -p .ai; f=.ai/salvage.md; if ! git rev-parse --verify -q HEAD >/dev/null 2>&1; then echo 'SALVAGE-IMPOSSIBLE: the target tree is not a git repository with a commit at HEAD, so nothing can be committed here. The work survives only as the run evidence under .ai/.' > $f; cat $f >&2; printf salvage_impossible; exit 0; fi; GD=$(git rev-parse --git-common-dir 2>/dev/null || printf .git); mkdir -p \"$GD/info\"; grep -qxF '.ai/' \"$GD/info/exclude\" 2>/dev/null || printf '.ai/\\n' >> \"$GD/info/exclude\"; err=$(git add -A 2>&1); if [ $? -ne 0 ]; then { echo 'SALVAGE-FAILED: git add -A refused, so the working tree was NOT committed and this run produced no durable artifact beyond .ai/. git said:'; echo \"$err\"; } > $f; cat $f >&2; printf salvage_failed; exit 0; fi; [ -n \"$(git ls-files -- .ai)\" ] && git reset -q -- .ai; if git diff --cached --quiet; then echo 'NOTHING-TO-SALVAGE: at the escalation gate the tree carried no uncommitted change outside .ai/ (the work was already committed, or none was produced).' > $f; cat $f >&2; printf nothing; exit 0; fi; err=$(git commit -q -m \"salvage: non-converged run WIP at iteration ${n}\" -m \"task-runner.dot reached its escalation gate without a ship verdict. This commit preserves the working tree exactly as the run left it, so the work outlives the runner. NOT a proven fix: there is no critique consensus and there may be no green gate. The verdict trail is in .ai/ (convergence.jsonl, postmortem/report.md, verify.log), which is excluded from version control and published as run evidence.\" 2>&1); if [ $? -ne 0 ]; then { echo 'SALVAGE-FAILED: git commit refused, so the working tree was NOT committed. git said:'; echo \"$err\"; } > $f; cat $f >&2; printf salvage_failed; exit 0; fi; { echo \"SALVAGED: $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD) - the non-converged run working tree is now a commit on the CURRENT branch.\"; echo; git show --stat --format='%H%n%s' HEAD | head -60; } > $f; cat $f >&2; printf salvaged"]
+
     escalate [shape=hexagon,
-        prompt="The runner could not converge within budget, or could not package cleanly. Review .ai/postmortem/ and .ai/convergence.jsonl before choosing."]
+        prompt="The runner could not converge within budget, or could not package cleanly. Review .ai/postmortem/ and .ai/convergence.jsonl before choosing. The working tree has already been committed to the current branch where that was possible — .ai/salvage.md records exactly what was salvaged, or why nothing was; read it before assuming the work is safe."]
 
     // Budget bumps are capped so the engine step cap can never become the
     // real terminator (which would bypass the postmortem path with a bare FAIL).
@@ -396,7 +451,7 @@ digraph BacklogTaskRunner {
         tool_command="B=$(cat .ai/budget 2>/dev/null); B=${B:-6}; N=$((B+3)); [ $N -gt 15 ] && N=15; echo $N > .ai/budget; rm -f .ai/last-fail-sig; printf continue"]
 
     abandon [shape=parallelogram, class="glue", max_retries=0,
-        tool_command="echo 'ABANDONED: see .ai/postmortem/report.md and .ai/convergence.jsonl' >&2; exit 1"]
+        tool_command="echo 'ABANDONED: see .ai/postmortem/report.md, .ai/convergence.jsonl, and .ai/salvage.md — the run work-in-progress was committed to the current branch unless that file says otherwise' >&2; exit 1"]
 
     // ================= edges =================
     start -> setup
@@ -427,7 +482,7 @@ digraph BacklogTaskRunner {
 
     diagnose -> diagnose_gate
     diagnose_gate -> attempt  [condition="context.tool.last_line=continue", label="change course"]
-    diagnose_gate -> escalate [condition="context.tool.last_line=blocked"]
+    diagnose_gate -> salvage  [condition="context.tool.last_line=blocked"]
 
     // Expensive gate: two independent family-diverse reviewers in
     // sequence, then a deterministic consensus verdict.
@@ -500,9 +555,22 @@ digraph BacklogTaskRunner {
     // labeled artifact. Same unconditional+outcome=fail edge idiom as the
     // critique nodes (box node — no tool.last_line, so the stale-label
     // defensive conjunction does not apply here).
-    postmortem -> escalate
+    postmortem -> salvage
     postmortem -> pm_gate  [condition="outcome=fail", label="no report after engine retries — synthesize"]
-    pm_gate -> escalate
+    pm_gate -> salvage
+    // WORK DURABILITY (issue #220): the three non-shipping doors to the human
+    // gate route through `salvage` first, so the run's product is a commit on
+    // the current branch before anyone is asked [A]/[C] — and before the
+    // hexagon gets a chance to raise. `salvage` is exit-0 guaranteed, so this
+    // one unconditional edge carries every outcome it can produce (a labeled
+    // .ai/salvage.md carries WHICH one); no last_line= condition is read here,
+    // so the stale-label conjunction rule (primer §6.11) has nothing to bind.
+    // ship_check's dirty leg is DELIBERATELY NOT routed here: that door means
+    // `package` already committed and left the tree unclean (stray porcelain,
+    // or the TRACKED-.ai leak channel), and the work is therefore already
+    // durable — what a human needs at that door is the forensic picture the
+    // gate just refused, not another commit on top of it.
+    salvage -> escalate
     escalate -> abandon     [label="[A] Abandon — keep the postmortem"]
     escalate -> bump_budget [label="[C] Continue — raise the budget"]
     bump_budget -> attempt

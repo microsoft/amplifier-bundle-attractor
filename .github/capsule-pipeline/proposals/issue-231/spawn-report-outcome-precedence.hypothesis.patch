@@ -1,0 +1,114 @@
+# Crude hypothesis patch (shape F) -- NOT a correct fix.
+#
+# Strategy: insert a 3-line early-return block immediately BEFORE the
+# `if not output.strip():` guard. When metadata.report_outcome is present
+# with a valid status, _outcome_from_spawn_result returns an Outcome with
+# is_explicit=True -- the early-return fires and returns it. When metadata
+# is absent, _outcome_from_spawn_result returns None or an Outcome with
+# is_explicit=False (spawn envelope only), so neither fires; those fall
+# through to the original guard and _parse_outcome as before.
+#
+# Shape F is genuinely different from prior patches:
+#
+#   hypothesis.patch (shape A, original):
+#     - Inserted a NEW early-return block BEFORE the if-not-output.strip() guard.
+#     - _outcome_from_spawn_result called TWICE: once in the new pre-check,
+#       once inside the original guard.
+#     - No is_explicit check -- fired on any non-None result.
+#     - Verified against the OLD pytest-based gate (not the current standalone
+#       probe gate).
+#
+#   hypothesis_b.patch (shape C):
+#     - Restructured the outcome-parsing block entirely: hoisted
+#       _outcome_from_spawn_result unconditionally, demoted the empty-output
+#       guard to a secondary branch.
+#     - Operation: restructuring (10 deletions + 19 insertions in numstat).
+#     - _outcome_from_spawn_result called ONCE (hoisted).
+#
+#   hypothesis_v.patch (void dodge, CLOSED by current gate):
+#     - Added pytest_collection_modifyitems hooks to skip all test_capsule_gate_*
+#       items. Caught by the standalone Python probe design: probes are run via
+#       `python3` outside both test trees, so no conftest.py hook can intercept
+#       them. The old gate ran probes as pytest test files; the current gate
+#       does not.
+#
+#   Prior hypothesis.patch (shape D):
+#     - Widened the CONDITION of the existing guard from
+#         `if not output.strip():`
+#       to
+#         `if not output.strip() or (_stub_spawn_outcome is not None and _stub_spawn_outcome.is_explicit):`
+#       where _stub_spawn_outcome was computed just before the guard.
+#     - Operation: 2 lines changed (condition widened, body reused precomputed).
+#     - _outcome_from_spawn_result called ONCE (precomputed before the guard).
+#     - Verified against the current standalone probe gate (greened).
+#
+#   This patch (shape F):
+#     - Inserts a NEW early-return block BEFORE the if-not-output.strip() guard.
+#     - Guard condition is UNCHANGED.
+#     - _outcome_from_spawn_result called TWICE: once in the new pre-check (with
+#       is_explicit guard), once inside the original empty-output guard.
+#     - Operation: pure insertion (0 deletions in numstat).
+#     - Simpler than shape D: no condition widening, just a bolt-on early-return.
+#
+# WHY THIS GREENS THE GATE:
+#   Probe1-A (non-empty prose + metadata): _outcome_from_spawn_result returns
+#     Outcome(is_explicit=True, preferred_label=RAND_LABEL) -> early-return
+#     fires -> probe assertion passes.
+#   Probe1-B call-with-metadata: same as Probe1-A -> early-return fires.
+#   Probe1-B call-without-metadata: metadata={} -> _outcome_from_spawn_result
+#     falls through to spawn-success branch -> Outcome(is_explicit=False) ->
+#     is_explicit check is False -> no early-return -> falls through to
+#     _parse_outcome("The work is done.") -> SUCCESS, is_explicit=False. Correct.
+#   Probe1-C (JSON fail, no metadata): _outcome_from_spawn_result returns
+#     Outcome(is_explicit=False) from spawn-success branch -> no early-return
+#     -> falls through to _parse_outcome('{"status": "fail", ...}') -> FAIL.
+#     Correct.
+#   Probe2 (drive_engine transport): same backend path as Probe1-A but through
+#     drive_engine -> status.json records is_explicit=true and the RAND_LABEL.
+#   Existing test (empty-output path): no change to that path -> still passes.
+#
+# WHY THIS IS NOT A CORRECT FIX:
+#   - _outcome_from_spawn_result is called TWICE (once in the early-return
+#     check, once inside the empty-output guard). Redundant call on the
+#     empty-output path.
+#   - Does not add a permanent regression test in test_backend.py.
+#   - _crude_early and _sid are ugly single-use variable names.
+#   - Does not handle the case where metadata is present but the status is
+#     unrecognized (that case returns None from _outcome_from_spawn_result,
+#     so it falls through to _parse_outcome -- which may or may not be right).
+#   - Does not preserve prose notes when metadata is present (the prose output
+#     is discarded entirely once metadata wins).
+#
+# Applicable via: git apply < .ai/hypothesis.patch
+# from the repo root.
+#
+# Machine-verified round-trip (current gate, standalone probe design):
+#   1. git apply --check passes at base SHA (clean tree)
+#   2. DEFINITION.verify.sh exits 0 with patch applied (all 3 Probe1 assertions
+#      pass, Probe2 passes, existing test passes)
+#   3. DEFINITION.verify.sh exits 1 without patch (gate is RED for the right reason)
+
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py
+index c3502e7..1bd2285 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py
+@@ -587,6 +587,19 @@ class AmplifierBackend:
+         # If the child produced output, _parse_outcome determines the outcome —
+         # including intentional {"status":"fail"} verdicts from goal_gate nodes.
+         output = result.get("output", "") if isinstance(result, dict) else str(result)
++        # CRUDE STUB (shape F -- NOT a real fix): early-return before the
++        # empty-output guard when metadata.report_outcome carries an explicit
++        # verdict. _outcome_from_spawn_result returns is_explicit=True only
++        # when metadata.report_outcome is present with a valid status. When
++        # metadata is absent it returns None or is_explicit=False (spawn
++        # envelope only), so neither fires here -- those fall through to
++        # _parse_outcome as before. Probe1-C is safe: no metadata -> None.
++        _crude_early = _outcome_from_spawn_result(result)
++        if _crude_early is not None and _crude_early.is_explicit:
++            _sid = result.get("session_id") if isinstance(result, dict) else None
++            if _sid:
++                _crude_early.session_id = _sid
++            return _crude_early
+         if not output.strip():
+             # The child's FINAL assistant message was empty — but that does NOT
+             # mean the child failed.  A child that did its work via tool calls

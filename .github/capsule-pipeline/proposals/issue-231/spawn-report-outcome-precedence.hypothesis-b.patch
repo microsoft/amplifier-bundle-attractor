@@ -1,0 +1,119 @@
+# Crude hypothesis patch B (shape D) -- NOT a correct fix.
+#
+# Strategy: widen the CONDITION of the existing empty-output guard so that
+# it also fires when metadata.report_outcome carries an explicit verdict
+# (is_explicit=True), even when output is non-empty.  A precomputed
+# _stub_spawn_outcome variable is introduced immediately before the guard;
+# the guard body reuses the precomputed value instead of calling
+# _outcome_from_spawn_result a second time.
+#
+# WHY THIS IS GENUINELY DIFFERENT FROM hypothesis.patch (shape F):
+#
+#   hypothesis.patch (shape F):
+#     - Inserts a NEW early-return block BEFORE the if-not-output.strip() guard.
+#     - The guard itself is UNCHANGED; the new block fires before it.
+#     - _parse_outcome is NEVER called when metadata is present (early-return
+#       fires before the guard, which is before _parse_outcome).
+#     - Operation: pure insertion (0 deletions in numstat, 14 additions).
+#     - Position: pre-guard (new code added before the existing guard).
+#     - _outcome_from_spawn_result called TWICE: once in the new pre-check,
+#       once inside the original empty-output guard body.
+#
+#   This patch (shape D):
+#     - MODIFIES the existing guard condition (1 deletion + 1 insertion for
+#       the condition line itself), plus adds a precomputed variable line
+#       (1 insertion) and rewrites the spawn_outcome assignment inside the
+#       guard body (1 deletion + 1 insertion).
+#     - The guard is CHANGED: `if not output.strip():` becomes
+#       `if not output.strip() or (_stub_spawn_outcome is not None and _stub_spawn_outcome.is_explicit):`
+#     - No new code is added BEFORE the guard; the guard itself is widened.
+#     - _parse_outcome is NEVER reached when metadata is present (widened
+#       guard fires before _parse_outcome).
+#     - Operation: 2 deletions + 8 insertions in numstat (not a pure insertion).
+#     - Position: guard-condition change (modifies existing lines, not new block).
+#     - _outcome_from_spawn_result called ONCE (precomputed before the guard,
+#       reused inside the guard body -- no duplicate call).
+#
+# OPPOSITE OPERATION AXIS:
+#   Shape F: ADD new code around the existing guard (bolt-on early-return).
+#   Shape D: CHANGE the existing guard itself (widen its condition).
+#   Shape F is purely additive; shape D is a modification of existing logic.
+#
+# WHY THIS GREENS THE GATE:
+#   Probe1-A (non-empty prose + metadata):
+#     _stub_spawn_outcome = _outcome_from_spawn_result(result) -> Outcome(is_explicit=True)
+#     Guard condition: `not output.strip()` is False, but
+#     `_stub_spawn_outcome is not None and _stub_spawn_outcome.is_explicit` is True.
+#     Combined: True -> guard fires -> spawn_outcome = _stub_spawn_outcome -> returned.
+#     preferred_label = RAND_LABEL, is_explicit=True. PASS.
+#   Probe1-B call-with-metadata: same as Probe1-A. PASS.
+#   Probe1-B call-without-metadata:
+#     _stub_spawn_outcome = _outcome_from_spawn_result({}) -> None (no metadata).
+#     Guard condition: `not output.strip()` is False, `None is not None` is False.
+#     Combined: False -> guard does NOT fire -> falls through to _parse_outcome.
+#     _parse_outcome("The work is done.") -> SUCCESS, is_explicit=False. PASS.
+#   Probe1-C (JSON fail, no metadata):
+#     _stub_spawn_outcome = None (no metadata).
+#     Guard condition: False (output non-empty) AND False (None is not None).
+#     Combined: False -> falls through to _parse_outcome.
+#     _parse_outcome('{"status":"fail",...}') -> FAIL. PASS.
+#   Probe2 (drive_engine transport):
+#     Same backend path as Probe1-A through drive_engine -> status.json
+#     records is_explicit=true and RAND_LABEL. PASS.
+#   Existing test (empty-output path):
+#     output = "" -> `not output.strip()` is True -> guard fires regardless of
+#     the new OR clause -> same behavior as before. PASS.
+#
+# WHY THIS IS NOT A CORRECT FIX:
+#   - The guard body now has a conditional expression for spawn_outcome:
+#     `_stub_spawn_outcome if _stub_spawn_outcome is not None else _outcome_from_spawn_result(result)`
+#     The else branch calls _outcome_from_spawn_result again (redundant on the
+#     empty-output path when _stub_spawn_outcome is None -- unnecessary double call).
+#   - The widened condition mixes two semantically different cases in one guard:
+#     (a) truly empty output and (b) non-empty output with explicit metadata.
+#     A correct fix would separate these cases clearly.
+#   - Does not add a permanent regression test in the repository's test suite.
+#   - The _stub_spawn_outcome variable name is a code smell flagging this as a stub.
+#   - Does not preserve the prose notes when metadata wins (prose discarded).
+#   - A correct fix would hoist the metadata check before the empty-output guard
+#     as a separate, clearly-labeled precedence step, not by widening the guard.
+#
+# Applicable via: git apply < .ai/hypothesis_b.patch
+# from the repo root.
+#
+# Machine-verified round-trip (current gate, standalone probe design):
+#   1. git apply --check passes at base SHA (clean tree)
+#   2. DEFINITION.verify.sh exits 0 with patch applied (Probe1-A/B/C PASS,
+#      Probe2 PASS, existing empty-output test PASS)
+#   3. DEFINITION.verify.sh exits 1 without patch (gate is RED for the right reason)
+#   4. Gate uses standalone Python probes run via `python3` outside both test
+#      trees -- no pytest conftest.py hook can intercept or forge the results.
+
+diff --git a/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py b/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py
+index c3502e7..d458377 100644
+--- a/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py
++++ b/modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py
+@@ -587,7 +587,13 @@ class AmplifierBackend:
+         # If the child produced output, _parse_outcome determines the outcome —
+         # including intentional {"status":"fail"} verdicts from goal_gate nodes.
+         output = result.get("output", "") if isinstance(result, dict) else str(result)
+-        if not output.strip():
++        # CRUDE STUB (hypothesis_b patch shape D -- not a real fix):
++        # Precompute spawn outcome before the empty-output guard so it can be
++        # reused in the widened condition.  _outcome_from_spawn_result returns
++        # is_explicit=True only when metadata.report_outcome is present with a
++        # valid status; otherwise it returns None or is_explicit=False.
++        _stub_spawn_outcome = _outcome_from_spawn_result(result)
++        if not output.strip() or (_stub_spawn_outcome is not None and _stub_spawn_outcome.is_explicit):
+             # The child's FINAL assistant message was empty — but that does NOT
+             # mean the child failed.  A child that did its work via tool calls
+             # (writing pages, then a terminal report_outcome) and ended on a tool
+@@ -601,7 +601,7 @@ class AmplifierBackend:
+             # the SAME outcome sources the direct tool loop already uses: the
+             # child's report_outcome args and the orchestrator's completion
+             # status (captured in the spawn result, see _prepared.py spawn()).
+-            spawn_outcome = _outcome_from_spawn_result(result)
++            spawn_outcome = _stub_spawn_outcome if _stub_spawn_outcome is not None else _outcome_from_spawn_result(result)
+             if spawn_outcome is not None:
+                 session_id = (
+                     result.get("session_id") if isinstance(result, dict) else None

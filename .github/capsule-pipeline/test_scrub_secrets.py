@@ -33,6 +33,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -935,6 +936,118 @@ class AssignmentValueGrammarTests(unittest.TestCase):
                 self.assertEqual(parsed["note"], record["note"])
                 self.assertEqual(parsed["n"], record["n"])
                 self.assertNotIn(tail, after)
+
+    # ---- post-review regression: the backslash-run ReDoS and its twin ----
+    #
+    # Found by #292's OWN adversarial review, before merge. The widened
+    # branch (c) joined a backslash in two ways -- the atomic pair `\\` and
+    # the lone alternative -- and NOTHING said the lone one could not also
+    # claim a backslash that was followed by another backslash. That made a
+    # backslash AMBIGUOUS, so a run of N of them had Fibonacci-many tilings,
+    # and the trailing `(?<!\\)` rejects every tiling that ends on a
+    # backslash, so the engine enumerated the lot. ONE root cause, TWO
+    # symptoms, so ONE probe family pins both. Measured at PR #292's head,
+    # before the `[\s\\]` fence:
+    #
+    #   PASSWORD= + 40 backslashes (raw)                     15.8 s
+    #   serialized event, secret + 20 trailing backslashes   18.4 s
+    #   ...and MY_PASSWORD=<secret>\ + \n + PATH=/usr/bin
+    #      redacted the PATH LINE AWAY (parity shift across the escape)
+    #
+    # After: 4 ms for a 40,000-backslash run, and the PATH line survives.
+
+    # A wall-clock budget, not a benchmark: the fixed cost of these probes is
+    # microseconds, so ANY number near this bound means the tilings came
+    # back. 500x headroom over the measured 4 ms keeps it immune to CI
+    # jitter while still being unreachable for an exponential rule.
+    REDOS_BUDGET_S = 2.0
+
+    def assert_fast(self, text: str, label: str) -> tuple[str, list[str]]:
+        """Scrub `text`, failing if it did not finish inside the budget."""
+        started = time.perf_counter()
+        after, shapes = self.scrub(text)
+        elapsed = time.perf_counter() - started
+        self.assertLess(
+            elapsed,
+            self.REDOS_BUDGET_S,
+            f"{label}: took {elapsed:.3f}s (budget {self.REDOS_BUDGET_S}s) -- "
+            "the backslash joiner is ambiguous again and the run is being "
+            "re-tiled exponentially",
+        )
+        return after, shapes
+
+    def test_a_backslash_run_does_not_blow_up_the_matcher(self) -> None:
+        """The ReDoS itself, on the raw and the serialized shape.
+
+        The ladder is ordered SMALLEST-FIRST on purpose: a regressed rule
+        blows the budget on the first probe in ~16s and never reaches the
+        40,000-backslash one (which, ambiguous, would not finish this
+        century). A test that FAILS beats a test that HANGS.
+        """
+        tail = fake_tail()
+        probes = (
+            ("raw, 40 trailing backslashes", "PASSWORD=" + "\\" * 40),
+            (
+                "serialized event, 20 trailing backslashes",
+                json.dumps({"output": f"DB_PASSWORD={tail}" + "\\" * 20}),
+            ),
+            (
+                "serialized event, 40 trailing backslashes",
+                json.dumps({"output": f"DB_PASSWORD={tail}" + "\\" * 40}),
+            ),
+            ("raw, 40000 backslashes (linearity)", "PASSWORD=" + "\\" * 40000),
+        )
+        for label, probe in probes:
+            with self.subTest(probe=label):
+                after, _ = self.assert_fast(probe, label)
+                self.assertNotIn(tail, after)
+
+    def test_a_secret_ending_in_backslashes_still_redacts(self) -> None:
+        """Direction 1 is not allowed to regress into a non-redaction: the
+        value must still GO, raw and serialized, however many backslashes
+        trail it."""
+        tail = fake_tail()
+        for k in (1, 2, 3, 20, 40):
+            with self.subTest(backslashes=k):
+                raw = f"PASSWORD={tail}" + "\\" * k
+                after, shapes = self.assert_fast(raw, f"raw k={k}")
+                self.assertIn("[REDACTED:assignment]", after)
+                self.assertNotIn(tail, after)
+                self.assertEqual(shapes, ["assignment:PASSWORD"])
+
+                line = json.dumps({"output": f"DB_PASSWORD={tail}" + "\\" * k})
+                after, shapes = self.assert_fast(line, f"serialized k={k}")
+                self.assertIn("[REDACTED:assignment]", after)
+                self.assertNotIn(tail, after)
+                self.assertEqual(shapes, ["assignment:DB_PASSWORD"])
+                json.loads(after)  # raises if the escape run was left dangling
+
+    def test_a_secret_ending_in_a_backslash_does_not_eat_the_next_line(self) -> None:
+        r"""The OVER-REDACTION half of the same defect, pinned separately
+        because it is the one a timing budget would never catch.
+
+        `MY_PASSWORD=<secret>\` + `\n` + `PATH=/usr/bin`: serialized, the
+        secret's own backslash and the separator escape sit adjacent, and an
+        odd tiling used to pair the SECOND and THIRD backslashes -- leaving
+        the separator's `n` to be eaten as ordinary value material, taking
+        the whole PATH line with it. The PATH/HOME-survive invariant this
+        file states two screens up was, in that shape, false.
+        """
+        tail = fake_tail()
+        for k in (1, 2, 3, 5):
+            with self.subTest(backslashes=k):
+                dump = (
+                    f"MY_PASSWORD={tail}" + "\\" * k
+                    + "\nPATH=/usr/bin\nHOME=/root\ntotal_tokens=41892"
+                )
+                after, shapes = self.assert_fast(json.dumps({"result": dump}), "dump")
+                self.assertNotIn(tail, after)
+                self.assertEqual(shapes, ["assignment:MY_PASSWORD"])
+                result = json.loads(after)["result"]
+                self.assertIn("[REDACTED:assignment]", result)
+                self.assertIn("PATH=/usr/bin", result)
+                self.assertIn("HOME=/root", result)
+                self.assertIn("total_tokens=41892", result)
 
     def test_capsule_gate_token_math_still_survives_the_widened_rule(self) -> None:
         """The 2026-08-13 corruption class, re-run against the WIDER value

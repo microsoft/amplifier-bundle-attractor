@@ -274,8 +274,10 @@ SENSITIVE_NAME_TAILS = (
 #           joins ATOMICALLY -- that is how a literal backslash inside a
 #           secret reaches this rule once the line has been JSON-serialized,
 #           and consuming it whole is what keeps the pair from being split.
-#           A LONE backslash joins UNLESS it opens one of the escapes that
-#           encode a record/field SEPARATOR (`\n`, `\r`, `\t`) or an
+#           A LONE backslash joins UNLESS it is followed by ANOTHER
+#           backslash (that case belongs to the pair -- see the fence
+#           below), or it opens one of the escapes that encode a
+#           record/field SEPARATOR (`\n`, `\r`, `\t`) or an
 #           arbitrary code point (`\u`); the class is matched
 #           case-sensitively, hence the `(?-i:...)`, because JSON escapes are
 #           lower-case and `\N`/`\T` in a Windows-path-shaped value are
@@ -289,6 +291,34 @@ SENSITIVE_NAME_TAILS = (
 #           not just the lucky ones.
 #       The run may not END on a backslash (`(?<!\\)`), so it can never leave
 #       a dangling escape that would corrupt the enclosing JSON string.
+#
+# THE FENCE ON THE LONE JOINER (`[\s\\]`, not `\s`) IS NOT COSMETIC -- it is
+# what makes this rule terminate, and it was added after #292's own
+# adversarial review. Without it a backslash is AMBIGUOUS: the engine may
+# read it as half of the atomic pair `\\` OR as the lone alternative, so a
+# run of N backslashes has Fibonacci-many tilings. ONE ambiguity, TWO
+# measured defects, both on this door and its ported twin:
+#
+#   * CATASTROPHIC BACKTRACKING. The trailing `(?<!\\)` fails every tiling
+#     that ends on a backslash, so the engine enumerates all of them.
+#     Measured before the fence: `PASSWORD=` + 40 backslashes -> 15.8s;
+#     a serialized event whose secret carried 20 trailing backslashes
+#     (`json.dumps` doubles each one) -> 18.4s. After: a 40,000-backslash
+#     run returns in ~4ms. The vector is not exotic -- any tool output
+#     with a sensitive `NAME=` and a Windows path or an escaped blob is
+#     exactly the env-dump class this module exists to scrub.
+#   * OVER-REDACTION, from the SAME root. An odd tiling shifts PARITY across
+#     a following `\n`: on `MY_PASSWORD=<secret>\` + `\n` + `PATH=/usr/bin`
+#     the engine paired the SECOND and THIRD backslashes and then ate the
+#     separator's `n` as ordinary value material -- swallowing the PATH
+#     line, i.e. breaking the very invariant the paragraph above states.
+#
+# Fencing the lone alternative off a following backslash leaves EXACTLY ONE
+# tiling of any run (pairs, then at most one trailing lone backslash). That
+# is what makes the scan linear AND what keeps the `\n` parity intact. It
+# cannot under-redact: a backslash followed by a backslash is still
+# consumed -- by the pair alternative, atomically, which is the reading this
+# grammar always intended.
 #
 # RESIDUAL, named rather than implied: in PLAIN (unserialized) text, a value
 # whose lone backslash is followed by `n`/`r`/`t`/`u` still ends there -- the
@@ -312,7 +342,7 @@ _ASSIGNMENT_VALUE = (
     r"|(?P<squote>')[^'\"\r\n]{4,}?(?<!\\)(?=')"
     # (c) unquoted run, with the two fenced joiners
     r"|(?:" + _ASSIGNMENT_VALUE_CHAR + r"|[\"'](?=" + _ASSIGNMENT_VALUE_CONT + r")"
-    r"|\\\\|\\(?!\s|(?-i:[nrtu]))){4,}(?<!\\)"
+    r"|\\\\|\\(?![\s\\]|(?-i:[nrtu]))){4,}(?<!\\)"
 )
 
 # The negative lookahead keeps an already-redacted value -- bare, quoted, or

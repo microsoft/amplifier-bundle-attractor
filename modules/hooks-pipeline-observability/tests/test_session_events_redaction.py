@@ -31,6 +31,7 @@ import importlib.util
 import json
 import secrets
 import string
+import time
 from pathlib import Path
 
 import pytest
@@ -456,6 +457,128 @@ def test_issue_289_a_serialized_env_dump_loses_only_the_secret():
     assert f"{_PLURAL_ENV_NAME}=41892" in result
 
 
+# ---------------------------------------------------------------------------
+# (f) Post-review regression: the backslash-run ReDoS, and its over-redacting
+#     twin.  ONE root cause, so the probes live together.
+# ---------------------------------------------------------------------------
+#
+# Found by PR #292's OWN adversarial review, before merge.  Branch (c) joins a
+# backslash two ways -- the atomic pair `\\` and the lone alternative -- and
+# nothing stopped the LONE one from also claiming a backslash that was
+# followed by another backslash.  A backslash was therefore AMBIGUOUS, a run
+# of N of them had Fibonacci-many tilings, and the trailing `(?<!\\)` rejects
+# every tiling that ends on a backslash, so the engine enumerated them all.
+#
+# This seam is where that costs the most: the input is attacker-influenced
+# TOOL OUTPUT, arriving on the hot write path, and the realistic carrier is
+# mundane -- a Windows path, an escaped blob, any `NAME=` followed by a
+# backslash run.  Measured HERE at PR #292's head, before the `[\s\\]` fence:
+#
+#   raw `PASSWORD=` + 40 backslashes                     15.8 s
+#   serialized event, secret + 20 trailing backslashes   18.4 s
+#
+# ...and the SAME ambiguity shifted parity across a following `\n` escape,
+# swallowing the `PATH=/usr/bin` line that section (e) promises survives.
+# After the fence: a 40,000-backslash run returns in ~4 ms, and PATH survives.
+
+#: Wall-clock budget, not a benchmark.  The honest cost of these probes is
+#: microseconds; 500x headroom over the measured 4 ms keeps this immune to CI
+#: jitter while staying unreachable for an exponentially-backtracking rule.
+_REDOS_BUDGET_S = 2.0
+
+
+def _redact_within_budget(text: str, label: str) -> tuple[str, list[str]]:
+    """Redact `text`, failing if it did not finish inside the budget."""
+    started = time.perf_counter()
+    cleaned, findings = redaction.redact_text(text)
+    elapsed = time.perf_counter() - started
+    assert elapsed < _REDOS_BUDGET_S, (
+        f"{label}: took {elapsed:.3f}s (budget {_REDOS_BUDGET_S}s) -- the "
+        "backslash joiner is ambiguous again and the run is being re-tiled "
+        "exponentially"
+    )
+    return cleaned, findings
+
+
+def test_a_backslash_run_does_not_blow_up_the_write_seam():
+    """The ReDoS itself, raw and serialized.
+
+    The ladder is SMALLEST-FIRST on purpose: a regressed rule blows the
+    budget on the first probe in ~16s and never reaches the 40,000-backslash
+    one (which, ambiguous, would not finish this century).  A test that FAILS
+    beats a test that HANGS.
+    """
+    tail = secrets.token_hex(8)
+    name = "MY" + "_PASSWORD"
+    probes = (
+        ("raw, 40 trailing backslashes", "PASSWORD=" + "\\" * 40),
+        (
+            "serialized event, 20 trailing backslashes",
+            json.dumps({"output": f"{name}={tail}" + "\\" * 20}),
+        ),
+        (
+            "serialized event, 40 trailing backslashes",
+            json.dumps({"output": f"{name}={tail}" + "\\" * 40}),
+        ),
+        ("raw, 40000 backslashes (linearity)", "PASSWORD=" + "\\" * 40000),
+    )
+    for label, probe in probes:
+        cleaned, _ = _redact_within_budget(probe, label)
+        assert tail not in cleaned, label
+
+
+def test_a_secret_ending_in_backslashes_still_redacts_at_the_write_seam():
+    """Direction 1 must not regress into a NON-redaction: the value still
+    goes, however many backslashes trail it, and the record still parses."""
+    tail = secrets.token_hex(8)
+    name = "MY" + "_PASSWORD"
+    for k in (1, 2, 3, 20, 40):
+        raw = f"{name}={tail}" + "\\" * k
+        cleaned, findings = _redact_within_budget(raw, f"raw k={k}")
+        assert tail not in cleaned, k
+        assert redaction.REDACTION_MARKER_PREFIX in cleaned, k
+        assert findings == [f"assignment:{name}"], k
+
+        line = json.dumps({"output": f"{name}={tail}" + "\\" * k})
+        cleaned, findings = _redact_within_budget(line, f"serialized k={k}")
+        assert tail not in cleaned, k
+        assert findings == [f"assignment:{name}"], k
+        json.loads(cleaned)  # raises if the escape run was left dangling
+
+
+def test_a_secret_ending_in_a_backslash_does_not_eat_the_next_line():
+    r"""The OVER-REDACTION half of the same defect -- the half a timing
+    budget would never catch.
+
+    A sensitive `<NAME>` assigned `<secret>\`, then `\n`, then
+    `PATH=/usr/bin`, serialized (the name is not spelled out here: this
+    file's own rule is that it never contains a literal
+    `<SENSITIVE_NAME>=<value>` for the leak scan to flag). The
+    secret's own backslash and the separator escape sit adjacent, and an odd
+    tiling used to pair the SECOND and THIRD backslashes, leaving the
+    separator's `n` to be eaten as ordinary value material -- taking the
+    whole PATH line with it.  At THIS seam the original bytes are never
+    written, so an over-redaction here is not recoverable.
+    """
+    tail = secrets.token_hex(8)
+    name = "MY" + "_PASSWORD"
+    for k in (1, 2, 3, 5):
+        dump = (
+            f"{name}={tail}" + "\\" * k
+            + f"\nPATH=/usr/bin\nHOME=/root\n{_PLURAL_ENV_NAME}=41892"
+        )
+        cleaned, findings = _redact_within_budget(
+            json.dumps({"result": dump}), f"env dump k={k}"
+        )
+        assert tail not in cleaned, k
+        assert findings == [f"assignment:{name}"], k
+        result = json.loads(cleaned)["result"]
+        assert redaction.REDACTION_MARKER_PREFIX in result, k
+        assert "PATH=/usr/bin" in result, k
+        assert "HOME=/root" in result, k
+        assert f"{_PLURAL_ENV_NAME}=41892" in result, k
+
+
 @pytest.mark.asyncio
 async def test_a_quoted_secret_redacts_at_the_write_seam(tmp_path):
     """End to end through the real persister (the #288 seam), on a value the
@@ -556,6 +679,17 @@ def test_the_two_doors_do_not_merely_SHARE_a_pattern_they_BEHAVE_alike():
         json.dumps({"result": f"{name}={tail}\nPATH=/usr/bin"}),
         json.dumps({"result": f'{key}="{tail} x"', "note": "keep"}),
         "prefix sk-proj-" + secrets.token_hex(24) + " suffix",
+        # ...and the post-review backslash-run corpus (section (f)): the
+        # shapes that were exponential AND over-redacting must agree at both
+        # doors too -- a fence applied to only ONE door would show up here as
+        # well as in the pattern-equality tripwire above.
+        f"{name}={tail}" + "\\",
+        f"{name}={tail}" + "\\" * 2,
+        f"{name}={tail}" + "\\" * 3,
+        f"{name}={tail}" + "\\" * 40,
+        "PASSWORD=" + "\\" * 40,
+        json.dumps({"output": f"{name}={tail}" + "\\" * 20}),
+        json.dumps({"result": f"{name}={tail}" + "\\" + "\nPATH=/usr/bin\nHOME=/root"}),
     ]
     for probe in probes:
         ported, ported_findings = redaction.redact_text(probe)

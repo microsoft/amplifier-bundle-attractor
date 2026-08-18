@@ -148,12 +148,30 @@ SENSITIVE_NAME_TAILS = (
 #:       terminator).  A backslash joins in two forms: an ESCAPED PAIR
 #:       (``\\``) joins ATOMICALLY -- that is how a literal backslash inside
 #:       a secret reaches this seam once the record is serialized -- while a
-#:       LONE backslash joins UNLESS it opens one of the escapes that encode
-#:       a record/field SEPARATOR (``\n``, ``\r``, ``\t``) or an arbitrary
+#:       LONE backslash joins UNLESS it is followed by ANOTHER backslash
+#:       (that case belongs to the pair -- see the fence below), or it opens
+#:       one of the escapes that encode a record/field SEPARATOR (``\n``,
+#:       ``\r``, ``\t``) or an arbitrary
 #:       code point (``\u``).  Stopping at those is what keeps a serialized
 #:       env dump (``MY_PASSWORD=<secret>\nPATH=/usr/bin`` on ONE line) from
 #:       being swallowed whole.  The run may not END on a backslash, so it
 #:       can never leave a dangling escape that would corrupt the string.
+#:
+#: THE FENCE ON THE LONE JOINER (``[\s\\]``, not ``\s``) IS NOT COSMETIC --
+#: it is what makes this rule TERMINATE, and it matters most HERE, where the
+#: input is attacker-influenced tool output arriving on the hot write path.
+#: Without it a backslash is AMBIGUOUS (half of the atomic pair ``\\``, or
+#: the lone alternative), so a run of N backslashes has Fibonacci-many
+#: tilings and the trailing ``(?<!\\)`` forces the engine to enumerate every
+#: one.  Measured at THIS seam before the fence: a serialized event whose
+#: secret carried 20 trailing backslashes took 18.4s to redact -- one such
+#: event stalls the persister.  After: a 40,000-backslash run returns in
+#: ~4ms.  The SAME ambiguity also over-redacted: an odd tiling shifted
+#: PARITY across a following ``\n`` and swallowed the ``PATH=/usr/bin`` line
+#: the paragraph above promises will survive.  The fence leaves exactly ONE
+#: tiling of any run, which is what makes the scan linear AND keeps the
+#: ``\n`` parity intact.  It cannot under-redact: a backslash before a
+#: backslash is still consumed, by the pair alternative, atomically.
 #:
 #: RESIDUAL, named rather than implied: in PLAIN text a lone backslash
 #: followed by ``n``/``r``/``t``/``u`` still ends the value -- the rule cannot
@@ -174,7 +192,7 @@ _ASSIGNMENT_VALUE = (
     r"|(?P<squote>')[^'\"\r\n]{4,}?(?<!\\)(?=')"
     # (c) unquoted run, with the two fenced joiners
     r"|(?:" + _ASSIGNMENT_VALUE_CHAR + r"|[\"'](?=" + _ASSIGNMENT_VALUE_CONT + r")"
-    r"|\\\\|\\(?!\s|(?-i:[nrtu]))){4,}(?<!\\)"
+    r"|\\\\|\\(?![\s\\]|(?-i:[nrtu]))){4,}(?<!\\)"
 )
 
 # The negative lookahead keeps an already-redacted value -- bare, quoted, or

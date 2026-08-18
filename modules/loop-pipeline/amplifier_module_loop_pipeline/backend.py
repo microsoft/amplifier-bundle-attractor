@@ -604,7 +604,33 @@ class AmplifierBackend:
             )
             if session_id:
                 spawn_outcome.session_id = session_id
-            if fidelity == "full" and graph is not None and thread_key is not None:
+            # output.strip() guard (issue #287): a child can carry an explicit
+            # verdict AND no closing prose (it did its work via tool calls and
+            # ended on a terminal report_outcome).  Appending that exchange puts
+            # an empty turn in the transcript, which
+            # _get_parent_messages_for_thread expands into
+            # {"role": "assistant", "content": ""} for a LATER same-thread spawn
+            # — and some providers reject empty assistant content.
+            #
+            # Append NEITHER half, not just the assistant half: a transcript
+            # entry is an indivisible (instruction, output) exchange that the
+            # emission site always expands into a user+assistant PAIR, and every
+            # other empty-output path already appends nothing — the
+            # non-explicit empty-output branch below returns before reaching an
+            # append, and the tool-loop path never appends at all.  Skipping the
+            # whole exchange keeps this consistent with them (and matches the
+            # pre-#286 behavior for an empty-output child).
+            #
+            # The verdict is unaffected: spawn_outcome (status /
+            # preferred_label / is_explicit) is still returned exactly as the
+            # #231 parent-side fix made it.  Only the empty turn stops being
+            # written.
+            if (
+                fidelity == "full"
+                and graph is not None
+                and thread_key is not None
+                and output.strip()
+            ):
                 self._append_to_transcript(thread_key, node.id, instruction, output)
             return spawn_outcome
 

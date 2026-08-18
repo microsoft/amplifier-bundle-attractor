@@ -23,8 +23,12 @@ one of them is inert:
 | an invented `verdict` variable in a condition | `condition="outcome=success"`, or `condition="context.tool.last_line=<token>"` from a real command |
 | `fidelity="stateless"`, `fidelity="fresh"` -- a real attribute, an invented value | one of the six modes below: `full`, `truncate`, `compact`, `summary:low`, `summary:medium`, `summary:high` |
 
-An unrecognized `shape=` falls back to the **codergen (LLM)** handler -- so a node you meant as a
-gate quietly becomes another model call, and the graph looks gated while nothing is being checked.
+An unrecognized `shape=` is **refused at dispatch** -- `HandlerRegistry.get()` raises, naming the
+shape, the node, and the valid set (specs/EXTENSIONS.md §38; the canonical spec's fall-through to
+the LLM handler is a deliberate divergence, because a typo must not silently re-class a gate as a
+model call). `attractor lint` reports it as a `shape_resolvable` **ERROR** before you ever run.
+So a typo'd shape is the one invented spelling on this page that is *already* loud. The rest are
+not -- which is what the next section is about.
 
 ## The output contract: a `.dot` is not delivered until you have linted it
 
@@ -38,10 +42,28 @@ obligation, which is why this one names **where the result lands**: in the reply
 
 So: author, run the linter, relay what it said -- warnings included, in the same message as the
 file. The linter is what turns a silently-inert attribute into a message a human can read: a node
-carrying an invented `instruction=` surfaces as `[prompt_on_llm_nodes] LLM node 'x' has no prompt
-and no explicit label`. Handing someone a `.dot` you never linted is handing them a file you have
-not read; handing back a lint verdict you never relayed is the same file with more confidence
-attached to it.
+carrying an invented `instruction=` and no `prompt=` surfaces as
+
+```
+WARNING: [VOCAB-001] [fetch_pr] LLM node 'fetch_pr' will run with no prompt: it carries
+`instruction=` but the engine reads `prompt=`.
+```
+
+Handing someone a `.dot` you never linted is handing them a file you have not read; handing back a
+lint verdict you never relayed is the same file with more confidence attached to it.
+
+**And the verdict is the findings, not the exit code.** `attractor lint` exits 0 on warnings by
+design -- the inert twelve-node graph above exits **0**. So "it passed", "exit 0", "no errors" and
+"lint clean" are all things you can say truthfully about a file whose every prompt is dropped.
+There is exactly one clean verdict, and it is the linter's own words:
+
+```
+attractor lint: <file>: OK (no findings)
+```
+
+Anything else is findings, and findings get relayed -- each one, in the reply, next to the file.
+Reporting rc instead of the findings is the same failure as not linting, one step later: it is the
+obligation discharged in a way the reader cannot check.
 
 ### The other half: you cannot certify the file yourself
 

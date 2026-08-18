@@ -378,12 +378,19 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    is in what you hand back.** Not "lint before handing back" -- an obligation
    you can discharge inside your own reasoning is not an obligation, which is
    why this one names where the result lands. A `.dot` that fails
-   `attractor lint` (TOPO-001 through TOPO-010, documented in
-   `docs/DOT-AUTHORING-GUIDE.md`) is not a runnable artifact: fix the findings,
-   re-run, and relay the final verdict with any surviving warnings quoted. If
-   the linter cannot be run here, say that in the handback, in those words, and
-   give the user the exact command -- an unrun lint reported as unrun is honest;
-   an unrun lint left unmentioned is how an inert graph ships.
+   `attractor lint` (TOPO-001 through TOPO-010, CMD-001/002 and VOCAB-001, all
+   documented in `docs/DOT-AUTHORING-GUIDE.md`) is not a runnable artifact: fix
+   the findings, re-run, and relay the final verdict with any surviving warnings
+   quoted. If the linter cannot be run here, say that in the handback, in those
+   words, and give the user the exact command -- an unrun lint reported as unrun
+   is honest; an unrun lint left unmentioned is how an inert graph ships.
+
+   **Relay the findings, not the exit code.** Lint exits 0 on warnings, so
+   "passed" / "exit 0" / "no errors" are all true of a graph whose every prompt
+   was silently dropped -- the measured shape of issue #261, which `VOCAB-001`
+   now reports as a WARNING at rc=0. The only clean verdict is the linter's own
+   `attractor lint: <file>: OK (no findings)`. See
+   `@attractor:context/dot-reference.md` for the full contract.
 
    **The other half of the same contract: you do not certify what you wrote.**
    Lint is a machine verdict, so relay it as a fact. Your own reading of your

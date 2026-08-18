@@ -364,6 +364,16 @@ that in the handback, in those words, and tell the caller the exact command to
 run: `attractor lint <path>`. An unrun lint reported as unrun is honest; an unrun
 lint left unmentioned is the failure.
 
+**3. Relay the findings, not the exit code.** `attractor lint` exits 0 on
+warnings by design, and the inert twelve-node graph above exits **0** -- so
+"passed", "exit 0" and "no errors" are all true of a file whose every prompt was
+dropped. The only clean verdict is the linter's own line
+`attractor lint: <file>: OK (no findings)`; anything else is findings, and each
+one goes in the handback. `VOCAB-001` is the rule that now names this exact
+defect (`LLM node 'x' will run with no prompt: it carries `instruction=` but the
+engine reads `prompt=``) -- a WARNING, at rc=0, which is precisely why summarising
+the exit code instead of the findings would bury it.
+
 ## Your Knowledge Base
 
 You have deep knowledge loaded from these references. **Start with the engine

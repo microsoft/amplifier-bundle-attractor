@@ -1887,6 +1887,33 @@ form (the collision scoped to one node's out-edges, and to the unconditional lab
 §3.3 Step 2 can actually select) fires on zero. That zero is pinned by
 `test_topological_lint.py::TestOutcomeLabelShadowingCalibration`.*
 
+*Addendum (2026-08-18, issue #261): **VOCAB-001** (`WARNING`) joins the same advisory entry point,
+and opens a second family on it — an *inert-vocabulary* rule, about attribute spelling rather than
+topology or command content. It fires on a codergen node that carries **no `prompt=` at all** but
+does carry a spelling from `context/dot-reference.md`'s invented-attribute table (`instruction=`,
+a node-level `goal=`, `attractor_goal=`, `agent=`, `handler=`, `attractor_handler=`). `dot_parser`'s
+`_NODE_FIELD_MAP` promotes exactly `{label, shape, type, prompt}`; everything else survives as an
+inert `node.attrs` entry no handler reads — so such a graph parses, validates, and runs its LLM
+nodes with no prompt, with no error and no visible difference from a configured one. Measured
+(issue #261): two graded sessions authored twelve-node pipelines with `instruction=` on all twelve
+nodes and `prompt=` on none; one of them linted **rc=0** with a single unrelated warning. The
+near-miss sibling `prompt_on_llm_nodes` (in `validate()`) could not see them: it requires no prompt
+**and** no explicit label, and every evidence node was labelled. VOCAB-001 is deliberately advisory
+and can never be an ERROR — it infers *intent* from an attribute the engine is entitled to ignore,
+and a graph may legitimately carry passthrough attributes the rule does not know about. It skips a
+node that has a real `prompt=` (carrying an extra attribute alongside a real prompt is not a
+defect), every non-codergen handler (a tool/human-gate/conditional/fan-in/sub-pipeline node never
+takes a prompt), start and exit nodes, and — unlike `prompt_on_llm_nodes`'s
+`SHAPE_TO_HANDLER.get(shape, "codergen")` — any node whose shape is *unrecognized*, because §38
+above makes that a dispatch refusal and `shape_resolvable` already ERRORs on it; treating it as an
+LLM node would double-diagnose. Measured over this repository's shipped corpus: **zero** of the 33
+`examples/**/*.dot` graphs fire it. Pinned by
+`test_inert_vocabulary_lint.py` (including
+`test_vocab_001_fires_on_zero_shipped_examples`, the calibration pin, and the false-positive class
+in `TestVocab001FalsePositives`). The invalid-`fidelity=` half of issue #261 needed no new rule:
+`fidelity_valid` (WARNING, in `validate()`) already reports it, and
+`TestFidelityValidCoversIssue261` pins that so it cannot silently regress.*
+
 **Why a separate entry point, not folded into `validate()`:** the five TOPO rules are
 judgment calls about pipeline *design quality* (is this graph shaped like a converging
 attractor?), not about whether the graph is *executable*. `validate_or_raise()` — the
@@ -1903,12 +1930,14 @@ never consulted by the engine at run time.
 
 **Implementation locations:**
 - `modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py` — `lint()` entry point;
-  `_check_dead_conditional_edge()` (TOPO-001) and the four sibling TOPO-002–005 checks
+  `_check_dead_conditional_edge()` (TOPO-001) and the four sibling TOPO-002–005 checks;
+  `_check_inert_prompt_vocabulary()` (VOCAB-001)
 - `modules/pipeline-runner/amplifier_module_pipeline_runner/cli.py` — `attractor lint` subcommand
 - `docs/DOT-AUTHORING-GUIDE.md` — "Static Lint Rules (`attractor lint`)" section documents all
   five rules with fix examples
 - Tests: `modules/loop-pipeline/tests/test_topological_lint.py`,
-  `modules/loop-pipeline/tests/test_examples_lint_clean.py`
+  `modules/loop-pipeline/tests/test_examples_lint_clean.py`,
+  `modules/loop-pipeline/tests/test_inert_vocabulary_lint.py`
 
 ---
 

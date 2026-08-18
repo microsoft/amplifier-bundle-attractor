@@ -59,7 +59,9 @@ the independent path: `@attractor:examples/authoring/`, or a fresh reviewer.
   Vocabulary: `@attractor:context/dot-reference.md`.
 - **The file is not delivered until `attractor lint <file>` has run and its
   verdict is in your reply.** Lint not relayed is lint not run: you hand over
-  an unverified file.
+  an unverified file. Relay the **findings**, not the exit code -- lint exits 0
+  on warnings, and `VOCAB-001` ("will run with no prompt") is a warning. The
+  only clean verdict is `OK (no findings)`.
 
 ## Depth, on demand
 

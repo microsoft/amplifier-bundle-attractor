@@ -18,6 +18,11 @@ CMD-001–002 are command-content lint rules that inspect ``tool_command``
 strings for two specific hazard shapes: pipe-masked exit codes (CMD-001) and
 always-true trailing sentinels (CMD-002).  Both are lint-only (WARNING
 severity) and do not change run-time behaviour.
+
+VOCAB-001 is an inert-vocabulary lint rule: an LLM node that carries no
+``prompt=`` at all but does carry an invented spelling the parser keeps and no
+handler ever reads (``instruction=``, ``agent=``, ...).  It is lint-only
+(WARNING severity) and does not change run-time behaviour.
 """
 
 from __future__ import annotations
@@ -133,7 +138,9 @@ def lint(graph: Graph) -> list[Diagnostic]:
     (TOPO-001–010) that reason about cycle structure, handler semantics,
     evidence-routing patterns and condition-key hazards, plus the two
     command-content rules (CMD-001–002)
-    that inspect ``tool_command`` strings for hazard shapes.
+    that inspect ``tool_command`` strings for hazard shapes, plus the
+    inert-vocabulary rule (VOCAB-001) that catches an LLM node configured
+    entirely in attribute spellings the engine does not read.
 
     All lint-only rules do not change run-time validation behaviour.  Existing
     graphs that execute today will not start failing at ``run`` time because of
@@ -158,6 +165,7 @@ def lint(graph: Graph) -> list[Diagnostic]:
     _check_folder_dot_file_absent(graph, diags)
     _check_pipe_masked_exit_code(graph, diags)
     _check_always_true_sentinel(graph, diags)
+    _check_inert_prompt_vocabulary(graph, diags)
     return diags
 
 
@@ -2998,3 +3006,146 @@ def _find_all_bare_pipes(cmd: str) -> list[int]:
                     positions.append(i)
         i += 1
     return positions
+
+
+# ---------------------------------------------------------------------------
+# Inert-vocabulary rule — VOCAB-001
+#
+# The failure this catches is silent by construction.  `_NODE_FIELD_MAP` in
+# `dot_parser.py` promotes exactly {label, shape, type, prompt} to Node
+# fields; every other attribute survives as an inert `node.attrs` entry that
+# no handler ever reads.  So a `.dot` authored with `instruction=` instead of
+# `prompt=` parses cleanly, validates cleanly, and runs its LLM nodes with no
+# prompt at all — there is no error, no warning, and no diff between
+# "configured" and "unconfigured" that a reader can see.
+#
+# Measured (issue #261): two graded sessions authored twelve-node pipelines
+# carrying `instruction=` on all twelve nodes and `prompt=` on none.  One of
+# them linted rc=0 with a single unrelated warning.
+#
+# `prompt_on_llm_nodes` (in `validate()`) is the near-miss sibling: it fires
+# only when a codergen node has NO prompt *and* NO explicit label.  Both
+# evidence files label every node, so it stayed silent on all twenty-four.
+# This rule asks the sharper question — is the prompt *missing*, and is there
+# an inert attribute here that the author plainly wrote as the prompt?
+# ---------------------------------------------------------------------------
+
+# Invented spellings the reference card (`context/dot-reference.md`) names as
+# inert, mapped to the attribute the engine actually reads.  Deliberately
+# limited to the card's own table: the card is declared the single attribute
+# vocabulary, so the lint rule and the card cannot drift into two lists.
+#
+# `goal` is node-scoped here.  Graph-level `goal=` is real (it is in
+# `dot_parser._GRAPH_FIELD_ATTRS` and backs `$goal` substitution); a
+# *node*-level `goal=` is not read by anything.  This rule only ever inspects
+# `node.attrs`, so the real graph attribute is never touched.
+_INERT_PROMPT_SPELLINGS: dict[str, str] = {
+    "instruction": "prompt",
+    "goal": "prompt",
+    "attractor_goal": "prompt",
+}
+
+# Invented spellings for "who executes this node".  A node carrying one of
+# these was written as though naming an executor were the same as configuring
+# one; the engine picks the executor from `shape=` alone.  They are reported
+# by the same rule because the *consequence* is identical and worse: the node
+# has no prompt AND the delegation the author wrote is inert.
+_INERT_HANDLER_SPELLINGS: dict[str, str] = {
+    "agent": "shape=box",
+    "handler": "shape=box",
+    "attractor_handler": "shape=box",
+}
+
+
+def _is_codergen_node(node: Node) -> bool:
+    """True when this node will actually dispatch to the LLM (codergen) handler.
+
+    Deliberately stricter than ``prompt_on_llm_nodes``'s
+    ``SHAPE_TO_HANDLER.get(node.shape, "codergen")``: an *unrecognized* shape
+    is NOT treated as an LLM node here.  Since PR #19 the engine refuses at
+    dispatch rather than falling back to codergen (``HandlerRegistry.get()``
+    raises; specs/EXTENSIONS.md §38), and ``shape_resolvable`` already emits
+    an ERROR for exactly that node.  Treating an unknown shape as codergen
+    would double-diagnose a node the author is already being told to fix.
+
+    A missing ``shape=`` is codergen: ``Node.shape`` defaults to ``"box"``.
+    """
+    if node.is_start_node() or node.is_exit_node():
+        return False
+    if node.type:
+        return node.type == "codergen"
+    return SHAPE_TO_HANDLER.get(node.shape) == "codergen"
+
+
+def _check_inert_prompt_vocabulary(graph: Graph, diags: list[Diagnostic]) -> None:
+    """VOCAB-001: an LLM node with no ``prompt=`` that carries an inert spelling.
+
+    Fires when ALL of the following hold:
+
+    * the node dispatches to the codergen (LLM) handler — see
+      ``_is_codergen_node``;
+    * ``node.prompt`` is empty — the node will run with no prompt at all;
+    * ``node.attrs`` carries at least one spelling from the reference card's
+      invented-attribute table (``instruction=``, ``agent=``, …).
+
+    Deliberately silent on:
+
+    * a node that has ``prompt=`` and *also* carries some other attribute —
+      the prompt is real, so the node is configured.  Carrying an extra
+      attribute is not by itself a defect, and warning about it would make
+      the rule noise on every graph using a custom passthrough attribute.
+    * a tool / human-gate / conditional / fan-in node with no prompt — those
+      never take one, and their real configuration lives in ``tool_command=``,
+      ``goal_gate=``, ``condition=``.
+    * a node with a typo'd shape — ``shape_resolvable`` owns that node.
+    * a node with no prompt and no inert spelling — that is
+      ``prompt_on_llm_nodes``'s existing territory, not this rule's.
+
+    Severity: WARNING.  It must never be an ERROR: the diagnosis rests on
+    reading the author's *intent* from an attribute the engine is entitled to
+    ignore, and a graph can legitimately carry passthrough attributes this
+    rule does not know about.  Advisory keeps ``attractor lint`` at rc=0 and
+    keeps ``validate_or_raise()`` (the admission gate) untouched.
+    """
+    for node in graph.nodes.values():
+        if not _is_codergen_node(node):
+            continue
+        if node.prompt:
+            continue  # configured — an extra attribute alongside a real prompt is not a defect
+
+        found_prompt = [a for a in _INERT_PROMPT_SPELLINGS if a in node.attrs]
+        found_handler = [a for a in _INERT_HANDLER_SPELLINGS if a in node.attrs]
+        if not found_prompt and not found_handler:
+            continue  # no prompt, but nothing here claims to be one
+
+        carried = ", ".join(f"`{a}=`" for a in found_prompt + found_handler)
+        if found_prompt:
+            reads = "`prompt=`"
+            fix = (
+                f"Rename {', '.join(f'`{a}=`' for a in found_prompt)} to `prompt=` on "
+                f"node '{node.id}'."
+            )
+        else:
+            reads = "`prompt=`, and picks the handler from `shape=` alone"
+            fix = (
+                f"Add a `prompt=` attribute to node '{node.id}'; "
+                f"{', '.join(f'`{a}=`' for a in found_handler)} does not select a handler "
+                f"(use `shape=box` for an LLM node)."
+            )
+
+        diags.append(
+            Diagnostic(
+                rule="VOCAB-001",
+                severity="WARNING",
+                message=(
+                    f"LLM node '{node.id}' will run with no prompt: it carries "
+                    f"{carried} but the engine reads {reads}.  The parser keeps "
+                    f"unknown attributes on the node and no handler ever looks at "
+                    f"them, so this node is inert while reading as configured.  "
+                    f"See context/dot-reference.md for the full attribute "
+                    f"vocabulary and DOT-AUTHORING-GUIDE.md (VOCAB-001)."
+                ),
+                node_id=node.id,
+                fix=fix,
+            )
+        )

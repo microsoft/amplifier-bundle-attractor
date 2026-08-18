@@ -294,9 +294,51 @@ async def drive_engine(
         # Always on: the incident path was exactly this invoker.  A hermetic
         # harness that mocks spawn satisfies the static check by setting the
         # provider's env var (presence is checked, never validity).
+        #
+        # Issue #283 -- the residual of #195/#280 on THIS path.  A profile is
+        # a STRING naming an agent; knowing the string is MAPPED is not
+        # knowing the agent it names can be RESOLVED.  "profile mounted +
+        # credential set" therefore used to accept a configuration whose
+        # EVERY spawn was guaranteed to fail, and the run drained its whole
+        # budget in exactly the #155 crash loop instead of refusing at
+        # startup.  #280 closed that at `PipelineOrchestrator.execute()`;
+        # drive_engine still passed no `resolvable_profiles` and so stayed
+        # fail-open -- and drive_engine IS the original #155 incident invoker
+        # (`attractor run` -> run_pipeline -> here).
+        #
+        # The set comes from the engine's OWN shared resolver,
+        # `_spawn_resolvable_agents` -- the single home #280 established for
+        # this rule, and exactly what `execute()` step 5b calls.  Re-deriving
+        # `coordinator.config["agents"]` here would be a second copy of a rule
+        # that MUST stay identical to what the spawn actually resolves
+        # against; a preflight seeing a different set than the backend is
+        # precisely the #196 false-refusal disease.
+        #
+        # Fail-closed when knowable, benefit of the doubt when not -- the same
+        # posture as execute():
+        #   * `None` (no `session.spawn` capability, or a coordinator whose
+        #     config/agents is not a statically inspectable Mapping -- e.g. a
+        #     bare stub coordinator) means "not knowable here, do not police
+        #     it", never "everything resolves".  Those paths keep their
+        #     current behavior exactly.
+        #   * a discovery CRASH becomes the empty set (refuse), never None:
+        #     unknowable-because-it-broke must not silently re-open the hole.
+        from amplifier_module_loop_pipeline import _spawn_resolvable_agents
         from amplifier_module_loop_pipeline.preflight import check_provider_preflight
 
-        check_provider_preflight(graph, profiles=dict(profiles or DEFAULT_PROFILES))
+        # ONE profiles dict, shared with the AmplifierBackend constructed
+        # below, so the map the preflight judges is literally the object the
+        # backend routes with -- not an equal-looking rebuild of it.
+        resolved_profiles = dict(profiles or DEFAULT_PROFILES)
+        try:
+            resolvable_profiles = _spawn_resolvable_agents(coordinator)
+        except Exception:
+            resolvable_profiles = frozenset()
+        check_provider_preflight(
+            graph,
+            profiles=resolved_profiles,
+            resolvable_profiles=resolvable_profiles,
+        )
 
         # Default engine/handler observability to the coordinator's own hook stack
         # when the caller didn't supply hooks. A mounted observability hook (e.g.
@@ -312,8 +354,14 @@ async def drive_engine(
         effective_hooks = hooks if hooks is not None else getattr(coordinator, "hooks", None)
 
         backend = AmplifierBackend(
+            # The SAME coordinator the preflight above read
+            # `config["agents"]` from, and the SAME profiles dict it judged:
+            # `AmplifierBackend._run_with_spawn` looks each profile up in
+            # `coordinator.config["agents"]`, which is precisely the mapping
+            # `_spawn_resolvable_agents(coordinator)` returned the keys of.
+            # Nothing between that call and this one mutates either.
             coordinator=coordinator,
-            profiles=dict(profiles or DEFAULT_PROFILES),
+            profiles=resolved_profiles,
         )
         registry = HandlerRegistry(
             HandlerContext(

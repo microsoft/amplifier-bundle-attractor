@@ -627,7 +627,13 @@ def test_profile_naming_a_resolvable_agent_stays_serviceable():
 def test_resolvable_profiles_none_does_not_police_adapter_resolution():
     """``None`` means "not knowable on this path", never "everything resolves":
     the check is skipped, preserving every caller that cannot supply the set
-    (no coordinator, no session.spawn, a stub coordinator, drive_engine)."""
+    (no coordinator, no session.spawn, a stub coordinator).
+
+    ``drive_engine`` used to be on that list and no longer is: issue #283 wired
+    it to the same ``_spawn_resolvable_agents`` resolver, so it supplies the set
+    whenever a coordinator with ``session.spawn`` is in scope -- which is the
+    production case -- and passes ``None`` only on the genuinely-unknowable
+    no-spawn path."""
     graph = parse_dot(_DOT_DECLARED_OPENAI)
     check_provider_preflight(
         graph,

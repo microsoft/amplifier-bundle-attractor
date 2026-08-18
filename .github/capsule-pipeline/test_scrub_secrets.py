@@ -29,6 +29,7 @@ import contextlib
 import io
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -730,6 +731,238 @@ class ScrubTests(unittest.TestCase):
         proc2 = run_cli(["scan", str(self.root / "does-not-exist")])
         self.assertEqual(proc2.returncode, 0)
 
+
+# ---- issue #289: the VALUE grammar (quote / backslash / space escapees) ----
+#
+# The pre-#289 value class `[^\s"'\\]{4,}` stopped at the first whitespace,
+# quote or backslash, so a sensitive assignment whose value merely CONTAINED
+# one of those in its first few characters escaped BOTH scrub doors -- this
+# gate and the session-event write seam that ports these same patterns.
+# Measured in PR #288's adversarial review: 0 of 500 20-char-tail escapees
+# caught. These tests pin BOTH directions of the widening:
+#
+#   1. the escape cases are now redacted (the fix), and
+#   2. nothing innocent moved (the crux -- an over-reaching value class is
+#      how this file corrupted a shipped artifact in 2026-08-13, and at the
+#      write seam it would destroy the JSON record instead of the secret).
+#
+# Every fake secret below is MINTED AT RUNTIME. A long credential-shaped
+# literal committed to this file would be secret-shaped material in the repo,
+# which the leak scan correctly refuses.
+
+
+def fake_tail(nbytes: int = 8) -> str:
+    """A fake secret tail, minted per run.
+
+    `token_hex` deliberately: hex is provably sub-threshold for the layer-4
+    entropy heuristic (16 symbols cannot carry 4.5 bits/char) and cannot
+    contain `sk-`/`gh?_`/`github_pat_`, so a finding on these probes can only
+    be the LAYER-2 assignment rule -- never a lucky entropy or token hit.
+    """
+    return secrets.token_hex(nbytes)
+
+
+class AssignmentValueGrammarTests(unittest.TestCase):
+    """Issue #289: values that begin with, or contain, a quote/backslash/space."""
+
+    def scrub(self, text: str) -> tuple[str, list[str]]:
+        return scrub_secrets.scrub_text(text, {})
+
+    # ---- direction 1: the escapees are caught ----
+
+    def test_issue_289_escape_cases_are_now_redacted(self) -> None:
+        """The issue's named cases, plus the variants they generalize to.
+
+        Each probe is `<SENSITIVE_NAME>=<value>` where the value carries a
+        quote/backslash/space in the first few characters. Before #289 the
+        first two redacted NOTHING and the rest leaked a tail; all of them
+        must now come out with the value gone.
+        """
+        tail = fake_tail()
+        cases = {
+            # value contains a backslash at char 4 -- redacted NOTHING before
+            "backslash-inside": f"PASSWORD=abc\\{tail}",
+            # value contains a single quote at char 4 -- redacted NOTHING before
+            "apostrophe-inside": f"PASSWORD=abc'{tail}",
+            # value contains a double quote -- the tail survived before
+            "double-quote-inside": f"MY_PASSWORD=abcd\"{tail}",
+            # value BEGINS with a backslash / quote
+            "leading-backslash": f"GH_TOKEN=\\{tail}",
+            "leading-double-quote": f'GH_TOKEN="{tail}"',
+            "leading-single-quote": f"CLIENT_SECRET='{tail}'",
+            # quoted value with internal spaces -- truncated at the space before
+            "quoted-with-spaces": f'OPENAI_API_KEY="{tail} and more {tail}"',
+            "single-quoted-with-spaces": f"AWS_SECRET_ACCESS_KEY='{tail} more'",
+            # a Windows-path-shaped value (backslashes throughout)
+            "path-shaped": f"DB_PASSWORD=C:\\Secrets\\{tail}",
+        }
+        for name, line in cases.items():
+            with self.subTest(case=name):
+                after, shapes = self.scrub(line)
+                self.assertNotIn(tail, after, f"{name}: the value survived the scrub")
+                self.assertIn("[REDACTED:assignment]", after)
+                self.assertTrue(shapes, f"{name}: redacted but reported no shape")
+
+                # And the READ-ONLY gate must independently SEE it, or the
+                # upload gate stays green on a line that carries a secret.
+                sub = tempfile.TemporaryDirectory()
+                self.addCleanup(sub.cleanup)
+                Path(sub.name, "x.log").write_text(line + "\n")
+                proc = run_cli(["scan", sub.name])
+                self.assertEqual(proc.returncode, 1, f"{name}: {proc.stdout}")
+                self.assertIn("shape=assignment:", proc.stdout)
+
+    def test_a_quoted_value_keeps_its_quotes(self) -> None:
+        """Structure is preserved: the opening quote is re-emitted and the
+        closing quote is matched by LOOKAHEAD, never consumed. A reader (and
+        a JSON parser) still sees a quoted value, just not the secret."""
+        tail = fake_tail()
+        for line, expected in (
+            (f'OPENAI_API_KEY="{tail} x"', 'OPENAI_API_KEY="[REDACTED:assignment]"'),
+            (f"CLIENT_SECRET='{tail} x'", "CLIENT_SECRET='[REDACTED:assignment]'"),
+        ):
+            with self.subTest(line=line.split("=")[0]):
+                after, _ = self.scrub(line)
+                self.assertEqual(after, expected)
+
+    def test_an_already_redacted_value_is_not_re_redacted(self) -> None:
+        """The negative lookahead now has to cover three spellings of an
+        already-scrubbed value, not one."""
+        for line in (
+            "PASSWORD=[REDACTED:assignment]",
+            'API_KEY="[REDACTED:assignment]"',
+            "CLIENT_SECRET='[REDACTED:assignment]'",
+            r'{"out": "API_KEY=\"[REDACTED:assignment]\""}',
+        ):
+            with self.subTest(line=line):
+                after, shapes = self.scrub(line)
+                self.assertEqual(after, line)
+                self.assertEqual(shapes, [])
+
+    # ---- direction 2 (the crux): nothing innocent moved ----
+
+    def test_innocent_lines_survive_byte_identical(self) -> None:
+        """The widened value class must not reach one byte further than the
+        value. These are the shapes ordinary evidence is made of."""
+        innocent = (
+            "total_tokens=41892",
+            "input_tokens=5000, output_tokens=120",
+            "path=/some/dir",
+            'note="hello world"',
+            "model=claude-sonnet-4",
+            'log: user said "the password is wrong" and retried',
+            json.dumps({"model": "claude", "note": "see docs"}),
+            json.dumps({"usage": {"total_tokens": 41892}, "note": "don't worry"}),
+            "api_key_name=OPENAI_API_KEY_ALT",
+            "password_field=pw1",
+        )
+        for line in innocent:
+            with self.subTest(line=line):
+                after, shapes = self.scrub(line)
+                self.assertEqual(after, line, "innocent content was rewritten")
+                self.assertEqual(shapes, [])
+
+    def test_only_the_value_is_redacted_not_what_follows_it(self) -> None:
+        """An unquoted value still stops DEAD at whitespace, and a quoted one
+        at its closing quote -- so a trailing non-secret token on the same
+        line, and the rest of the file, survive."""
+        tail = fake_tail()
+        # NB: the survivor is spelled `next_field`, not `trailing_token` --
+        # `..._token` IS a sensitive name tail, so that spelling would be a
+        # correctly-redacted second assignment, not a survivor.
+        cases = (
+            (f"PASSWORD={tail} next_field=keepme", "next_field=keepme"),
+            (f'API_KEY="{tail}" next_field=keepme', "next_field=keepme"),
+            (f"PASSWORD=abc\\{tail} next_field=keepme", "next_field=keepme"),
+            (f"PASSWORD=abcd\"{tail} next_field=keepme", "next_field=keepme"),
+        )
+        for line, survivor in cases:
+            with self.subTest(line=line.split("=")[0]):
+                after, _ = self.scrub(line)
+                self.assertNotIn(tail, after)
+                self.assertIn(survivor, after)
+
+    def test_a_serialized_env_dump_loses_only_the_secret_line(self) -> None:
+        """The incident's own shape, and the sharpest over-redaction trap: an
+        ENTIRE env dump serialized onto ONE JSON line, its lines separated by
+        `\\n` ESCAPES rather than real newlines. A value class that treated a
+        backslash as ordinary would swallow the whole dump."""
+        tail = fake_tail()
+        line = json.dumps(
+            {"result": f"MY_PASSWORD={tail}\nPATH=/usr/bin\nHOME=/root\ntotal_tokens=41892"}
+        )
+        after, shapes = self.scrub(line)
+        self.assertNotIn(tail, after)
+        self.assertEqual(shapes, ["assignment:MY_PASSWORD"])
+        parsed = json.loads(after)
+        self.assertIn("PATH=/usr/bin", parsed["result"])
+        self.assertIn("HOME=/root", parsed["result"])
+        self.assertIn("total_tokens=41892", parsed["result"])
+
+    def test_a_redaction_never_crosses_a_json_string_boundary(self) -> None:
+        """The write-seam invariant, proven here at the canonical door: the
+        redacted line still PARSES and every field other than the one holding
+        the secret is byte-identical.
+
+        This is not decoration. The persister that shares this rule re-parses
+        its redacted line and WITHHOLDS the payload when it no longer parses,
+        so a rule that crosses a string boundary costs the whole event.
+        """
+        tail = fake_tail()
+        payloads = (
+            f"MY_PASSWORD={tail}",
+            f'MY_PASSWORD="{tail} with spaces"',
+            f"MY_PASSWORD='{tail}'",
+            f"MY_PASSWORD=abc\\{tail}",
+            f'MY_PASSWORD=abcd"{tail}',
+            f"MY_PASSWORD='{tail}",  # unterminated single quote
+            f'MY_PASSWORD="{tail}',  # unterminated double quote
+            f"MY_PASSWORD={tail}\\",  # value ends on a backslash
+            f'MY_PASSWORD={tail}"',  # value ends on a quote
+            f"MY_PASSWORD={tail}\nPATH=/usr/bin",
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload.replace(tail, "<tail>")):
+                record = {
+                    "event": "tool:post",
+                    "data": {"result": payload},
+                    "note": 'keep me: "quoted", don\'t drop, ends with \\',
+                    "n": 7,
+                }
+                after, _ = self.scrub(json.dumps(record))
+                parsed = json.loads(after)  # raises if the boundary was crossed
+                self.assertEqual(list(parsed), list(record))
+                self.assertEqual(parsed["note"], record["note"])
+                self.assertEqual(parsed["n"], record["n"])
+                self.assertNotIn(tail, after)
+
+    def test_capsule_gate_token_math_still_survives_the_widened_rule(self) -> None:
+        """The 2026-08-13 corruption class, re-run against the WIDER value
+        rule: the name anchor is what protects these, and widening the value
+        must not have quietly given the name back its reach."""
+        original = "\n".join(CAPSULE_GATE_LINES_FROM_PR_205) + "\n"
+        after, shapes = self.scrub(original)
+        self.assertEqual(after, original)
+        self.assertEqual(shapes, [])
+
+    def test_known_residual_single_quoted_value_holding_a_double_quote(self) -> None:
+        """An honestly-pinned RESIDUAL, not a claim of completeness.
+
+        The single-quoted branch excludes `"` from its content so that an
+        unterminated `'` inside a JSON string cannot run past that string's
+        closing `"` and delete an unrelated field. The price is that a
+        single-quoted value which itself contains a double quote is not
+        covered. Unchanged from the pre-#289 rule (which also missed it), so
+        this is a residual, not a regression -- and it is a NON-redaction,
+        never an over-redaction.
+        """
+        tail = fake_tail()
+        line = f"CLIENT_SECRET='he said \"{tail}\"'"
+        after, shapes = self.scrub(line)
+        self.assertEqual(after, line)  # residual: not redacted
+        self.assertEqual(shapes, [])
+        # The gate's entropy layer is the backstop for material like this;
+        # what matters for THIS rule is that it does not over-reach instead.
 
 if __name__ == "__main__":
     unittest.main()

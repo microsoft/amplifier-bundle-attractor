@@ -349,6 +349,136 @@ async def test_redaction_failure_withholds_the_payload_instead_of_writing_it_raw
 
 
 # ---------------------------------------------------------------------------
+# (e) Issue #289: values that begin with, or contain, a quote/backslash/space
+# ---------------------------------------------------------------------------
+#
+# The pre-#289 value class `[^\s"'\\]{4,}` stopped at the first whitespace,
+# quote or backslash, so a secret carrying one of those in its first few
+# characters escaped BOTH doors -- this seam and the canonical upload gate.
+# The widened grammar is shared (the tripwire below pins it), so it is proven
+# HERE too: the write seam is the door where an over-reaching rule costs the
+# most, because the persister re-parses its own output and WITHHOLDS a payload
+# that no longer parses.
+
+
+def _escape_case_payloads(tail: str) -> dict[str, str]:
+    """Issue #289's named cases plus the variants they generalize to.
+
+    `tail` is minted by the caller from ``secrets`` -- nothing credential-
+    shaped is written down in this file.
+    """
+    name = "MY" + "_PASSWORD"
+    key = "SOME_API" + "_KEY"
+    return {
+        "backslash-inside": f"{name}=abc\\{tail}",
+        "apostrophe-inside": f"{name}=abc'{tail}",
+        "double-quote-inside": f'{name}=abcd"{tail}',
+        "leading-backslash": f"{name}=\\{tail}",
+        "double-quoted-with-spaces": f'{key}="{tail} and more"',
+        "single-quoted": f"{key}='{tail}'",
+        "windows-path-shaped": f"{name}=C:\\Secrets\\{tail}",
+    }
+
+
+def test_issue_289_escape_cases_redact_at_the_write_seam():
+    """Direction 1: every escapee is now redacted by the ported rule."""
+    tail = secrets.token_hex(8)
+    for case, payload in _escape_case_payloads(tail).items():
+        cleaned, findings = redaction.redact_text(payload)
+        assert tail not in cleaned, f"{case}: the value survived redaction"
+        assert redaction.REDACTION_MARKER_PREFIX in cleaned, case
+        assert findings and all(f.startswith("assignment:") for f in findings), case
+
+
+def test_issue_289_the_widened_rule_still_leaves_innocent_content_verbatim():
+    """Direction 2 (the crux): nothing innocent moves.
+
+    A value class that reached one byte further than the value would corrupt
+    the forensic record this seam exists to produce -- and at THIS door the
+    original bytes are never written, so there is nothing left to recover.
+    """
+    innocent = (
+        f"{_PLURAL_ENV_NAME}=41892",
+        "path=/some/dir",
+        'note="hello world"',
+        "model=claude-sonnet-4",
+        'the user wrote "my password is wrong" in the ticket',
+        json.dumps({"model": "claude", "note": "see docs"}),
+        json.dumps({"usage": {"total_tokens": 41892}, "note": "don't worry"}),
+    )
+    for line in innocent:
+        assert redaction.redact_text(line) == (line, []), line
+
+
+def test_issue_289_a_redaction_never_crosses_a_json_string_boundary():
+    """The invariant this seam actually depends on, exercised on the shapes
+    that would break it: the redacted line still PARSES, and every field
+    other than the one holding the secret is byte-identical."""
+    tail = secrets.token_hex(8)
+    payloads = list(_escape_case_payloads(tail).values()) + [
+        f"MY{'_PASSWORD'}='{tail}",  # unterminated single quote
+        f'MY{"_PASSWORD"}="{tail}',  # unterminated double quote
+        f"MY{'_PASSWORD'}={tail}\\",  # value ends on a backslash
+        f'MY{"_PASSWORD"}={tail}"',  # value ends on a quote
+        f"MY{'_PASSWORD'}={tail}\nPATH=/usr/bin\nHOME=/root",  # env dump
+    ]
+    for payload in payloads:
+        record = {
+            "event": "tool:post",
+            "data": {"result": payload},
+            "note": 'keep me: "quoted", don\'t drop, ends with \\',
+            "n": 7,
+        }
+        line = json.dumps(record, ensure_ascii=False)
+        cleaned, _ = redaction.redact_text(line)
+        parsed = json.loads(cleaned)  # raises if a string boundary was crossed
+        assert list(parsed) == list(record)
+        assert parsed["note"] == record["note"]
+        assert parsed["n"] == record["n"]
+        assert tail not in cleaned
+
+
+def test_issue_289_a_serialized_env_dump_loses_only_the_secret():
+    """The incident's own shape and the sharpest over-redaction trap: a whole
+    env dump on ONE serialized line, its records separated by `\\n` ESCAPES.
+    A rule that treated a backslash as ordinary would swallow the lot."""
+    tail = secrets.token_hex(8)
+    name = "MY" + "_PASSWORD"
+    line = json.dumps(
+        {"result": f"{name}={tail}\nPATH=/usr/bin\nHOME=/root\n{_PLURAL_ENV_NAME}=41892"}
+    )
+    cleaned, findings = redaction.redact_text(line)
+    assert tail not in cleaned
+    assert findings == [f"assignment:{name}"]
+    result = json.loads(cleaned)["result"]
+    assert "PATH=/usr/bin" in result
+    assert "HOME=/root" in result
+    assert f"{_PLURAL_ENV_NAME}=41892" in result
+
+
+@pytest.mark.asyncio
+async def test_a_quoted_secret_redacts_at_the_write_seam(tmp_path):
+    """End to end through the real persister (the #288 seam), on a value the
+    pre-#289 rule truncated at the first space: the file must never hold the
+    secret, the record must still parse, and the quotes must survive so the
+    line stays readable."""
+    sessions = tmp_path / "sessions"
+    persister = SessionEventPersister(lambda: str(sessions))
+    tail = secrets.token_hex(8)
+    name = "SOME_SERVICE" + "_TOKEN"
+    await persister.make_handler("tool:post")(
+        "tool:post",
+        {"session_id": "sid-289", "result": f'{name}="{tail} with spaces"\n'},
+    )
+
+    path = sessions / "sid-289" / "events.jsonl"
+    assert tail not in path.read_text()
+    record = _read_events(path)[0]
+    assert f'{name}="[REDACTED:assignment]"' in record["data"]["result"]
+    assert record["redaction"]["shapes"] == [f"assignment:{name}"]
+
+
+# ---------------------------------------------------------------------------
 # Drift tripwire: the ported shapes must stay identical to the canonical set
 # ---------------------------------------------------------------------------
 
@@ -397,3 +527,41 @@ def test_every_ported_shape_actually_redacts():
         assert value not in cleaned
         assert cleaned == f"prefix [REDACTED:{shape}] suffix"
         assert findings == [shape]
+
+
+def test_the_two_doors_do_not_merely_SHARE_a_pattern_they_BEHAVE_alike():
+    """Pattern equality is necessary but not sufficient: the two copies also
+    apply the pattern with their own substitution function, and a drift THERE
+    would be invisible to the equality assertions above.
+
+    So the same probe corpus goes through both doors and the REDACTED TEXT
+    must match byte for byte -- including the issue #289 shapes, where the
+    substitution has to re-emit an opening quote that comes from one of two
+    alternative groups.
+    """
+    canonical = _load_canonical_scrubber()
+    tail = secrets.token_hex(8)
+    name = "MY" + "_PASSWORD"
+    key = "SOME_API" + "_KEY"
+    probes = [
+        f"{name}={tail}",
+        f"{name}=abc\\{tail}",
+        f"{name}=abc'{tail}",
+        f'{name}=abcd"{tail}',
+        f'{key}="{tail} with spaces"',
+        f"{key}='{tail}'",
+        f"{name}=\\{tail}",
+        f"{_PLURAL_ENV_NAME}=41892",
+        'note="hello world"',
+        json.dumps({"result": f"{name}={tail}\nPATH=/usr/bin"}),
+        json.dumps({"result": f'{key}="{tail} x"', "note": "keep"}),
+        "prefix sk-proj-" + secrets.token_hex(24) + " suffix",
+    ]
+    for probe in probes:
+        ported, ported_findings = redaction.redact_text(probe)
+        canon, canon_shapes = canonical.scrub_text(probe, {})
+        assert ported == canon, f"the two doors redacted {probe!r} differently"
+        # The shape vocabularies are reported differently by design (the gate
+        # de-duplicates per pattern, the seam counts spans), so compare the
+        # SET of shapes, which is the part both doors promise.
+        assert set(ported_findings) == set(canon_shapes), probe

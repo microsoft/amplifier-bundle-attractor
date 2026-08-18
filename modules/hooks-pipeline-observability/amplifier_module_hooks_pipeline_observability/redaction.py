@@ -107,12 +107,83 @@ SENSITIVE_NAME_TAILS = (
     "CREDENTIALS?",
 )
 
+#: THE VALUE GRAMMAR (issue #289), copied from the canonical set with the
+#: rest of layer 2.  The pre-#289 rule spelled a value as ONE character class
+#: -- ``[^\s"'\\]{4,}`` -- which stops at the FIRST whitespace, quote or
+#: backslash, so a secret containing one of those within its first few
+#: characters escaped BOTH doors: ``PASSWORD=abc\<tail>`` and
+#: ``PASSWORD=abc'<tail>`` redacted NOTHING (the class dies at char 3),
+#: ``PASSWORD=abcd"<tail>`` left the tail, and ``API_KEY="secret value"``
+#: redacted only up to the first space.
+#:
+#: A value is now one of three shapes, tried IN THIS ORDER, each anchored so
+#: that widening what a value MAY CONTAIN never widens how far a value may
+#: REACH.  That anchoring is what keeps this rule safe HERE in particular:
+#: this seam applies it to an ALREADY-SERIALIZED JSON LINE, and a match that
+#: crossed a JSON string boundary would destroy the record instead of the
+#: secret (``SessionEventPersister`` re-parses the redacted line and WITHHOLDS
+#: the payload when it no longer parses -- an over-reaching rule here costs
+#: the whole event, permanently).
+#:
+#:   (a) DOUBLE-QUOTED -- ``NAME="..."`` and the JSON-escaped ``NAME=\"...\"``
+#:       form this seam actually sees.  The content class excludes ``"``
+#:       outright, so the match STOPS at the first closing quote and can never
+#:       leave the string it started in; it is non-greedy and refuses to end
+#:       on a backslash (``(?<!\\)``), so the closing ``\"``'s escape is never
+#:       eaten.  The closing quote is matched by lookahead, never consumed,
+#:       and the opening quote is re-emitted by the substitution:
+#:       ``API_KEY="[REDACTED:assignment]"``.
+#:
+#:   (b) SINGLE-QUOTED -- ``NAME='...'``.  Its content additionally excludes
+#:       ``"``: an UNTERMINATED single quote inside a JSON string would
+#:       otherwise let the match run past that string's own closing ``"`` to
+#:       the next apostrophe on the line (``"note": "don't"``), silently
+#:       deleting an unrelated field.  Stated cost: a single-quoted value that
+#:       itself contains a double quote is only partly covered.
+#:
+#:   (c) UNQUOTED -- the pre-#289 class plus two fenced joiners: a quote joins
+#:       only when the NEXT character is ordinary value material (in JSON a
+#:       string-terminating quote is ALWAYS followed by ``,`` ``}`` ``]``
+#:       ``:`` or whitespace, so this joiner provably cannot consume a string
+#:       terminator).  A backslash joins in two forms: an ESCAPED PAIR
+#:       (``\\``) joins ATOMICALLY -- that is how a literal backslash inside
+#:       a secret reaches this seam once the record is serialized -- while a
+#:       LONE backslash joins UNLESS it opens one of the escapes that encode
+#:       a record/field SEPARATOR (``\n``, ``\r``, ``\t``) or an arbitrary
+#:       code point (``\u``).  Stopping at those is what keeps a serialized
+#:       env dump (``MY_PASSWORD=<secret>\nPATH=/usr/bin`` on ONE line) from
+#:       being swallowed whole.  The run may not END on a backslash, so it
+#:       can never leave a dangling escape that would corrupt the string.
+#:
+#: RESIDUAL, named rather than implied: in PLAIN text a lone backslash
+#: followed by ``n``/``r``/``t``/``u`` still ends the value -- the rule cannot
+#: tell ``\n``-the-newline from ``\n``-the-two-characters without knowing
+#: whether the line is JSON.  At THIS seam the input is always JSON, so the
+#: stop is the CORRECT reading here; the residual belongs to the shared
+#: canonical rule, and it is always a non-redaction, never an over-redaction.
+#:
+#: Unchanged: the end-anchored name, the 4-character floor, and the fact that
+#: no branch crosses a newline -- an unquoted value still stops dead at
+#: whitespace, so a redaction can never swallow a following token.
+_ASSIGNMENT_VALUE_CHAR = r"[^\s\"'\\]"
+_ASSIGNMENT_VALUE_CONT = r"[^\s\"'\\,:;)\]}]"
+_ASSIGNMENT_VALUE = (
+    # (a) double-quoted, including the JSON-escaped \"...\" form
+    r"(?P<quote>\\?\")[^\"\r\n]{4,}?(?<!\\)(?=\\?\")"
+    # (b) single-quoted
+    r"|(?P<squote>')[^'\"\r\n]{4,}?(?<!\\)(?=')"
+    # (c) unquoted run, with the two fenced joiners
+    r"|(?:" + _ASSIGNMENT_VALUE_CHAR + r"|[\"'](?=" + _ASSIGNMENT_VALUE_CONT + r")"
+    r"|\\\\|\\(?!\s|(?-i:[nrtu]))){4,}(?<!\\)"
+)
+
+# The negative lookahead keeps an already-redacted value -- bare, quoted, or
+# JSON-escaped-quoted -- from being re-redacted into a less specific shape.
 ASSIGNMENT_PATTERN = re.compile(
     r"(?P<name>[A-Za-z0-9_]*(?:" + "|".join(SENSITIVE_NAME_TAILS) + r"))"
     r"(?P<sep>\s*=\s*)"
-    r"(?P<quote>[\"']?)"
-    r"(?!\[REDACTED:)"
-    r"(?P<value>[^\s\"'\\]{4,})",
+    r"(?!\\?[\"']?\[REDACTED:)"
+    r"(?:" + _ASSIGNMENT_VALUE + r")",
     re.IGNORECASE,
 )
 
@@ -149,8 +220,13 @@ def redact_text(text: str) -> tuple[str, list[str]]:
 
     def _assignment_sub(m: re.Match[str]) -> str:
         findings.append(f"assignment:{m.group('name')}")
+        # Exactly one of the two quote groups participates when the value was
+        # quoted (issue #289); the opening quote is re-emitted so the line
+        # keeps its shape -- `API_KEY="[REDACTED:assignment]"` -- and the
+        # closing quote was matched by lookahead, so it is still in the text.
+        quote = m.group("quote") or m.group("squote") or ""
         return (
-            f"{m.group('name')}{m.group('sep')}{m.group('quote')}"
+            f"{m.group('name')}{m.group('sep')}{quote}"
             f"{REDACTION_MARKER_PREFIX}assignment]"
         )
 

@@ -829,6 +829,180 @@ async def test_spawn_nonempty_output_without_metadata_uses_parse_outcome():
     )
 
 
+def _make_same_thread_full_graph():
+    """Two fidelity=full nodes sharing thread_id 't', linked start->step1->step2.
+
+    Returns (node1, node2, graph, edge_to_step1, edge_to_step2).  Used by the
+    issue #287 transcript-append tests below, which need a real same-thread
+    full-fidelity setup so that _run_with_spawn resolves a thread_key and
+    reaches the transcript-append site.
+    """
+    from amplifier_module_loop_pipeline.graph import Edge, Graph
+
+    node1 = _make_node(
+        id="step1",
+        attrs={"llm_provider": "anthropic", "fidelity": "full", "thread_id": "t"},
+    )
+    node2 = _make_node(
+        id="step2",
+        attrs={"llm_provider": "anthropic", "fidelity": "full", "thread_id": "t"},
+    )
+    graph = Graph(
+        name="test",
+        nodes={
+            "start": Node(id="start", shape="Mdiamond"),
+            "step1": node1,
+            "step2": node2,
+            "exit": Node(id="exit", shape="Msquare"),
+        },
+        edges=[
+            Edge(from_node="start", to_node="step1"),
+            Edge(from_node="step1", to_node="step2"),
+            Edge(from_node="step2", to_node="exit"),
+        ],
+    )
+    return (
+        node1,
+        node2,
+        graph,
+        Edge(from_node="start", to_node="step1"),
+        Edge(from_node="step1", to_node="step2"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_explicit_verdict_empty_output_appends_no_empty_turn():
+    """Explicit verdict + EMPTY output => no empty assistant turn (issue #287).
+
+    A child can legitimately carry an explicit ``metadata.report_outcome``
+    verdict AND produce no closing prose (it did its work via tool calls and
+    ended on a terminal report_outcome).  Before the ``output.strip()`` guard,
+    the explicit-verdict path appended that empty exchange to the full-fidelity
+    transcript, and ``_get_parent_messages_for_thread`` then expanded it into
+    ``{"role": "assistant", "content": ""}`` for a LATER same-thread spawn --
+    which some providers reject.
+
+    The verdict itself must STILL round-trip (the #231/#286 parent-side fix is
+    orthogonal to the transcript append and must not regress).
+    """
+    coordinator = MockCoordinator(
+        spawn_result={
+            "output": "",  # child ended on a tool call -- no closing prose
+            "session_id": "c-empty-verdict",
+            "status": "success",
+            "metadata": {
+                "report_outcome": {
+                    "status": "success",
+                    "preferred_label": "validated",
+                    "notes": "Work done via tool calls; no closing prose.",
+                }
+            },
+        }
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+    node1, node2, graph, edge1, edge2 = _make_same_thread_full_graph()
+
+    outcome = await backend.run(
+        node1, "First instruction", _make_context(), incoming_edge=edge1, graph=graph
+    )
+
+    # --- #287: no empty assistant turn reaches a later same-thread spawn ---
+    messages = backend._get_parent_messages_for_thread("t")
+    empty_assistant_turns = [
+        m
+        for m in messages
+        if m["role"] == "assistant" and not str(m["content"]).strip()
+    ]
+    assert empty_assistant_turns == [], (
+        "explicit-verdict spawn with empty output must not append an empty "
+        f"assistant turn to the same-thread transcript, got {messages!r}"
+    )
+
+    # ... and prove it at the emission seam a later same-thread spawn actually sees.
+    await backend.run(
+        node2, "Second instruction", _make_context(), incoming_edge=edge2, graph=graph
+    )
+    parent_messages = coordinator.last_spawn_kwargs.get("parent_messages") or []
+    assert not [
+        m
+        for m in parent_messages
+        if m.get("role") == "assistant" and not str(m.get("content", "")).strip()
+    ], (
+        "a later same-thread spawn must not be handed an empty assistant "
+        f"message, got parent_messages={parent_messages!r}"
+    )
+
+    # --- #231/#286 must NOT regress: the verdict still round-trips ---
+    assert isinstance(outcome, Outcome)
+    assert outcome.is_explicit is True, (
+        "metadata.report_outcome must still set is_explicit=True for an "
+        "empty-output child -- the #231 parent-side fix must not regress"
+    )
+    assert outcome.preferred_label == "validated", (
+        f"expected preferred_label='validated', got {outcome.preferred_label!r}"
+    )
+    assert outcome.status == StageStatus.SUCCESS
+    assert outcome.session_id == "c-empty-verdict"
+
+
+@pytest.mark.asyncio
+async def test_spawn_explicit_verdict_nonempty_output_still_appends_turn():
+    """Explicit verdict + NON-EMPTY output => assistant turn STILL appended.
+
+    Control for the issue #287 guard: gating the transcript append on
+    ``output.strip()`` must not over-correct and suppress the normal case where
+    the child DOES produce closing prose.  That prose must still reach a later
+    same-thread spawn as its assistant turn (the behavior #286 deliberately
+    introduced).
+    """
+    coordinator = MockCoordinator(
+        spawn_result={
+            "output": "The analysis is complete.",
+            "session_id": "c-prose-verdict",
+            "status": "success",
+            "metadata": {
+                "report_outcome": {
+                    "status": "success",
+                    "preferred_label": "validated",
+                    "notes": "All checks passed.",
+                }
+            },
+        }
+    )
+    backend = AmplifierBackend(
+        coordinator=coordinator,
+        profiles={"anthropic": "attractor-anthropic"},
+    )
+    node1, node2, graph, edge1, edge2 = _make_same_thread_full_graph()
+
+    outcome = await backend.run(
+        node1, "First instruction", _make_context(), incoming_edge=edge1, graph=graph
+    )
+
+    messages = backend._get_parent_messages_for_thread("t")
+    assert messages == [
+        {"role": "user", "content": "First instruction"},
+        {"role": "assistant", "content": "The analysis is complete."},
+    ], f"non-empty child prose must still be appended, got {messages!r}"
+
+    # The later same-thread spawn receives it as parent_messages.
+    await backend.run(
+        node2, "Second instruction", _make_context(), incoming_edge=edge2, graph=graph
+    )
+    assert coordinator.last_spawn_kwargs.get("parent_messages") == [
+        {"role": "user", "content": "First instruction"},
+        {"role": "assistant", "content": "The analysis is complete."},
+    ]
+
+    # The explicit verdict is honored here too (spec 35 / #231).
+    assert outcome.is_explicit is True
+    assert outcome.preferred_label == "validated"
+    assert outcome.status == StageStatus.SUCCESS
+
+
 @pytest.mark.asyncio
 async def test_spawn_truly_empty_fails_loud():
     """No text, no report_outcome, no success status => FAIL (fail-loud).

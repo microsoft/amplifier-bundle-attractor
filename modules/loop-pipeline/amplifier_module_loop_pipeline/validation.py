@@ -4,7 +4,7 @@ Validates parsed Graph models against the rules defined in
 spec Section 7 (Validation and Linting). Produces Diagnostic objects
 with severity ERROR (blocks execution) or WARNING (informational).
 
-Spec coverage: LINT-001–018.  TOPO-001–009 are topological basin-lint rules
+Spec coverage: LINT-001–018.  TOPO-001–010 are topological basin-lint rules
 implemented here beyond the canonical spec; they are lint-only (exposed via
 ``lint()``, not ``validate()``) and do not change run-time behaviour.
 TOPO-009 warns when an ``outcome=<status word>`` edge condition shares a
@@ -22,6 +22,7 @@ severity) and do not change run-time behaviour.
 
 from __future__ import annotations
 
+import os
 import re
 from collections import deque
 from collections.abc import Callable
@@ -128,8 +129,8 @@ def lint(graph: Graph) -> list[Diagnostic]:
     """Run topological (basin-lint) and command-content rules in addition to structural rules.
 
     This is the entry point for the ``attractor lint`` CLI command.  It runs
-    the full structural ``validate()`` suite plus the nine topological rules
-    (TOPO-001–009) that reason about cycle structure, handler semantics,
+    the full structural ``validate()`` suite plus the ten topological rules
+    (TOPO-001–010) that reason about cycle structure, handler semantics,
     evidence-routing patterns and condition-key hazards, plus the two
     command-content rules (CMD-001–002)
     that inspect ``tool_command`` strings for hazard shapes.
@@ -154,6 +155,7 @@ def lint(graph: Graph) -> list[Diagnostic]:
     _check_gate_retry_budget_dead(graph, diags)
     _check_inert_evidence_gate(graph, diags)
     _check_outcome_label_shadowing(graph, diags)
+    _check_folder_dot_file_absent(graph, diags)
     _check_pipe_masked_exit_code(graph, diags)
     _check_always_true_sentinel(graph, diags)
     return diags
@@ -793,7 +795,7 @@ def _check_response_schema(graph: Graph, diags: list[Diagnostic]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Topological (basin-lint) rules — TOPO-001 through TOPO-009
+# Topological (basin-lint) rules — TOPO-001 through TOPO-010
 #
 # These rules reason about cycle structure and handler semantics, not just
 # graph topology.  They are exposed via ``lint()`` (not ``validate()``) so
@@ -2341,6 +2343,93 @@ def _check_outcome_label_shadowing(graph: Graph, diags: list[Diagnostic]) -> Non
                     f"off its labelled edge instead. See "
                     f"DOT-AUTHORING-GUIDE.md (TOPO-009) and "
                     f"docs/ROUTING-REFERENCE.md §3."
+                ),
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# TOPO-010 — a shape=folder node whose STATIC relative dot_file= target is
+# absent at lint time.
+#
+# Issue #200.  The complaint there is real: a missing child DOT used to
+# surface mid-run as a `no_matching_edge` termination.  The node-entry fix
+# (handlers/pipeline.py's ChildDotResolutionError) makes that failure legible,
+# and this rule offers the author the same information one step earlier.
+#
+# Severity: WARNING, and deliberately ADVISORY — never ERROR, never in
+# validate()/validate_or_raise().  The linter genuinely cannot tell "the
+# author typo'd the path" from "a node upstream writes this file during the
+# run": write-then-run composition (a node generates a child .dot mid-run and
+# a later folder node executes it) is a supported, shipped shape —
+# examples/objective/objective-runner.dot does exactly this, and
+# EXTENSIONS.md §10's resolution is lazy precisely so it can.  An ERROR here
+# would block every composition graph; per §32's entry-point discriminator a
+# lint-only WARNING blocks nothing and fails no exit code.
+#
+# What it deliberately does NOT flag:
+#   • an ABSOLUTE dot_file= — nothing about a lint-time absolute path tells
+#     you which machine/workspace it will resolve against at run time.
+#   • any value containing `$` — a $variable target is resolved from run-time
+#     context (EXTENSIONS.md §21); its lint-time spelling is not the path.
+#     This is also the exact shape a composition graph uses for a generated
+#     child (`dot_file="$target_dir/.objective/gen/child.dot"`).
+#   • any graph with no `source_dir` — an inline DOT source (--dot-source, a
+#     library caller, the examples sweep) has no backing file, so there is no
+#     honest base directory to resolve a relative target against.  Guessing
+#     one would manufacture false positives.
+# ---------------------------------------------------------------------------
+
+
+def _check_folder_dot_file_absent(graph: Graph, diags: list[Diagnostic]) -> None:
+    """TOPO-010: a static relative ``dot_file=`` target that is absent on disk.
+
+    Advisory only.  See the section comment above for the full skip list and
+    the reason this can never be an ERROR.
+    """
+    if not graph.source_dir:
+        return
+
+    for node in graph.nodes.values():
+        if not (node.shape == "folder" or node.type == "pipeline"):
+            continue
+        dot_file = node.attrs.get("dot_file")
+        if not dot_file or not isinstance(dot_file, str):
+            continue
+        # Runtime-substituted target: its lint-time spelling is not a path.
+        if "$" in dot_file:
+            continue
+        # Absolute target: lint-time absence says nothing about run time.
+        if os.path.isabs(dot_file):
+            continue
+
+        resolved = os.path.join(graph.source_dir, dot_file)
+        if os.path.exists(resolved):
+            continue
+
+        diags.append(
+            Diagnostic(
+                rule="folder_dot_file_absent",
+                severity="WARNING",
+                message=(
+                    f"Node '{node.id}' (shape=folder) has "
+                    f'dot_file="{dot_file}", which resolves to {resolved!r} — '
+                    f"no such file at lint time.  If an upstream node writes "
+                    f"this child graph during the run (write-then-run "
+                    f"composition), this is expected and can be ignored: "
+                    f"dot_file= resolution is lazy by design (EXTENSIONS.md "
+                    f"§10).  If not, this node will fail at execution with a "
+                    f"child-DOT resolution error (TOPO-010)."
+                ),
+                node_id=node.id,
+                fix=(
+                    f"Ship the child graph at {resolved!r}, or correct the "
+                    f"dot_file= value — a relative dot_file= resolves against "
+                    f"the parent .dot file's own directory FIRST "
+                    f"(EXTENSIONS.md §10 precedence chain), not against --cwd.  "
+                    f"If an upstream node generates this file at run time, no "
+                    f"change is needed — this is a WARNING, not an error, and "
+                    f"it does not affect the exit code."
                 ),
             )
         )

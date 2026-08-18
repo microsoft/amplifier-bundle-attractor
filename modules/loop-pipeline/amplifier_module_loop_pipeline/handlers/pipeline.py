@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -41,28 +42,203 @@ def _expand_path_variables(path: str, context: PipelineContext) -> str:
     return re.sub(r"\$(\w+)", _replace, path)
 
 
+@dataclass(frozen=True)
+class DotPathCandidate:
+    """One tier of the ``dot_file=`` precedence chain (EXTENSIONS.md §10).
+
+    ``resolve_dot_path()`` is a *precedence chain*, not a search path: the
+    first tier that yields a non-empty base wins and the rest are never
+    consulted.  Recording every tier — the winner, the tiers that were
+    skipped because an earlier one won, and the tiers that had nothing to
+    offer at all — is what makes "resolved against the wrong base directory"
+    readable in a diagnostic instead of something an author has to infer.
+    """
+
+    #: Tier name as EXTENSIONS.md §10 names it (``graph.source_dir``, …).
+    tier: str
+    #: The path this tier would produce, or None when the tier is not
+    #: applicable at all (an absolute ``dot_file=``; an empty base dir).
+    path: str | None
+    #: True for the tier ``resolve_dot_path()`` actually returned.
+    chosen: bool
+    #: Why this tier produced no path (only set when ``path`` is None).
+    unavailable_reason: str = ""
+
+    @property
+    def exists(self) -> bool:
+        """True when this tier's path names a file that exists right now."""
+        return bool(self.path) and os.path.exists(self.path)
+
+
+def resolve_dot_path_candidates(
+    dot_file: str, source_dir: str, context: PipelineContext
+) -> list[DotPathCandidate]:
+    """Enumerate every tier of the ``dot_file=`` precedence chain.
+
+    Returns the four EXTENSIONS.md §10 tiers in precedence order, with
+    exactly one marked ``chosen`` — the same path ``resolve_dot_path()``
+    returns.  This is the diagnostic sibling of ``resolve_dot_path()``: it
+    exists so a failed resolution can name *where it looked*, not only
+    *what it picked*.
+    """
+    expanded = _expand_path_variables(dot_file, context)
+    is_abs = os.path.isabs(expanded)
+    target_dir = context.get("context.target_dir") if context else None
+
+    # Build each tier's would-be path (None when the tier cannot apply).
+    # Note: for an absolute `expanded`, tiers 2-4 are genuinely inapplicable —
+    # os.path.join(base, "/abs") returns "/abs" regardless of base, so
+    # reporting them as candidates would be a lie dressed as a diagnostic.
+    _ABS = "dot_file= is absolute; the precedence chain stops at tier 1"
+    raw: list[tuple[str, str | None, str]] = []
+
+    raw.append(
+        (
+            "absolute path",
+            expanded if is_abs else None,
+            "dot_file= is relative after $variable expansion",
+        )
+    )
+    raw.append(
+        (
+            "graph.source_dir",
+            os.path.join(source_dir, expanded) if (source_dir and not is_abs) else None,
+            _ABS
+            if is_abs
+            else "graph.source_dir is empty (an inline DOT source has no backing file)",
+        )
+    )
+    raw.append(
+        (
+            "context.target_dir",
+            os.path.join(str(target_dir), expanded)
+            if (target_dir and not is_abs)
+            else None,
+            _ABS
+            if is_abs
+            else "context.target_dir is unset (no --cwd; the mounted orchestrator skips this tier)",
+        )
+    )
+    raw.append(
+        (
+            "os.getcwd()",
+            None if is_abs else os.path.join(os.getcwd(), expanded),
+            _ABS,
+        )
+    )
+
+    chosen_index = next((i for i, (_, path, _) in enumerate(raw) if path), -1)
+    return [
+        DotPathCandidate(
+            tier=tier,
+            path=path,
+            chosen=(i == chosen_index),
+            unavailable_reason="" if path else reason,
+        )
+        for i, (tier, path, reason) in enumerate(raw)
+    ]
+
+
 def resolve_dot_path(dot_file: str, source_dir: str, context: PipelineContext) -> str:
     """Resolve a dot_file path.
 
     1. Expand $variable tokens from context values.
     2. If path is absolute (starts with /), return as-is.
     3. Otherwise resolve relative to source_dir.
-    4. If source_dir is empty, resolve relative to cwd.
+    4. If source_dir is empty, resolve relative to context.target_dir, then cwd.
+
+    Resolution stays LAZY by design (EXTENSIONS.md §10): the first non-empty
+    candidate wins with NO existence check here, which is what makes
+    write-then-run composition possible (a node writes the child .dot mid-run
+    and a later shape=folder node executes it).  Existence is asserted at node
+    ENTRY instead — see ``ChildDotResolutionError``.
     """
-    expanded = _expand_path_variables(dot_file, context)
+    for candidate in resolve_dot_path_candidates(dot_file, source_dir, context):
+        if candidate.chosen and candidate.path:
+            return candidate.path
+    # Unreachable: the os.getcwd() tier always yields a path for a relative
+    # dot_file, and the absolute tier always yields one for an absolute value.
+    return _expand_path_variables(dot_file, context)
 
-    if os.path.isabs(expanded):
-        return expanded
 
-    if source_dir:
-        return os.path.join(source_dir, expanded)
+class ChildDotResolutionError(Exception):
+    """A ``shape=folder`` node's ``dot_file=`` named no existing child graph.
 
-    # Try context.target_dir before falling back to os.getcwd()
-    target_dir = context.get("context.target_dir") if context else None
-    if target_dir:
-        return os.path.join(target_dir, expanded)
+    Issue #200.  This is deliberately a *distinct* error class, raised at node
+    ENTRY, because the failure it describes is a child-graph RESOLUTION fault
+    — not the edge-routing fault the engine's ``no_matching_edge`` termination
+    used to frame it as.  A FAIL Outcome returned from here reaches edge
+    selection, where FAIL is fail-fast (no plain-edge drift), so a graph with
+    no failure edge terminated with "No matching edge from node 'X'" and the
+    real cause (a missing file, usually resolved against the wrong base
+    directory) was buried in an error_type that pointed at the wrong subsystem.
 
-    return os.path.join(os.getcwd(), expanded)
+    The message names the node, the literal ``dot_file=`` value, and every
+    tier of the EXTENSIONS.md §10 precedence chain, so a wrong-base-directory
+    resolution is readable rather than inferred.
+    """
+
+    def __init__(
+        self,
+        *,
+        node_id: str,
+        dot_file: str,
+        expanded: str,
+        resolved_path: str,
+        candidates: list[DotPathCandidate],
+    ) -> None:
+        self.node_id = node_id
+        self.dot_file = dot_file
+        self.expanded = expanded
+        self.resolved_path = resolved_path
+        self.candidates = candidates
+        super().__init__(self._format())
+
+    def _format(self) -> str:
+        expansion_note = (
+            ""
+            if self.expanded == self.dot_file
+            else f' (expanded to "{self.expanded}")'
+        )
+        lines = [
+            (
+                f"Child DOT file not found for node '{self.node_id}': "
+                f'dot_file="{self.dot_file}"{expansion_note} resolved to '
+                f"{self.resolved_path!r}, which does not exist."
+            ),
+            "This is a child-graph RESOLUTION failure, not an edge-routing failure.",
+            (
+                "Candidate paths tried (specs/EXTENSIONS.md §10 precedence chain — "
+                "the first applicable tier wins):"
+            ),
+        ]
+        for index, candidate in enumerate(self.candidates, start=1):
+            if candidate.path is None:
+                lines.append(
+                    f"  {index}. {candidate.tier}: n/a — {candidate.unavailable_reason}"
+                )
+                continue
+            marks = []
+            marks.append("CHOSEN" if candidate.chosen else "not consulted")
+            marks.append("EXISTS" if candidate.exists else "missing")
+            lines.append(
+                f"  {index}. {candidate.tier}: {candidate.path}  [{', '.join(marks)}]"
+            )
+
+        elsewhere = [c for c in self.candidates if c.exists and not c.chosen]
+        if elsewhere:
+            found = "; ".join(f"{c.tier} -> {c.path}" for c in elsewhere)
+            lines.append(
+                "NOTE: the child DOT DOES exist under a lower-precedence tier "
+                f"({found}) — dot_file= resolved against the wrong base directory."
+            )
+        lines.append(
+            "Fix: create the child DOT at the CHOSEN path, correct the dot_file= "
+            "value, or have an upstream node write it before this node runs "
+            "(write-then-run composition — resolution is intentionally lazy, so a "
+            "runtime-generated child is supported)."
+        )
+        return "\n".join(lines)
 
 
 class PipelineHandler:
@@ -111,7 +287,9 @@ class PipelineHandler:
         Steps:
         1. Get dot_file from node.attrs, FAIL if missing.
         2. Resolve path via resolve_dot_path().
-        3. Read the DOT file, FAIL if not found.
+        3. Assert the child DOT exists at node ENTRY; raise
+           ChildDotResolutionError (issue #200) naming every candidate path if
+           it does not, then read it.
         4. Parse DOT source, FAIL if invalid.
         5. Set child_graph.source_dir for nested resolution.
         6. Clone parent context.
@@ -134,18 +312,42 @@ class PipelineHandler:
                 failure_reason="Missing dot_file attribute on pipeline node",
             )
 
-        # (2) Resolve path
+        # (2) Resolve path.  Resolution itself stays LAZY (EXTENSIONS.md §10):
+        # the candidate chain is walked with no existence check, so a child DOT
+        # written earlier in THIS run (write-then-run composition) resolves
+        # exactly as it always has.
+        candidates = resolve_dot_path_candidates(dot_file, graph.source_dir, context)
         resolved_path = resolve_dot_path(dot_file, graph.source_dir, context)
 
-        # (3) Read the DOT file
+        # (3) Assert existence at node ENTRY, then read the DOT file.
+        #
+        # Issue #200: returning Outcome(FAIL, ...) here sends the failure into
+        # edge selection, where FAIL is fail-fast — so a graph with no failure
+        # edge terminated as `no_matching_edge` / "No matching edge from node
+        # 'X'", framing a missing FILE as a ROUTING fault.  Raising a distinct
+        # resolution error instead keeps the fault in its own class: the engine
+        # reports it as a child-graph resolution failure, and the message names
+        # every tier of the precedence chain so a wrong-base-directory
+        # resolution is readable rather than inferred.
+        def _resolution_error() -> ChildDotResolutionError:
+            return ChildDotResolutionError(
+                node_id=node.id,
+                dot_file=str(dot_file),
+                expanded=_expand_path_variables(str(dot_file), context),
+                resolved_path=resolved_path,
+                candidates=candidates,
+            )
+
+        if not os.path.isfile(resolved_path):
+            raise _resolution_error()
+
         try:
             with open(resolved_path) as f:
                 dot_source = f.read()
         except FileNotFoundError:
-            return Outcome(
-                status=StageStatus.FAIL,
-                failure_reason=f"Child DOT file not found: {resolved_path}",
-            )
+            # The file vanished between the check above and the open (or the
+            # path is a dangling symlink) — same fault, same diagnostic.
+            raise _resolution_error() from None
 
         # (4) Parse DOT source
         try:

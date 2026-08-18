@@ -229,6 +229,21 @@ async def execute_with_retry(
                 node, context, graph, logs_root, engine=engine
             )
         except Exception as e:
+            # Issue #200: a shape=folder node whose dot_file= names no existing
+            # child graph raises ChildDotResolutionError at node ENTRY.  That is
+            # a child-graph RESOLUTION fault, not node work that failed, so it
+            # must NOT be flattened into a FAIL Outcome here: a FAIL Outcome
+            # goes to edge selection, where fail-fast routing turns a missing
+            # FILE into a `no_matching_edge` termination that names the wrong
+            # subsystem.  Re-raise so the engine can report it in its own class.
+            # (Retrying it would be pointless anyway — nothing here creates the
+            # missing file.)  Lazy import: keeps retry.py's module-level import
+            # graph free of any dependency on the handlers package.
+            from .handlers.pipeline import ChildDotResolutionError
+
+            if isinstance(e, ChildDotResolutionError):
+                raise
+
             logger.warning(
                 "Node %s attempt %d/%d raised: %s",
                 node.id,

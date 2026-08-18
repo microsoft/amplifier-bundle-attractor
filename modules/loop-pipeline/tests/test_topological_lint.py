@@ -1,4 +1,4 @@
-"""Tests for topological (basin-lint) rules — TOPO-001 through TOPO-009.
+"""Tests for topological (basin-lint) rules — TOPO-001 through TOPO-010.
 
 These rules reason about cycle structure and handler semantics, not just
 graph topology.  They are exposed via ``lint()`` (not ``validate()``) so
@@ -2386,3 +2386,123 @@ class TestOutcomeLabelShadowingCalibration:
             f"the issue's suggested conservative form fires on only "
             f"{plus_any_status_label} graphs now (was 6 of 63) -- recheck the narrowing"
         )
+
+
+# ---------------------------------------------------------------------------
+# TOPO-010: folder_dot_file_absent
+# ---------------------------------------------------------------------------
+
+
+def _folder(node_id: str = "child", dot_file: str = "child.dot") -> Node:
+    return Node(id=node_id, shape="folder", attrs={"dot_file": dot_file})
+
+
+def _folder_graph(source_dir: str, dot_file: str = "child.dot") -> Graph:
+    return _graph(
+        nodes={
+            "start": _mdiamond(),
+            "child": _folder(dot_file=dot_file),
+            "exit": _msquare(),
+        },
+        edges=[
+            Edge(from_node="start", to_node="child"),
+            Edge(from_node="child", to_node="exit"),
+        ],
+        source_dir=source_dir,
+    )
+
+
+class TestFolderDotFileAbsent:
+    """TOPO-010 (issue #200): advisory warning for a STATIC relative dot_file=.
+
+    The rule exists to give an author with a typo'd path the same information
+    the node-entry ChildDotResolutionError gives them, one step earlier.  It
+    is advisory because the linter cannot distinguish a typo from a child
+    graph an upstream node writes during the run.
+    """
+
+    def test_absent_static_relative_target_warns(self, tmp_path):
+        diags = _diag(lint(_folder_graph(str(tmp_path))), "folder_dot_file_absent")
+        assert len(diags) == 1
+        assert diags[0].node_id == "child"
+        assert 'dot_file="child.dot"' in diags[0].message
+        assert str(tmp_path / "child.dot") in diags[0].message
+
+    def test_severity_is_warning_never_error(self, tmp_path):
+        """ERROR here would block every composition graph from starting."""
+        diags = _diag(lint(_folder_graph(str(tmp_path))), "folder_dot_file_absent")
+        assert diags and all(d.severity == "WARNING" for d in diags)
+
+    def test_rule_is_lint_only_validate_stays_silent(self, tmp_path):
+        """Admission stays LAZY: validate() must not learn about existence."""
+        g = _folder_graph(str(tmp_path))
+        assert not _diag(validate(g), "folder_dot_file_absent")
+
+    def test_present_target_does_not_warn(self, tmp_path):
+        (tmp_path / "child.dot").write_text("digraph c { a [shape=Mdiamond] }")
+        diags = _diag(lint(_folder_graph(str(tmp_path))), "folder_dot_file_absent")
+        assert not diags
+
+    def test_absolute_target_is_skipped(self, tmp_path):
+        """A lint-time absolute path says nothing about the run-time machine."""
+        g = _folder_graph(str(tmp_path), dot_file=str(tmp_path / "nope" / "child.dot"))
+        assert not _diag(lint(g), "folder_dot_file_absent")
+
+    def test_variable_target_is_skipped(self, tmp_path):
+        """`$var` targets are the exact shape a composition graph uses."""
+        g = _folder_graph(str(tmp_path), dot_file="$target_dir/.gen/child.dot")
+        assert not _diag(lint(g), "folder_dot_file_absent")
+
+    def test_empty_source_dir_is_skipped(self):
+        """An inline DOT source has no backing file -- no honest base to resolve."""
+        g = _folder_graph("", dot_file="child.dot")
+        assert not _diag(lint(g), "folder_dot_file_absent")
+
+    def test_non_folder_nodes_are_ignored(self, tmp_path):
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "work": _box(attrs={"dot_file": "child.dot"}),
+                "exit": _msquare(),
+            },
+            edges=[
+                Edge(from_node="start", to_node="work"),
+                Edge(from_node="work", to_node="exit"),
+            ],
+            source_dir=str(tmp_path),
+        )
+        assert not _diag(lint(g), "folder_dot_file_absent")
+
+    def test_type_pipeline_node_is_covered(self, tmp_path):
+        """type="pipeline" is the non-shape spelling of the same handler."""
+        g = _graph(
+            nodes={
+                "start": _mdiamond(),
+                "child": Node(
+                    id="child",
+                    shape="component",
+                    type="pipeline",
+                    attrs={"dot_file": "child.dot"},
+                ),
+                "exit": _msquare(),
+            },
+            edges=[
+                Edge(from_node="start", to_node="child"),
+                Edge(from_node="child", to_node="exit"),
+            ],
+            source_dir=str(tmp_path),
+        )
+        assert len(_diag(lint(g), "folder_dot_file_absent")) == 1
+
+    def test_write_then_run_graph_is_advisory_only(self, tmp_path):
+        """The warning may fire on a legitimate composition graph -- and must
+
+        never be more than advisory when it does.  This is the case the rule
+        genuinely cannot tell apart from a typo, which is exactly why it is a
+        WARNING and lives only in lint().
+        """
+        g = _folder_graph(str(tmp_path), dot_file="gen/child.dot")
+        diags = lint(g)
+        assert _diag(diags, "folder_dot_file_absent")
+        # No ERROR anywhere -- the CLI's exit-code contract stays 0.
+        assert not [d for d in diags if d.severity == "ERROR"]

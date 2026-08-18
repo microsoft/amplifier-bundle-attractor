@@ -378,7 +378,7 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    is in what you hand back.** Not "lint before handing back" -- an obligation
    you can discharge inside your own reasoning is not an obligation, which is
    why this one names where the result lands. A `.dot` that fails
-   `attractor lint` (TOPO-001 through TOPO-009, documented in
+   `attractor lint` (TOPO-001 through TOPO-010, documented in
    `docs/DOT-AUTHORING-GUIDE.md`) is not a runnable artifact: fix the findings,
    re-run, and relay the final verdict with any surviving warnings quoted. If
    the linter cannot be run here, say that in the handback, in those words, and

@@ -12,6 +12,7 @@ import pytest
 from amplifier_module_loop_pipeline.context import PipelineContext
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.handlers.pipeline import (
+    ChildDotResolutionError,
     PipelineHandler,
     resolve_dot_path,
 )
@@ -178,8 +179,16 @@ class TestPipelineHandlerExecute:
         assert outcome.status == StageStatus.SUCCESS
 
     @pytest.mark.asyncio
-    async def test_missing_dot_file_returns_fail(self, tmp_path):
-        """Missing DOT file on disk returns FAIL with 'not found'."""
+    async def test_missing_dot_file_raises_child_dot_resolution_error(self, tmp_path):
+        """Missing DOT file on disk raises at node ENTRY (issue #200).
+
+        This used to return ``Outcome(FAIL, "Child DOT file not found: X")``.
+        A FAIL Outcome reaches edge selection, where FAIL is fail-fast, so a
+        parent with no failure edge terminated as ``no_matching_edge`` -- a
+        routing framing for a missing FILE.  The fault now has its own class;
+        the engine reports it as ``error_type="child_dot_resolution"``.
+        Full coverage lives in ``test_child_dot_resolution.py``.
+        """
         graph = _make_parent_graph(tmp_path)
         node = graph.nodes["sub"]
         # Point to a non-existent file
@@ -188,11 +197,11 @@ class TestPipelineHandlerExecute:
         logs_root = str(tmp_path / "logs")
 
         handler = PipelineHandler()
-        outcome = await handler.execute(node, context, graph, logs_root)
+        with pytest.raises(ChildDotResolutionError) as excinfo:
+            await handler.execute(node, context, graph, logs_root)
 
-        assert outcome.status == StageStatus.FAIL
-        assert outcome.failure_reason is not None
-        assert "not found" in outcome.failure_reason.lower()
+        assert "not found" in str(excinfo.value).lower()
+        assert excinfo.value.node_id == "sub"
 
     @pytest.mark.asyncio
     async def test_invalid_dot_source_returns_fail(self, tmp_path):
@@ -789,15 +798,31 @@ class TestOutputsMergeBack:
         """Outputs do not merge back to parent context when child pipeline fails.
 
         The folder node declares outputs='result' and pre-seeds
-        context.result='should_not_leak'. The child DOT references a nonexistent
-        file, so the handler returns FAIL before the merge-back code runs.
+        context.result='should_not_leak'. The child pipeline RUNS and fails
+        (its tool node exits 1), so the handler propagates FAIL and the
+        merge-back code never runs.
 
         After execution, outcome.status should be FAIL and context.get('result')
         should be None, verifying that the merge-back code only runs on
         outcome.is_success.
 
+        (The child used to be a nonexistent dot_file, which was a shortcut for
+        "the handler returns FAIL".  Issue #200 gave that case its own error
+        class -- a missing child DOT now raises ChildDotResolutionError at node
+        entry instead -- so this test exercises a real child failure, which is
+        what it was always about.)
+
         Uses default PipelineHandler() (no factory).
         """
+        failing_child = tmp_path / "child_fail.dot"
+        failing_child.write_text(
+            "digraph child_fail {\n"
+            "    start [shape=Mdiamond]\n"
+            '    fail_step [shape=parallelogram, tool_command="exit 1"]\n'
+            "    done [shape=Msquare]\n"
+            "    start -> fail_step\n"
+            "}\n"
+        )
         graph = Graph(
             name="parent",
             nodes={
@@ -807,7 +832,7 @@ class TestOutputsMergeBack:
                     shape="folder",
                     type="pipeline",
                     attrs={
-                        "dot_file": "nonexistent.dot",
+                        "dot_file": "child_fail.dot",
                         "outputs": "result",
                         "context.result": "should_not_leak",
                     },

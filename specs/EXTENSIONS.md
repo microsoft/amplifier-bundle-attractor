@@ -2240,6 +2240,35 @@ profiles, hence a refusal, never a false accept) and the rot-prone "mirrors `_bu
 home behaviorally (one monkeypatched resolver must be observed by both in one run), so it is
 enforced rather than promised.*
 
+*Addendum (2026-08-17, issue #283): the addendum above wired the new clause into
+`PipelineOrchestrator.execute()` only. `drive_engine()` -- the standalone/CLI path, and the
+ORIGINAL #155 incident invoker (`attractor run` -> `run_pipeline` -> `drive_engine`) -- kept
+calling `check_provider_preflight` with no `resolvable_profiles`, so on that path the clause was
+never armed and the key-set-but-adapter-absent class stayed fail-open. The "Implementation
+locations" list above named `runner.py` under §36 without that qualification, which read as more
+coverage than the path actually had. Probed at `efe9da2` through `drive_engine` on the same #155
+graph shape (openai node on a transient-recovery loop, `OPENAI_API_KEY` set, profile
+`attractor-openai` mapped, coordinator agents = `attractor-anthropic` only): ACCEPTED at startup,
+then drained to the 200-step safety bound -- `Pipeline exceeded 200 steps (safety bound): 4 nodes
+x 50` -- with the unserviceable node executed 101 times and 99 real spawns issued for the recovery
+node, each failure reading `loop-pipeline recursion guard: agent 'attractor-openai' has
+session.orchestrator.module=None`. `drive_engine` now passes the set too, computed by the SAME
+shared resolver `execute()` step 5b uses (`_spawn_resolvable_agents(coordinator)`) rather than a
+second copy of the rule -- the coordinator is already in scope at that call site, so the answer was
+always knowable there; it simply was not asked for. Same fail-closed-when-knowable posture: `None`
+still means "not knowable on this path" and still skips the clause (a coordinator with no
+`session.spawn` capability never consumes a profile at all, so that path's behavior is unchanged),
+and a discovery crash yields the EMPTY set (refuse), never `None`. The set is the key set of
+`coordinator.config["agents"]` on the very coordinator object handed to `AmplifierBackend` a few
+lines later -- the same mapping `_run_with_spawn` indexes the profile into -- so the preflight can
+never judge a different set than the spawn resolves against (the #196 false-refusal failure mode).
+The runner's compat gate gained `_spawn_resolvable_agents` as a required engine symbol: it is also
+the only available proxy for the `resolvable_profiles` KEYWORD, which a symbol probe on
+`check_provider_preflight` cannot see (both landed in the same engine commit, `ccbd89f`).
+`modules/pipeline-runner/tests/test_provider_preflight_drive_engine.py` pins both directions on
+this path -- the refusal, and the no-false-refusal control (same graph, same credentials, same
+profiles map, agent PRESENT -> still runs to success).*
+
 ---
 
 ## 37. Bundle Composition: Always-On Guidance, Agent Registration, and Ref-Free Same-Repo Sources

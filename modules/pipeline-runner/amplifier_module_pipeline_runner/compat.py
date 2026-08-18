@@ -93,10 +93,24 @@ import importlib
 # older engine snapshot (the incident: remote_dot absent <= bc6cbec, #96).
 _REQUIRED_ENGINE_SYMBOLS: list[tuple[str, str]] = [
     ("amplifier_module_loop_pipeline.remote_dot", "load_remote_or_local_graph"),
+    # issue #283: drive_engine() imports the engine's shared spawn-resolver to
+    # feed `resolvable_profiles` into the startup provider preflight.  This
+    # entry is also the only gate we CAN have on that keyword argument itself:
+    # `check_provider_preflight` existed before it gained `resolvable_profiles`,
+    # so a symbol probe on the function would pass against a stale engine and
+    # the call would then die on a bare `TypeError` mid-run (the skew this
+    # module's `_load_graph` docstring warns about).  `_spawn_resolvable_agents`
+    # and that keyword landed in the SAME engine commit (ccbd89f, PR #280), so
+    # probing the symbol is a faithful proxy for the signature.
+    ("amplifier_module_loop_pipeline", "_spawn_resolvable_agents"),
 ]
 
 # Human-readable minimum description for the actionable error message.
-_ENGINE_MIN_DESCRIPTION = "engine with remote_dot support (commit bc6cbec or later, PR #96)"
+_ENGINE_MIN_DESCRIPTION = (
+    "engine with remote_dot support (commit bc6cbec or later, PR #96) and the "
+    "shared spawn-resolver / resolvable_profiles preflight argument "
+    "(commit ccbd89f or later, PR #280)"
+)
 
 
 class IncompatibleEngineError(RuntimeError):

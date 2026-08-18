@@ -39,6 +39,23 @@ Records are standard-shaped, append-only JSONL, one event per line:
 ``{"event": <name>, "timestamp": <utc-iso>, "data": {...}}`` — the same
 shape session observers write for ordinary Amplifier sessions, so existing
 session tooling can read these files unchanged.
+
+Write-time redaction (issue #198)
+---------------------------------
+Every record passes through :func:`redaction.redact_text` **at the moment it
+is serialized**, before a byte reaches disk.  A worker's ``tool:post``
+payload is arbitrary tool output — the 2026-08-11 incident was an ``env``
+dump carrying a live ``OPENAI_API_KEY`` — and this file is uploaded as CI
+run evidence.  Redaction runs on the SERIALIZED LINE rather than by walking
+the payload, so nesting depth, container type, and ``default=str`` coercions
+cannot route a credential around it (the leak was inside a nested result
+string, not at the top level).
+
+The redaction is LOUD, never silent: a scrubbed record carries a top-level
+``"redaction": {"count": N, "shapes": [...]}`` block alongside the inline
+``[REDACTED:<shape>]`` markers, so a scrubbed dump is distinguishable from a
+clean one.  Clean records are byte-identical to what this persister wrote
+before — the key appears only when something was actually removed.
 """
 
 from __future__ import annotations
@@ -49,6 +66,8 @@ import os
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
+
+from .redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +155,69 @@ class SessionEventPersister:
             "data": data,
         }
         path = os.path.join(session_dir, "events.jsonl")
+        line = self._serialize(record, session_id)
         with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+            f.write(line + "\n")
+
+    @staticmethod
+    def _serialize(record: dict[str, Any], session_id: Any) -> str:
+        """Serialize ONE record to the exact line that will hit disk.
+
+        This is the write seam, and the only place event bytes become file
+        bytes -- so it is where redaction belongs (issue #198).  Redacting the
+        SERIALIZED text rather than walking the payload is deliberate: the
+        2026-08-11 leak was a credential nested inside a ``tool:post`` result
+        string, and a walker has to be right about every nesting depth,
+        container type and ``default=str`` coercion to catch that.  The
+        serialized line has no such blind spots -- whatever is about to be
+        written is exactly what is inspected.
+
+        Safe by construction: every pattern's character class stops at quote
+        and backslash, so a match can never cross a JSON string boundary or
+        eat an escape.  That is then VERIFIED rather than trusted -- the
+        redacted line is re-parsed before it is returned, and a line that no
+        longer parses is treated as a redaction-machinery failure (below),
+        never written.
+
+        FAIL-LOUD, NEVER FALL BACK TO UNSAFE.  If redaction (or the
+        serialization it depends on) raises, writing the raw payload would
+        resurrect the exact leak this seam exists to close, so the payload is
+        WITHHELD: a marker record is written in its place recording that an
+        event occurred, which session it belonged to, and that its payload
+        could not be attested clean.  Only the exception TYPE is recorded --
+        an exception *message* can quote the very bytes that failed to
+        redact -- while the full traceback goes to the process log, which is
+        not the artifact that gets uploaded.
+        """
+        try:
+            serialized = json.dumps(record, ensure_ascii=False, default=str)
+            cleaned, findings = redact_text(serialized)
+            if not findings:
+                return cleaned
+            payload = json.loads(cleaned)  # proves the redaction kept it valid
+            payload["redaction"] = {
+                "count": len(findings),
+                "shapes": sorted(set(findings)),
+            }
+            return json.dumps(payload, ensure_ascii=False)
+        except Exception as exc:
+            logger.error(
+                "session-event redaction FAILED for %s (session %s) -- payload "
+                "WITHHELD from events.jsonl rather than written unredacted",
+                record.get("event"),
+                session_id,
+                exc_info=True,
+            )
+            marker = {
+                "event": record.get("event"),
+                "timestamp": record.get("timestamp"),
+                "data": {"session_id": str(session_id)},
+                "redaction": {
+                    "error": type(exc).__name__,
+                    "payload_withheld": True,
+                },
+            }
+            return json.dumps(marker, ensure_ascii=False)
 
 
 def register_session_event_persister(

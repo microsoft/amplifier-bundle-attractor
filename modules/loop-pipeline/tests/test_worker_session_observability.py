@@ -27,6 +27,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -72,14 +73,33 @@ def _make_engine(backend, logs_root: str) -> PipelineEngine:
 
 
 def _load_shipped_persister_module():
-    """Load the REAL shipped session_events.py by file path."""
-    path = (
+    """Load the REAL shipped session_events.py by file path.
+
+    Loaded UNDER a synthetic parent package rather than as a bare top-level
+    module: ``session_events`` imports its sibling ``redaction`` (the
+    write-time secret redaction added for issue #198) with a relative
+    import, which cannot resolve without a package context.  The synthetic
+    parent is a bare namespace whose ``__path__`` points at the real shipped
+    directory -- so the sibling that gets imported is the real shipped
+    ``redaction.py``, not a stub -- while the module's own ``__init__.py``
+    (which pulls in the rest of the hooks module) is deliberately NOT
+    executed, preserving this test's point: loop-pipeline does not install
+    hooks-pipeline-observability, and the runtime coupling stays lazy in
+    both directions.
+    """
+    pkg_dir = (
         Path(__file__).resolve().parents[2]
         / "hooks-pipeline-observability"
         / "amplifier_module_hooks_pipeline_observability"
-        / "session_events.py"
     )
-    spec = importlib.util.spec_from_file_location("_shipped_session_events", path)
+    path = pkg_dir / "session_events.py"
+    pkg_name = "_shipped_observability_pkg"
+    pkg = sys.modules.get(pkg_name)
+    if pkg is None:
+        pkg = types.ModuleType(pkg_name)
+        pkg.__path__ = [str(pkg_dir)]  # type: ignore[attr-defined]
+        sys.modules[pkg_name] = pkg
+    spec = importlib.util.spec_from_file_location(f"{pkg_name}.session_events", path)
     assert spec is not None and spec.loader is not None, f"missing shipped file: {path}"
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

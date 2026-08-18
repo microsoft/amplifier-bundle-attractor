@@ -1041,6 +1041,68 @@ Fully backward-compatible and fail-safe:
 - `response.md` is written only when `response_text` is present; infrastructure-failure
   Outcomes (no child output) skip it.
 
+*Addendum (2026-08-17): the persister now REDACTS SECRET-SHAPED MATERIAL AT WRITE TIME (issue
+#198), and the "Compatibility" bullet above about silent no-ops does NOT extend to this — a
+redaction failure is loud. Incident 2026-08-11: a worker agent ran a tool that dumped its
+environment, and the "captured, not reconstructed" property this entry is built on — the
+persister writes the worker's REAL `tool:post` payload — meant a literal `OPENAI_API_KEY` value
+of the `sk-proj-...` shape (spelled apart here so this ledger is not itself secret-shaped
+material) was written verbatim into `<stage_dir>/sessions/<id>/events.jsonl`, which CI then
+uploaded inside a PUBLIC run-evidence artifact. (Artifacts deleted, key rotated; a workflow-level scrub-before-upload was added
+separately.) That guard sits at the UPLOAD door, one hop downstream of the leak: it can only
+clean a file that already holds the credential, and it protects exactly one consumer — anything
+else reading the run dir (a maintainer tailing the file, a bug report pasting it, a sandbox that
+syncs it) still read a live key. Defense in depth belongs at the WRITE seam, which is
+`SessionEventPersister._serialize` — the single place event bytes become file bytes.
+
+**Mechanics.** Each record is serialized, passed through the module's own
+`redaction.redact_text`, re-parsed as a validity self-check, and only then appended; each matched
+span becomes `[REDACTED:<shape>]`. Redaction runs on the SERIALIZED LINE rather than by walking
+the payload because the leak was nested inside a `tool:post` result STRING — a walker has to be
+right about every nesting depth, container type and `default=str` coercion, while the serialized
+line has no blind spots: whatever is about to be written is exactly what is inspected.
+
+**Shape-targeted, deliberately NOT entropy.** The shapes are a copy of layers 1 and 2 of this
+repository's canonical detection set (`.github/capsule-pipeline/scrub_secrets.py`): the known
+token prefixes (`sk-`, `github_pat_`, `gh[posur]_`) and end-anchored sensitive `NAME=value`
+assignments. Layer 4, the high-entropy heuristic, is NOT ported, and that is the load-bearing
+scoping decision rather than an omission — it was MEASURED WRONG on this exact file class
+(issue #206: worker-session `events.jsonl` is legitimately full of digests, base64 fragments and
+request ids; it blocked the evidence upload on 4 of 4 real runs, and produced 487 entropy-only
+findings on run 31689374533). At the upload door a false positive costs one run's evidence; at
+the WRITE seam it costs that evidence PERMANENTLY, because the original bytes are never written
+at all — which would defeat the forensic-navigation contract above. `redaction.py` is a local
+copy and not an import: the canonical script lives under `.github/`, is deliberately stdlib-only
+so it runs on a bare Actions runner, and is not a package this module may depend on. A drift
+tripwire test loads it BY PATH and asserts the two pattern sets are still identical, so two
+copies cannot quietly become two behaviors.
+
+**Loud, never silent.** A scrubbed record carries a top-level
+`"redaction": {"count": N, "shapes": [...]}` block beside the inline markers. A CLEAN record is
+byte-identical to what this entry originally specified — the key appears only when something was
+actually removed — so the record shape documented above still holds for every event that had
+nothing to redact, and existing session tooling reading `event`/`timestamp`/`data` is unaffected.
+**Fail-loud on redaction failure:** if the machinery raises, the payload is WITHHELD and a
+`{"error": <exception type>, "payload_withheld": true}` marker is written in its place. Falling
+back to the raw write would resurrect the exact leak; only the exception TYPE is recorded,
+because an exception MESSAGE can quote the very bytes that failed to redact.
+
+**Honest residuals.** The canonical set's layer 3 (redacting the literal VALUES of the env vars
+the CI job holds) is not ported — it is a workflow-context mechanism, and making write-time
+redaction depend on ambient process environment would be non-deterministic and untestable at
+this seam; the incident's own credential is covered here twice over, by shape and by assignment.
+And the assignment rule matches `NAME=value`, not a JSON key spelled `"api_key": "..."`, so a
+SHAPELESS credential in a structured field remains the upload gate's job rather than being
+closed by widening a pattern that has already corrupted a shipped artifact once (PR #205). Files:
+`modules/hooks-pipeline-observability/amplifier_module_hooks_pipeline_observability/redaction.py`
+(new), `.../session_events.py` (`_serialize`). Pinned by
+`modules/hooks-pipeline-observability/tests/test_session_events_redaction.py`, which holds all
+four directions at once — secret-shaped material redacted AND loud; an innocent runtime-random
+value surviving VERBATIM in the same event (the no-over-redaction pin, measured against the
+entropy heuristic that WOULD have eaten it); the redaction proved to be AT the write seam
+(`events.jsonl` opened exactly once, append-only, the bytes handed to `write()` already clean,
+so no post-hoc rewrite could be what cleaned it); and the fail-loud path.*
+
 ---
 
 ## 27. `must_write=` Node Attribute — Fail-Closed Artifact Contract

@@ -11,9 +11,12 @@ from __future__ import annotations
 # Amplifier module metadata
 __amplifier_module_type__ = "orchestrator"
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
+
+from amplifier_core.events import ORCHESTRATOR_COMPLETE
 
 from .agent_session import KNOWN_PROVIDERS, AgentSession, canonical_provider
 from .config import SessionConfig
@@ -190,7 +193,7 @@ class AgentOrchestrator:
         # raises a clear FileNotFoundError naming the value and path tried — (4).
         return _resolve_system_prompt_file(spf).read_text(encoding="utf-8")
 
-    async def execute(
+    async def _execute_session(
         self,
         prompt: str,
         context: Any,
@@ -346,4 +349,158 @@ class AgentOrchestrator:
             self._coordinator.register_capability(
                 "self_delegation_depth", config.current_depth
             )
+
+        # EXTENSIONS.md 35: the mounted report tool's `last_outcome` is a single
+        # semantic completion register that OUTLIVES an invocation (the tool
+        # instance is mounted once per session, and a session is reused across
+        # execute() calls).  Reset it here, before the loop runs, so invocation
+        # N+1 can never inherit invocation N's verdict and report a stale
+        # envelope as if the child had just asserted it.
+        report_tool = self._report_outcome_tool(self._session)
+        if report_tool is not None:
+            report_tool.last_outcome = None
+
         return await self._session.process_input(prompt)
+
+    async def execute(
+        self,
+        prompt: str,
+        context: Any,
+        providers: dict[str, Any],
+        tools: dict[str, Any],
+        hooks: Any,
+        coordinator: Any = None,
+    ) -> str:
+        """Run one agent invocation and publish its completion envelope.
+
+        Wraps `_execute_session` (the actual agent loop) with the
+        EXTENSIONS.md 35 completion envelope.  EXACTLY ONE
+        `orchestrator:complete` event is emitted per invocation -- including
+        when initialization fails or the loop raises -- because the spawn
+        boundary (foundation's `PreparedBundle.spawn`) reads that event to
+        build the child's result dict, and a missing emission is
+        indistinguishable there from "the child had nothing to say".
+
+        The envelope has two deliberately separate layers:
+
+          * top-level `status` is LIFECYCLE ONLY (success / incomplete /
+            cancelled) -- how the invocation ended, never what the node
+            decided;
+          * `metadata.report_outcome` is the SEMANTIC verdict -- the child's
+            own `report_outcome` arguments, and the only thing that lets a
+            parent record `is_explicit=True`.
+
+        The return contract is unchanged: this still returns the loop's final
+        string, so every existing caller is unaffected.
+        """
+        provider_calls_before = self._provider_call_count(self._session)
+        cooperative_cancels_before = self._cooperative_cancel_count(self._session)
+
+        try:
+            response = await self._execute_session(
+                prompt, context, providers, tools, hooks, coordinator
+            )
+        except asyncio.CancelledError:
+            # Emit BEFORE re-raising: an interrupted invocation still owes the
+            # spawn boundary an envelope, and it must not promote a partial
+            # report as if the invocation had completed.
+            await self._emit_completion(
+                hooks, "cancelled", provider_calls_before, include_report=False
+            )
+            raise
+        except Exception:
+            await self._emit_completion(
+                hooks, "incomplete", provider_calls_before, include_report=False
+            )
+            raise
+
+        termination_reason = self._termination_reason(self._session)
+        if (
+            self._cooperative_cancel_count(self._session) > cooperative_cancels_before
+            or termination_reason == "cancelled"
+        ):
+            status = "cancelled"
+        elif termination_reason == "natural":
+            status = "success"
+        else:
+            # max_turns / tool_round_limit / context_limit / awaiting_input:
+            # the loop stopped because it ran into a wall, not because the work
+            # finished.
+            status = "incomplete"
+
+        await self._emit_completion(
+            hooks,
+            status,
+            provider_calls_before,
+            # EXTENSIONS.md 35: interrupted invocations do NOT promote a
+            # partial report.
+            include_report=status == "success",
+        )
+        return response
+
+    # ------------------------------------------------------------------
+    # Completion envelope helpers (EXTENSIONS.md 35)
+    # ------------------------------------------------------------------
+    #
+    # Each reads through getattr with a default rather than touching the
+    # attribute directly: `_session` is None until the first successful
+    # initialization (so an init failure still emits a well-formed envelope),
+    # and loop-agent is routinely driven in tests by hand-rolled session
+    # doubles that predate these counters.
+
+    @staticmethod
+    def _provider_call_count(session: AgentSession | None) -> int:
+        """Cumulative attempted provider calls for this session."""
+        return getattr(session, "_provider_call_count", 0)
+
+    @staticmethod
+    def _cooperative_cancel_count(session: AgentSession | None) -> int:
+        """Cumulative count of cooperatively-cancelled invocations."""
+        return getattr(session, "_cooperative_cancel_count", 0)
+
+    @staticmethod
+    def _termination_reason(session: AgentSession | None) -> str:
+        """Terminal condition of the session's most recent invocation."""
+        return getattr(session, "termination_reason", "natural")
+
+    @staticmethod
+    def _report_outcome_tool(session: AgentSession | None) -> Any | None:
+        """Return the mounted report_outcome tool, when this session has one."""
+        tools = getattr(session, "_tools", None)
+        return tools.get("report_outcome") if tools is not None else None
+
+    async def _emit_completion(
+        self,
+        hooks: Any,
+        status: str,
+        provider_calls_before: int,
+        *,
+        include_report: bool,
+    ) -> None:
+        """Emit the single `orchestrator:complete` envelope for an invocation.
+
+        `metadata` is `{}` unless this invocation both COMPLETED and left a
+        successful report behind -- a status-only completion carries no
+        verdict, which is exactly what keeps a downstream goal gate
+        fail-closed (EXTENSIONS.md 25).
+        """
+        report_tool = self._report_outcome_tool(self._session)
+        report_outcome = getattr(report_tool, "last_outcome", None)
+        metadata = (
+            {"report_outcome": report_outcome}
+            if include_report and isinstance(report_outcome, dict)
+            else {}
+        )
+
+        await hooks.emit(
+            ORCHESTRATOR_COMPLETE,
+            {
+                "orchestrator": "loop-agent",
+                "status": status,
+                "turn_count": max(
+                    0,
+                    self._provider_call_count(self._session) - provider_calls_before,
+                ),
+                "metadata": metadata,
+            },
+        )

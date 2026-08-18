@@ -153,6 +153,17 @@ class AgentSession:
         self._use_streaming = self._detect_streaming_support()
         self._follow_up_depth = 0  # Tracks recursion depth for SESSION_END timing
         self._tracked_processes: set[Any] = set()  # M-7: running tool subprocesses
+        # EXTENSIONS.md 35 -- completion-envelope inputs.  These two are
+        # CUMULATIVE session-lifetime counters, not per-invocation ones: the
+        # orchestrator snapshots them before an invocation and diffs after, so
+        # a session reused across several execute() calls still reports a
+        # per-invocation turn_count and a per-invocation cancellation signal.
+        self._provider_call_count = 0
+        self._cooperative_cancel_count = 0
+        # Terminal condition of the MOST RECENT invocation.  Reset at the top of
+        # every process_input() so a prior invocation's ending can never
+        # classify this one's lifecycle status.
+        self._termination_reason = "natural"
 
     # ------------------------------------------------------------------
     # Streaming detection
@@ -316,6 +327,16 @@ class AgentSession:
     # Public API
     # ------------------------------------------------------------------
 
+    @property
+    def termination_reason(self) -> str:
+        """Terminal condition of the most recent invocation.
+
+        One of ``natural``, ``cancelled``, ``max_turns``, ``context_limit``,
+        ``awaiting_input`` or ``tool_round_limit``.  Read by the orchestrator to
+        classify the EXTENSIONS.md 35 completion envelope's lifecycle status.
+        """
+        return self._termination_reason
+
     async def process_input(self, prompt: str) -> str:
         """Process a user input through the agentic loop.
 
@@ -323,6 +344,9 @@ class AgentSession:
         execution, and returns the final text response.  The loop exits
         on natural completion (no tool calls), round limit, or turn limit.
         """
+        # EXTENSIONS.md 35: per-invocation reset -- a prior invocation's
+        # terminal condition must never classify this one.
+        self._termination_reason = "natural"
         # Emit session_start once (spec: SESSION_START on session creation)
         if not self._session_started:
             self._session_started = True
@@ -353,6 +377,8 @@ class AgentSession:
         while _max_rounds <= 0 or round_count < _max_rounds:
             # Checkpoint 1: Graceful cancellation at top of loop
             if self._is_cancelled():
+                self._termination_reason = "cancelled"
+                self._cooperative_cancel_count += 1
                 self._state_machine.complete()
                 await self._emit_session_end()
                 return await self._process_follow_ups(last_text)
@@ -362,6 +388,7 @@ class AgentSession:
                 self._config.max_turns > 0
                 and self._history.turn_count >= self._config.max_turns
             ):
+                self._termination_reason = "max_turns"
                 await self._hooks.emit(
                     AGENT_TURN_LIMIT,
                     {"total_turns": self._history.turn_count},
@@ -383,8 +410,12 @@ class AgentSession:
 
             # Call LLM — streaming or non-streaming based on provider capability
             try:
+                # EXTENSIONS.md 35 turn_count: count ATTEMPTED provider calls,
+                # so a call that raises still shows up in the envelope.
+                self._provider_call_count += 1
                 call_result = await self._call_provider(request)
             except ContextLengthError as e:
+                self._termination_reason = "context_limit"
                 # Spec Appendix B / STOP-005: ContextLengthError is handled
                 # separately from other non-retryable errors.  Emit a context
                 # warning (reusing AGENT_CONTEXT_WARNING) and return to IDLE
@@ -418,6 +449,8 @@ class AgentSession:
 
             # Checkpoint 2: Immediate cancellation after provider call
             if self._is_immediate_cancel():
+                self._termination_reason = "cancelled"
+                self._cooperative_cancel_count += 1
                 self._state_machine.complete()
                 await self._emit_session_end()
                 return await self._process_follow_ups(last_text)
@@ -491,6 +524,7 @@ class AgentSession:
             if not tool_calls:
                 # Detect if the model is asking the user a question
                 if self._looks_like_question(text):
+                    self._termination_reason = "awaiting_input"
                     self._state_machine.await_input()  # PROCESSING -> AWAITING_INPUT
                     await self._hooks.emit(
                         AGENT_AWAITING_INPUT,
@@ -510,6 +544,26 @@ class AgentSession:
             self._history.append(ToolResultsTurn(results=results))
             round_count += 1
 
+            # EXTENSIONS.md 35 (Ordering barrier): after the COMPLETE declared
+            # batch has run, a successful report_outcome terminates this
+            # execute() invocation -- no further provider call, and no
+            # automatic follow-up processing.  The verdict IS the node's
+            # answer; burning another provider call to have the model narrate
+            # it is what produced the cheerful-prose-after-a-FAIL class of
+            # incident in the first place.
+            #
+            # Already-queued follow-ups deliberately REMAIN queued (they are
+            # neither cleared nor consumed here) so a later explicit
+            # process_input() can still drain them.  That is also why this
+            # returns last_text directly rather than via _process_follow_ups.
+            if any(
+                tool_call.name == "report_outcome" and result.success
+                for tool_call, result in zip(raw_tool_calls, results, strict=True)
+            ):
+                self._state_machine.complete()  # PROCESSING -> IDLE
+                await self._emit_session_end()
+                return last_text
+
             # Record tool calls for loop detection
             if self._config.enable_loop_detection:
                 for tc in raw_tool_calls:
@@ -522,6 +576,7 @@ class AgentSession:
             await self._check_loop_detection()
 
         # Round limit reached
+        self._termination_reason = "tool_round_limit"
         await self._hooks.emit(AGENT_TURN_LIMIT, {"round_count": round_count})
         self._state_machine.complete()  # PROCESSING -> IDLE
         # SESSION_END emitted after follow-ups are fully drained
@@ -671,10 +726,24 @@ class AgentSession:
         """Execute tool calls, parallel or sequential based on config.
 
         Uses asyncio.gather() when supports_parallel_tool_calls is True
-        AND there are multiple tool calls. Otherwise executes sequentially
-        to preserve ordering guarantees (spec Section 3.2).
+        AND there are multiple ORDINARY tool calls (spec Section 3.2).
+
+        EXTENSIONS.md 35 (Ordering barrier): a batch containing AT LEAST ONE
+        ``report_outcome`` call is the exception -- every call in that batch
+        runs sequentially, in provider-declared order.  ``report_outcome``
+        writes a single semantic completion register (the tool's
+        ``last_outcome``); under asyncio.gather() the winner of two reports in
+        one batch would be decided by scheduling order rather than by the order
+        the model declared them, so "the last declared report wins" would not
+        be a statement anyone could rely on.  Batches without report_outcome
+        keep the configured parallel behavior unchanged.
         """
-        use_parallel = self._config.supports_parallel_tool_calls and len(tool_calls) > 1
+        has_report_outcome = any(tc.name == "report_outcome" for tc in tool_calls)
+        use_parallel = (
+            self._config.supports_parallel_tool_calls
+            and len(tool_calls) > 1
+            and not has_report_outcome
+        )
 
         if use_parallel:
             try:

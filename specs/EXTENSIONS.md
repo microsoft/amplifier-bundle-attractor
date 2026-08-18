@@ -2188,20 +2188,57 @@ This is additive at the spawn boundary:
   `metadata.report_outcome`; status-only spawn results remain non-explicit.
 - Parallel execution is unchanged for batches without `report_outcome`.
 
+*Addendum (2026-08-18, issue #285): **everything above this line described a transport that was
+not on `main`.** The entry's prose landed; its child-side implementation did not — the commit that
+would have carried it (`9251a6a`, "fix: preserve spawned agent outcomes") was written on a review
+branch and was never an ancestor of `main`. Measured at `701edc7`: `git log origin/main -S
+report_outcome -- modules/loop-agent` returned ZERO commits, and
+`modules/loop-agent/tests/test_orchestrator_completion.py` — named below as a contract test — did
+not exist. The only "Implementation location" that was real was `backend.py`, the CONSUMER,
+faithfully reading a `metadata.report_outcome` that nothing produced. The observable cost was the
+`#231` incident shape: a child that demonstrably called `report_outcome` (its own `events.jsonl`
+carrying `Outcome reported: fail (preferred_label=escalate)`) was nonetheless recorded on the
+parent node as `notes="Child session completed with empty final message"`, `is_explicit=false`,
+`preferred_next_label=null` — because `AgentOrchestrator.execute()` emitted no
+`orchestrator:complete` event at all, so foundation's `PreparedBundle.spawn` capture hook had
+nothing to copy and the spawn result's `metadata` was always `{}`. The envelope, the ordering
+barrier, the terminal report path and the per-invocation reset are now implemented and the
+locations below are true. Re-derived against current `main` rather than cherry-picked: `9251a6a`
+predates ~98 commits of consumer drift.*
+
+*Addendum (2026-08-18, issue #285) — one consequence the original text did not spell out: because
+the envelope now reports a REAL lifecycle status, an INTERRUPTED child no longer reaches its parent
+disguised as a clean one. Foundation's spawn-result assembly defaults `status` to `"success"` when
+no completion event arrives (`_prepared.py`), so before this shipped EVERY child — including one
+that burned its `max_turns` without a single provider call — arrived at `_outcome_from_spawn_result`
+carrying `status="success"`. An empty-output child in that state was recorded SUCCESS (with
+`is_explicit=false`, so a goal gate still failed closed, but a plain node passed). Such a child now
+reports `status="incomplete"`, which is not in `_SPAWN_SUCCESS_STATUSES`, so an empty-output
+limit-terminated child is recorded FAIL (`"No output from child session"`) rather than a silent
+success. This is fail-loud by intent and consistent with §25's fail-closed direction; it is called
+out here because it changes an outcome, not merely an observability field. Children that produce
+output are unaffected — that path never consults the lifecycle status unless an explicit verdict is
+present.*
+
 ### Implementation locations
 
 - `modules/loop-agent/amplifier_module_loop_agent/__init__.py` —
   per-invocation reset, exactly-one completion emission, lifecycle classification, provider-call
   `turn_count`, and `metadata.report_outcome` transport
 - `modules/loop-agent/amplifier_module_loop_agent/agent_session.py` —
-  provider-call counting, invocation termination reason, and the `report_outcome` batch ordering
-  barrier
+  provider-call counting, invocation termination reason, the `report_outcome` batch ordering
+  barrier, and the terminal report path
 - `modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py` —
   spawn-result precedence, semantic `Outcome` reconstruction, response/session preservation, and
   full-fidelity transcript continuity
 - `modules/loop-agent/tests/test_orchestrator_completion.py`,
   `modules/loop-agent/tests/test_parallel_gating.py`, and
   `modules/loop-pipeline/tests/test_backend_fidelity.py` — contract tests
+- `modules/pipeline-runner/tests/test_spawn_report_outcome_transport.py` — the CROSS-BOUNDARY
+  regression. The contract tests above each cover one side of the seam; this one runs the real
+  producer (`loop-agent`), the real verdict tool (`tool-report-outcome`) and the real consumer
+  (`loop-pipeline`) in a single test, so it proves the envelope TRAVELLED rather than that each
+  side would have honored one. It is the test that goes red if the transport is removed.
 
 ---
 

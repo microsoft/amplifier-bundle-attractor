@@ -60,6 +60,18 @@ override-dependencies = [
 [tool.uv.sources]
 amplifier-module-loop-pipeline = { path = "../loop-pipeline" }
 amplifier-module-remote-source = { path = "../remote-source" }
+# Test-only, same-repo path sources.  tests/test_spawn_report_outcome_transport.py
+# drives the REAL producer (loop-agent) and the REAL verdict tool
+# (tool-report-outcome) against the REAL consumer (loop-pipeline) so the
+# child->parent report_outcome transport is asserted end-to-end rather than
+# re-implemented on both sides of the seam (issue #285).  Path sources, not git
+# refs: a branch must test ITS OWN modules, never main's.
+# `editable` so the test always runs the working tree's modules.  A
+# non-editable path source is COPIED at sync time, so a local edit to
+# loop-agent would be silently invisible here until the next `uv sync` --
+# exactly the kind of stale-copy result this test exists to rule out.
+amplifier-module-loop-agent = { path = "../loop-agent", editable = true }
+amplifier-module-tool-report-outcome = { path = "../tool-report-outcome", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = [
@@ -73,6 +85,9 @@ allow-direct-references = true
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=1.0.0",
+    # See the [tool.uv.sources] note above -- both are TEST-ONLY.
+    "amplifier-module-loop-agent",
+    "amplifier-module-tool-report-outcome",
 ]
 
 [tool.pytest.ini_options]

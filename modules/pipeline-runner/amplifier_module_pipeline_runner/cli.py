@@ -549,7 +549,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
     """Static topological lint of a .dot pipeline file.
 
     Parses the DOT file and runs the full basin-lint rule set:
-    structural rules (LINT-001–018), topological rules (TOPO-001–009),
+    structural rules (LINT-001–018), topological rules (TOPO-001–010),
     and command-content rules (CMD-001–002, which inspect tool_command
     strings for pipe-masked exit codes and always-true sentinels).
 
@@ -584,6 +584,13 @@ def cmd_lint(args: argparse.Namespace) -> int:
     except Exception as e:  # noqa: BLE001 -- fail loud with the real error, no fallback
         print(f"attractor lint: failed to parse {dot_path}: {e}", file=sys.stderr)
         return 1
+
+    # Seed source_dir exactly as cmd_run does (the directory of the .dot file
+    # that produced this graph -- EXTENSIONS.md §10 tier 2).  TOPO-010 needs it
+    # to resolve a static relative dot_file= the same way the engine will at run
+    # time; without it the rule cannot tell where a relative target points and
+    # deliberately stays silent.  No other lint rule reads source_dir.
+    graph.source_dir = str(dot_path.resolve().parent)
 
     diags = lint(graph)
 

@@ -1557,7 +1557,7 @@ changed what happened), a branching diamond, a constant emitter such as
 inequality condition, the same token twice, and an unreachable gate.
 
 **Severity:** WARNING — consistent with the rest of the family (TOPO-002
-through TOPO-009; TOPO-001 is `ERROR`).  The hazard is real but the author's
+through TOPO-010; TOPO-001 is `ERROR`).  The hazard is real but the author's
 intent is not statically provable, and it is `lint()`-only: `validate()` and
 `validate_or_raise()` stay silent, so no graph that executes today starts
 failing at run time.
@@ -1635,6 +1635,50 @@ delta: `outcome` resolves `preferred_label` first").
 
 ---
 
+### TOPO-010 — `shape=folder` child graph missing at lint time
+
+**What it detects:** A `shape=folder` (sub-pipeline) node whose `dot_file=` is
+a **static relative** path that names no file on disk when you lint.
+
+```dot
+// Flagged — child.dot is not next to this file, and nothing writes it
+child [shape=folder, dot_file="pipelines/child.dot"];
+```
+
+**Why it matters:** `dot_file=` resolution is a **precedence chain**, not a
+search path (`specs/EXTENSIONS.md` §10): a relative value resolves against the
+parent `.dot` file's **own directory** first — *not* against `--cwd`. The most
+common form of this bug is a path that is perfectly correct relative to where
+you ran the command and wrong relative to where the graph lives. Left alone it
+surfaces at run time, when the folder node is entered, as a child-DOT
+resolution error naming every candidate path that was tried.
+
+**Severity:** WARNING — and it can never be an ERROR. The linter cannot
+distinguish "the author typo'd the path" from "a node upstream writes this file
+during the run": **write-then-run composition** (a node generates a child
+`.dot` mid-run and a later folder node executes it) is a supported, shipped
+shape, and `examples/objective/objective-runner.dot` does exactly this. An
+ERROR here would refuse to lint every composition graph. Warnings do not affect
+the exit code (rc stays 0 without `--strict`), so an author with a typo sees it
+immediately and a composition graph is never blocked.
+
+**What is NOT flagged:**
+- an **absolute** `dot_file=` — a lint-time absolute path tells you nothing
+  about the machine or workspace it will resolve against at run time;
+- any value containing **`$`** (`dot_file="$target_dir/.objective/gen/child.dot"`)
+  — a `$variable` target is resolved from run-time context, so its lint-time
+  spelling is not a path. This is also the exact shape a composition graph uses
+  for a generated child;
+- a graph with no `source_dir` — an inline DOT source (`--dot-source`, a library
+  caller) has no backing file, so there is no honest base directory to resolve a
+  relative target against, and guessing one would manufacture false positives.
+
+**Fix:** Ship the child graph beside its parent, or correct the path so it is
+relative to the **parent `.dot` file's directory**. If an upstream node
+generates the file at run time, no change is needed — this warning is advisory.
+
+---
+
 ### CMD-001 — Pipe-masked exit code
 
 **What it detects:** A `parallelogram` (tool) node whose `tool_command` ends
@@ -1682,7 +1726,7 @@ If you need to see the last N lines, write to a file and read it separately
 from the routing logic.
 
 **Severity:** WARNING — consistent with the WARNING-severity TOPO rules
-(TOPO-002 through TOPO-009; note TOPO-001 is `ERROR`, not this family's
+(TOPO-002 through TOPO-010; note TOPO-001 is `ERROR`, not this family's
 default).  The hazard is real but static analysis cannot prove the command is
 a meaningful gate; conservative analysis may miss complex cases.
 
@@ -1744,7 +1788,7 @@ influence either the exit code or the emitted token?  The hazard shapes
 destroy that influence.  The honest idioms preserve it.
 
 **Severity:** WARNING — consistent with CMD-001 and the WARNING-severity TOPO
-rules (TOPO-002 through TOPO-009; TOPO-001 is `ERROR`).
+rules (TOPO-002 through TOPO-010; TOPO-001 is `ERROR`).
 
 **What this rule does NOT catch:** sentinels inside `$(...)` substitutions,
 sentinels after non-pipe-masked commands (where `&& echo TOKEN` is the honest

@@ -289,6 +289,64 @@ on disk. The precedence chain above means an explicitly-set `graph.source_dir` a
 over `context.target_dir` for `dot_file=` resolution: pointing `--cwd` at a separate
 workspace does not require flattening a multi-file pipeline into that workspace.
 
+*Addendum (2026-08-18, issue #200): an unresolvable child `dot_file=` is now its own
+**terminal failure class at NODE ENTRY**, and the resolution diagnostic names **every** tier
+of the chain above -- not only the tier that won.*
+
+**What did not change (the load-bearing part).** Resolution stays **LAZY**. There is still no
+existence check in `resolve_dot_path()`, and still none in `validate()` /
+`validate_or_raise()`: a `dot_file=` target that does not exist at parse or admission time is
+a **supported shape**. That laziness is what makes **write-then-run composition** possible --
+a node writes a child `.dot` during the run and a later `shape=folder` node executes it --
+which `examples/objective/objective-runner.dot`'s `compose` path does today
+(`docs/designs/2026-08-15-objective-layer.md` §2 P1 / §2.6 finding F2). An admission-time
+existence gate would make that graph, and any composition layer, unable to start at all. It
+was considered and deliberately **rejected**.
+
+**What changed.** The old behaviour returned `Outcome(FAIL, "Child DOT file not found: X")`
+from `PipelineHandler.execute()` step 3. A FAIL outcome goes to edge selection, where FAIL is
+fail-fast (§16, no plain-edge drift), so a parent graph with no failure edge terminated
+through the §33 no-matching-edge hard fail:
+
+```
+[PIPELINE] ✗ Error at child (no_matching_edge): Child DOT file not found: /tmp/…/missing-child.dot
+attractor: notes:
+No matching edge from node 'child'
+```
+
+That framing named the wrong subsystem -- there was no routing problem -- and printed only
+the single chosen path, so "resolved against the wrong base directory" had to be inferred.
+
+The handler now asserts existence at **node entry** and raises `ChildDotResolutionError`
+(`handlers/pipeline.py`), a distinct class carrying the node id, the literal `dot_file=`
+value (plus its `$variable`-expanded form when they differ), and each of the four tiers above
+with its would-be path, whether that path exists, and whether it was chosen or skipped
+because an earlier tier won. When a lower-precedence tier *does* hold the file, the message
+says so outright. `execute_with_retry()` re-raises it rather than flattening it into a FAIL
+outcome (retrying cannot create the file); `PipelineEngine.run()` catches it before Step 5
+and terminates with `error_type="child_dot_resolution"`, and `run_subgraph()` preserves the
+same diagnostic verbatim for folder nodes reached through a parallel branch or the
+manager-loop in-graph path.
+
+**Deliberately terminal.** There is no child graph to run and no honest way to route around
+one that does not exist, so this fault does not participate in §3.7 per-node failure routing.
+Folder-node failure routing itself is untouched: a child that *runs* and fails still
+propagates FAIL verbatim and still takes an `outcome=fail` edge or a `retry_target`
+(`test_folder_node_failure_routing.py`). Only the "there is no child" case is terminal.
+
+**Advisory lint sibling.** `attractor lint` gained **TOPO-010** (`WARNING`, lint-only) for a
+*static relative* `dot_file=` target absent at lint time -- see §32's catalog. It is advisory
+because the linter cannot distinguish an author's typo from a child an upstream node writes
+mid-run, and it skips absolute targets, `$variable` targets, and graphs with no `source_dir`.
+It never fails the exit code and never blocks a composition graph.
+
+**Known residual (named, not silently absorbed):** the manager-loop child dotfile path
+(`handlers/manager_loop.py`, `shape=house` / `stack.manager_loop`, marked experimental in the
+shape table) still returns `Outcome(FAIL, "Child DOT file not found: …")` and is unchanged
+here. It shares `resolve_dot_path()` but not the folder node's execution branch or its
+routing semantics; converting it is a separate behaviour change with its own compat surface,
+and issue #200's repro does not cover it.
+
 ---
 
 ## 11. Sub-Pipeline and Manager-Child Execution Is a Fresh Session Boundary
@@ -1802,6 +1860,23 @@ as a status). Listed here so this entry
 stays the complete catalog of the `lint()`-only rule family; per this entry's own discriminator
 (the **entry point**, not the rule count), none of them owed a new ledger entry. All four are
 documented in `docs/DOT-AUTHORING-GUIDE.md` with fix examples.
+
+*Addendum (2026-08-18, issue #200): **TOPO-010** (`WARNING`) joins the same advisory entry point
+— a `shape=folder` node whose **static relative** `dot_file=` target is absent at lint time. It is
+the author-time sibling of §10's node-entry `ChildDotResolutionError`: the same information, one
+step earlier, for the author who simply typo'd a path. It is deliberately advisory and can never be
+an ERROR, because the linter cannot distinguish a typo from a child graph an upstream node writes
+mid-run — write-then-run composition is a supported shape (§10), and an ERROR would block every
+composition graph including `examples/objective/objective-runner.dot`. It skips absolute targets
+(a lint-time absolute path says nothing about the run-time machine), any target containing `$`
+(resolved from run-time context per §21 — and the exact shape a composition graph uses), and any
+graph with an empty `source_dir` (an inline DOT source has no backing file, so there is no honest
+base directory to resolve against; the `lint()` library entry point and
+`test_examples_lint_clean.py`'s sweep are therefore untouched). `attractor lint` seeds
+`graph.source_dir` from the `.dot` file's own directory for this rule, the same way `attractor run`
+already does. Measured over this repository's shipped corpus: **zero** of the 33 `examples/**/*.dot`
+graphs fire it. Pinned by `test_topological_lint.py::TestFolderDotFileAbsent` and
+`modules/pipeline-runner/tests/test_lint_folder_dot_file.py` (the rc=0 contract).*
 
 TOPO-009 is the first rule in the family whose whole subject is a ledgered divergence rather than
 a topology defect: §22 / ATX-5 is deliberate and load-bearing, and the rule does not argue with

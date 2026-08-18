@@ -34,6 +34,7 @@ from .feedback import collect_and_inject_feedback
 from .fidelity import RESUME_FIDELITY_CAP_KEY, resolve_fidelity
 from .graph import Graph, Node, resolve_bool_attr
 from .handlers import HandlerRegistry
+from .handlers.pipeline import ChildDotResolutionError
 from .must_write import check_must_write
 from .node_outputs import SUBSTITUTABLE_ATTRS, build_output_table
 from .outcome import Outcome, StageStatus
@@ -919,6 +920,15 @@ class PipelineEngine:
                                     hooks=self.hooks,
                                     engine=self,
                                 )
+                        except ChildDotResolutionError as _child_dot_exc:
+                            # Issue #200 -- see the sibling handler below.
+                            return await self._terminate_child_dot_resolution(
+                                node_id=current_node.id,
+                                exc=_child_dot_exc,
+                                node_start_time=node_start_time,
+                                pipeline_start_time=pipeline_start_time,
+                                execution_index=execution_index,
+                            )
                         except asyncio.TimeoutError:
                             node_duration_ms = (time.monotonic() - node_start_time) * 1000
                             _ap = current_node.attrs.get("allow_partial")
@@ -945,16 +955,33 @@ class PipelineEngine:
                                 },
                             )
                     else:
-                        outcome = await execute_with_retry(
-                            handler,
-                            current_node,
-                            self.context,
-                            self.graph,
-                            self.logs_root,
-                            retry_policy,
-                            hooks=self.hooks,
-                            engine=self,
-                        )
+                        try:
+                            outcome = await execute_with_retry(
+                                handler,
+                                current_node,
+                                self.context,
+                                self.graph,
+                                self.logs_root,
+                                retry_policy,
+                                hooks=self.hooks,
+                                engine=self,
+                            )
+                        except ChildDotResolutionError as _child_dot_exc:
+                            # Issue #200: a shape=folder node's dot_file= named
+                            # no existing child graph.  That is a child-graph
+                            # RESOLUTION fault, and it must never be allowed to
+                            # reach Step 5 below: FAIL is fail-fast there, so a
+                            # graph with no failure edge would terminate as
+                            # `no_matching_edge` / "No matching edge from node
+                            # 'X'" -- a routing framing for a missing FILE.
+                            # Terminate here instead, in the fault's own class.
+                            return await self._terminate_child_dot_resolution(
+                                node_id=current_node.id,
+                                exc=_child_dot_exc,
+                                node_start_time=node_start_time,
+                                pipeline_start_time=pipeline_start_time,
+                                execution_index=execution_index,
+                            )
                 node_duration_ms = (time.monotonic() - node_start_time) * 1000
 
                 # Spec §5.3 rule 6 is ONE hop: clear the cap the moment the
@@ -1425,6 +1452,32 @@ class PipelineEngine:
                     outcome = await handler.execute(
                         current_node, ctx, self.graph, self.logs_root, engine=self
                     )
+                except ChildDotResolutionError as exc:
+                    # Issue #200: keep the child-resolution diagnostic verbatim
+                    # here too.  run_subgraph is the shared runner for parallel
+                    # branch bodies and the manager-loop in-graph path, and its
+                    # generic wrapper below would bury the candidate-path chain
+                    # behind "Subgraph node 'X' raised: ...".
+                    fail_outcome = Outcome(
+                        status=StageStatus.FAIL,
+                        failure_reason=str(exc),
+                        notes=str(exc),
+                    )
+                    if emit_node_events:
+                        await self._emit(
+                            PIPELINE_NODE_COMPLETE,
+                            {
+                                "node_id": current_node.id,
+                                "status": fail_outcome.status.value,
+                                "duration_ms": (time.monotonic() - node_start_time)
+                                * 1000,
+                                "notes": fail_outcome.notes,
+                                "failure_reason": fail_outcome.failure_reason,
+                                "session_id": None,
+                                "attempt": 1,
+                            },
+                        )
+                    return fail_outcome
                 except Exception as exc:
                     fail_outcome = Outcome(
                         status=StageStatus.FAIL,
@@ -1971,6 +2024,61 @@ class PipelineEngine:
         return best
 
     # -- Failure routing helpers ----------------------------------------------
+
+    async def _terminate_child_dot_resolution(
+        self,
+        *,
+        node_id: str,
+        exc: ChildDotResolutionError,
+        node_start_time: float,
+        pipeline_start_time: float,
+        execution_index: int,
+    ) -> Outcome:
+        """Terminate the run on a child-graph RESOLUTION fault (issue #200).
+
+        A ``shape=folder`` node whose ``dot_file=`` names no existing child
+        graph is not a node whose work failed and not a graph whose routing is
+        incomplete -- it is a composition fault, and it gets its own terminal
+        class here rather than being laundered through edge selection into
+        ``no_matching_edge`` (EXTENSIONS.md §33), which named the wrong
+        subsystem and printed only the single chosen path.
+
+        Deliberately terminal: there is no child graph to run and no honest
+        way to route around one that does not exist.  ``validate_or_raise``
+        stays untouched -- admission remains LAZY (EXTENSIONS.md §10), so a
+        child DOT written earlier in the same run still resolves normally and
+        write-then-run composition is unaffected.
+        """
+        fail_outcome = Outcome(
+            status=StageStatus.FAIL,
+            notes=str(exc),
+            failure_reason=str(exc),
+        )
+        node_duration_ms = (time.monotonic() - node_start_time) * 1000
+        self.node_outcomes[node_id] = fail_outcome
+        self._write_node_status(node_id, fail_outcome, node_duration_ms)
+        await self._emit(
+            PIPELINE_NODE_COMPLETE,
+            {
+                "node_id": node_id,
+                "status": fail_outcome.status.value,
+                "duration_ms": node_duration_ms,
+                "notes": fail_outcome.notes,
+                "failure_reason": fail_outcome.failure_reason,
+                "session_id": None,
+                "execution_index": execution_index,
+            },
+        )
+        await self._emit(
+            PIPELINE_ERROR,
+            {
+                "node_id": node_id,
+                "error_type": "child_dot_resolution",
+                "message": str(exc),
+            },
+        )
+        await self._emit_complete(fail_outcome, pipeline_start_time)
+        return fail_outcome
 
     def _no_matching_edge_reason(self, node_id: str, outcome: Outcome) -> str:
         """Build a diagnostic 'no matching edge' message that traces back.

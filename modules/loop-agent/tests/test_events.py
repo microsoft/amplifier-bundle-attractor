@@ -8,6 +8,7 @@ through the hooks parameter at the correct times with correct data.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from amplifier_core.events import ORCHESTRATOR_COMPLETE
 from amplifier_core.message_models import ChatResponse, ToolCall, Usage
 from amplifier_core.models import ToolResult
 
@@ -289,8 +290,11 @@ async def test_event_ordering_simple():
     ate_idx = names.index(AGENT_ASSISTANT_TEXT_END)
     assert resp_idx < ate_idx
 
-    # session_end should come last
-    assert names[-1] == AGENT_SESSION_END
+    # EXTENSIONS.md 35: the OUTER orchestrator completion envelope is emitted
+    # after the inner agent-session lifecycle events, so it -- not session_end
+    # -- is last.  The spawn boundary reads that final event.
+    assert names[-2] == AGENT_SESSION_END
+    assert names[-1] == ORCHESTRATOR_COMPLETE
 
 
 @pytest.mark.asyncio
@@ -305,9 +309,11 @@ async def test_event_ordering_with_tools():
     await orch.execute("go", ctx, provs, tools, hooks)
     names = [e[0] for e in hooks._emitted]
 
-    # session_start first, session_end last
+    # session_start first; the outer orchestrator completion envelope follows
+    # session_end (EXTENSIONS.md 35).
     assert names[0] == AGENT_SESSION_START
-    assert names[-1] == AGENT_SESSION_END
+    assert names[-2] == AGENT_SESSION_END
+    assert names[-1] == ORCHESTRATOR_COMPLETE
 
     # First provider round: request -> response -> assistant_text_end
     first_req = names.index(PROVIDER_REQUEST)

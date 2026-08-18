@@ -332,3 +332,104 @@ async def test_single_tool_always_sequential():
 
     assert tool_a.execute.call_count == 1
     assert order == ["tool_a"]
+
+
+# ---------------------------------------------------------------------------
+# report_outcome ordering barrier (EXTENSIONS.md §35)
+# ---------------------------------------------------------------------------
+#
+# `report_outcome` writes a SINGLE semantic completion register (the tool's
+# `last_outcome`), which the orchestrator then transports to the parent as
+# `metadata.report_outcome`.  Under asyncio.gather() the winner of two reports
+# in one batch would be decided by scheduling order rather than by the order
+# the model declared them — so "the last declared report wins" would not be a
+# statement anyone could rely on.  A batch carrying at least one
+# `report_outcome` therefore runs sequentially; every other batch keeps the
+# configured parallel behavior.
+
+
+def _make_report_outcome_tool(order_tracker: list):
+    """Stand-in for tool-report-outcome that records declared-order writes."""
+    tool = MagicMock()
+    tool.name = "report_outcome"
+    tool.description = "Report the outcome of your work."
+    tool.input_schema = {
+        "type": "object",
+        "properties": {"status": {"type": "string"}},
+        "required": ["status"],
+    }
+    tool.last_outcome = None
+
+    async def _execute(args):
+        # Yield control so a gather()-based execution would interleave here.
+        await asyncio.sleep(0)
+        order_tracker.append(args.get("preferred_label"))
+        tool.last_outcome = dict(args)
+        return ToolResult(success=True, output="reported")
+
+    tool.execute = AsyncMock(side_effect=_execute)
+    return tool
+
+
+@pytest.mark.asyncio
+async def test_batch_with_report_outcome_runs_sequentially():
+    """A batch containing report_outcome executes in provider-declared order."""
+    order: list[str] = []
+    report = _make_report_outcome_tool(order)
+    slow = _make_slow_tool("slow_tool", delay=0.05)
+
+    provider = AsyncMock()
+    provider.complete = AsyncMock(
+        side_effect=[
+            _multi_tool_response(
+                ("tc1", "slow_tool", {}),
+                ("tc2", "report_outcome", {"status": "fail", "preferred_label": "a"}),
+                ("tc3", "report_outcome", {"status": "success", "preferred_label": "b"}),
+            ),
+        ]
+    )
+
+    session = AgentSession(
+        config=SessionConfig(
+            system_prompt="You are a test coding agent.",
+            supports_parallel_tool_calls=True,
+        ),
+        provider=provider,
+        tools={"slow_tool": slow, "report_outcome": report},
+        hooks=_make_hooks(),
+    )
+    await session.process_input("go")
+
+    # Declared order preserved, so the LAST declared report is the one left in
+    # the register — deterministically, not by scheduling luck.
+    assert order == ["a", "b"]
+    assert report.last_outcome["preferred_label"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_batch_without_report_outcome_still_runs_in_parallel():
+    """The barrier is scoped to report_outcome — ordinary batches are unchanged."""
+    tracker = _ConcurrencyTracker()
+    tool_a = _make_tracked_tool("tool_a", tracker, delay=0.05)
+    tool_b = _make_tracked_tool("tool_b", tracker, delay=0.05)
+
+    provider = AsyncMock()
+    provider.complete = AsyncMock(
+        side_effect=[
+            _multi_tool_response(("tc1", "tool_a", {}), ("tc2", "tool_b", {})),
+            _text_response("done."),
+        ]
+    )
+
+    session = AgentSession(
+        config=SessionConfig(
+            system_prompt="You are a test coding agent.",
+            supports_parallel_tool_calls=True,
+        ),
+        provider=provider,
+        tools={"tool_a": tool_a, "tool_b": tool_b},
+        hooks=_make_hooks(),
+    )
+    await session.process_input("go")
+
+    assert tracker.max_in_flight == 2

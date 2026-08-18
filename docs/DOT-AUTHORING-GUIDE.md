@@ -1799,6 +1799,81 @@ where the pipe appears in a non-final `;`-separated segment (e.g.
 
 ---
 
+### VOCAB-001 — LLM node configured in attributes the engine never reads
+
+**What it detects:** A codergen (LLM) node that carries **no `prompt=` at all**
+but does carry an invented spelling from `context/dot-reference.md`'s
+invented-attribute table — `instruction=`, a node-level `goal=`,
+`attractor_goal=`, `agent=`, `handler=`, or `attractor_handler=`.
+
+**Why it matters:** The parser promotes exactly `{label, shape, type, prompt}`
+to node fields (`dot_parser._NODE_FIELD_MAP`). Every other attribute survives
+as an inert `node.attrs` entry that no handler ever reads. So a `.dot`
+authored with `instruction=` parses cleanly, validates cleanly, and runs its
+LLM nodes **with no prompt at all** — no error, no warning, and no visible
+difference between "configured" and "unconfigured".
+
+This is measured, not hypothetical. Two graded sessions (issue #261) authored
+twelve-node pipelines carrying `instruction=` on all twelve nodes and
+`prompt=` on none; one of them linted **rc=0** with a single unrelated
+warning. `prompt_on_llm_nodes` could not see them: it fires only when a node
+has no prompt **and** no explicit label, and every node in both files was
+labelled.
+
+```dot
+// WRONG — parses, lints rc=0, runs with no prompt
+fetch_pr [
+    shape=box,
+    label="Fetch PR Branch",
+    instruction="Fetch the PR branch using git."
+];
+
+// CORRECT — prompt= is the attribute the engine reads
+fetch_pr [
+    shape=box,
+    label="Fetch PR Branch",
+    prompt="Fetch the PR branch using git."
+];
+```
+
+**Severity:** WARNING — consistent with CMD-001/002 and TOPO-002 through
+TOPO-010. It must never be an ERROR: the rule infers *intent* from an
+attribute the engine is entitled to ignore, and a graph may legitimately carry
+passthrough attributes the rule does not know about.
+
+**What this rule does NOT flag** (the false-positive discipline):
+
+- A node that has a real `prompt=` **and** also carries `instruction=`,
+  `agent=`, or any other attribute — the prompt is real, so the node is
+  configured. Carrying an extra attribute is not by itself a defect.
+- Any non-codergen node: a `parallelogram` tool node (configured by
+  `tool_command=`), a `hexagon` human gate, a `diamond` router, a
+  `component`/`tripleoctagon` parallel node, a `folder` sub-pipeline
+  (`goal=` on a `folder` node is a child parameter, not a dropped prompt).
+- Start (`Mdiamond`) and exit (`Msquare`) nodes.
+- A node whose `shape=` is *unrecognized* — dispatch refuses that node
+  outright (specs/EXTENSIONS.md §38) and `shape_resolvable` already reports
+  it as an **ERROR**; flagging it here too would double-diagnose.
+- A bare LLM node with no prompt and no invented spelling — that is
+  `prompt_on_llm_nodes`' existing territory.
+
+Measured over this repository's shipped corpus: **zero** of the 33
+`examples/**/*.dot` graphs fire it. Pinned by
+`modules/loop-pipeline/tests/test_inert_vocabulary_lint.py`.
+
+**Related — an invented `fidelity=` value:** `fidelity` is a real attribute,
+but `fidelity="stateless"` / `"fresh"` are not among its six values, and
+`backend.py` falls back to `compact`. That case is reported by the existing
+`fidelity_valid` rule (WARNING), which runs in both `validate()` and
+`attractor lint`.
+
+**Reading the verdict:** VOCAB-001 is a WARNING, so `attractor lint` exits
+**0** on a graph whose every prompt was dropped. Relay the *findings*, not the
+exit code — the only clean verdict is
+`attractor lint: <file>: OK (no findings)`.
+
+---
+
 ### Record-validating gates: parse, don't grep
 
 A companion design rule to the CMD family, for gates whose evidence is a

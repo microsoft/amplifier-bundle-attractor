@@ -2495,6 +2495,21 @@ Design record and probe evidence:
 including §8's "two resolution classes" finding — the empirical reason the self-pin sweep is
 split rather than blanket.
 
+*Addendum (2026-08-18): change 3 above made the skills registration ref-free, but left it declared
+only in root `bundle.md` — and change 2's reasoning ("registered by both `behaviors/attractor-core.yaml`
+and root `bundle.md`", so every composition gets it) was never applied to skills. The measured
+consequence is the same shape as the defect this entry exists to fix, one surface over: a
+behavior-only install composes `behaviors/attractor-core.yaml` and never the root, so it registered
+`tool-skills` **not at all** and delivered **zero skills** — while still registering
+`attractor-expert`, whose guidance directs the reader to `/attractorify`. The pointer shipped
+without the destination. `behaviors/attractor-core.yaml` now declares the identical
+`"@attractor:skills"` entry, so the behavior stands on its own. This stays inside this entry's
+"additive and non-interfering" envelope: no engine module changed, and a pipeline node's composed
+content is byte-identical (`tool-skills` mounts a session tool; no LLM-node context is added).
+Composing the root is unchanged and **measured** unchanged — foundation merges `tools:` by module id
+and de-duplicates list-valued config, so base and head both resolve to one `tool-skills`
+registration naming `"@attractor:skills"` exactly once.*
+
 ---
 
 ## 38. Unknown Node Shape Hard-Fails at Dispatch (No Default-Handler Fallback)

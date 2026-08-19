@@ -1,0 +1,6 @@
+{
+  "include": ["scripts", "fixtures", "tests", "evals"],
+  "extraPaths": ["scripts", "."],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "error"
+}

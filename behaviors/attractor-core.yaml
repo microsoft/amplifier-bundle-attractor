@@ -13,6 +13,37 @@ tools:
   - module: tool-report-outcome
     source: ../modules/tool-report-outcome
 
+  # Registers this bundle's skills/ directory (today: attractorify) with the Agent
+  # Skills system.  The slash command itself comes from each skill's own
+  # `user-invocable: true` frontmatter.
+  #
+  # This lives HERE, and not only in the root bundle.md, because a behavior-only
+  # install composes THIS FILE and never the root -- so before this entry existed,
+  # such an install registered tool-skills not at all and delivered no skills.  It
+  # still registered attractor-expert (below), whose own guidance directs the user
+  # to `/attractorify` (agents/attractor-expert.md).  Shipping the pointer without
+  # the destination is the gap this closes.
+  #
+  # `tool-skills` is an EXTERNAL module, so a `git+...@main` source is correct here;
+  # the no-self-pin rule above governs SAME-repo modules only.  The skills source
+  # stays namespaced and ref-free for exactly the reason the root bundle gives: a
+  # `git+...@main#subdirectory=skills` pin would serve MAIN's SKILL.md to a branch
+  # install, while "@attractor:skills" resolves inside whatever snapshot was
+  # installed.  The @attractor: namespace is available from this file -- loading it
+  # registers @attractor: -> the repo root via foundation's nested-bundle
+  # resolution, the same mechanism the `attractor:attractor-expert` include below
+  # already relies on.
+  #
+  # Root bundle.md declares the identical entry.  When both compose, foundation
+  # merges tools: by module id and de-duplicates list-valued config, so the pair
+  # collapses to ONE tool-skills registration naming ONE skills source -- the same
+  # declared-in-both pattern this file and the root already use for attractor-expert.
+  - module: tool-skills
+    source: git+https://github.com/microsoft/amplifier-bundle-skills@main#subdirectory=modules/tool-skills
+    config:
+      skills:
+        - "@attractor:skills"
+
 hooks:
   - module: hooks-tool-truncation
     source: ../modules/hooks-tool-truncation

@@ -264,10 +264,19 @@ PART 3 --- THE SECTION FURNITURE (what a section is made of, in order)
   glyph, carrying its own focus ring rect that appears only on
   `:focus-visible`. Every one of them carries `data-modal`.
 
-  DENSITY: one idea per screen, one diagram per section, prose capped at
-  `--col`, grids on `repeat(auto-fit,minmax(230-300px,1fr))`. Hover states lift
-  a card by 2px and change its border; all of it opts out under
+  DENSITY: one idea per screen, at least one diagram per section, prose capped
+  at `--col`, grids on `repeat(auto-fit,minmax(230-300px,1fr))`. Hover states
+  lift a card by 2px and change its border; all of it opts out under
   `prefers-reduced-motion`.
+
+  FIGURE DENSITY: every major section carries AT LEAST ONE inline-SVG figure ---
+  a flow, a ladder, a distribution, a comparison --- and a section whose data
+  supports a SECOND distinct figure (a flow AND the counts that moved through
+  it; a verdict AND the evidence behind it) carries that one too. Draw only what
+  the run's own numbers support: a figure that illustrates nothing the data says
+  is decorative filler, and padding is the enemy here exactly as it is in the
+  modals --- where the data is thin, say so in a styled note instead of drawing
+  a shape to fill the space.
 
 =========================================================================
 PART 4 --- THE MODAL MACHINERY AND ITS DEPTH CONTRACT

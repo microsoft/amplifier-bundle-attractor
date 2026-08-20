@@ -62,7 +62,7 @@ digraph {
 |-----------|------|-------------|
 | `goal` | string | Pipeline objective. Expands `$goal` in prompts. |
 | `default_fidelity` | string | Default fidelity for all nodes |
-| `default_max_retry` | int | Default retry count for all nodes |
+| `default_max_retries` | int | Default retry count for all nodes (default `0`). Legacy alias `default_max_retry` is accepted and maps to the same behavior (`dot_parser.py` `_set_graph_attr`) |
 | `retry_target` | string | Retry target when exit has unsatisfied goal gates (spec §3.4); not consulted on per-node failure |
 | `max_pipeline_duration` | string | Timeout for entire pipeline (e.g. "10m") |
 | `model_stylesheet` | string | CSS-like rules for model/provider config |
@@ -114,7 +114,7 @@ digraph {
 ### Retry Loop
 ```dot
 digraph {
-    graph [default_max_retry=3]
+    graph [default_max_retries=3]
     start [shape=Mdiamond]; done [shape=Msquare]
     do_work [prompt="$goal", goal_gate=true, retry_target="do_work"]
     verify [prompt="Verify the work"]

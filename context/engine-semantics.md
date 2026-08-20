@@ -28,8 +28,19 @@ Source: nlspec §2.8; `validation.py:24-34` (`SHAPE_TO_HANDLER`).
 | `house` | `stack.manager_loop` | no | orchestrates child | experimental ("future form TBD" `validation.py:33`) | [EXTENSION] |
 | `folder` | `pipeline` | no (runs child graph) | no | yes — merges child `outputs=` back `handlers/pipeline.py` | [EXTENSION] |
 
-Handler resolution: explicit `type` attr → shape mapping → default `codergen` (nlspec §4.2;
-`node_outputs.py:83-89`).
+Handler resolution (dispatch): explicit `type` attr → `node_type` attr → shape mapping →
+**hard-fail**. There is NO default-handler fallback: a shape outside the table above makes
+`HandlerRegistry.get()` raise `ValueError` naming the shape, the node id, the full supported-shape
+set, and the remedy (`shape=box` for an LLM node) — `handlers/__init__.py`. This is a **DECIDED
+DIVERGENCE** from nlspec §4.2, whose resolution order ends "3. Default handler (the codergen/LLM
+handler)": an unrecognized shape must never silently become an LLM session. Ledgered at
+`specs/EXTENSIONS.md` §38 and `SPEC_CONFORMANCE.md` ATX-13; both halves asserted by matrix row
+`ATX-M-F01`.
+
+The spec-literal `SHAPE_TO_HANDLER.get(shape, "codergen")` fallback survives only in **non-dispatch**
+helpers — lint classification (`validation.py`), output-table prediction
+(`node_outputs.py:83-89`), and preflight's effective-handler estimate
+(`preflight.py:80`). None of these selects an executing handler.
 
 ---
 

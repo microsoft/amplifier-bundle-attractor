@@ -77,12 +77,18 @@ def test_spec_default_max_retry_table_is_zero():
 
 
 def test_authoring_guide_default_max_retry_is_zero():
-    """DOT-AUTHORING-GUIDE.md table row for default_max_retry must show default 0 (D-135)."""
+    """DOT-AUTHORING-GUIDE.md table row for the retry ceiling must show default 0 (D-135).
+
+    Accepts BOTH spellings, for the same reason the canonical-spec check above
+    does: canonical names the attribute ``default_max_retries`` and keeps the
+    singular only as a legacy alias, so this guard is anchored on the documented
+    default *value*, not on which of the two names the row happens to use.
+    """
     content = _read("docs/DOT-AUTHORING-GUIDE.md")
     matches = re.findall(
-        r"\|\s*`default_max_retry`\s*\|\s*Integer\s*\|\s*`(\d+)`", content
+        r"\|\s*`default_max_retr(?:y|ies)`\s*\|\s*Integer\s*\|\s*`(\d+)`", content
     )
-    assert matches, "default_max_retry table row not found in DOT-AUTHORING-GUIDE.md"
+    assert matches, "default_max_retries table row not found in DOT-AUTHORING-GUIDE.md"
     for val in matches:
         assert val == "0", (
             f"DOT-AUTHORING-GUIDE.md: default_max_retry table default is '{val}', expected '0' (D-135)"

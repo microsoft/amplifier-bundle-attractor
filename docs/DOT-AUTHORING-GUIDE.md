@@ -223,7 +223,7 @@ unsatisfied goal-gate exit (spec §3.4), not on per-node failure.
 digraph {
     graph [
         goal="Generate an RFC 5322 email validation regex",
-        default_max_retry=3
+        default_max_retries=3
     ]
 
     start [shape=Mdiamond]
@@ -267,7 +267,7 @@ that can change the cause, not always back to a single generic attempt node.
 digraph ConvergencePipeline {
     graph [
         goal="Build, test, and security-scan a feature branch",
-        default_max_retry=2,
+        default_max_retries=2,
         // graph-level targets fire on unsatisfied goal-gate exit (spec §3.4),
         // NOT on per-node failure (spec §3.7). Per-node failure uses node-level
         // retry_target or a conditional edge.
@@ -1028,7 +1028,7 @@ Set these on the `graph` element:
 | `label` | String | `""` | Display name for the pipeline. |
 | `model_stylesheet` | String | `""` | CSS-like model assignment rules. |
 | `default_fidelity` | String | `compact` | Default context fidelity for all nodes. |
-| `default_max_retry` | Integer | `0` | Global retry ceiling. |
+| `default_max_retries` | Integer | `0` | Global retry ceiling. Legacy alias: `default_max_retry`. |
 | `retry_target` | String | `""` | Global retry target when exit has unsatisfied goal gates. |
 | `fallback_retry_target` | String | `""` | Global fallback retry target when exit has unsatisfied goal gates. |
 
@@ -1075,7 +1075,7 @@ digraph FeatureBuild {
     graph [
         goal="$goal",
         label="Feature Build Pipeline",
-        default_max_retry=2,
+        default_max_retries=2,
         default_fidelity="full",
         default_thread_id="feature-build"
     ]

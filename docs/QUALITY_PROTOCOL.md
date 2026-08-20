@@ -74,11 +74,18 @@ may ask for more, never less.
 | **Exemplar / example graphs** | `examples/pipelines/*.dot`, `examples/patterns/*.dot`, `examples/objective/*` | `attractor lint` with **zero ERROR** diagnostics -- warnings are informational, which is exactly the line `modules/loop-pipeline/tests/test_examples_lint_clean.py` enforces -- **and** at least one live convergence run **and** the graph's own gates demonstrated **RED and GREEN**: a negative control proving the gate can fail, a positive control proving it can pass. A gate only ever seen green is an unproven gate |
 | **Guidance surfaces** | `agents/`, `skills/`, `context/`, teaching content in `README.md` and `docs/` | **Guidance-eval evidence** from [`evals/guidance/`](../evals/guidance/README.md) -- the instrument shipped, and its 2026-08-15 baseline is the run every later run is read against. Run the scenarios whose `surfaces_under_test:` name the file you touched and paste the results table plus the decisive transcript quotes; a broad change -- a bundle recomposition, a doctrine amendment, a new guidance surface -- warrants the full six. Where the eval genuinely cannot reach the changed surface, say so in the PR in those words and fall back to a **fresh-session walk-through**: a session with no prior context follows only the changed text and arrives at the intended behavior |
 | **Docs making factual claims** | any doc asserting a number, default, vocabulary, or behavior | A guard test pinning each load-bearing claim to **its source of truth in code**, following the existing guards (section 5, Layer 1). A page-only assertion ("the page says 500") is tautological: it passes forever and fails only when someone edits the page, which is the one case needing no guard. The assertion must read the value from the code and fail when the **code** moves |
+| **New public content class** | a new top-level directory; a new artifact type that reaches users (run artifacts, published pages, generated reports); docs carrying real-run evidence; a new fixture corpus | The deterministic leak guards green **and** a **leak-lens review** (section 7): a fresh-context reviewer reads the diff under the outsider brief and reports what it identifies. Both, not either -- a passing grep is not the semantic read, which is precisely how the 2026-08-19 incident got through |
 | **Spec-relevant behavior** | anything that conforms to, diverges from, or extends the nlspec | A `specs/EXTENSIONS.md` entry and/or a `SPEC_CONFORMANCE.md` row, **in the same PR**, per the Compatibility doctrine. Entries obey the Entry Format: `depends-on:`, plus `upstream action:` in one of its legal forms whenever the banner states a divergence. Its **matrix tier** (section 3) sets the rest of the toll |
 
-Two of these already have machinery behind them: the `EXTENSIONS.md` requirement is on the PR
-checklist (`.github/PULL_REQUEST_TEMPLATE.md`), and the ledger's structural integrity is guarded in
-CI. The rest are enforced by review today.
+Three of these already have machinery behind them: the `EXTENSIONS.md` requirement is on the PR
+checklist (`.github/PULL_REQUEST_TEMPLATE.md`), the leak-lens review is on that same checklist as an
+honest-N/A line, and the ledger's structural integrity is guarded in CI. The rest are enforced by
+review today.
+
+**The new-public-content row names a reviewer obligation, not just an artifact.** Its evidence is a
+*reading*, performed by someone who did not write the content -- the same independence property
+section 1 requires of adversarial review, for the same reason. Section 7 defines the brief and why a
+grep cannot substitute for it.
 
 **Every change also carries a decision-matrix tier**, and the two compose rather than substitute for
 each other. The row above says what the change owes for *what it can break*; section 3 says what it
@@ -212,7 +219,7 @@ claim to something that fails when the *code* moves:
 | `test_engine_semantics_doc_guard.py` | `context/engine-semantics.md`, the bundle's declared source of truth for shipped-engine behavior -- both text-anchored claims (the no-matching-edge and stale-label rules) and behavior-anchored ones (a real engine run asserting the main loop hard-fails on no matching edge) |
 | `test_explainer_doc_guard.py` | The published explainer page, `docs/attractor-explained.html`: feedback-critique caps, the parallel-branch default, `last_response` truncation, the summary budgets, the fidelity vocabulary and its default, the lifecycle phases, and the shape-to-execution-tier vocabulary -- each read from its source module, never from the page |
 | `test_examples_lint_clean.py` | Every `.dot` under `examples/` lints with zero ERROR diagnostics. Written because the dead-corrective-edge class shipped in eight examples for months, because nothing could see topology |
-| `test_quality_protocol_guard.py` | This document's own external references: every guard-test filename it names exists; the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records; the Changelog exists with a dated entry. Also the vision wiring (Q-304..Q-307): `docs/VISION.md` exists with its own dated Changelog and names the decision matrix; this page carries the decision-matrix section and the literal `vision-observation` label; and the decision matrix's canonical articulation reads identically in both pages. Written because section 7 set its own adoption condition and this file has to keep it (section 7) |
+| `test_quality_protocol_guard.py` | This document's own external references: every guard-test filename it names exists; the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records; the Changelog exists with a dated entry. Also the vision wiring (Q-304..Q-307): `docs/VISION.md` exists with its own dated Changelog and names the decision matrix; this page carries the decision-matrix section and the literal `vision-observation` label; and the decision matrix's canonical articulation reads identically in both pages. Also the leak-defense wiring (Q-308..Q-312): the pre-publication section exists naming all three layers, the outsider brief appears verbatim, the two reference implementations it names exist on disk, `.github/PULL_REQUEST_TEMPLATE.md` carries the leak-review line, and the Changelog records the amendment's date. Written because section 8 set its own adoption condition and this file has to keep it (section 8) |
 
 **The rule this layer imposes: a new claim-bearing doc ships with its guard.** The explainer guard
 states the reason plainly -- a page nobody re-reads rots silently and keeps being shared, which is
@@ -278,7 +285,7 @@ context, and whose shape is guarded by
 
 ### Layer 4 -- the meta-protocol
 
-Layers 0-3 are machinery, and machinery accretes. Section 7 governs how they are amended, and how
+Layers 0-3 are machinery, and machinery accretes. Section 8 governs how they are amended, and how
 they are retired.
 
 ---
@@ -301,7 +308,115 @@ Triggers are inclusive -- whichever fires first, fires.
 
 ---
 
-## 7. The meta-protocol -- improving the protocol
+## 7. Pre-publication leak defense
+
+Section 5 asks whether what this repo *says* is true. This section asks a different question about
+the same artifacts: whether what this repo *publishes* is ours to publish. The asymmetry is what
+makes it a separate defense -- a wrong claim is corrected by the next commit, while a leaked value is
+in the world's clones, forks and caches the moment it lands, and no later commit takes it back. The
+defense therefore runs **before** the push, and it is the one place in this document where a false
+positive is cheap and a false negative is unrecoverable.
+
+Two measured incidents shape everything below; both are named with their evidence in the Changelog
+entry for 2026-08-19.
+
+**The layers here are numbered locally.** They are *not* section 5's drift layers -- different threat,
+different machinery, different retirement conditions. Where both are meant, they are named apart.
+
+### The three layers
+
+Each layer catches a class the others structurally cannot, and each is defined as much by **where its
+data lives** as by what it matches. The shipped reference implementation is
+`skills/attractor-scout/tests/test_no_real_data_leak.py`, which runs all three over the skill's
+shipped source and docs -- a defined set of text suffixes, with narrow documented exemptions (caches,
+and the scanner's own pattern definitions) -- on every suite invocation.
+
+**Layer 1 -- generic shapes, committed.** Patterns matching the *shape* of private data without
+naming any instance of it: v4-UUID session ids, `-home-<user>`-shaped workspace slugs, personal path
+prefixes, database and graph endpoints, e-mail shape, common secret-key prefixes. These literals are
+safe to commit precisely because a shape reveals no value -- the pattern for "an API key looks like
+this" is not an API key. The canonical sibling on the run-artifact side is
+`.github/capsule-pipeline/scrub_secrets.py`: the deterministic scrubber built after the 2026-08-11
+key leak, together with its residual gates. It is also the canonical, drift-tripwire-pinned pattern
+source for the write-seam redaction the observability persister applies as artifacts are written --
+its patterns ported from that scrubber -- so a value is scrubbed where it is written rather than only
+where it is uploaded.
+
+**Layer 2 -- environment identity, DERIVED at runtime, never stored.** The guard asks the executing
+machine who it is -- hostname (including its short form), login user, home directory, git `user.name`
+and `user.email` -- and asserts that none of those strings appear in any shipped file. What is
+committed is the *derivation*, never a value. This catches **any** contributor's identity by
+construction, on their own machine, in the file they just wrote; on a CI runner it harmlessly checks
+the runner's own identity. A static deny-list cannot do this, and the reason is not merely that such
+a list is always incomplete: **committing an identity term to a deny-list publishes that term.** A
+deny-list of secrets is a list of secrets. That is the self-defeat the 2026-08-19 incident
+demonstrated in production, and Layer 2 is the structural answer to it. Values below a minimum length
+are skipped, so a short username cannot flag every file in the repo.
+
+**Layer 3 -- local deny-list, outside the repo.** The identity terms Layer 2 cannot derive -- other
+machines, project codenames, collaborators' handles -- live in a file on the contributor's own disk:
+a path named by an environment variable, or `~/.amplifier/leak-denylist.txt` by default. When the
+file is absent the layer skips silently, which is the expected and correct state on CI. The rule that
+makes this layer work is the one it exists to enforce: **identity values never land in the repo** --
+not in a fixture, not in a comment, and not in the list of things being forbidden. A failure message
+from this layer names how many terms matched and withholds which, for the same reason.
+
+### The leak-lens review duty
+
+Deterministic layers match what someone already thought to describe. The 2026-08-19 incident is the
+counter-example that earns this duty: maintainer host-name literals were hardcoded across four
+shipped files of a new skill, and **both** existing defenses passed them. The skill's own static
+deny-list guard missed them because the literals were not in the list -- and adding them would have
+published them. The independent adversarial review's leak-attack missed them because it executed a
+list of greps instead of reading the diff as a stranger. What caught them was a maintainer-prompted
+manual read by a reader asked to look at the change with no context and say what it revealed.
+
+So: **any PR that introduces a NEW public content class gets a semantic pre-publication review by a
+fresh-context reviewer**, briefed verbatim:
+
+> *"Read this diff as a stranger. List everything that identifies a person, a machine, an
+> organization, an internal project, or a private process."*
+
+A **new public content class** is a new top-level directory; a new artifact type that reaches users;
+docs carrying real-run evidence; or a new fixture corpus. Section 2's evidence table carries the same
+row, and `.github/PULL_REQUEST_TEMPLATE.md` carries the checklist line.
+
+**This duty is explicitly distinct from confirming that the greps pass.** A grep-armed reviewer is
+answering *does anything match the patterns we already wrote down* -- which is the question the
+deterministic layers answer faster, cheaper and more reliably than any human will. The outsider brief
+asks the question no pattern encodes: *what does this text tell a stranger about us.* Incident 2 is
+the proof that these are different questions, because a capable reviewer answered the first one
+correctly and shipped the leak anyway.
+
+The reviewer must be **fresh-context** for the same reason section 1's adversarial review must be
+independent of the context that produced the artifact: a reader who watched the content being written
+cannot un-know what the strings mean. To their author, an identity literal reads as ordinary
+configuration; that is exactly why it survives every review that is not performed by a stranger.
+
+**Honest N/A is a valid answer, and the common one** -- most PRs introduce no new public content
+class at all. The checklist line takes the reason in one line rather than inviting a checkbox to be
+ticked past.
+
+### Retirement conditions
+
+Per section 8, each rule here names the observable event that would make it unnecessary.
+
+- **Layer 1** retires per-pattern, not wholesale: an individual shape retires when the data class it
+  matches stops being produced -- an endpoint form no longer used, a key prefix no longer issued. The
+  layer itself retires only with the artifact classes it scans.
+- **Layers 2 and 3** retire together when the ecosystem ships a centralized, identity-aware scrubber
+  that these guards can delegate to -- one place deriving environment identity and one place holding
+  the local terms, with the per-skill copies deleted rather than left in place. Until that exists,
+  duplicated derivation is the cost of the guarantee.
+- **The leak-lens duty** retires only on **measured** evidence that the deterministic layers catch
+  the semantic class: an eval in which content carrying an outsider-visible identifier that no
+  committed pattern names is caught by the guards alone. The burden sits on the evidence and not on
+  the absence of incidents -- the duty exists precisely because two defenses passed a real leak, and
+  "nothing has leaked since" is what a working duty and an unnecessary one look like from outside.
+
+---
+
+## 8. The meta-protocol -- improving the protocol
 
 This document is subject to itself. It is a doc making factual claims, it is a guidance surface, and
 it is machinery. All three of those rows in section 2 apply to it.
@@ -337,7 +452,8 @@ design that usually goes undone: yesterday's scaffolding is today's tax.
 `modules/loop-pipeline/tests/test_quality_protocol_guard.py`. The stated adoption condition -- *the
 first time one of those references is found stale, or the Layer-2 matrix lands, whichever comes
 first* -- **fired with the matrix**, and the guard shipped in the same PR rather than in the next
-one. It was extended with the vision wave (Q-304..Q-307). A protocol that defers its own rule while enforcing it on others is not a protocol; that is the
+one. It was extended with the vision wave (Q-304..Q-307) and again with the leak-defense wave
+(Q-308..Q-312). A protocol that defers its own rule while enforcing it on others is not a protocol; that is the
 whole reason the condition was written with a trigger instead of an intention.
 
 What it pins, each claim read from this page and resolved against the repository rather than against
@@ -347,17 +463,22 @@ exists and the upstream SHA recorded in Layer 0 is the SHA `SPEC_CONFORMANCE.md`
 records; the Changelog this section mandates exists carrying at least one dated entry; and, since
 the vision wave, that [`docs/VISION.md`](VISION.md) exists with its own dated Changelog and names
 the decision matrix, that this page names the `vision-observation` label section 4 depends on, and
-that the decision matrix's canonical articulation reads identically on both pages. It skips
-wholesale in a checkout without this file, and fails loud otherwise.
+that the decision matrix's canonical articulation reads identically on both pages. Since the
+leak-defense wave it also pins section 7: the section exists and names all three of its layers, the
+outsider brief appears on the page verbatim, the two reference implementations it names
+(`skills/attractor-scout/tests/test_no_real_data_leak.py` and
+`.github/capsule-pipeline/scrub_secrets.py`) exist on disk, `.github/PULL_REQUEST_TEMPLATE.md`
+carries the leak-review checklist line, and the Changelog records the amendment that introduced all
+of it. It skips wholesale in a checkout without this file, and fails loud otherwise.
 
 **What is deliberately not guarded: the vision prose itself.** `docs/VISION.md` is judgment, not a
 set of fact claims about code, and a guard over its wording would pin taste rather than truth. The
 guards hold its *structure* (it exists, it has an amendment history, it states the governing rule)
 and the one thing that can silently rot -- the decision matrix's articulation living on two pages.
 
-**One reference remains unpinned, deliberately: the issue numbers.** The nine issue and PR numbers
-cited on this page (#144, #146, #156, #172, #175, #182, #204, #223, #234) resolve only over the
-network, and these suites do not reach it. That is a real remaining gap, named here in those words
+**One reference remains unpinned, deliberately: the issue numbers.** The fourteen issue and PR
+numbers cited on this page (#144, #146, #156, #172, #175, #182, #199, #204, #207, #208, #223, #234,
+#288, #297) resolve only over the network, and these suites do not reach it. That is a real remaining gap, named here in those words
 rather than left for a reader to find; it belongs to the Layer-3 pass, not to CI.
 
 Retirement condition: none while this page names external references. The guard narrows as the page
@@ -365,7 +486,7 @@ stops naming things, and retires only with the page.
 
 ---
 
-## 8. Dogfooding
+## 9. Dogfooding
 
 Improvements to this repo that fit the pipelines' weight class go through the repo's own lanes.
 [`docs/ISSUE_PIPELINE.md`](ISSUE_PIPELINE.md) documents both -- the defect lane (`ready:spec`) and
@@ -395,7 +516,7 @@ same reason it exists: criteria written after the work is done describe the work
 
 ---
 
-## 9. Lifting this model
+## 10. Lifting this model
 
 Other repos in the ecosystem are welcome to take this. What transfers, and what does not:
 
@@ -413,6 +534,14 @@ different posture and a different toll per direction relative to whatever your n
 (section 3), plus the **standing observation duty** with a label, a PR heading, non-blocking capture,
 and named resolution paths (section 4). A repo with no upstream spec still has a direction it is
 being steered in, and can still ask what each change costs relative to it.
+
+One more, added with the leak-defense wave and the most portable thing on this page because it is
+not about specs at all: the **three-layer pre-publication leak model** (section 7) -- generic shapes
+committed, environment identity derived at runtime and never stored, extra identity terms in a local
+file outside the repo -- plus the **leak-lens review duty** and its outsider brief. Any repo that is
+public, or that will be, has the same problem and the same two failure modes: a deny-list that
+publishes what it forbids, and a reviewer who greps instead of reading. The layer boundaries are
+where the transferable design lives; the patterns inside Layer 1 are local.
 
 **Intended follow-up, named not done:** promoting the vision-document + observation-convention
 pattern into `amplifier-foundation`'s per-repo-conventions guidance, so other repos inherit the shape
@@ -434,6 +563,80 @@ This repo's maintainers will help seed a customized version on request -- open a
 ## Changelog
 
 Amendments to this protocol, newest first. Each entry names the evidence that justified it.
+
+### 2026-08-19 -- pre-publication leak defense (entry 8)
+
+- **Added.** A new **section 7, "Pre-publication leak defense"**: the three-layer model (generic
+  shapes committed; environment identity *derived* at runtime and never stored; extra identity terms
+  in a local file outside the repo), the **leak-lens review duty** with its outsider brief quoted
+  verbatim, and a named retirement condition for each. Wired in: section 2's evidence table gains a
+  **New public content class** row naming the leak-lens as required evidence and a note that the row
+  buys a *reading*, not an artifact; `.github/PULL_REQUEST_TEMPLATE.md` gains one honest-N/A
+  checklist line; section 10 adds the model to the portable set;
+  `modules/loop-pipeline/tests/test_quality_protocol_guard.py` gains Q-308..Q-312.
+- **Renumbering, stated rather than silent.** Old sections 7-9 are now 8-10. Cross-references
+  throughout the page -- including inside earlier Changelog entries -- were repointed, and the one
+  external citation (`evals/guidance/README.md`, which cites the retirement review) was updated in
+  this PR. **Sections 1-6 deliberately keep their numbers.** Sections 3-6 are cited by name and
+  number from an exemplar pipeline and its gate script (`examples/drift-review/`), and from
+  `specs/conformance/attractor-matrix.yaml` and `context/pipeline-awareness.md`; renumbering them
+  would have turned a documentation change into an exemplar change, which section 2 prices at
+  zero-ERROR lint plus a live convergence run plus RED-and-GREEN gate proof. Placing the new section
+  at 7 buys the same reading order for free -- the two defense-in-depth models sit adjacent, and the
+  meta-protocol still closes the machinery.
+- **Evidence that justified it: two measured incidents, both in this repo's own history.**
+  1. **2026-08-11 -- a live provider API key leaked through public run artifacts.** A worker's
+     environment dump was persisted verbatim and uploaded as a public Actions artifact. The response
+     built the deterministic scrubber `.github/capsule-pipeline/scrub_secrets.py` with its residual
+     gates (#199, #207, #208) and, later, the observability persister's write-seam redaction -- its
+     patterns ported from that scrubber, which stays the canonical, drift-tripwire-pinned pattern
+     source -- so a value is scrubbed where it is written rather than only where it is uploaded
+     (#288). That machinery already existed;
+     what this section adds is naming it as Layer 1 of a model, rather than leaving it as one
+     pipeline's local defense that nothing generalizes from.
+  2. **2026-08-19 -- maintainer host-name literals were hardcoded across four shipped files of a new
+     skill (#297)**, and were caught only by a maintainer-prompted manual "read as an outsider"
+     pass. **Both** existing defenses missed them. The skill's own static deny-list guard missed
+     them because the literals were not on the list -- and adding them would have *published* them,
+     which is the property that makes a deny-list of identity terms self-defeating in a public repo.
+     The independent adversarial review's leak-attack missed them because it executed a list of
+     greps instead of reading the diff as a stranger. The fix merged in #297 redesigned the guard so
+     environment identity is **derived at runtime and never committed**; that is now Layer 2. The
+     review-duty half of the same lesson had nowhere to live until this section.
+- **What each half of the section is for.** Layers 1-3 are the deterministic answer and they are
+  cheap, but they only ever match what someone already thought to describe. The leak-lens duty
+  answers incident 2's actual finding, which is not *the greps were wrong* but *greps and reading
+  are different questions, and only one of them was asked*. A grep-armed reviewer answers "does this
+  match a known pattern"; the outsider brief asks "what does this tell a stranger about us". A
+  capable reviewer answered the first question correctly and shipped the leak anyway, which is the
+  measurement.
+- **The amendment obeys the discipline it codifies.** No identity literal appears anywhere in this
+  change. Incident 2 is described by class -- *maintainer host-name literals* -- and never by value,
+  because a changelog entry naming what leaked reproduces the exact self-defeat the incident is
+  about. A shape-level grep over the full diff was run before commit and is reported in the PR.
+- **Scope of this change: documentation, the PR template, and one guard test.** No engine, handler,
+  example, module or ledger *behavior* changed.
+- **Decision-matrix tier: uncharted (section 3), and the silence is argued.** The nlspec specifies
+  pipeline semantics -- parsing, routing, dispatch, fidelity, checkpointing. It says nothing about
+  the publication hygiene of a repository that implements it, and that silence is a **scope
+  boundary rather than a judgment**: publication hygiene is not a thing the spec declined to
+  specify, it is a thing outside what a pipeline specification is for. This change routes around the
+  spec rather than against it, and protects the project on an axis the spec does not reach. It is
+  additive and non-interfering by construction -- a spec-conformant graph behaves identically, and
+  no `.dot`, handler, engine or dispatch path is touched. **No `specs/EXTENSIONS.md` entry is
+  owed**: that ledger records extensions to *observable pipeline contracts*, and this change extends
+  none. Recording a process convention there would dilute the ledger's meaning, which is the one
+  property the coverage tripwire depends on.
+- **Proven red before green.** Each of Q-308..Q-312 was mutated in a scratch copy and observed to
+  fail naming the specific stale claim, then restored byte-identically. A guard never seen red is an
+  unproven guard.
+- **Retirement conditions**, stated per rule in section 7. Layer 1 retires per-pattern, with the
+  data classes each shape matches. Layers 2 and 3 retire together when the ecosystem ships a
+  centralized identity-aware scrubber the guards can delegate to, with the per-skill copies deleted
+  rather than left in place. The leak-lens duty retires only on **measured** evidence that the
+  deterministic layers catch the semantic class -- and the burden sits on that evidence, not on a
+  quiet interval, because "nothing has leaked since" is what a working duty and an unnecessary one
+  look like from outside.
 
 ### 2026-08-15 -- the guidance eval shipped; section 2's interim floor retired (entry 7)
 
@@ -464,7 +667,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
   `evals/guidance/README.md`, not here, and no run artifact is committed: the harness refuses to
   write results inside the checkout, so transcripts and prompts stay out of source by construction.
 - **Retirement conditions.** The instrument's own are stated in `evals/guidance/README.md` and are
-  governed by section 7's retirement review -- *what has it caught since the last review?* -- plus a
+  governed by section 8's retirement review -- *what has it caught since the last review?* -- plus a
   hold-out discipline that requires one scenario rewritten from scratch, same property and new
   words, whenever several runs pass without finding anything. The walk-through fallback in the
   section 2 row retires when no change class remains that the eval cannot reach.
@@ -496,7 +699,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
 - **Scope of this change: additive.** No engine, handler or ledger *behavior* changed. One new
   example directory, one new guard test, one README gallery row, and this page's Layer-3 line.
 - **Retirement condition.** The layer has none. The *executor* retires if the review it runs stops
-  earning its cost under section 7's retirement review -- if it finds nothing across several
+  earning its cost under section 8's retirement review -- if it finds nothing across several
   cycles, that is itself the finding, and the review that observed it would say so.
 
 ### 2026-08-15 -- the decision matrix stated in authored prose (entry 5)
@@ -533,7 +736,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
   Wired in: section 1's adversarial-review duties now include classifying the tier and verifying its
   toll; section 2's table names the tier as a second, composing obligation; Layer 3 names
   `docs/VISION.md` as the vision it reads against and `vision-observation` issues as an input;
-  section 9 adds both to the portable set.
+  section 10 adds both to the portable set.
 - **Renumbering, stated rather than silent.** Old sections 3-7 are now 5-9. Cross-references
   throughout the page -- including in Changelog entries 1-3 -- were repointed at the new numbers, so
   every citation still resolves. No historical *claim* was altered; only the pointers. The one
@@ -559,14 +762,14 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
   scaffolding around a bug class. The observation duty's label and PR heading retire if the
   observation stream proves empty across several Layer-3 cycles, which would itself be a finding.
 - **Intended follow-up, named not done.** Promoting the vision-document + observation-convention
-  pattern into `amplifier-foundation`'s per-repo-conventions guidance (section 9). Separate repo,
+  pattern into `amplifier-foundation`'s per-repo-conventions guidance (section 10). Separate repo,
   separate change.
 
 ### 2026-08-15 -- this document's own guard shipped (entry 3)
 
-- **Changed.** Section 7's "**This document's own guard**" passage flipped from *owed next* to
+- **Changed.** Section 8's "**This document's own guard**" passage flipped from *owed next* to
   shipped, naming `modules/loop-pipeline/tests/test_quality_protocol_guard.py`. Layer 1 goes from
-  five guard files to six and the new guard gets its table row. Section 2's and section 9's
+  five guard files to six and the new guard gets its table row. Section 2's and section 10's
   pointers at "the five existing guards" / "the five named guard files" were updated with it.
 - **Evidence that justified it: the protocol's own rule fired, and the deferral was the finding.**
   Entry 2 recorded the adoption condition as met ("the matrix landed") and then deferred the guard
@@ -588,7 +791,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
 - **Scope of this change: additive.** One new test module and this page. No engine, handler,
   example or ledger *behavior* changed.
 - **Honest gap, named not hidden.** The nine issue/PR numbers on this page stay unpinned: they
-  resolve only over the network and these suites do not reach it. Recorded in section 7 in those
+  resolve only over the network and these suites do not reach it. Recorded in section 8 in those
   words, and assigned to the Layer-3 pass rather than to CI.
 - **Retirement condition.** None while this page names external references. The guard narrows as
   the page stops naming things, and retires only with the page.
@@ -621,7 +824,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
 - **Retirement conditions.** The matrix mechanism has none -- it is the executable form of a ledger
   that is itself permanent. Individual rows retire by changing disposition: when upstream absorbs a
   divergence, or when a decision closes an `OPEN-PINNED` row. **This document's own missing guard
-  (section 7) is now due**: its stated adoption condition -- "or the Layer-2 matrix lands" -- fired
+  (section 8) is now due**: its stated adoption condition -- "or the Layer-2 matrix lands" -- fired
   with this entry. *(Discharged by entry 3, same PR: the guard shipped rather than being deferred.)*
 
 ### 2026-08-15 -- protocol captured (entry 1)
@@ -639,7 +842,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
 - **Scope of this change: documentation only.** No engine, handler, example or test code changed.
   Layer 2 and the guidance-eval instrument are marked in flight and are explicitly *not* claimed to
   exist.
-- **Retirement conditions.** Section 7's retirement review has none: it is the mechanism that retires
+- **Retirement conditions.** Section 8's retirement review has none: it is the mechanism that retires
   other machinery and cannot retire itself. Layer 3's ~15-merge cadence retires when a measured rate
-  exists to replace the estimate. This document's missing self-guard (section 7) retires when that
+  exists to replace the estimate. This document's missing self-guard (section 8) retires when that
   guard lands.

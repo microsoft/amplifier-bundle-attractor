@@ -1,24 +1,18 @@
 ---
 name: attractorify
+version: "1.0.0"
 description: >
   Analyze the current session and decide whether an attractor pipeline is
   warranted — then design one conversationally if it is. Triggers: "/attractorify",
   "should this be an attractor?", "design a pipeline for", "attractorify this",
   "do I need an attractor pipeline?", "turn this into a pipeline".
 user-invocable: true
-model_role: >
-  You are an attractor pipeline design assistant. You diagnose whether a pipeline
-  is warranted, design one conversationally when it is, and ask targeted clarifying
-  questions when the session under-determines the design. You consult the
-  attractor:attractor-expert agent by delegation at design start and final review
-  (reading agents/attractor-expert.md directly only when delegation is
-  unavailable); you do not restate the doctrine from memory.
+model_role: reasoning
 allowed-tools:
   - read_file
   - write_file
   - bash
   - delegate
-shortcut: attractorify
 ---
 
 # /attractorify — Attractor Pipeline Design Skill

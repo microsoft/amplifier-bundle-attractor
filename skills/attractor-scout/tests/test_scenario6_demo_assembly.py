@@ -90,6 +90,64 @@ def test_brief_carries_the_gate_tool_evidence_from_their_own_sessions(tmp_path: 
     assert "read_file" not in text.split("## What to write")[0], "non-verify tools are not gate evidence"
 
 
+def test_brief_quotes_the_a5_budget_wall_vocabulary(tmp_path: Path):
+    """A5 is a literal token match, so the brief must NAME the tokens.
+
+    Measured on real runs: with the budget wall described only in prose, both
+    live demonstrations came back `[FAIL] A5` on the first draft and cost a
+    second delegation. A fresh-context delegate cannot read the checker, so
+    every token the checker matches on is quoted into the brief verbatim.
+    """
+    from attractor_scout import authoring_contract as contract
+
+    ranked_path = _write_ranked(tmp_path)
+    _, brief_path = demo.build_brief(ranked_path=ranked_path, unit_id=None, workdir=tmp_path / "demo")
+    text = brief_path.read_text(encoding="utf-8")
+
+    assert "A5 IN DETAIL" in text, "the A5 shape must be spelled out, not left to the contract summary"
+    for token in contract._BUDGET_TOKENS:
+        assert token in text, f"the brief must name the A5 budget token {token!r} the checker matches on"
+    for token in contract._EXHAUSTION_TOKENS:
+        assert token in text, f"the brief must name the A5 exhaustion token {token!r} the checker matches on"
+    assert "tool_command" in text and "condition" in text, "A5 needs BOTH halves: the command and the edge"
+
+
+def test_the_briefs_worked_a5_example_actually_passes_a5(tmp_path: Path):
+    """The example the brief hands the author must survive the real checker.
+
+    A worked example that does not itself pass is worse than none: it teaches
+    a shape the gate rejects. So the shipped fragment — the same string the
+    brief embeds — is wrapped in the smallest legal graph and fed to the
+    vendored checker.
+    """
+    from attractor_scout import authoring_contract as contract
+    from attractor_scout import demo_templates as T
+
+    ranked_path = _write_ranked(tmp_path)
+    _, brief_path = demo.build_brief(ranked_path=ranked_path, unit_id=None, workdir=tmp_path / "demo")
+    assert T.A5_WORKED_EXAMPLE in brief_path.read_text(encoding="utf-8"), "the brief must carry the example"
+
+    dot = (
+        "digraph demo {\n"
+        "  start [shape=Mdiamond];\n"
+        "  done [shape=Msquare];\n"
+        '  worker [shape=box, prompt="do the work"];\n'
+        '  gate [shape=parallelogram, tool_command="pytest -q"];\n'
+        '  give_up [shape=parallelogram, tool_command="echo out of budget; exit 1", max_retries="0"];\n'
+        f"{T.A5_WORKED_EXAMPLE}\n"
+        "  start -> wall;\n"
+        '  worker -> gate [condition="outcome=success"];\n'
+        '  worker -> give_up [condition="outcome=fail"];\n'
+        '  gate -> done [condition="context.tool.last_line=green && outcome=success"];\n'
+        '  gate -> wall [condition="context.tool.last_line=red && outcome=success"];\n'
+        '  give_up -> done [condition="outcome=fail"];\n'
+        "}\n"
+    )
+    results = {r.check_id: r for r in contract.run_checks(contract.parse_dot_min(dot), None)}
+    assert results["A5"].passed, f"the brief's own worked example fails A5: {results['A5'].detail}"
+    assert results["A8"].passed, f"the example routes exhaustion badly: {results['A8'].detail}"
+
+
 def test_brief_is_honest_when_no_gate_evidence_was_observed(tmp_path: Path):
     ranked_path = _write_ranked(tmp_path)
     _, brief_path = demo.build_brief(ranked_path=ranked_path, unit_id=None, workdir=tmp_path / "demo")

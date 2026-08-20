@@ -49,11 +49,11 @@ def _gate(report: deck_mod.DeckReport, letter: str) -> deck_mod.GateResult:
 
 # --------------------------------------------------------------------- GREEN
 def test_clean_deck_passes_every_gate(run_dir: Path):
-    """★ The green baseline: a minimal clean deck clears all five gates."""
+    """★ The green baseline: a minimal clean deck clears all six gates."""
     report = _verify(run_dir, F.clean_deck())
     failing = [f"{g.letter}: {g.findings}" for g in report.gates if not g.passed]
     assert report.ok, f"the clean fixture deck must pass every gate; failures: {failing}"
-    assert [g.letter for g in report.gates] == ["a", "b", "c", "d", "e"]
+    assert [g.letter for g in report.gates] == ["a", "b", "c", "d", "e", "f"]
 
 
 def test_clean_deck_report_reports_real_numbers(run_dir: Path):
@@ -335,6 +335,101 @@ def test_diagram_with_no_demonstration_to_check_against_is_red(tmp_path: Path):
     assert "no demonstration bundle was supplied" in " ".join(gate.findings)
 
 
+# ------------------------------------------- (f) every modal has the depth
+def test_clean_deck_modal_conforms_to_the_structure_contract(run_dir: Path):
+    """★ GREEN: the fixture's one modal carries all five mandated parts."""
+    gate = _gate(_verify(run_dir, F.clean_deck()), "f")
+    assert gate.passed, gate.findings
+    assert "1/1 dialog(s) conforming" in gate.detail
+    assert "sub-section(s)" in gate.detail and "evidence block(s)" in gate.detail
+
+
+def test_red_hollow_modal_fails_gate_f(run_dir: Path):
+    """★ RED: a modal that is two flat paragraphs and nothing else.
+
+    Everything else about the deck is untouched, so this proves the gate is
+    reading modal STRUCTURE and not riding some other gate's failure.
+    """
+    report = _verify(run_dir, F.with_hollow_modal())
+    assert not report.ok
+    gate = _gate(report, "f")
+    assert not gate.passed
+    joined = " ".join(gate.findings)
+    assert "m-unit" in joined, gate.findings
+    for expected in ("sub-section", "evidence", "why", "entry"):
+        assert expected in joined, f"the finding must name the missing {expected!r}: {gate.findings}"
+    for other in ("a", "b", "c", "d", "e"):
+        assert _gate(report, other).passed, f"gate {other} must be unaffected: {_gate(report, other).findings}"
+
+
+def test_red_modal_without_evidence_fails_gate_f(run_dir: Path):
+    """RED: heading, sub-sections, why and entry --- but never the reader's own data."""
+    report = _verify(run_dir, F.with_modal_missing_evidence())
+    gate = _gate(report, "f")
+    assert not gate.passed
+    joined = " ".join(gate.findings)
+    assert DT.MODAL_EVIDENCE_CLASS in joined, gate.findings
+    assert "sub-section" not in joined, f"only the evidence gap should be named: {gate.findings}"
+
+
+def test_red_modal_with_one_subsection_fails_gate_f(run_dir: Path):
+    """RED: the sub-section minimum is a real threshold, not a presence check."""
+    gate = _gate(_verify(run_dir, F.with_modal_one_subsection()), "f")
+    assert not gate.passed
+    joined = " ".join(gate.findings)
+    assert f"1 <{DT.MODAL_SUBSECTION_TAG}> sub-section(s)" in joined, gate.findings
+    assert str(DT.MODAL_MIN_SUBSECTIONS) in joined
+
+
+def test_gate_f_is_structural_not_a_length_check(run_dir: Path):
+    """A SHORT modal that has every part passes; a LONG one missing parts fails.
+
+    The whole design intent of gate (f), asserted directly: padding buys
+    nothing and brevity costs nothing. Structure is the only currency.
+    """
+    filler = "<p>The same point, restated at length, again and again.</p>\n" * 30
+    padded_hollow = F.with_hollow_modal().replace(
+        "<p>It is worth automating.</p>", "<p>It is worth automating.</p>\n" + filler, 1
+    )
+    assert not _gate(_verify(run_dir, padded_hollow), "f").passed
+
+    trimmed = F.clean_deck().replace(
+        "A generated report comes back wrong, you repair it, and you run the check again until the\n"
+        "      check stops complaining.",
+        "It repeats.",
+        1,
+    )
+    assert len(trimmed) < len(F.clean_deck())
+    assert _gate(_verify(run_dir, trimmed), "f").passed
+
+
+def test_gate_f_class_token_is_matched_exactly(run_dir: Path):
+    """`class="whyever"` is not a why-block --- the gate splits, never substrings."""
+    html = F.clean_deck().replace('<p class="why">', '<p class="whyever">', 1)
+    gate = _gate(_verify(run_dir, html), "f")
+    assert not gate.passed
+    assert DT.MODAL_WHY_CLASS in " ".join(gate.findings)
+
+
+def test_gate_f_accepts_a_class_token_beside_others(run_dir: Path):
+    """A mandated class may sit alongside styling classes --- the token is what counts."""
+    html = F.clean_deck().replace('<div class="evidence">', '<div class="inset evidence wide">', 1)
+    assert _gate(_verify(run_dir, html), "f").passed
+
+
+def test_gate_f_names_an_unnamed_dialog_rather_than_crashing(run_dir: Path):
+    """A <dialog> with no id still gets counted and still gets named in the finding."""
+    html = F.clean_deck().replace(
+        '<script type="application/json" id="derived-values">',
+        '<dialog><div class="mbox"><h3>No id at all</h3></div></dialog>\n\n'
+        '<script type="application/json" id="derived-values">',
+        1,
+    )
+    gate = _gate(_verify(run_dir, html), "f")
+    assert not gate.passed
+    assert "(unnamed dialog)" in " ".join(gate.findings), gate.findings
+
+
 # ------------------------------------------------------------ report shape
 def test_failures_name_the_file_and_the_reason(run_dir: Path):
     report = _verify(run_dir, F.with_fabricated_number(), name="candidate-deck.html")
@@ -349,7 +444,7 @@ def test_report_round_trips_as_json(run_dir: Path):
     report = _verify(run_dir, F.clean_deck())
     payload = json.loads(json.dumps(report.as_dict()))
     assert payload["ok"] is True
-    assert [g["letter"] for g in payload["gates"]] == ["a", "b", "c", "d", "e"]
+    assert [g["letter"] for g in payload["gates"]] == ["a", "b", "c", "d", "e", "f"]
 
 
 # ===================================================================

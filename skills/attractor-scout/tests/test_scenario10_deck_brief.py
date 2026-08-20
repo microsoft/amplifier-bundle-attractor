@@ -58,7 +58,7 @@ def test_brief_is_written_and_deterministic(run_dir: Path):
     assert second.read_text(encoding="utf-8") == text_a, "the same run must always produce the same brief"
 
 
-def test_brief_carries_all_four_mandates(run_dir: Path):
+def test_brief_carries_all_five_mandates(run_dir: Path):
     """★ Without these, the gates are unpassable by an author who cannot see them."""
     brief = deck_mod.build_deck_brief(
         ranked_path=run_dir / "ranked.json", demos_path=run_dir / "demos.json", workdir=run_dir / "deck"
@@ -68,6 +68,7 @@ def test_brief_carries_all_four_mandates(run_dir: Path):
         "MANDATE 2 --- DECLARE EVERY DERIVED VALUE",
         "MANDATE 3 --- DIAGRAM FIDELITY IS CHECKED",
         "MANDATE 4 --- ABSENT DATA GETS AN HONEST NOTE",
+        "MANDATE 5 --- EVERY MODAL IS STRUCTURED",
     ):
         assert mandate in brief, f"the brief must state {mandate!r}"
     assert DT.DERIVED_BLOCK_ID in brief
@@ -228,7 +229,7 @@ def test_cli_verify_writes_a_machine_readable_report(run_dir: Path):
     assert proc.returncode == 0, proc.stderr
     payload = json.loads((run_dir / "gates.json").read_text(encoding="utf-8"))
     assert payload["ok"] is True
-    assert len(payload["gates"]) == 5
+    assert len(payload["gates"]) == 6
 
 
 def test_cli_fails_loud_on_a_missing_deck(run_dir: Path):

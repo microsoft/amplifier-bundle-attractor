@@ -108,6 +108,9 @@ STEP10_PINNED_CLAIMS = [
     ("deck brief", 'action == "brief"', "scripts/attractor_scout_cli.py"),
     # The 600 s provider-timeout rationale for staged delegation (FOLD 6).
     ("600 s", "DECK_MAX_ATTEMPTS", "scripts/attractor_scout/deck.py"),
+    # The structural depth gate (f) and the class tokens it counts.
+    ("structural depth gate", "def gate_modal_depth", "scripts/attractor_scout/deck.py"),
+    ("`evidence` inset", 'MODAL_EVIDENCE_CLASS = "evidence"', "scripts/attractor_scout/deck_templates.py"),
 ]
 
 
@@ -122,12 +125,12 @@ def test_step10_claims_are_sourced_in_code():
         )
 
 
-def test_step10_names_all_five_gates():
-    """Step 10 must describe every deterministic deck gate (a)-(e) by letter.
+def test_step10_names_all_six_gates():
+    """Step 10 must describe every deterministic deck gate (a)-(f) by letter.
 
     Guards against a future edit silently dropping a gate description from the
     guidance while the gate still runs in code.
     """
     skill = SKILL_MD.read_text(encoding="utf-8")
-    for letter in "abcde":
+    for letter in "abcdef":
         assert f"**({letter})**" in skill, f"SKILL.md step 10 no longer names deck gate ({letter})"

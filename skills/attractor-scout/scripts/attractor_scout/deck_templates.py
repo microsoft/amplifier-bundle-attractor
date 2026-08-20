@@ -53,6 +53,44 @@ EDGE_ATTR = "data-edge"
 #: the recovered exemplar verifies. When present the mapping is explicit.
 DIAGRAM_ATTR = "data-diagram"
 
+# --------------------------------------------------------------------------
+# The modal STRUCTURE contract --- the second machine-readable seam.
+#
+# The style contract below tells the author to build every modal out of these
+# named parts; `deck.gate_modal_depth` counts exactly these names. One set of
+# constants, so the brief and the gate can never drift apart --- the same
+# single-source discipline `DERIVED_BLOCK_ID` uses for the numbers gate.
+#
+# These are STRUCTURE mandates, not length quotas. A modal cannot satisfy them
+# by being long; it satisfies them by having a heading, real sub-sections, a
+# block that quotes the reader's own verified data, a why-this-matters, and a
+# way in. Padding does not help, which is the entire point.
+# --------------------------------------------------------------------------
+
+#: The tiny uppercase label above a modal's title. Part of the heading pattern.
+MODAL_KICKER_CLASS = "m-kick"
+
+#: A modal sub-section head. Plain `<h4>` inside the modal body --- no class
+#: needed, because the tag alone is unambiguous at this depth.
+MODAL_SUBSECTION_TAG = "h4"
+
+#: The inset that quotes THIS reader's own verified data back to them ---
+#: their counts, medians, trend, or a machine verdict relayed verbatim.
+MODAL_EVIDENCE_CLASS = "evidence"
+
+#: The block that says why the evidence matters *for this reader*.
+MODAL_WHY_CLASS = "why"
+
+#: The closing line: the smallest next step, or (for an honest NO) what would
+#: change the answer. Every modal ends somewhere the reader can go.
+MODAL_ENTRY_CLASS = "entry"
+
+#: How many `<h4>` sub-sections a conforming modal carries, at minimum.
+MODAL_MIN_SUBSECTIONS = 2
+
+#: How many evidence insets a conforming modal carries, at minimum.
+MODAL_MIN_EVIDENCE = 1
+
 #: The two links the footer carries, and the only two the gate permits.
 FOOTER_LINKS: tuple[tuple[str, str], ...] = (
     ("the published explainer", T.EXPLAINER_URL),
@@ -67,7 +105,7 @@ ALLOWED_HTTPS_HREFS = len(FOOTER_LINKS)
 # (a) The house style / technique contract --- the section arc, as TEXT.
 # --------------------------------------------------------------------------
 
-STYLE_CONTRACT = """\
+STYLE_CONTRACT = f"""\
 THE HOUSE DECK IDIOM (learn the TECHNIQUES; write FRESH content)
 
 This is a DECK, not a report. A report enumerates; a deck argues. Every section
@@ -75,6 +113,232 @@ opens on a claim a reader can disagree with, then pays it off with the run's own
 verified evidence. Write for one specific reader --- the person whose work this
 run mined --- in second person, in their vocabulary, with no internal jargon and
 no meta-commentary about being a language model.
+
+What follows is a TECHNIQUE SHEET, not a template: concrete tokens, a concrete
+nav spec, and a concrete modal-structure contract, extracted from the house
+decks this one has to sit beside. Reproduce the TECHNIQUES exactly. Write every
+sentence yourself, from the data below.
+
+=========================================================================
+PART 1 --- THE DESIGN TOKENS (declare these verbatim in :root)
+=========================================================================
+
+  --bg:#0d1117;      --bg2:#11171e;     --surface:#171e26; --surface2:#1e262f;
+  --track:#232c36;   --line:#2a3540;    --line2:#3a4753;
+  --ink:#eef2f6;     --ink2:#c3ccd6;    --muted:#93a1af;   --faint:#8593a1;
+  --accent:#ff7a45;  --accent2:#ffa27a; --accent-tint:#2b1a12;
+  --pass:#4ade80;    --pass2:#86efac;   --pass-tint:#102a1c;
+  --focus:#7cc4ff;
+  --wide:1040px;     --col:760px;
+
+THE RULES THOSE TOKENS ENCODE --- follow them, do not just paste them:
+
+  * EVERY SEMANTIC COLOUR IS A TRIAD: a saturated hue for strokes/borders
+    (`--accent`, `--pass`), a LIGHTER sibling for text on dark (`--accent2`,
+    `--pass2`), and a very dark TINT for filled shapes (`--accent-tint`,
+    `--pass-tint`). Never set accent-hue text directly on the page background;
+    always use the lighter sibling. Accent = attention, a gate, a control node.
+    Pass/green = the passing edge and the single exit door. Nothing else gets
+    a colour.
+  * FOCUS IS ITS OWN HUE, outside both families, so a keyboard ring can never
+    be mistaken for an accent: `:focus-visible {{ outline:2px solid var(--focus);
+    outline-offset:3px }}` declared once, globally, for links, buttons and
+    anything with a tabindex.
+  * SURFACES GO LIGHTER, INSETS GO DARKER. A card/panel sits ABOVE the page
+    (`--surface`, hover `--surface2`); a quoted/evidence inset sits BELOW it
+    (`--bg2`). That inversion is what makes quoted material read as quoted.
+  * FLAT, NOT GLOSSY. No gradients anywhere. Exactly ONE shadow in the whole
+    document, on the dialog: `0 26px 70px rgba(0,0,0,.62)`. Everything else is
+    a 1px `--line` border.
+
+TYPOGRAPHY --- three stacks, and the split between them is the signature:
+
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,
+         "Helvetica Neue",sans-serif;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",
+          Georgia,"Times New Roman",serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,
+         "Liberation Mono",monospace;
+
+  * SERIF carries every h1/h2/h3, the hero sub-line, every pull quote, every
+    doctrine strip, every card title, and every big stat value. SANS carries
+    body copy and the tiny uppercase labels. MONO carries counters, diagram
+    edge labels, code, and stat figures inside modals. A deck that sets its
+    headings in the body sans is the single most obvious way to miss this
+    house style.
+  * WEIGHT AND TRACKING: headings are `font-weight:600` with NEGATIVE tracking
+    (h1 about -.035em, h2/h3 about -.02em) and tight leading (h1 near .98).
+    Heavy 800-weight headings are wrong here; the serif does the work.
+  * SCALE: body 17px/1.6. h1 `clamp(44px,7.4vw,82px)`.
+    h2 `clamp(32px,4.8vw,50px)`. h3 about 21px. A serif deck-line under the
+    hero headline at `clamp(20px,2.6vw,27px)`. A sans standfirst at 19px/1.45.
+    A muted lede at 16px.
+  * THE MICRO-LABEL RHYTHM (this recurs in ~8 places and is the second
+    signature): 10.5-11px, `font-weight:700`, `letter-spacing:.16em-.2em`,
+    `text-transform:uppercase`, coloured `--accent` when it labels a section
+    or a modal, `--faint` when it labels a figure or an inset. Use it for the
+    hero kicker, the section eyebrow, the figure title, the modal kicker, and
+    every inset's label.
+
+LAYOUT RHYTHM:
+
+  * TWO WIDTHS, deliberately different: `--col:760px` for PROSE, `--wide:1040px`
+    for FIGURES and the top bar. Prose narrower than diagrams is what makes the
+    page feel airy instead of like a report.
+  * `main > section {{ padding:76px 0 34px; scroll-margin-top:70px;
+    border-top:1px solid var(--line) }}`, and the hero section drops the top
+    border. Sections are separated by a hairline, never by a colour change.
+  * RADII BY ROLE: 5px insets/notes, 6px cards and diagram nodes, 10px dialog,
+    999px pill buttons, 50% circular counters and the modal close button.
+  * THE 3px LEFT STRIPE is the house emphasis device. A doctrine strip, a
+    pull-out note, an evidence inset, and a card all carry
+    `border-left:3px solid <a semantic hue>` --- accent for attention, pass for
+    "what changes", faint for "what we cannot see".
+
+=========================================================================
+PART 2 --- THE NAV SPEC (build all four pieces; they are not optional)
+=========================================================================
+
+  1. SCROLL PROGRESS. A fixed 3px bar across the top of the viewport
+     (`position:fixed;top:0;left:0;right:0;z-index:80`, `aria-hidden="true"`)
+     whose inner element's width is set from the scroll fraction by the inline
+     script, on a passive scroll listener plus resize.
+  2. STICKY TOP BAR. `position:sticky;top:0;z-index:60`, background the page
+     colour at ~92% alpha with `backdrop-filter:saturate(150%) blur(10px)`, a
+     1px bottom border, about 54px tall, its contents laid out at `--wide`.
+     It carries a BRAND word-mark (12.5px, 700, .16em tracking, uppercase, one
+     word inside it in `--accent`) and, optionally, one bordered mono pill
+     tagging what this document is.
+  3. NUMBERED SECTION NAV. Inside the bar, `<nav aria-label="Sections">` with
+     one anchor per non-hero section, each labelled with a zero-padded ordinal
+     and a two-or-three-word name (`01 The shape`, `02 What is already
+     loop-shaped`, ...). 12px, `--muted`, transparent bottom border; on hover
+     and when current, an `--accent` bottom border. The bar scrolls
+     horizontally on narrow screens with the scrollbar hidden.
+  4. CURRENT-SECTION HIGHLIGHT. An `IntersectionObserver` over the section
+     elements with a `rootMargin` that narrows the trigger band to the middle
+     of the viewport (about `-45% 0px -50% 0px`), setting `aria-current="true"`
+     on the matching anchor and removing it from the others. Guard the whole
+     block with a feature check so a browser without it simply gets no
+     highlight. Pair it with `html {{ scroll-behavior:smooth }}` and the
+     `scroll-margin-top` above, so a jumped-to heading is never hidden under
+     the sticky bar.
+
+=========================================================================
+PART 3 --- THE SECTION FURNITURE (what a section is made of, in order)
+=========================================================================
+
+  HERO: a `--col` block holding a kicker micro-label, a serif h1 that is ONE
+  declarative sentence ending in a full stop, a serif deck-line, and a muted
+  lede that says how to read the page (that cards, nodes and numbers open
+  detail). Then, immediately, a full-`--wide` `<figure>` carrying the hero
+  diagram. No top border.
+
+  EVERY OTHER SECTION, in this order:
+    a. `--col` block: eyebrow micro-label with the ordinal in its own <span>,
+       then a claim-shaped serif h2, then a sans standfirst.
+    b. full-`--wide` `<figure>`: a figure-title micro-label, the inline SVG,
+       and a `<figcaption>` (14px, `--muted`, top-bordered, capped near 660px)
+       that opens with a bold lead-in clause and then says what the diagram
+       MEANS --- never what it depicts.
+    c. `--col` block again: a serif PULL QUOTE (`clamp(20px,2.4vw,25px)`, with
+       one clause in accent italics), then the section's content grid (cards,
+       stat tiles, numbered rows, or chips), then a cluster of PILL OPENER
+       buttons that open modals, then optionally one bordered NOTE block.
+    d. a full-width DOCTRINE STRIP closing the section: a single serif line at
+       `clamp(21px,2.8vw,28px)` in `--accent2`, with a 3px accent left rule and
+       about 22px of left padding. One per section. It is the deck's
+       punctuation --- the last thing a skimmer reads before the next hairline.
+
+  FOOTER: `--bg2` background, its heading deliberately set in SANS at 14px
+  uppercase `--faint` (breaking the serif rule to de-emphasise), a flex row of
+  mono links, and one closing paragraph.
+
+  TRIGGER SPECIES --- use several, not one. The house decks open modals from
+  FIVE different kinds of element, and that variety is most of why the page
+  feels alive: (i) grid CARDS with a mono index line, a serif title, a muted
+  description, a mono stat line and an uppercase go-line; (ii) big STAT TILES
+  whose value is serif at ~54px in `--accent2`; (iii) NUMBERED ROWS with a
+  circular mono counter; (iv) PILL OPENERS prefixed with a `+` in accent;
+  (v) SVG HOTSPOTS --- a `<g>` with `role="button" tabindex="0"` and a `+`
+  glyph, carrying its own focus ring rect that appears only on
+  `:focus-visible`. Every one of them carries `data-modal`.
+
+  DENSITY: one idea per screen, one diagram per section, prose capped at
+  `--col`, grids on `repeat(auto-fit,minmax(230-300px,1fr))`. Hover states lift
+  a card by 2px and change its border; all of it opts out under
+  `prefers-reduced-motion`.
+
+=========================================================================
+PART 4 --- THE MODAL MACHINERY AND ITS DEPTH CONTRACT
+=========================================================================
+
+MACHINERY (build exactly this):
+
+  * Native `<dialog id="m-slug" aria-labelledby="h-slug">`, opened with
+    `showModal()` from a delegated handler bound to every `[data-modal]`
+    element --- buttons AND SVG groups. Non-button triggers additionally
+    handle Enter and Space. Keep a `setAttribute("open")` fallback for engines
+    without `showModal`.
+  * Inside the dialog: ONE scroll box (`max-height:86vh; overflow-y:auto`,
+    `tabindex="-1"`, its own outline suppressed) containing a STICKY HEADER and
+    a BODY. On open, reset the box's `scrollTop` to 0 and focus it.
+  * The sticky header carries the modal kicker micro-label and the serif h3
+    (`clamp(23px,3.4vw,30px)`), plus a circular close button that inverts to
+    accent on hover. It stays put while the body scrolls.
+  * Backdrop: `dialog::backdrop {{ background:rgba(5,8,12,.76) }}`. Close on a
+    click OUTSIDE the dialog's own bounding rect --- compute it from
+    `getBoundingClientRect()`, and skip the check when a click reports
+    coordinates of exactly 0,0 (that is a keyboard-synthesised click, and
+    treating it as a backdrop hit closes the dialog the instant it opens).
+  * On the dialog's `close` event, return focus to the trigger that opened it.
+    Escape is native; the `close` event fires for every path, which is why the
+    focus return belongs there and nowhere else.
+  * Motion: `dialog[open]` gets a ~.18s ease-out fade-and-rise, and the
+    `prefers-reduced-motion` block turns that animation off along with every
+    hover transform.
+
+DEPTH --- WHAT A MODAL CONTAINS (this is Mandate 5; the gate counts it):
+
+  A modal is a DEEP-DIVE, not a tooltip. Every dialog in this deck is built
+  from these named parts, and `deck verify` checks for them by name:
+
+    * HEADING PATTERN --- the sticky header's `<p class="{MODAL_KICKER_CLASS}">`
+      kicker plus an `<h3>` title (the one `aria-labelledby` points at).
+    * AT LEAST {MODAL_MIN_SUBSECTIONS} SUB-SECTIONS --- plain `<{MODAL_SUBSECTION_TAG}>`
+      heads inside the modal body, each naming a distinct move: what it is,
+      why it recurs, what changes, what is still unknown, what it is NOT.
+      Set them in the micro-label rhythm (uppercase, tracked, `--faint`).
+    * AT LEAST {MODAL_MIN_EVIDENCE} EVIDENCE BLOCK --- an inset carrying
+      `class="{MODAL_EVIDENCE_CLASS}"` that quotes THIS reader's own verified
+      data back to them: their session count, their medians, their trend, the
+      machine verdict relayed verbatim. Give it the darker inset background,
+      a 3px left stripe, and an uppercase label of its own. A grid of stat
+      tiles (a mono figure over a small caption) is the densest form and is
+      encouraged wherever several of the reader's numbers belong together.
+      Numbers inside it are subject to Mandate 1 exactly like any other text.
+    * A WHY-IT-MATTERS --- one element carrying `class="{MODAL_WHY_CLASS}"`
+      that says what the evidence means FOR THIS READER, in their vocabulary.
+      Not what an attractor is in general; what this specific piece of their
+      week costs them, or buys them.
+    * AN ENTRY POINT --- one element carrying `class="{MODAL_ENTRY_CLASS}"`
+      that closes the modal on somewhere to go: the smallest next step for an
+      opportunity, what would change the answer for an honest NO, what to stop
+      doing for a waste finding, how to run it for a demonstration.
+
+  A conforming modal lands at roughly five to fourteen block elements. That is
+  a consequence of having the parts, NOT a quota --- padding a thin modal with
+  filler paragraphs satisfies nothing and is worse than a short honest one.
+  Optionally close on a serif accent pull-quote with a left rule, the same
+  device as the section doctrine strips.
+
+  A KNOWN LIMIT, stated so you do not go looking for it: the house decks do
+  NOT put diagrams inside modals. Diagrams live in section figures; modals
+  carry stat tiles and quoted verdicts instead. Follow that.
+
+=========================================================================
+PART 5 --- THE SECTION ARC
+=========================================================================
 
 THE SECTION ARC (six sections, in this order; each is one <section> element):
 
@@ -106,16 +370,21 @@ THE SECTION ARC (six sections, in this order; each is one <section> element):
      gated for this run, drawn as INLINE SVG in the house diagram grammar (see
      below). Each diagram is the real graph, node for node and edge for edge.
      Quote the machine verdicts verbatim. Say which checks did NOT run. Never
-     vouch for the pipeline yourself.
+     vouch for the pipeline yourself. EVERY demonstration gets its own modal
+     too, built to the same structure contract --- its evidence block is the
+     machine verdict relayed verbatim, and its entry point is how to run it.
 
   5. HONEST NOES AND WASTE --- the units that recur and cost real effort and are
      still NOT worth automating, each with the sub-test it failed and what would
      change the answer; plus the waste channel (ceremony that cost time but is
-     not an opportunity to act on). Give EVERY honest-NO in the data its own
-     modal too, the same as the opportunities --- the credibility of this
-     section is that it withholds nothing; depth scales with the findings, to no
-     fixed quota. This section is the deck's credibility: a deck that only sells
-     is an advertisement.
+     not an opportunity to act on). Give EVERY honest-NO AND EVERY waste finding
+     its own modal too, the same depth as the opportunities --- the credibility
+     of this section is that it withholds nothing, and a finding demoted to a
+     table row is a finding the deck is quietly embarrassed by. Depth scales
+     with the findings, to no fixed quota. An honest-NO modal's entry point is
+     what would change the answer; a waste finding's is what to stop doing.
+     This section is the deck's credibility: a deck that only sells is an
+     advertisement.
 
   6. GOING FORWARD --- the entry points, ordered by how much the reader has to
      commit. Smallest first. End on the smallest possible next step.
@@ -195,7 +464,7 @@ HARD CONSTRAINTS (verbatim --- a violation fails the deck):
 # --------------------------------------------------------------------------
 
 MANDATES = f"""\
-THE FOUR MANDATES (machine-enforced by `deck verify`; a violation means the
+THE FIVE MANDATES (machine-enforced by `deck verify`; a violation means the
 deck is NOT published --- these are not style advice, they are the gate):
 
   ** MANDATE 1 --- EVERY DISPLAYED NUMBER RESOLVES. **
@@ -268,6 +537,41 @@ deck is NOT published --- these are not style advice, they are the gate):
   what happened before the artifact was written --- label it as TESTIMONY
   ("reported, not recovered from a file"), distinctly from anything quoted from
   a real artifact. A reader must always be able to tell which is which.
+
+  ** MANDATE 5 --- EVERY MODAL IS STRUCTURED, NOT A PARAGRAPH DUMP. **
+  A modal is where this deck earns the word "deck-grade". Every single
+  `<dialog>` in the document --- an opportunity, an honest NO, a waste finding,
+  a demonstration, a methodology aside, all of them --- must carry ALL FIVE of
+  the following, and `deck verify` counts them:
+
+    1. An `<h3>` title (the one `aria-labelledby` points at), preceded by a
+       kicker element carrying `class="{MODAL_KICKER_CLASS}"`.
+    2. At least {MODAL_MIN_SUBSECTIONS} `<{MODAL_SUBSECTION_TAG}>` sub-section
+       heads inside the modal body. Each names a distinct move --- what it is,
+       why it recurs, what changes, what is still unknown --- not "Details" and
+       "More details".
+    3. At least {MODAL_MIN_EVIDENCE} element carrying
+       `class="{MODAL_EVIDENCE_CLASS}"`: the inset that quotes THIS reader's
+       own verified data back to them (their counts, their medians, their
+       trend, a machine verdict relayed verbatim). Numbers inside it obey
+       Mandate 1 like everything else.
+    4. One element carrying `class="{MODAL_WHY_CLASS}"` --- why that evidence
+       matters for this reader specifically.
+    5. One element carrying `class="{MODAL_ENTRY_CLASS}"` --- where they can go
+       next: the smallest next step, or what would change the answer, or what
+       to stop doing, or how to run it.
+
+  The class name may sit alongside others (`class="inset {MODAL_EVIDENCE_CLASS}"`
+  is fine); the gate looks for the token. A dialog missing any of the five
+  fails, and the failure names the dialog's id and exactly which parts are
+  absent.
+
+  This is a STRUCTURE mandate and deliberately not a length one. There is no
+  word count to hit and no reward for padding: a modal passes by having a
+  heading, real sub-sections, the reader's own evidence, a reason it matters,
+  and a way in. If a finding genuinely does not support five parts, that is
+  worth saying inside the modal --- but say it in the parts, not by omitting
+  them.
 """
 
 
@@ -297,8 +601,14 @@ When you are done, the orchestrating session runs `deck verify` over it. That
 gate is deterministic and it is the only thing that decides whether the deck is
 published. It checks, in order: that the HTML parses; that the page is fully
 self-contained; that every modal has a trigger and every trigger has a modal;
-that every displayed number resolves (Mandate 1/2); and that every pipeline
-diagram matches its real `.dot` node-for-node and edge-for-edge (Mandate 3).
+that every displayed number resolves (Mandate 1/2); that every pipeline diagram
+matches its real `.dot` node-for-node and edge-for-edge (Mandate 3); and that
+every modal carries the five structural parts (Mandate 5).
+
+Write the modals to the structure contract on the FIRST pass. Retro-fitting
+five structural parts into a page of finished paragraphs is far more work than
+writing them that way to begin with, and the structural gate is the one most
+likely to catch a draft that read fine to its author.
 """
 
 

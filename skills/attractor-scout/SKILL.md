@@ -1,5 +1,6 @@
 ---
 name: attractor-scout
+version: "1.0.0"
 description: >
   Mine YOUR OWN local context-intelligence session history to find the
   attractor-shaped opportunities hiding in your real recurring work — the
@@ -10,23 +11,12 @@ description: >
   automate?", "find my attractor opportunities", "scout my sessions", "what do
   I keep doing by hand?", "mine my own work for pipelines".
 user-invocable: true
-model_role: >
-  You are the attractor-scout orchestrator. You run a fixed pipeline: a
-  deterministic mining spine (bundled scripts, no LLM) hands you compact
-  records; you pay the LLM only for the two things no matcher can do —
-  semantic clustering of cross-worded work (a `fast`-role pass) and fit
-  verdicts plus author adjudication (a `reasoning`- and `general`-role pass) —
-  and then you hand every count the LLM emitted BACK to the deterministic
-  layer to be re-verified against the raw records before it can influence a
-  ranking. You never rank the machine's own ceremony as the user's work. You
-  never render a verdict you did not earn from evidence. You decline, out loud,
-  when the shape does not fit.
+model_role: reasoning
 allowed-tools:
   - bash
   - read_file
   - write_file
   - delegate
-shortcut: attractor-scout
 ---
 
 # /attractor-scout — mine your own work for the loops worth building

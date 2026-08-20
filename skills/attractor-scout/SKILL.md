@@ -275,6 +275,91 @@ generate a second demonstration without a fresh explicit yes** — the first one
 is the skill's second half; every one after it is marginal spend for marginal
 personalization.
 
+**10 — Deck mode (OPT-IN; ask once, and only after step 9).** Steps 7–9 produce
+a deterministic report: a renderer places every number, so no model can invent
+one. Deck mode produces something different — ONE authored, deck-grade,
+personalized page over the same verified data — and pays for that freedom with
+machine gates instead of with a deterministic renderer. Offer it in one
+question, naming the cost out loud:
+
+> *"I can also build a deck-grade version of this — one self-contained page
+> that teaches the ideas and walks your own results, authored rather than
+> templated. It costs one more reasoning-model delegation (two if the gates
+> reject the first draft), and it only publishes if it passes them. Want it?"*
+
+**Never build a deck without an explicit yes.** On yes:
+
+```bash
+source "$WORK/env.sh"
+RUNDIR="$(dirname "$OUTPUT_PATH")"
+BRIEF=$($CLI deck brief --ranked "$WORK/ranked.json" --demos "$WORK/demos.json" \
+        --workdir "$WORK/deck")
+```
+
+`deck brief` writes `$WORK/deck/deck-brief.md` — deterministically assembled
+from the same verified data the report rests on: the ranking, the honest-NOs,
+the waste channel, every generated `.dot` verbatim with its gate verdicts, the
+house style/technique contract, the hard self-containment constraints, and the
+four MANDATES that make the gates passable. Delegate to a **fresh-context
+`reasoning` sub-agent** whose instruction is exactly that file; it writes ONE
+file, `deck.html`, into `$WORK/deck/`. **Cost: one delegation; at most two if
+the gates reject the first draft; never more.**
+
+**Drive that delegation across resumed turns, not one giant request.** A deck is
+tens of thousands of tokens of markup, and a single request that tries to emit
+the whole file in one response reliably exceeds the provider's ~600 s request
+timeout and loses the work. Have the fresh-context author build the file up in
+several turns — the document head/stylesheet/`<defs>` first, then one section
+per turn, then the dialogs and the closing script — resuming the same session
+each turn so it is still ONE fresh context. The brief tells the author this too;
+it is stated here because the orchestrating session is what sequences the turns.
+
+Then gate it:
+
+```bash
+$CLI deck verify --deck "$WORK/deck/deck.html" \
+    --ranked "$WORK/ranked.json" --demos "$WORK/demos.json" \
+    --report "$WORK/deck/deck-gate-report.txt"
+```
+
+`deck verify` is deterministic and it is the only thing that decides whether the
+deck publishes. Five gates: **(a)** the HTML parses; **(b)** the page is
+self-contained — no `<img>`/`<link>`/`<script src>`/`@import`/`<iframe>`/
+`srcset`, `url(` only as `url(#…)`, exactly two https links, zero `file://`;
+**(c)** every modal has a trigger and every trigger has a modal; **(d)** every
+number displayed in visible text re-verifies against the run data or against a
+derivation the deck itself declares, with provenance, in its
+`<script type="application/json" id="derived-values">` block — **an undeclared
+number is FATAL, same as step 5**; **(e)** every pipeline diagram matches its
+real `.dot` node-for-node and edge-for-edge (an edge MULTISET comparison, so a
+back-edge quietly not drawn is caught). Exit 0 means all five passed; **exit 3
+means a gate came back red and the deck must NOT be published**.
+
+If it exits 3, re-delegate **ONCE** with `$WORK/deck/deck-gate-report.txt`
+appended verbatim, then re-verify. Still red? **Do not publish.** Say which
+gates failed and move on — the report and the demonstrations are already
+complete artifacts. On green, publish it beside the report:
+
+```bash
+cp "$WORK/deck/deck.html" "$RUNDIR/attractor-scout-deck.html"
+```
+
+**Optional vision rung — only AFTER `deck verify` passes.** If a
+vision-analysis tool is available in this session, render the published deck to
+images, stitch them, and inspect for layout defects (overlap, clipping,
+unreadable contrast, a diagram running off its viewBox). At most **one** fix
+round: hand the defects back to the same fresh-context author, re-run
+`deck verify` (a visual fix must not break a gate), and republish. If no such
+tool is available, do **not** imply it was checked — leave the honest label in
+the deck's footer comment:
+
+```
+<!-- vision QA: NOT RUN -->
+```
+
+Same ladder philosophy as the demo lint rung: a rung that could not run is
+*labelled*, never silently treated as a pass.
+
 ---
 
 ## Hard rules (non-negotiable — these are the trust contract)
@@ -319,7 +404,20 @@ personalization.
 - **Generated `.dot`/`.md` land beside the HTML, never in a repo** — under
   `attractor-scout-demos/` next to `$OUTPUT_PATH`, and only *after* the gates
   finish. A demo whose gates came back red is not published at all; an
-  unverified-but-labelled demo is.
+  unverified-but-labelled demo is. **The deck lands there too**, as
+  `attractor-scout-deck.html` — never in a repo, and never before
+  `deck verify` exits 0.
+- **Deck mode is opt-in, and a gate-failed deck never publishes.** Ask once,
+  name the cost, and build nothing without a yes. The deck is *authored*, so
+  it does not inherit the renderer's structural guarantee — it earns trust from
+  `deck verify` instead, and a red gate after the one retry means the deck is
+  discarded, not shipped with a caveat. The report and the demonstrations are
+  already complete artifacts; a deck is a bonus, never a hostage.
+- **Every number a deck displays is re-verified or declared.** The deck may do
+  arithmetic the run data does not contain — a total, a percentage, a unit
+  conversion — but it must declare each one, with its provenance, in its own
+  `derived-values` block. An undeclared number is FATAL. And where the run has
+  no value for something, the deck says so out loud; it never fills the hole.
 - **The artifact is not the success test.** A pretty HTML file proves nothing;
   the ranking is only trustworthy because every count in it was re-verified
   against the raw records (step 5, `--strict`). Ship the map, but the map earns
@@ -340,6 +438,12 @@ The HTML embeds the pipeline text as well as naming that path, so the artifact
 stays self-contained if the folder ever moves. The one hyperlink it carries is
 the published explainer — an anchor a reader may follow, not a resource the
 page loads.
+
+Plus, when deck mode was accepted AND every gate passed:
+`attractor-scout-deck.html` beside them — one authored, self-contained,
+deck-grade page over the same verified data, carrying exactly two outbound
+anchors (the explainer and the bundle repository) and loading nothing. A deck
+that failed `deck verify` is never written there at all.
 
 ---
 

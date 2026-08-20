@@ -19,4 +19,8 @@ ARTIFACT_STEM = SKILL_NAME
 # SKILL_NAME so the single-naming-source rule survives the demo layer.
 DEMO_DIR_STEM = f"{SKILL_NAME}-demos"
 
-__all__ = ["ARTIFACT_STEM", "DEMO_DIR_STEM", "SKILL_NAME", "SKILL_TITLE"]
+# The opt-in deck-mode artifact, published beside the HTML map. Derived from
+# SKILL_NAME so the single-naming-source rule survives deck mode too.
+DECK_FILENAME = f"{SKILL_NAME}-deck.html"
+
+__all__ = ["ARTIFACT_STEM", "DECK_FILENAME", "DEMO_DIR_STEM", "SKILL_NAME", "SKILL_TITLE"]

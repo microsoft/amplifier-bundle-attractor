@@ -20,6 +20,8 @@ import hashlib
 import re
 from collections import Counter
 
+from . import provenance
+
 HARNESS = "harness"
 HUMAN = "human"
 MIXED = "mixed"
@@ -148,9 +150,19 @@ def _harness_score(rec: dict, src: str, n_exact: int, n_near: int) -> tuple[int,
     if rec.get("n_prompts", 0) <= 1:
         score += 1
         sig.append("single-shot")
-    if rec.get("machine_launched"):
+    # The deterministic provenance verdict (R0-R3) replaces the old
+    # `machine_launched` flag, which keyed on two orchestration events that
+    # were measured DEAD on the production path: pipeline-start roots and
+    # prompt-carrying roots were disjoint sets, so the signal never once fired
+    # for a session this prior actually scored. The ladder subsumes it and
+    # adds the lineage/path evidence the flag never had.
+    rung = (rec.get("provenance") or {}).get("rung")
+    if rung in (provenance.R0, provenance.R1, provenance.R2):
+        score += 3
+        sig.append(f"provenance-{rung}-agent")
+    elif rung == provenance.R3:
         score += 2
-        sig.append("machine-launched")
+        sig.append(f"provenance-{rung}-likely-agent")
     return score, sig
 
 

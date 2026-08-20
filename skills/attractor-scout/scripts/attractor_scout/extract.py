@@ -29,7 +29,8 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from .discover import Discovery, SessionRef, event_of, read_metadata
+from . import provenance
+from .discover import Discovery, SessionRef, event_of, read_metadata, working_dir_of
 
 MAX_LINE_BYTES = 150_000
 MAX_EVENTS_SCANNED = 6_000
@@ -46,6 +47,10 @@ SPAN_CAP_S = 7_200.0
 
 _PROMPT_RE = re.compile(r'"prompt"\s*:\s*"((?:[^"\\]|\\.){0,4000})')
 _TOOLNAME_RE = re.compile(r'"tool_name"\s*:\s*"([^"]{1,60})"')
+#: Per-event timestamp, under either of the two key orderings (`ts` in format
+#: A, `timestamp` in format B). Prompt timestamps are what make the R4
+#: inter-prompt gap measurable at all.
+_TS_RE = re.compile(r'"(?:timestamp|ts)"\s*:\s*"([^"]{4,40})"')
 _NOISE_RE = re.compile(
     r"<context_file\b.*?</context_file>|<system-reminder\b.*?</system-reminder>",
     re.DOTALL,
@@ -105,12 +110,26 @@ def _seq_signature(tool_all: list[str]) -> tuple[str | None, int]:
     return hashlib.sha1("|".join(collapsed).encode()).hexdigest()[:12], len(collapsed)
 
 
+def _note_event(state: dict, name: str) -> None:
+    """Record the provenance-relevant facts about an event's IDENTITY.
+
+    Two facts, both cheap: which event came FIRST (a `session:fork` opener is
+    the corpus's cleanest agent separator) and whether an orchestrator start
+    appeared at all.
+    """
+    if state["first_event"] is None:
+        state["first_event"] = name
+    if name in provenance.ORCHESTRATION_START_EVENTS and name not in state["orchestration_events"]:
+        state["orchestration_events"].append(name)
+
+
 def _handle_big_line(line: str, state: dict) -> None:
     """Oversized line: read the event field only, never json-parse ~1 MB."""
     name = event_of(line.encode("utf-8", "replace"))
     if not name:
         return
     state["ev_names"][name] += 1
+    _note_event(state, name)
     if name == "llm:response":
         state["n_llm_resp"] += 1
     elif name == "llm:request":
@@ -122,6 +141,11 @@ def _handle_big_line(line: str, state: dict) -> None:
             _record_tool(state, m.group(1)[:40])
     elif name == "prompt:submit":
         state["n_prompts"] += 1
+        # Format B puts the timestamp last, so look at the tail first; a
+        # format-A oversized line carries it in the head.
+        ts = _TS_RE.search(line[-400:]) or _TS_RE.search(line[:400])
+        if ts:
+            state["prompt_ts"].append(ts.group(1))
         m = _PROMPT_RE.search(line[:400_000])
         if m:
             try:
@@ -186,6 +210,11 @@ def extract_session(ref: SessionRef, *, strict_schema: bool = True) -> dict:
         "bash_cmds": [],
         "last_err_tool": None,
         "ev_names": Counter(),
+        # Provenance inputs. Collected here because this is the pass that
+        # already reads every line; the ladder itself lives in `provenance`.
+        "first_event": None,
+        "orchestration_events": [],
+        "prompt_ts": [],
     }
 
     scanned = 0
@@ -211,6 +240,30 @@ def extract_session(ref: SessionRef, *, strict_schema: bool = True) -> dict:
     seq_sig, seq_len = _seq_signature(state["tool_all"])
     later = " ".join(state["prompts"][1:])
     all_prompts = " ".join(state["prompts"])
+
+    # Provenance: computed HERE, in the deterministic layer, before any
+    # clustering, ranking or model pass can see this record. The qualifier's
+    # prescan is preferred for `first_event` only when this pass saw nothing
+    # (an unreadable or empty stream); otherwise the full-file read wins,
+    # because its window is a superset of the qualifier's.
+    prescan = ref.prescan
+    first_event = state["first_event"] or (prescan.first_event if prescan else None)
+    orchestration = tuple(state["orchestration_events"]) or (prescan.orchestration_events if prescan else ())
+    prompt_gaps = provenance.gaps_from_timestamps(state["prompt_ts"])
+    working_dir = ref.working_dir or working_dir_of(meta)
+    prov = provenance.classify(
+        provenance.SessionSignals(
+            session_id=ref.session_id,
+            parent_id=ref.parent_id,
+            working_dir=working_dir,
+            first_event=first_event,
+            orchestration_events=tuple(orchestration),
+            n_prompts=state["n_prompts"],
+            first_prompt=state["first_prompt_full"],
+            prompt_gaps_s=prompt_gaps,
+            span_s=span_capped,
+        )
+    )
 
     return {
         "session_id": ref.session_id,
@@ -245,7 +298,15 @@ def extract_session(ref: SessionRef, *, strict_schema: bool = True) -> dict:
         "seq_len": seq_len,
         "events_scanned": scanned,
         "scan_truncated": scanned > MAX_EVENTS_SCANNED,
-        "machine_launched": bool(state["ev_names"].get("recipe:start") or state["ev_names"].get("pipeline:node_start")),
+        # Provenance inputs, retained so a record read back from
+        # `extracts.jsonl` can be re-classified without re-reading the corpus.
+        "working_dir": working_dir,
+        "first_event": first_event,
+        "orchestration_events": list(orchestration),
+        "prompt_gaps_s": list(prompt_gaps),
+        # The verdict itself: which rung fired, on what signal, with the
+        # evidence that justified it. Auditable, and rendered in the artifact.
+        "provenance": prov.as_dict(),
     }
 
 
@@ -253,11 +314,15 @@ def _consume_event(ev: dict, state: dict) -> None:
     name = ev.get("event")
     if name:
         state["ev_names"][name] += 1
+        _note_event(state, name)
     raw_data = ev.get("data")
     data: dict = raw_data if isinstance(raw_data, dict) else {}
 
     if name == "prompt:submit":
         state["n_prompts"] += 1
+        stamp = ev.get("timestamp") or ev.get("ts")
+        if stamp:
+            state["prompt_ts"].append(stamp)
         _record_prompt(state, data.get("prompt") or "")
     elif name == "tool:pre":
         state["n_tools"] += 1
@@ -310,6 +375,14 @@ def extract_all(
     root rather than counting it as an additional distinct session — the C1
     join discipline. A child whose parent is not in the selection is kept as
     its own record (dropping it would silently lose work).
+
+    NOTE (honest, and deliberately not "fixed" here): on the PRODUCTION path
+    this fold never runs. `discover.qualify` returns root sessions only, so no
+    child ever reaches this function and `_fold_into` is dead code in the
+    shipped pipeline. It stays because it is correct and because the census /
+    re-analysis paths do pass children. Making it live would change the
+    distinct-session reach of every existing unit — a ranking-semantics
+    decision, not a provenance one, and not one to smuggle in here.
     """
     records: list[dict] = []
     seen: set[str] = set()

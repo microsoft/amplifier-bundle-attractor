@@ -62,15 +62,19 @@ def _iso(offset_s: float) -> str:
     return (BASE_TIME + timedelta(seconds=offset_s)).isoformat()
 
 
-def _line_format_b(event: str, data: dict) -> str:
-    """FORMAT B: data payload first, top-level `event` key LAST (E1 hazard)."""
+def _line_format_b(event: str, data: dict, at_s: float = 0.0) -> str:
+    """FORMAT B: data payload first, top-level `event` key LAST (E1 hazard).
+
+    `at_s` defaults to 0.0 so every corpus written before per-event timing
+    existed is still produced byte-for-byte identically.
+    """
     body = json.dumps(data, ensure_ascii=False)
-    return '{"data":' + body + ',"event":"' + event + '","timestamp":"' + _iso(0) + '"}'
+    return '{"data":' + body + ',"event":"' + event + '","timestamp":"' + _iso(at_s) + '"}'
 
 
-def _line_format_a(event: str, data: dict) -> str:
+def _line_format_a(event: str, data: dict, at_s: float = 0.0) -> str:
     """FORMAT A: `event` key early."""
-    return json.dumps({"ts": _iso(0), "lvl": "info", "event": event, "data": data}, ensure_ascii=False)
+    return json.dumps({"ts": _iso(at_s), "lvl": "info", "event": event, "data": data}, ensure_ascii=False)
 
 
 def write_session(
@@ -94,6 +98,10 @@ def write_session(
     llm_cycles: int | None = None,
     explicit_loop: bool = False,
     approval: bool = False,
+    working_dir: str | None = None,
+    prompt_offsets_s: list[float] | None = None,
+    first_event: str | None = None,
+    orchestration_events: list[str] | None = None,
 ) -> Path:
     """Write one synthetic session directory. Returns its path.
 
@@ -101,6 +109,22 @@ def write_session(
     is emitted after that call. `recover=True` re-invokes the SAME tool
     immediately after, which is exactly the error -> same-tool-retry shape
     4c reads.
+
+    The provenance parameters are all OPT-IN and default to off, so every
+    corpus written before the provenance layer existed is still produced
+    byte-for-byte identically:
+
+    * `working_dir` -- recorded in metadata.json. The single most
+      discriminating provenance field, and the R2 rung's only input.
+    * `prompt_offsets_s` -- per-prompt timestamps, relative to the session
+      start. Without them every prompt shares one timestamp and no
+      inter-prompt gap exists to measure, which is exactly what makes R4
+      (human-presumed) decline rather than guess.
+    * `first_event` -- overrides the opening `session:start`, so a
+      `session:fork` opener (the corpus's cleanest agent separator) can be
+      planted.
+    * `orchestration_events` -- emitted straight after the opener, so a
+      pipeline- or recipe-started session can be planted.
     """
     tools = list(tools or [])
     error_idx: set[int] = set(errors_at or [])
@@ -117,6 +141,8 @@ def write_session(
     }
     if parent_id:
         meta["parent_id"] = parent_id
+    if working_dir:
+        meta["working_dir"] = working_dir
     if source:
         # A NEUTRAL origin label under a forward-compatible key. Used only to
         # plant a foreign-source session the scoping gate must exclude; it is
@@ -124,13 +150,17 @@ def write_session(
         meta["source"] = source
     (sess_dir / "metadata.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
 
-    lines: list[str] = [_line_format_a("session:start", {"session_id": session_id})]
+    lines: list[str] = [_line_format_a(first_event or "session:start", {"session_id": session_id})]
+    for orchestration in orchestration_events or []:
+        lines.append(_line_format_a(orchestration, {"node": "synthetic"}))
     if big_config:
         # E2 hazard: a ~1 MB config line BEFORE the first prompt.
         lines.append(_line_format_b("session:config", {"blob": "c" * BIG_CONFIG_BYTES}))
-    for prompt in prompts:
+    for idx, prompt in enumerate(prompts):
         # E1 hazard: prompts always in FORMAT B.
-        lines.append(_line_format_b("prompt:submit", {"prompt": prompt}))
+        offsets = prompt_offsets_s or []
+        at_s = started_offset_s + offsets[idx] if idx < len(offsets) else 0.0
+        lines.append(_line_format_b("prompt:submit", {"prompt": prompt}, at_s))
     for _ in range(extra_marker_lines):
         lines.append(_line_format_b("llm:response", {"text": f"working on {UNIT_MARKER} ..."}))
 
@@ -657,4 +687,225 @@ def build_own_data_scope_corpus(root: str | Path) -> GroundTruth:
     return GroundTruth(
         root=root,
         expected={"own_ids": own, "foreign_ids": foreign, "blocked_endpoints": 2},
+    )
+
+
+# ------------------------------------------------------- Session provenance
+#: A stable, obviously-synthetic workspace path. The ladder reads the CLASS of
+#: a working directory, never the path itself, so the fixture only needs a
+#: path that is recognisably NOT ephemeral. No real user path ships here.
+STABLE_WORKDIR = "/synthetic-workspace/proj-alpha"
+
+#: An ephemeral harness workspace: a tmp root with a mktemp-shaped basename.
+HARNESS_TMP_WORKDIR = "/tmp/synthetic-run.k3f9zq"
+
+#: A templated machine brief: markdown-titled and long. Built from a repeated
+#: synthetic sentence so its length is a property of the fixture, not an
+#: accident of prose.
+TEMPLATED_BRIEF = "# Lane mission brief\n" + (
+    "Bring the synthetic module in line with its documented contract, add the regression "
+    "test that proves it, and drive the suite to green before reporting back. " * 12
+)
+
+
+#: Every planted class runs the SAME shape of work at the SAME cost -- a real
+#: loop (edit_file three times inside six calls), a terminal verification, and
+#: one error it recovers from -- differing only in its LEADING tool, so A-rung
+#: signature clustering gives each class its own unit. Same work, same cost,
+#: different PROVENANCE: any difference in what reaches the ranking is
+#: therefore attributable to provenance and to nothing else.
+def _prov_tools(lead: str) -> list[str]:
+    return [lead, "edit_file", "edit_file", "edit_file", "bash", "python_check"]
+
+
+def build_provenance_corpus(root: str | Path) -> GroundTruth:
+    """The six calibration classes of the provenance ladder, planted by construction.
+
+    Every class does the SAME shape of work with the SAME tools and the same
+    cost profile (a real loop, a terminal verification, an error it recovers
+    from). Only its provenance differs. That isolation is the point: any
+    difference in what reaches the ranking is caused by the ladder and by
+    nothing else.
+
+        human_multi_turn      R4  human-presumed  multi-prompt with real gaps
+        delegate_sub_session  R0  agent           parent_id + delegate id + fork
+        pipeline_root         R1  agent           orchestration start event
+        harness_oneshot_tmp   R2  agent           ephemeral tmp workspace
+        goal_lane_worktree    R2  agent           lane-shaped worktree path
+        templated_brief_root  R3  likely-agent    one-shot long templated brief
+        stable_single_prompt  R5  unknown         genuinely undecidable
+
+    `harness_oneshot_tmp` is the RED-PROOF class: it carries a `prompt:submit`
+    and is a root, so the pre-provenance qualifier admitted it as the user's
+    own work with zero discrimination.
+    """
+    root = Path(root)
+    classes: dict[str, dict] = {}
+
+    def _plant(name: str, rung: str, verdict: str, ids: list[str]) -> None:
+        classes[name] = {"ids": ids, "rung": rung, "verdict": verdict}
+
+    # R4 -- human: three turns, with real thinking gaps between them.
+    human_ids = []
+    for i in range(3):
+        sid = synth_id("synprovhum", i)
+        human_ids.append(sid)
+        write_session(
+            root,
+            "syn-prov-human",
+            sid,
+            prompts=[
+                "Can you help me line up the retry policy with what the contract says?",
+                "hmm that didn't work, try again",
+                "ok now verify the tests pass",
+            ],
+            prompt_offsets_s=[0.0, 180.0, 420.0],
+            tools=_prov_tools("read_file"),
+            errors_at=[2],
+            recover=True,
+            span_s=900,
+            started_offset_s=i * 7200,
+            working_dir=STABLE_WORKDIR,
+        )
+    _plant("human_multi_turn", "R4", "human-presumed", human_ids)
+
+    # R0 -- delegate sub-sessions: a parent, a delegate id shape, and a fork
+    # opener. Each of the three is independently conclusive.
+    delegate_ids = []
+    for i in range(2):
+        sid = f"0000000000000000-syndelegate{i:02d}"
+        delegate_ids.append(sid)
+        write_session(
+            root,
+            "syn-prov-delegate",
+            sid,
+            prompts=["Carry out the delegated leg of the task."],
+            prompt_offsets_s=[0.0],
+            tools=_prov_tools("glob"),
+            parent_id=human_ids[i],
+            first_event="session:fork",
+            span_s=300,
+            started_offset_s=i * 3600,
+            working_dir=STABLE_WORKDIR,
+        )
+    _plant("delegate_sub_session", "R0", "agent", delegate_ids)
+
+    # R1 -- a session an orchestrator started.
+    pipeline_ids = []
+    for i in range(2):
+        sid = synth_id("synprovpipe", i)
+        pipeline_ids.append(sid)
+        write_session(
+            root,
+            "syn-prov-pipeline",
+            sid,
+            prompts=["Advance the node."],
+            prompt_offsets_s=[0.0],
+            tools=_prov_tools("grep"),
+            errors_at=[2],
+            recover=True,
+            orchestration_events=["pipeline:start", "pipeline:node_start"],
+            span_s=400,
+            started_offset_s=i * 3600,
+            working_dir=STABLE_WORKDIR,
+        )
+    _plant("pipeline_root", "R1", "agent", pipeline_ids)
+
+    # R2 (RED PROOF) -- a harness one-shot in an ephemeral tmp workspace. A
+    # prompt-carrying root, indistinguishable from human work to the old
+    # qualifier, and deliberately given the full opportunity shape (loop +
+    # gate + recovery) so that nothing BUT provenance keeps it out.
+    harness_ids = []
+    for i in range(3):
+        sid = synth_id("synprovtmp", i)
+        harness_ids.append(sid)
+        write_session(
+            root,
+            "syn-prov-harness",
+            sid,
+            prompts=["Run the scheduled check and repair what it reports."],
+            prompt_offsets_s=[0.0],
+            tools=_prov_tools("todo"),
+            errors_at=[2],
+            recover=True,
+            span_s=500,
+            started_offset_s=i * 3600,
+            working_dir=HARNESS_TMP_WORKDIR,
+        )
+    _plant("harness_oneshot_tmp", "R2", "agent", harness_ids)
+
+    # R2 -- an autonomous goal lane running in its own worktree.
+    lane_ids = []
+    for i in range(2):
+        sid = synth_id("synprovlane", i)
+        lane_ids.append(sid)
+        write_session(
+            root,
+            "syn-prov-lane",
+            sid,
+            prompts=["Lane mission: bring the module to green.", "keep going"],
+            prompt_offsets_s=[0.0, 600.0],
+            tools=_prov_tools("web_search"),
+            errors_at=[2],
+            recover=True,
+            span_s=1200,
+            started_offset_s=i * 3600,
+            working_dir=f"{STABLE_WORKDIR}/worktrees/lane-{i}",
+        )
+    _plant("goal_lane_worktree", "R2", "agent", lane_ids)
+
+    # R3 -- a one-shot templated brief: machine-assembled, long, and never
+    # returned to. Likely-agent, and treated as agent by the policy.
+    brief_ids = []
+    for i in range(2):
+        sid = synth_id("synprovbrief", i)
+        brief_ids.append(sid)
+        write_session(
+            root,
+            "syn-prov-brief",
+            sid,
+            prompts=[TEMPLATED_BRIEF],
+            prompt_offsets_s=[0.0],
+            tools=_prov_tools("write_file"),
+            errors_at=[2],
+            recover=True,
+            span_s=800,
+            started_offset_s=i * 3600,
+            working_dir=STABLE_WORKDIR,
+        )
+    _plant("templated_brief_root", "R3", "likely-agent", brief_ids)
+
+    # R5 -- the honest residual: one short prompt, a stable workspace, and
+    # nothing else recorded. Undecidable, and never guessed as human.
+    unknown_ids = []
+    for i in range(3):
+        sid = synth_id("synprovunk", i)
+        unknown_ids.append(sid)
+        write_session(
+            root,
+            "syn-prov-unknown",
+            sid,
+            prompts=["fix the failing check"],
+            prompt_offsets_s=[0.0],
+            tools=_prov_tools("python_check"),
+            errors_at=[2],
+            recover=True,
+            span_s=600,
+            started_offset_s=i * 3600,
+            working_dir=STABLE_WORKDIR,
+        )
+    _plant("stable_single_prompt", "R5", "unknown", unknown_ids)
+
+    return GroundTruth(
+        root=root,
+        expected={
+            "classes": classes,
+            "red_proof_class": "harness_oneshot_tmp",
+            "opportunity_class": "human_multi_turn",
+            "stable_workdir": STABLE_WORKDIR,
+        },
+        notes=[
+            "every class shares one tool signature and cost profile; only provenance differs",
+            "delegate sub-sessions are not roots, so they are reached via enumerate, not qualify",
+        ],
     )

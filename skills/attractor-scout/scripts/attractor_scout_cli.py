@@ -11,11 +11,14 @@ the skill's importable path can never disagree about what a signal means.
     detect      run the deterministic detectors over an extract
     rank        admission gate + score -> ranked JSON
     render      ranked JSON -> self-contained HTML (deterministic, no LLM)
+    demo        brief | assemble -- the demonstration/teaching layer
     run         the whole pipeline end to end
     census      event-name / tool-name census (Gap-1 allow-list finalization)
 
 Exit codes: 0 ok · 2 fail-loud (empty corpus, schema mismatch, graph demanded
-but unavailable). A fail-loud condition NEVER exits 0 with a fabricated count.
+but unavailable, an invented count in a demo narrative, a red machine gate).
+A fail-loud condition NEVER exits 0 with a fabricated count, and a demo whose
+gates came back red is NEVER published.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import argparse
 import json
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -190,9 +194,60 @@ def cmd_rank(args) -> int:
 
 def cmd_render(args) -> int:
     result = json.loads(Path(args.ranked).read_text(encoding="utf-8"))
-    path = render.write_report(result, args.out, generated_at=args.generated_at)
+    demos = None
+    if args.demos:
+        demos_path = Path(args.demos)
+        if not demos_path.is_file():
+            raise AttractorScoutError(f"--demos was given but {demos_path} does not exist")
+        demos = json.loads(demos_path.read_text(encoding="utf-8"))
+    path = render.write_report(result, args.out, generated_at=args.generated_at, demos=demos)
     print(f"wrote {path}", file=sys.stderr)
     return 0
+
+
+def cmd_demo(args) -> int:
+    """The demonstration layer: assemble a brief, or gate + publish a draft."""
+    from attractor_scout import demo as demo_mod
+
+    if args.action == "brief":
+        slug, brief_path = demo_mod.build_brief(
+            ranked_path=args.ranked,
+            unit_id=args.unit,
+            workdir=args.workdir,
+            extracts_path=args.extracts,
+        )
+        print(f"brief -> {brief_path}", file=sys.stderr)
+        # The slug is the ONLY thing on stdout: the skill captures it directly.
+        print(slug)
+        return 0
+
+    if args.action == "assemble":
+        stamp = args.generated_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+        entry = demo_mod.assemble_demo(
+            ranked_path=args.ranked,
+            unit_id=args.unit,
+            workdir=args.workdir,
+            output_dir=args.output_dir,
+            lint_cmd=args.lint_cmd,
+            generated_at=stamp,
+        )
+        doc = demo_mod.write_demos(entry, args.out, append=args.append)
+        print(
+            f"published {entry['dot_relpath']} + {entry['companion_relpath']} "
+            f"(verification: {entry['verification']['level']}); "
+            f"{len(doc['demos'])} demo(s) in {args.out}",
+            file=sys.stderr,
+        )
+        print(entry["verification"]["level"])
+        return 0
+
+    if args.action == "primer-only":
+        demo_mod.write_demos(None, args.out, append=False)
+        print(f"primer-only demos document -> {args.out}", file=sys.stderr)
+        print("primer-only")
+        return 0
+
+    raise ValueError(f"unknown demo action: {args.action!r}")
 
 
 def cmd_run(args) -> int:
@@ -284,7 +339,40 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ranked", default="ranked.json")
     p.add_argument("--out", default=None, help="default: ./<skill>-report.html")
     p.add_argument("--generated-at", default=None, help="pin the timestamp for byte-reproducible output")
+    p.add_argument(
+        "--demos",
+        default=None,
+        help="demos.json from `demo assemble`; omitted => byte-identical to the pre-demo artifact",
+    )
     p.set_defaults(func=cmd_render)
+
+    p = sub.add_parser(
+        "demo",
+        help="the demonstration/teaching layer: assemble a brief, or gate+publish a draft",
+    )
+    p.add_argument("action", choices=["brief", "assemble", "primer-only"])
+    p.add_argument("--ranked", default="ranked.json")
+    p.add_argument(
+        "--unit",
+        default=None,
+        help="unit_id to demonstrate; default is opportunities[0], the top-ranked one",
+    )
+    p.add_argument("--workdir", default=None, help="brief: the demo parent dir; assemble: the slug dir")
+    p.add_argument(
+        "--extracts",
+        default=None,
+        help="brief: extracts.jsonl, so the gate-tool census is drawn from THEIR terminal windows",
+    )
+    p.add_argument("--output-dir", default=None, help="assemble: the directory the HTML map lives in")
+    p.add_argument("--out", default=None, help="assemble: the demos.json to write")
+    p.add_argument(
+        "--lint-cmd",
+        default=None,
+        help="assemble: override the linter argv (rung 2 -- only ever after an explicit user yes)",
+    )
+    p.add_argument("--append", action="store_true", help="assemble: add to an existing demos.json")
+    p.add_argument("--generated-at", default=None, help="pin the demo timestamp for reproducible output")
+    p.set_defaults(func=cmd_demo)
 
     p = sub.add_parser("run")
     add_selector(p)

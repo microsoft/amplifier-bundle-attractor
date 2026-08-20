@@ -65,6 +65,46 @@ skill. It is deliberately deferred: it belongs in the guidance-eval bundle's
 own backlog, and building it here would couple this skill to eval machinery it
 should not own.
 
+### Demonstration layer (steps 8–9) — the same fallback, re-discharged
+
+Steps 8–9 add new guidance to the same surface, so the same toll applies and the
+same argument discharges it: the eight ambient scenarios still cannot reach an
+opt-in slash-command skill, so the evidence is again a fresh-session
+walk-through.
+
+**Run 1 — CLEAN, no fix required.** A general-tier sub-agent with
+`context_depth=none` was handed *only* the post-change SKILL.md **body**
+(frontmatter stripped) plus a synthetic corpus root of 1,081 sessions built from
+this skill's own `fixtures/`, and told to follow the skill exactly. With no
+hints about the new steps, it reached and executed them unaided: `demo brief`
+(with `--extracts`, so the gate-tool census came from the corpus's own terminal
+windows) → **one** `reasoning` delegation → `demo assemble` → `render --demos`.
+The machine gates passed on the first draft, so no corrective retry was spent.
+It then stated step 9's offer question verbatim, listed the one
+not-yet-demonstrated opportunity, and stopped without looping.
+
+The artifact it produced verified clean: primer rendered exactly once, the
+explainer **linked** exactly once, one demonstration section, the published
+`.dot`/`.md` present on disk at the relative paths the HTML names, zero fetched
+resources, and the verification level rendered as the exact string the ladder
+resolved. Unprompted, the walk-through also answered the "can you vouch for it?"
+question in the three required parts and noted that the brief had found no
+verify-class tool for that unit — so the delegate said so plainly in the
+companion instead of inventing a check.
+
+**Ladder coverage, and where each rung was proven.** The walk-through
+environment had the CLI installed, so it exercised rung 1 (`lint+doctrine`). The
+other rungs are proven elsewhere rather than left to chance: `doctrine-only`
+with its exact `NOT RUN` label and the red-verdict refusal were both proven on
+the maintainer's real data as controls in the same evidence set, and all four
+rungs — including the `none`/`UNVERIFIED` case and a fake-CLI-on-PATH shim — are
+pinned deterministically in `tests/test_scenario7_verification_ladder.py`.
+
+As before, the walk-through evidence lives outside the repo, in the maintainer's
+local evaluation artifacts: it references a local synthetic run tree and the
+maintainer's own mined units, neither of which is shippable content. A dedicated
+guidance scenario remains deferred for the same reason as above.
+
 ---
 
 ## Stage-1 results (run against the maintainer's own corpus: 2,164 sessions / 54 clusters)

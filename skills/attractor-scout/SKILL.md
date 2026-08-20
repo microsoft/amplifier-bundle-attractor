@@ -195,6 +195,72 @@ verdict and remediation, waste-findings in their own channel:
 $CLI render --ranked "$WORK/ranked.json" --out "$OUTPUT_PATH"
 ```
 
+**8 — Demonstrate (teach with their top opportunity).** The map shows *what*
+recurs; this step shows *the pipeline that would have converged it*. Run it for
+`opportunities[0]` in `$WORK/ranked.json` — the ranking already made the pick, so
+do not open with a menu. Skip this step entirely if the user asked for the map
+only. If `opportunities` is empty there is no subject to demonstrate: write the
+primer-only document and re-render, then say so plainly.
+
+```bash
+source "$WORK/env.sh"
+# No opportunities? Primer only, and skip the rest of this step:
+#   $CLI demo primer-only --out "$WORK/demos.json"
+SLUG=$($CLI demo brief --ranked "$WORK/ranked.json" \
+        --extracts "$WORK/extracts.jsonl" --workdir "$WORK/demo")
+```
+
+`demo brief` writes `$WORK/demo/$SLUG/brief.md` — deterministically assembled
+from their verified stats, their fit detail, the verify-class tools actually
+seen in their own sessions' terminal windows, the A0–A10 authoring contract, and
+the engine's attribute vocabulary. Delegate to a **fresh-context `reasoning`
+sub-agent** whose instruction is exactly that file; it writes `pipeline.dot`,
+`pipeline.md` and `narrative.json` into `$WORK/demo/$SLUG/`. **Cost: one
+delegation; at most two if the gates reject the first draft; never more.**
+Then gate, validate and publish:
+
+```bash
+$CLI demo assemble --ranked "$WORK/ranked.json" \
+    --workdir "$WORK/demo/$SLUG" --output-dir "$(dirname "$OUTPUT_PATH")" \
+    --out "$WORK/demos.json" --append
+```
+
+`assemble` runs the verification ladder (`attractor lint` if it is on PATH; the
+bundled doctrine checker always), validates every number in the **six teaching-
+prose slots** against the re-verified ranking — **an invented count there is
+FATAL, same as step 5** — and copies the `.dot` + companion beside the HTML
+**only after the gates finish**. (Numbers written *inside* the generated `.dot`
+— budgets, `max_iterations`, thresholds — are gate-checked by lint+doctrine, not
+digit-whitelisted: a pipeline legitimately carries parameters, and the panel's
+"what nothing checked" names that surface out loud.)
+If `attractor` is missing it will say so in the artifact rather than imply a
+pass. You may then ask the user ONCE whether to fetch the public linter via
+`uvx` — **an inbound package fetch; none of their mined data leaves the machine;
+never run it without their yes**. On yes, re-run assemble with
+`--lint-cmd "uvx --from git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/pipeline-runner attractor"`.
+If the gates reject the draft it exits non-zero and leaves the verbatim reports
+at `$WORK/demo/$SLUG/gate-report.txt`: re-delegate **ONCE** with those reports
+appended, and if it is still red, do not publish — say so and move on. Then
+re-render the same file:
+
+```bash
+$CLI render --ranked "$WORK/ranked.json" --demos "$WORK/demos.json" --out "$OUTPUT_PATH"
+```
+
+**Generation is stochastic; verification, assembly and rendering are not.**
+And: **what you authored — via your delegate — you cannot certify.** The
+artifact carries the machine verdicts verbatim, says which checks did NOT run,
+and offers the independent path (`examples/authoring/pipeline-author.dot` plus
+the CLI install line). If the user asks you to vouch for the demo, answer in
+those three parts — never "yes, I'm sure."
+
+**9 — Offer more (their call).** List the top five not-yet-demonstrated
+opportunities by name and ask exactly one question: *"Want another one
+demonstrated? Name or number — or no."* Each yes repeats step 8 for that unit
+(`--unit <unit_id>`, with `--append`) and re-renders. **Never generate a second
+demonstration without a fresh explicit yes** — the first one is the skill's
+second half; every one after it is marginal spend for marginal personalization.
+
 ---
 
 ## Hard rules (non-negotiable — these are the trust contract)
@@ -223,6 +289,23 @@ $CLI render --ranked "$WORK/ranked.json" --out "$OUTPUT_PATH"
   all; "no bad day observed" is not "would not survive a bad day."
 - **Fail loud on an empty root** — exact string `looked in <root>, found 0`,
   non-zero exit. Never invent a count.
+- **What you authored, you cannot certify.** A demonstration your delegate
+  wrote is not something you may vouch for. Asked whether it is right, answer
+  in three parts and no fourth: what a machine checked and what it said
+  (verbatim), what nothing checked (whether the prompts fit their workflow,
+  whether the gate is the right definition-of-done, whether it solves the
+  problem they actually have), and the independent path
+  (`examples/authoring/pipeline-author.dot`, plus the CLI install line). Never
+  "yes, I'm sure."
+- **Never auto-fetch. Ask before any `uvx`.** The bundled doctrine checker is
+  the floor and it always runs, so a "no" costs nothing but a label. An inbound
+  public-package fetch is not data egress — say that plainly — but unrequested
+  network activity inside a local-only promise is still a trust violation. And
+  never run `uv tool install`: that line is text the user may choose to run.
+- **Generated `.dot`/`.md` land beside the HTML, never in a repo** — under
+  `attractor-scout-demos/` next to `$OUTPUT_PATH`, and only *after* the gates
+  finish. A demo whose gates came back red is not published at all; an
+  unverified-but-labelled demo is.
 - **The artifact is not the success test.** A pretty HTML file proves nothing;
   the ranking is only trustworthy because every count in it was re-verified
   against the raw records (step 5, `--strict`). Ship the map, but the map earns
@@ -237,6 +320,12 @@ references), written to `$OUTPUT_PATH`. That is the current working directory
 by default, or an **`AGENTS.md`-guided output path** if the repo declares one.
 Never write the user's mined data into a shared repo — their session history
 belongs in their own artifact.
+
+Plus, when demonstrated: `attractor-scout-demos/<slug>.dot` + `.md` beside it.
+The HTML embeds the pipeline text as well as naming that path, so the artifact
+stays self-contained if the folder ever moves. The one hyperlink it carries is
+the published explainer — an anchor a reader may follow, not a resource the
+page loads.
 
 ---
 

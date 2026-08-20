@@ -1,0 +1,13 @@
+# Lint/format settings for the attractor-scout skill.
+#
+# line-length matches the style the whole skill was written in; without it,
+# ruff's default would report every existing file as needing a reformat.
+line-length = 120
+
+# The vendored doctrine checker is a BYTE-IDENTICAL copy of
+# examples/authoring/check_authored_pipeline.py, pinned by
+# tests/test_vendored_doctrine_checker_pin.py. Formatting or auto-fixing it
+# here would break that pin and silently fork the second opinion from the
+# upstream one -- so ruff must not touch it. It is linted and formatted at
+# its upstream home, which is the only place a change to it belongs.
+extend-exclude = ["scripts/attractor_scout/authoring_contract.py"]

@@ -165,7 +165,7 @@ judged, not matched — carry the real weight.
 
 **4. Refresh on a schedule, and hold one back.** When the instrument has run several times
 without finding anything, that is a finding about the instrument, not a clean bill of health
-(`docs/QUALITY_PROTOCOL.md` section 7's retirement review: *"What has it caught since the last
+(`docs/QUALITY_PROTOCOL.md` section 8's retirement review: *"What has it caught since the last
 review? Nothing is a finding, not a pass."*). At that point **rewrite one scenario's prose from
 scratch** — same property, same criteria, entirely new persona, phrasing, and surface details —
 and re-run. A bundle that passes the old wording and fails the new one was fitted to the wording.

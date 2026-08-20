@@ -12,13 +12,15 @@ the skill's importable path can never disagree about what a signal means.
     rank        admission gate + score -> ranked JSON
     render      ranked JSON -> self-contained HTML (deterministic, no LLM)
     demo        brief | assemble -- the demonstration/teaching layer
+    deck        brief | verify -- OPT-IN deck mode (an authored deck-grade page)
     run         the whole pipeline end to end
     census      event-name / tool-name census (Gap-1 allow-list finalization)
 
 Exit codes: 0 ok · 2 fail-loud (empty corpus, schema mismatch, graph demanded
-but unavailable, an invented count in a demo narrative, a red machine gate).
-A fail-loud condition NEVER exits 0 with a fabricated count, and a demo whose
-gates came back red is NEVER published.
+but unavailable, an invented count in a demo narrative, a red machine gate)
+· 3 a deck-mode gate came back red (`deck verify`; its report goes to stdout).
+A fail-loud condition NEVER exits 0 with a fabricated count, and neither a demo
+nor a deck whose gates came back red is EVER published.
 """
 
 from __future__ import annotations
@@ -250,6 +252,49 @@ def cmd_demo(args) -> int:
     raise ValueError(f"unknown demo action: {args.action!r}")
 
 
+def cmd_deck(args) -> int:
+    """Deck mode (OPT-IN): assemble the deck brief, or gate a candidate deck."""
+    from attractor_scout import deck as deck_mod
+
+    if args.action == "brief":
+        brief_path = deck_mod.build_deck_brief(
+            ranked_path=args.ranked,
+            demos_path=args.demos,
+            workdir=args.workdir,
+            run_label=args.run_label,
+        )
+        print(f"deck brief -> {brief_path}", file=sys.stderr)
+        # The path is the ONLY thing on stdout: the skill captures it directly.
+        print(brief_path)
+        return 0
+
+    if args.action == "verify":
+        report = deck_mod.verify_deck(
+            deck_path=args.deck,
+            ranked_path=args.ranked,
+            demos_path=args.demos,
+        )
+        text = report.render()
+        print(text)
+        if args.report:
+            Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.report).write_text(text + "\n", encoding="utf-8")
+        if args.json_out:
+            _emit(report.as_dict(), args.json_out)
+        if not report.ok:
+            failed = ", ".join(g.letter for g in report.gates if not g.passed)
+            print(
+                f"DECK GATE RED [{failed}]: {args.deck} was NOT published. Re-delegate ONCE with this "
+                f"report appended verbatim; if it is still red, say so and do not publish.",
+                file=sys.stderr,
+            )
+            return 3
+        print(f"deck verified: {args.deck}", file=sys.stderr)
+        return 0
+
+    raise ValueError(f"unknown deck action: {args.action!r}")
+
+
 def cmd_run(args) -> int:
     result = pipeline.run(
         root=args.root,
@@ -373,6 +418,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--append", action="store_true", help="assemble: add to an existing demos.json")
     p.add_argument("--generated-at", default=None, help="pin the demo timestamp for reproducible output")
     p.set_defaults(func=cmd_demo)
+
+    p = sub.add_parser(
+        "deck",
+        help="OPT-IN deck mode: assemble the deck brief, or run the deterministic gates over a candidate deck",
+    )
+    p.add_argument("action", choices=["brief", "verify"])
+    p.add_argument("--ranked", default="ranked.json", help="the re-verified ranking (both actions)")
+    p.add_argument("--demos", default=None, help="demos.json from `demo assemble`; carries the real .dot text")
+    p.add_argument("--workdir", default=None, help="brief: where deck-brief.md is written")
+    p.add_argument("--run-label", default=None, help="brief: a short human label for this run")
+    p.add_argument("--deck", default=None, help="verify: the candidate deck HTML to gate")
+    p.add_argument("--report", default=None, help="verify: also write the verbatim gate report here")
+    p.add_argument("--json-out", default=None, help="verify: also write the machine-readable report here")
+    p.set_defaults(func=cmd_deck)
 
     p = sub.add_parser("run")
     add_selector(p)

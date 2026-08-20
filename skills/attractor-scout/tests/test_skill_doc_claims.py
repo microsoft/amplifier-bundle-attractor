@@ -91,3 +91,43 @@ def test_skill_percentages_are_all_accounted_for():
         f"SKILL.md contains unpinned percentage(s) {sorted(unexpected)}. Pin each to "
         f"evals/README.md (add to PINNED_CLAIMS) or remove it."
     )
+
+
+# --------------------------------------------------------------------------
+# Step 10 (deck mode) claims, pinned to the CODE that makes them true.
+# Same doctrine as above, but the source of truth is the implementation, not
+# evals/README.md: step 10 describes gate behaviour, so a claim that drifts
+# from the code must break this test rather than mislead a reader.
+# --------------------------------------------------------------------------
+
+#: (phrase that must appear in SKILL.md, substring that must source it, source file)
+STEP10_PINNED_CLAIMS = [
+    ("attractor-scout-deck.html", 'DECK_FILENAME = f"{SKILL_NAME}-deck.html"', "scripts/attractor_scout/naming.py"),
+    ("exit 3", "return 3", "scripts/attractor_scout_cli.py"),
+    ("deck verify", "def cmd_deck", "scripts/attractor_scout_cli.py"),
+    ("deck brief", 'action == "brief"', "scripts/attractor_scout_cli.py"),
+    # The 600 s provider-timeout rationale for staged delegation (FOLD 6).
+    ("600 s", "DECK_MAX_ATTEMPTS", "scripts/attractor_scout/deck.py"),
+]
+
+
+def test_step10_claims_are_sourced_in_code():
+    skill = _strip_emphasis(SKILL_MD.read_text(encoding="utf-8"))
+    for phrase, source, relpath in STEP10_PINNED_CLAIMS:
+        assert _strip_emphasis(phrase) in skill, f"SKILL.md no longer contains the step-10 claim {phrase!r}"
+        code = (SKILL_DIR / relpath).read_text(encoding="utf-8")
+        assert source in code, (
+            f"SKILL.md's step-10 claim {phrase!r} is not sourced by {source!r} in {relpath} \u2014 "
+            f"the code moved; re-check the claim or update the pin."
+        )
+
+
+def test_step10_names_all_five_gates():
+    """Step 10 must describe every deterministic deck gate (a)-(e) by letter.
+
+    Guards against a future edit silently dropping a gate description from the
+    guidance while the gate still runs in code.
+    """
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    for letter in "abcde":
+        assert f"**({letter})**" in skill, f"SKILL.md step 10 no longer names deck gate ({letter})"

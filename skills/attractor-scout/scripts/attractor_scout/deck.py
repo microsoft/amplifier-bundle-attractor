@@ -8,7 +8,7 @@ file, with its own layout and its own prose --- and buys the trust back with
 gates instead.
 
 That is the whole design: **what the renderer guaranteed by construction, the
-gates here guarantee by inspection.** Five of them, all deterministic, all
+gates here guarantee by inspection.** Six of them, all deterministic, all
 stdlib, run over the candidate deck plus the run's own data:
 
   a. **It parses.** Container elements nest and close.
@@ -29,6 +29,13 @@ stdlib, run over the candidate deck plus the run's own data:
      MULTISET, read off `data-node`/`data-edge` attributes, must equal the
      `.dot`'s. A diagram that quietly drops the awkward back-edge is a diagram
      that teaches the wrong shape.
+  f. **Every modal carries the mandated structure.** A deck's depth lives in
+     its modals, so a hollow modal is a hollow deck. Each `<dialog>` must
+     carry a title and kicker, at least two `<h4>` sub-sections, an
+     `evidence` inset quoting the reader's own verified data, a `why`, and an
+     `entry` point --- names the style contract mandates and this gate counts.
+     It is a STRUCTURE check, never a length check: padding buys nothing, and
+     a genuinely short modal that has the parts passes.
 
 `verify_deck` returns a report; the CLI exits 0 only when every gate passed.
 **A gate-failed deck is never published** --- the same posture as
@@ -220,6 +227,43 @@ class DeckSvg:
     edges: list[str] = field(default_factory=list)
 
 
+@dataclass
+class DeckDialog:
+    """One `<dialog>`, counted against the modal-structure contract.
+
+    Every field is a COUNT of a structural part the style contract mandates by
+    name (see `deck_templates`'s Mandate 5). Counting, rather than measuring
+    length, is the whole design: a modal cannot pad its way past this.
+    """
+
+    dialog_id: str
+    titles: int = 0  # <h3> --- the modal title
+    kickers: int = 0  # class="m-kick" --- the label above it
+    subsections: int = 0  # <h4> --- the sub-section spine
+    evidence: int = 0  # class="evidence" --- the reader's own data, quoted
+    why: int = 0  # class="why" --- why it matters for them
+    entry: int = 0  # class="entry" --- where they can go next
+
+    def missing(self) -> list[str]:
+        """The mandated parts this dialog does not have. Empty == conforming."""
+        gaps: list[str] = []
+        if self.titles < 1:
+            gaps.append("no <h3> title")
+        if self.kickers < 1:
+            gaps.append(f"no class={DT.MODAL_KICKER_CLASS!r} kicker")
+        if self.subsections < DT.MODAL_MIN_SUBSECTIONS:
+            gaps.append(
+                f"{self.subsections} <{DT.MODAL_SUBSECTION_TAG}> sub-section(s); {DT.MODAL_MIN_SUBSECTIONS} required"
+            )
+        if self.evidence < DT.MODAL_MIN_EVIDENCE:
+            gaps.append(f"{self.evidence} class={DT.MODAL_EVIDENCE_CLASS!r} block(s); {DT.MODAL_MIN_EVIDENCE} required")
+        if self.why < 1:
+            gaps.append(f"no class={DT.MODAL_WHY_CLASS!r} why-it-matters")
+        if self.entry < 1:
+            gaps.append(f"no class={DT.MODAL_ENTRY_CLASS!r} entry point")
+        return gaps
+
+
 class _DeckParser(HTMLParser):
     """Structural read of a candidate deck. Never raises on content."""
 
@@ -230,11 +274,13 @@ class _DeckParser(HTMLParser):
         self.text_parts: list[str] = []
         self.dialog_ids: list[str] = []
         self.trigger_targets: list[str] = []
+        self.dialogs: list[DeckDialog] = []
         self.svgs: list[DeckSvg] = []
         self.json_blocks: dict[str, list[str]] = {}
         self.script_bodies: list[str] = []
         self.meta_description: str | None = None
         self._svg_stack: list[DeckSvg] = []
+        self._dialog_stack: list[DeckDialog] = []
         self._suppress_text = 0
         self._json_block_id: str | None = None
         self._capturing_js = False
@@ -253,8 +299,31 @@ class _DeckParser(HTMLParser):
                 current.nodes.append(adict[DT.NODE_ATTR])
             if DT.EDGE_ATTR in adict:
                 current.edges.append(adict[DT.EDGE_ATTR])
-        if tag == "dialog" and adict.get("id"):
-            self.dialog_ids.append(adict["id"])
+        if tag == "dialog":
+            if adict.get("id"):
+                self.dialog_ids.append(adict["id"])
+            record = DeckDialog(dialog_id=adict.get("id") or "(unnamed dialog)")
+            self.dialogs.append(record)
+            self._dialog_stack.append(record)
+        elif self._dialog_stack:
+            # Structural parts of the modal-depth contract, counted by NAME
+            # against the constants the brief also quotes. A class token may
+            # sit alongside others, so the class attribute is split, never
+            # substring-matched --- `class="whyever"` must not count as `why`.
+            current = self._dialog_stack[-1]
+            if tag == "h3":
+                current.titles += 1
+            elif tag == DT.MODAL_SUBSECTION_TAG:
+                current.subsections += 1
+            tokens = set(adict.get("class", "").split())
+            if DT.MODAL_KICKER_CLASS in tokens:
+                current.kickers += 1
+            if DT.MODAL_EVIDENCE_CLASS in tokens:
+                current.evidence += 1
+            if DT.MODAL_WHY_CLASS in tokens:
+                current.why += 1
+            if DT.MODAL_ENTRY_CLASS in tokens:
+                current.entry += 1
         if adict.get("data-modal"):
             self.trigger_targets.append(adict["data-modal"])
         if tag == "meta" and adict.get("name", "").lower() == "description":
@@ -293,6 +362,8 @@ class _DeckParser(HTMLParser):
         tag = tag.lower()
         if tag == "svg" and self._svg_stack:
             self._svg_stack.pop()
+        if tag == "dialog" and self._dialog_stack:
+            self._dialog_stack.pop()
         if tag in ("style", "script"):
             self._suppress_text = max(0, self._suppress_text - 1)
             self._json_block_id = None
@@ -686,6 +757,39 @@ def gate_dialogs(doc: DeckDocument) -> GateResult:
     )
 
 
+def gate_modal_depth(doc: DeckDocument) -> GateResult:
+    """Gate (f): every modal carries the five mandated structural parts.
+
+    Cheap and structural on purpose. It counts named parts --- a title, a
+    kicker, `<h4>` sub-sections, an evidence inset, a why-it-matters, an entry
+    point --- and never looks at length. A hollow modal cannot pass by being
+    padded, and an honest short modal that HAS the parts is never punished for
+    being short. The names come from `deck_templates`, which is also what the
+    brief quotes, so the author and the gate read one contract.
+    """
+    dialogs = doc.parser.dialogs
+    findings: list[str] = []
+    conforming = 0
+    for dialog in dialogs:
+        gaps = dialog.missing()
+        if gaps:
+            findings.append(f"{dialog.dialog_id}: {'; '.join(gaps)}")
+        else:
+            conforming += 1
+    total_sub = sum(d.subsections for d in dialogs)
+    total_ev = sum(d.evidence for d in dialogs)
+    return GateResult(
+        letter="f",
+        name="every modal carries the mandated structure",
+        passed=not findings,
+        detail=(
+            f"{conforming}/{len(dialogs)} dialog(s) conforming; "
+            f"{total_sub} sub-section(s) and {total_ev} evidence block(s) across the deck"
+        ),
+        findings=findings,
+    )
+
+
 def gate_numbers(doc: DeckDocument, whitelist: set[str]) -> GateResult:
     declared, problems = read_derived_declarations(doc)
     findings = list(problems)
@@ -857,6 +961,7 @@ def verify_deck(
         gate_dialogs(doc),
         gate_numbers(doc, whitelist),
         gate_diagram_fidelity(doc, demos),
+        gate_modal_depth(doc),
     ]
     return DeckReport(deck_path=str(deck_file), gates=gates)
 
@@ -1099,6 +1204,7 @@ __all__ = [
     "dot_graph_counts",
     "gate_diagram_fidelity",
     "gate_dialogs",
+    "gate_modal_depth",
     "gate_numbers",
     "gate_parses",
     "gate_self_contained",

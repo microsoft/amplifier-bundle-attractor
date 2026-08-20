@@ -304,10 +304,30 @@ CLEAN_DECK = f"""<!doctype html>
 
 <dialog id="m-unit" aria-labelledby="h-unit">
   <div class="mbox" tabindex="-1">
-    <h3 id="h-unit">The repair loop</h3>
-    <p>Seven distinct sessions. A median of twelve tool calls and four LLM cycles per session, over
-    a median span of nine hundred and thirty seconds, with about a third of an error per session.</p>
-    <button class="m-close" type="button" aria-label="Close">Close</button>
+    <div class="mhead">
+      <div class="mh-b">
+        <p class="m-kick">The strongest fit</p>
+        <h3 id="h-unit">The repair loop</h3>
+      </div>
+      <button class="m-close" type="button" aria-label="Close">Close</button>
+    </div>
+    <div class="mbody">
+      <p>The one unit in this run that cleared all three questions.</p>
+      <h4>What it is</h4>
+      <p>A generated report comes back wrong, you repair it, and you run the check again until the
+      check stops complaining.</p>
+      <div class="evidence">
+        <span class="lbl">Your own numbers</span>
+        <p>Seven distinct sessions. A median of twelve tool calls and four LLM cycles per session,
+        over a median span of nine hundred and thirty seconds, with about a third of an error per
+        session.</p>
+      </div>
+      <h4>Why it recurs</h4>
+      <p class="why">Every one of those sessions ended when a check you already run agreed with
+      you. That agreement is the evidence gate; nothing about it needs a person.</p>
+      <p class="entry">Smallest next step: name the command you already run at the end, and let a
+      loop run it instead.</p>
+    </div>
   </div>
 </dialog>
 
@@ -367,6 +387,49 @@ def with_orphan_dialog() -> str:
         '<script type="application/json" id="derived-values">',
         1,
     )
+
+
+#: The conforming modal body from CLEAN_DECK, sliced out once so the hollow
+#: mutation below can replace exactly it and nothing else.
+_CONFORMING_MBODY_START = '    <div class="mbody">'
+_CONFORMING_MBODY_END = "    </div>\n  </div>\n</dialog>"
+
+#: A modal that says a true thing in two flat paragraphs and carries not one
+#: of the five mandated structural parts. This is the shape gate (f) exists to
+#: catch: readable, honest, and hollow.
+_HOLLOW_MBODY = """\
+    <div class="mbody">
+      <p>The repair loop shows up in seven distinct sessions.</p>
+      <p>It is worth automating.</p>
+"""
+
+
+def with_hollow_modal() -> str:
+    """Gate (f): a modal with a title but none of the mandated structure.
+
+    Everything else about the deck is unchanged --- it still parses, is still
+    self-contained, its numbers still resolve. Only the modal's INSIDE is
+    gutted, which is precisely the failure a length check would miss and a
+    structure check catches.
+    """
+    start = CLEAN_DECK.index(_CONFORMING_MBODY_START)
+    end = CLEAN_DECK.index(_CONFORMING_MBODY_END, start)
+    return CLEAN_DECK[:start] + _HOLLOW_MBODY + CLEAN_DECK[end:]
+
+
+def with_modal_missing_evidence() -> str:
+    """Gate (f): every part present EXCEPT the reader's own data, quoted.
+
+    The narrow case: a modal that has a heading, sub-sections, a why and an
+    entry point, and still never shows the reader a number of their own. The
+    gate must name the missing evidence block specifically, not just fail.
+    """
+    return CLEAN_DECK.replace('<div class="evidence">', '<div class="aside">', 1)
+
+
+def with_modal_one_subsection() -> str:
+    """Gate (f): one sub-section where the contract mandates two."""
+    return CLEAN_DECK.replace("<h4>Why it recurs</h4>", "<p><strong>Why it recurs</strong></p>", 1)
 
 
 def with_fabricated_number() -> str:
@@ -555,9 +618,12 @@ __all__ = [
     "with_external_resource",
     "with_fabricated_number",
     "with_from_not_referencing_inputs",
+    "with_hollow_modal",
     "with_inputless_derivation",
     "with_local_use_href",
     "with_media_source",
+    "with_modal_missing_evidence",
+    "with_modal_one_subsection",
     "with_node_added",
     "with_object_data",
     "with_orphan_dialog",

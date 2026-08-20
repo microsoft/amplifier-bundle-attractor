@@ -253,3 +253,129 @@ byte-pinned `authoring_contract.py`, and every pre-existing test.
 - **Any edit to the deterministic renderer's output.** `render.py` is untouched; a deck is a
   sibling file, never a modification of the map.
 - **Shipping the exemplar.** No sentence of it is committed. Only the method is.
+
+---
+
+# Addendum — 2026-08-20: the style uplift and the structural depth gate (gate f)
+
+**Status:** SHIPPED. Built and live-proved on the branch that lands this addendum.
+**Repo:** `amplifier-bundle-attractor`, branched from `main` @ `4e1ba02`.
+**Decision-matrix tier:** still an **additive extension**. One new gate, one new mandate, a
+rewritten style contract. No CLI surface changed; steps 1–9 remain byte-untouched in behaviour.
+
+## A.0 What was wrong
+
+The shipped deck mode produced *correct* pages that did not read like the house decks they were
+meant to sit beside. Reviewing a real generated deck against the two reference decks turned up a
+consistent set of misses, and every one of them was an **absence in the brief**, not an author
+failure — the style contract described a section *arc* and a diagram *grammar* and left everything
+between them to taste:
+
+| Axis | Reference decks do | The shipped contract said | Result |
+|---|---|---|---|
+| Type | three stacks; a serif carries every heading, pull quote, card title and stat value | "system fonts only" | sans-only, report-flavoured |
+| Colour | every semantic hue is a **triad** (stroke / lighter text sibling / dark tint fill), plus a separate focus hue | "typographic hierarchy carries the structure" | a flat palette, no tints, no focus token |
+| Width | **two** measures — narrow for prose, wide for figures | (unstated) | one width for everything; dense |
+| Nav | fixed scroll-progress bar, sticky top bar, numbered section nav, `IntersectionObserver` current-section highlight | (unstated) | **no navigation of any kind** |
+| Section furniture | eyebrow → claim heading → standfirst → figure with title+caption → pull quote → openers → doctrine strip | "a kicker, a headline, a deck line, then body" | no captions, no pull quotes, no closing strip |
+| Modals | sticky header with kicker + serif title over a scrolling body; `<h4>` sub-sections; inset evidence blocks; focus return; reduced-motion | "depth lives in a MODAL per card" | a floated close button and three flat paragraphs |
+| Modal count | ~3.5–4.5 per section, across every finding class | "every opportunity + every honest-NO" | modals on opportunities only; demos and waste had none |
+
+## A.1 The approach: a technique sheet, not a template
+
+The original design's §4 records why the exemplar itself is not shipped ("only the method is").
+That still holds — and it is exactly why the fix is **not** "give the author a better exemplar."
+The fix is to make the method *concrete enough to reproduce*.
+
+So `STYLE_CONTRACT` was rewritten as a five-part **technique sheet**: the design tokens with the
+rules they encode, the nav spec, the section furniture in order, the modal machinery, and only then
+the section arc. It carries literal token values (a hex ramp is a design token, not prose) and
+literal structural instructions, and it carries **no sentence of any reference deck**. The leak
+guard's Layer-1/2 scan covers the shipped file as it covers every other; the discipline the
+addendum adds on top is editorial — *techniques, not sentences* — and it is checked by reading, the
+same way §4's "no exemplar sentence ships" is.
+
+The bet: an author who is told "the serif carries every heading, `font-weight:600`, negative
+tracking near -.035em on the h1" will produce the house look from scratch, where an author told
+"typographic hierarchy carries the structure" will produce something reasonable and generic. That
+is a claim about briefs, and the live proof in §A.4 is what tests it.
+
+## A.2 The new mandate, and why it is structural
+
+**Mandate 5 — every modal is structured, not a paragraph dump.** Dissecting ten representative
+modals (five per reference deck) showed one invariant shape, not a length: an unheaded lede, two or
+more sub-section heads, at least one *inset* that quotes evidence, a reading of what it means, and
+somewhere to go. Length varied 5–14 block elements; **structure did not vary at all**.
+
+So the contract mandates the parts, by name, with marker classes the gate can count:
+
+| Part | Marker | Minimum |
+|---|---|---|
+| title | `<h3>` | 1 |
+| kicker | `class="m-kick"` | 1 |
+| sub-sections | `<h4>` | **2** |
+| evidence (the reader's own verified data, quoted) | `class="evidence"` | **1** |
+| why-it-matters | `class="why"` | 1 |
+| entry point | `class="entry"` | 1 |
+
+These live as constants in `deck_templates.py` (`MODAL_*`), quoted by the brief and read by the
+gate — the same single-source discipline `DERIVED_BLOCK_ID` already uses for the numbers gate, and
+for the same reason: a contract stated in two places drifts.
+
+**Why structure and not a length quota.** A byte or word minimum is trivially satisfiable by
+padding, and padding is the failure mode a deck-grade page most needs protection from. A structure
+check inverts that: a hollow modal cannot pass by growing, and a genuinely short modal that has the
+parts passes untouched. `test_gate_f_is_structural_not_a_length_check` asserts both halves
+directly — a padded hollow modal fails, a trimmed conforming one passes.
+
+## A.3 Gate (f), and its named limits
+
+`gate_modal_depth` counts the parts above per `<dialog>` and fails naming the dialog id and exactly
+which parts are absent. It is stdlib, deterministic, and O(document) — it rides the existing
+`HTMLParser` pass, adding a dialog stack and six counters. Fixtures: `with_hollow_modal` (the RED
+proof — a modal gutted to two flat paragraphs while every other gate stays green),
+`with_modal_missing_evidence`, `with_modal_one_subsection`; the clean fixture's modal was rebuilt
+to the contract and is the GREEN baseline.
+
+Named limits, documented rather than closed, each with a test:
+
+1. **It counts presence, not quality.** Two `<h4>`s reading "Details" and "More details" pass.
+   Judging whether a sub-section *earns* its heading is exactly the taste question a deterministic
+   gate must not pretend to answer; the brief tells the author what the sub-sections are for, and
+   the gate only ensures the slots exist. Same posture as gate (d)'s refusal to recompute
+   arithmetic (§3.4).
+2. **`class="evidence"` is a claim, not a proof.** The gate checks that an evidence inset exists;
+   it does not verify that what is inside it came from the run. It does not need to — every number
+   in it is already subject to gate (d), which is the check that actually binds. The residual is an
+   evidence block with no numbers in it at all.
+3. **Class tokens are matched exactly, never as substrings.** `class="whyever"` is not a `why`
+   block (`test_gate_f_class_token_is_matched_exactly`). A token may sit beside others.
+4. **Nesting is stack-based but flat in practice.** Dialogs do not nest in any real deck; the
+   parser keeps a stack anyway so a malformed document degrades to a named failure rather than a
+   miscount.
+5. **The gate cannot see a modal that is never opened.** It counts structure inside `<dialog>`
+   elements; gate (c) is what guarantees each of them is reachable. The two are complementary and
+   neither subsumes the other.
+
+## A.4 What the technique sheet does NOT close
+
+- **Nav is mandated in the brief, not gated.** A deck could ship without the sticky bar and still
+  pass every gate. Gating "has a top bar" would be checkable, but it is a *taste* mandate wearing
+  machine clothes, and the deck's trust story is about honesty, not chrome. Named, not closed.
+- **Diagrams still do not appear inside modals.** The reference decks do not do it; the contract
+  says so explicitly so an author does not go looking for the pattern and invent one.
+- **Token adoption is unenforced.** The contract states the hex ramp; nothing checks that the
+  author used it. A colour gate would fight legitimate variation for no honesty gain.
+
+## A.5 Files
+
+**Changed:** `scripts/attractor_scout/deck_templates.py` (the technique sheet; `MODAL_*` constants;
+Mandate 5), `scripts/attractor_scout/deck.py` (`DeckDialog`, dialog-structure parsing,
+`gate_modal_depth`, docstring), `fixtures/deck_fixture.py` (conforming clean modal + three
+mutations), `tests/test_scenario9_deck_gates.py` (+8 gate-f tests),
+`tests/test_scenario10_deck_brief.py` (six gates, five mandates),
+`tests/test_skill_doc_claims.py` (gate (f) pinned to `gate_modal_depth`), `SKILL.md` (step 10 names
+gate (f)).
+
+**Unchanged:** every module of the mining spine, `demo.py`, `demo_templates.py`, `render.py`, the
+byte-pinned `authoring_contract.py`, and the CLI's surface and exit codes.

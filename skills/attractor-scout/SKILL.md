@@ -323,7 +323,7 @@ $CLI deck verify --deck "$WORK/deck/deck.html" \
 ```
 
 `deck verify` is deterministic and it is the only thing that decides whether the
-deck publishes. Five gates: **(a)** the HTML parses; **(b)** the page is
+deck publishes. Six gates: **(a)** the HTML parses; **(b)** the page is
 self-contained — no `<img>`/`<link>`/`<script src>`/`@import`/`<iframe>`/
 `srcset`, `url(` only as `url(#…)`, exactly two https links, zero `file://`;
 **(c)** every modal has a trigger and every trigger has a modal; **(d)** every
@@ -332,8 +332,13 @@ derivation the deck itself declares, with provenance, in its
 `<script type="application/json" id="derived-values">` block — **an undeclared
 number is FATAL, same as step 5**; **(e)** every pipeline diagram matches its
 real `.dot` node-for-node and edge-for-edge (an edge MULTISET comparison, so a
-back-edge quietly not drawn is caught). Exit 0 means all five passed; **exit 3
-means a gate came back red and the deck must NOT be published**.
+back-edge quietly not drawn is caught); **(f)** the **structural depth gate** —
+every `<dialog>` carries the five parts the style contract mandates (a title and
+kicker, at least two `<h4>` sub-sections, an `evidence` inset quoting the
+reader's own verified data, a `why`, and an `entry` point). It counts structure,
+never length, so padding cannot buy a pass and an honest short modal is never
+punished. Exit 0 means all six passed; **exit 3 means a gate came back red and
+the deck must NOT be published**.
 
 If it exits 3, re-delegate **ONCE** with `$WORK/deck/deck-gate-report.txt`
 appended verbatim, then re-verify. Still red? **Do not publish.** Say which

@@ -8,7 +8,7 @@ digraph Refactor {
     graph [
         goal="$goal",
         label="Safe Refactoring Pipeline",
-        default_max_retry=3,
+        default_max_retries=3,
         default_fidelity="full",
         default_thread_id="refactor"
     ]

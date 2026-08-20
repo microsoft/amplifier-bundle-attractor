@@ -59,7 +59,7 @@ would never fire, and the pipeline would report success with failing tests. The 
 gate runs `pytest` directly and routes on the actual exit code.
 
 **FAIL routing**: `write_tests` has `retry_target="fix_failures"`. If any LLM node crashes
-(hard FAIL), the engine's `default_max_retry=3` provides retry before fail-fast termination.
+(hard FAIL), the engine's `default_max_retries=3` provides retry before fail-fast termination.
 
 ## Models
 

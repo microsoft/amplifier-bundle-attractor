@@ -65,4 +65,4 @@ fire, and the pipeline would proceed to diff review even when tests are failing.
 gate runs `pytest` directly and routes on the actual exit code.
 
 **FAIL routing**: `snapshot_tests` has `retry_target="snapshot_tests"`. If any LLM node crashes
-(hard FAIL), the engine's `default_max_retry=3` provides retry before fail-fast termination.
+(hard FAIL), the engine's `default_max_retries=3` provides retry before fail-fast termination.

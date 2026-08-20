@@ -17,8 +17,15 @@ Maintainer ruling, 2026-08-14. The four rules that decide every disposition in t
 1. **Honor the nlspec design where possible.** The upstream natural-language spec is the design of
    record; "we'd have done it differently" is not a reason to diverge.
 2. **100% support for community `.dot` files built against the nlspec.** A graph written to the
-   canonical spec must run on this engine unmodified. This is the hard constraint — an extension
-   that breaks a conforming graph is a bug, not an extension.
+   canonical spec must run on this engine unmodified. This is the hard constraint **on
+   extensions** — an extension that breaks a conforming graph is a bug, not an extension. It is
+   not a claim that *nothing* can require an edit: the decided **divergences** under rule 4 are
+   the enumerated exceptions, and each one names the graph shape it refuses and the one-line
+   remedy. Today the divergences that can require touching a conforming graph are `EXTENSIONS.md`
+   §16 (fail-fast routing — a graph relying on canonical "continue past FAIL on the best
+   unconditional edge" must add `runs_on=always` or `continue_on_fail` to the intended successor)
+   and §38 / ATX-13 (unknown-shape hard-fail — a decorative out-of-table shape must carry an
+   explicit `type=`). Rule 2 bounds what an *extension* may do; it does not repeal rule 4.
 3. **Extensions must be additive and non-interfering.** New attributes, shapes, and semantics may
    only add reachable behavior; they may not change what a spec-conformant graph does.
 4. **Divergences only for safety, backed by measured evidence, and always LOUD.** A divergence must
@@ -127,11 +134,20 @@ keys. Do not mark "live" until exercised against real providers (e.g. in a DTU w
 | ATX-13 | Unknown node shape hard-fails at dispatch instead of falling back to the default handler: `HandlerRegistry.get()` raises `ValueError` naming the shape, the node, the supported set, and the remedy | `§4.2 :603-607` (resolution order ends "3. Default handler (the codergen/LLM handler)"); `:628-629` (`RETURN default_handler`) | `handlers/__init__.py:116-121`; behavior contract `tests/test_no_silent_fallback.py`; both halves asserted by matrix row `ATX-M-F01` (`specs/conformance/attractor-matrix.yaml`) | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §38; closes issue #234 F1) |
 | ATX-14 | `reasoning_effort` unset-passthrough: no engine-injected default anywhere, so Appendix A's `"high"` does not hold — an omitted attribute reaches the provider as no reasoning parameter at all, and node attr / `model_stylesheet` / profile are the only value sources | `§2.6 :162` and Appendix A `:2020` (default `"high"`) | `graph.py:251` (`Node.reasoning_effort = None`), `backend.py:244` + `__init__.py:114` (None passthrough; spawn path omits the key), `transforms.py`/`stylesheet.py` (explicit resolution surface); asserted by matrix row `ATX-M-F04`; authoring-guide claim pinned by `tests/test_doc_consistency.py` D-243 | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §39; closes issue #234 F4) |
 
-**Shipped extensions (IMPROVE — fold into `specs/EXTENSIONS.md`):** fail-fast edge routing with
-`runs_on`/`continue_on_fail`; skip-propagation contracts (`requires=`/`outputs=`/`failed_outputs`,
+**Shipped extensions (IMPROVE — ledgered in `specs/EXTENSIONS.md`):** skip-propagation contracts
+(`requires=`/`outputs=`/`failed_outputs`,
 `PIPELINE_NODE_SKIPPED`/`PIPELINE_NODE_CONTRACT_VIOLATION`); parallel `k_of_n`/`quorum`/`error_policy`;
 human `freeform` mode + attachments; tool `parse_json`/`tool_env`/`tool.last_line`; `$param`/`${key}`
-substitution beyond `$goal`.
+substitution beyond `$goal`. These are additive: they add reachable behavior without changing what a
+spec-conformant graph does (doctrine rule 3).
+
+**Fail-fast edge routing (`runs_on`/`continue_on_fail`) is a DIVERGE, not an IMPROVE.** It changes
+what a conforming graph does on a FAIL outcome — canonical §3.3 step 4 selects the best unconditional
+edge regardless of outcome status; this engine stops unless the target declares
+`runs_on` ∈ {`always`, `failure`} or `continue_on_fail`. The load-bearing classification is
+conformance-matrix row `ATX-M-016` (`specs/conformance/attractor-matrix.yaml`),
+`disposition: DIVERGE-DECIDED`, ledgered at `specs/EXTENSIONS.md` §16 and asserted by
+`tests/test_edge_selection_no_silent_fallthrough.py`.
 
 ---
 

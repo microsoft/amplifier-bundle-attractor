@@ -37,7 +37,7 @@ digraph GraphResume {
         label="Graph-Level Resume Pattern",
         default_fidelity="full",
         default_thread_id="graph-resume",
-        default_max_retry=2
+        default_max_retries=2
     ]
     rankdir=LR
 

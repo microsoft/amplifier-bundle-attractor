@@ -48,7 +48,7 @@ This is a realistic "build a feature" pipeline that exercises **every Attractor 
 | **Class attribute** | `.planning`, `.code`, `.fast` on various nodes |
 | **Join policy** | `wait_all` on parallel_impl |
 | **Error policy** | `continue` on parallel_impl |
-| **Graph-level defaults** | `default_fidelity`, `default_max_retry`, `retry_target`, `fallback_retry_target` |
+| **Graph-level defaults** | `default_fidelity`, `default_max_retries`, `retry_target`, `fallback_retry_target` |
 
 ## Pipeline Structure
 

@@ -80,7 +80,7 @@ meaningful in both contexts.
 - **`goal_gate` + `retry_target`**: the gate survives to the exit node check;
   `retry_target` names where to resume
 - **Iteration budget**: `max_pipeline_duration=300000` (5 minutes) is the
-  duration cap the engine actually enforces on this graph. Note: `default_max_retry`
+  duration cap the engine actually enforces on this graph. Note: `default_max_retries`
   bounds handler retries on individual nodes, not graph traversal through
   `loop_restart` edges — a loop without a real bound is a different foot-gun,
   not a fix. Use `max_pipeline_duration` for a duration cap the engine enforces.

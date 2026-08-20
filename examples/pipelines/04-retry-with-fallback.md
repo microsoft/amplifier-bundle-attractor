@@ -72,7 +72,7 @@ committed at
 - **`retry_target`** (node-level): When `implement` exhausts retries, jump back to `plan` for a fresh approach (spec §3.7 step 2)
 - **`fallback_retry_target`** (node-level on `implement`): If no drawn edge matches a FAIL outcome, the engine would consult `retry_target` then `fallback_retry_target` as a belt-and-suspenders chain (spec §3.7 steps 2-3). The drawn edge `implement -> renegotiate` **is** the engine mechanism in this graph — it is selected at spec §3.3 Step 1 on any FAIL outcome, before the engine reaches `_resolve_failure_retry_target`. The attributes are present to demonstrate the retry-ladder API; they are not the active routing mechanism here.
 - **Fail-edge**: `validate_gate -> implement [condition="context.tool.last_line=gate_fail"]` — explicit per-node failure routing
-- **Graph-level `default_max_retry`**: Sets the global retry ceiling to 3
+- **Graph-level `default_max_retries`**: Sets the global retry ceiling to 3
 - **`goal_gate` + retry interaction**: Both `implement` and `simple_implement` are goal gates — the pipeline cannot exit until at least one succeeds
 - **`allow_partial`**: `simple_implement` accepts PARTIAL_SUCCESS when retries exhaust, treating it as good enough for the relaxed criteria
 

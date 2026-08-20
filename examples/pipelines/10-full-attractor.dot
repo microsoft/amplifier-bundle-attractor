@@ -13,7 +13,7 @@ digraph FullAttractor {
         goal="Build a user notifications feature with real-time WebSocket delivery, email fallback, and a React notification center UI",
         label="Full Attractor Kitchen Sink",
         default_fidelity="compact",
-        default_max_retry=3,
+        default_max_retries=3,
         retry_target="plan",
         fallback_retry_target="plan",
         model_stylesheet="

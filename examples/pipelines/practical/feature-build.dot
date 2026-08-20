@@ -7,7 +7,7 @@ digraph FeatureBuild {
     graph [
         goal="$goal",
         label="Feature Build Pipeline",
-        default_max_retry=2,
+        default_max_retries=2,
         default_fidelity="full",
         default_thread_id="feature-build"
     ]

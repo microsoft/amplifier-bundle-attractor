@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import shlex
 
+from . import authoring_contract as _contract
+
 # --------------------------------------------------------------------------
 # Public endpoints and commands --- written down exactly once.
 # --------------------------------------------------------------------------
@@ -294,6 +296,70 @@ before anyone sees it, so write to it deliberately:
       answer cannot change the path gates nothing
 """
 
+# --------------------------------------------------------------------------
+# A5 in detail --- the check first drafts actually fail.
+# --------------------------------------------------------------------------
+#
+# Measured on real runs: the brief above described the budget wall in PROSE
+# ("a budget wall, so it cannot spin"), and both live demonstrations came back
+# `[FAIL] A5` on the first draft --- costing a second delegation every time.
+# A5 is not a judgement about whether the pipeline is well budgeted; it is a
+# LITERAL SUBSTRING MATCH over the graph text. A delegate that cannot see the
+# checker cannot guess the tokens, so the brief now quotes them.
+#
+# The tuples are read off the vendored checker itself rather than retyped: it
+# is byte-pinned to upstream (`test_vendored_doctrine_checker_pin.py`), so a
+# private-name read here is the only way to keep ONE source of truth. If
+# upstream ever changes the vocabulary, the brief follows on the next `cp` and
+# the pin test proves it did.
+
+#: Substrings A5 accepts in a reachable tool node's `tool_command`.
+A5_BUDGET_TOKENS: tuple[str, ...] = tuple(_contract._BUDGET_TOKENS)
+
+#: Substrings A5 accepts on that node's outgoing edge (`condition` / `label`).
+A5_EXHAUSTION_TOKENS: tuple[str, ...] = tuple(_contract._EXHAUSTION_TOKENS)
+
+
+def _token_line(tokens: tuple[str, ...]) -> str:
+    """The tokens as the author must spell them --- backticked, comma-joined."""
+    return ", ".join(f"`{token}`" for token in tokens)
+
+
+#: The worked shape handed to the author. Written ONCE, here: a test wraps this
+#: exact fragment in the smallest legal graph and runs the real checker over
+#: it, so an example that would not itself pass A5 cannot ship in the brief.
+A5_WORKED_EXAMPLE = """\
+  wall [shape=parallelogram,
+        tool_command="max_attempts=3; test $(cat .n) -lt $max_attempts && echo under_budget || echo budget_exhausted"]
+  wall -> worker  [condition="context.tool.last_line=under_budget"]
+  wall -> give_up [condition="context.tool.last_line=budget_exhausted"]"""
+
+
+A5_BUDGET_WALL_CONTRACT = f"""\
+A5 IN DETAIL — this is the check first drafts fail, so it is spelled out. A5 is
+a LITERAL SUBSTRING MATCH over your graph's text, not a reading of your prose:
+a companion that eloquently describes a budget wall scores nothing. The checker
+requires, verbatim:
+
+  1. A TOOL node (`shape=parallelogram`, or any node carrying a `tool_command`)
+     that is REACHABLE from start, and whose `tool_command` contains one of
+     these substrings, spelled exactly like this — the match is case-sensitive:
+       {_token_line(A5_BUDGET_TOKENS)}
+  2. That SAME node has an OUTGOING EDGE whose `condition` or `label` contains
+     one of these substrings (this match is case-insensitive):
+       {_token_line(A5_EXHAUSTION_TOKENS)}
+  3. That exhaustion edge routes somewhere honest — a LOUD nonzero terminal —
+     never into the exit as a success (A1, A8).
+
+A worked shape that satisfies all three:
+
+{A5_WORKED_EXAMPLE}
+
+`max_attempts` carries the budget token; `budget_exhausted` carries the
+exhaustion token on the edge. Counting attempts in a worker's prompt, or naming
+a budget only in the companion, leaves A5 red.
+"""
+
 NARRATIVE_CONTRACT = """\
 NARRATIVE RULES (machine-enforced at assembly — a violation kills the demo):
 
@@ -392,6 +458,7 @@ test as separate nodes is the anti-pattern.
 
 {VOCAB_EXCERPT}
 {CONTRACT_SUMMARY}
+{A5_BUDGET_WALL_CONTRACT}
 ### 2. `pipeline.md`
 
 The companion. It MUST name every LLM (box) node id in your graph and state each
@@ -461,6 +528,9 @@ def uvx_consent_question(relpath: str) -> str:
 
 
 __all__ = [
+    "A5_BUDGET_TOKENS",
+    "A5_BUDGET_WALL_CONTRACT",
+    "A5_EXHAUSTION_TOKENS",
     "AUTHOR_PIPELINE_PATH",
     "CLI_INSTALL_CMD",
     "CONTRACT_SUMMARY",

@@ -122,8 +122,11 @@ not fabricate a count from a shallower glob.
 **2 — Semantic label + cluster (`fast` role).** The deterministic spine dedups
 by tool-signature, but the large majority of real opportunities are found ONLY
 by reading the work's *meaning* across differently-worded sessions. Delegate
-this to `fast`-role sub-agents over **local text only**, in **small batches (a
-few dozen sessions each)** run in **waves of a handful, in series**. The `fast`
+this to `fast`-role sub-agents over **local text only**, in **batches of ~40
+sessions**, run in **waves of 5 batches in series**. Those two numbers are the
+calibrated shape: ~40 keeps a batch inside one workspace's coherence so a
+cluster is not split across unrelated work, and 5-at-a-time in series stays
+under provider rate limits on a corpus of any size. The `fast`
 role does this reliably at scale — every batch measured in this build placed
 every session with **zero invented ids**. Each batch returns cluster
 assignments as JSON; collect them into an intermediate `$WORK/fast-clusters.json`
@@ -206,7 +209,10 @@ primer-only document and re-render, then say so plainly.
 source "$WORK/env.sh"
 # No opportunities? Primer only, and skip the rest of this step:
 #   $CLI demo primer-only --out "$WORK/demos.json"
-SLUG=$($CLI demo brief --ranked "$WORK/ranked.json" \
+# Pin the unit ONCE, and pass it to every demo command in this step:
+UNIT=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["opportunities"][0]["unit_id"])' \
+        "$WORK/ranked.json")
+SLUG=$($CLI demo brief --ranked "$WORK/ranked.json" --unit "$UNIT" \
         --extracts "$WORK/extracts.jsonl" --workdir "$WORK/demo")
 ```
 
@@ -220,10 +226,16 @@ delegation; at most two if the gates reject the first draft; never more.**
 Then gate, validate and publish:
 
 ```bash
-$CLI demo assemble --ranked "$WORK/ranked.json" \
+$CLI demo assemble --ranked "$WORK/ranked.json" --unit "$UNIT" \
     --workdir "$WORK/demo/$SLUG" --output-dir "$(dirname "$OUTPUT_PATH")" \
     --out "$WORK/demos.json" --append
 ```
+
+**`brief` and `assemble` must both point at the SAME unit.** `--unit` defaults
+to `opportunities[0]` on *each* command independently, so an `assemble` that
+omits it silently validates the draft against the top-ranked unit's numbers —
+which is why `$UNIT` is pinned once above and passed to both. Mismatch it and
+the count check fails on numbers the delegate never wrote.
 
 `assemble` runs the verification ladder (`attractor lint` if it is on PATH; the
 bundled doctrine checker always), validates every number in the **six teaching-
@@ -256,10 +268,12 @@ those three parts — never "yes, I'm sure."
 
 **9 — Offer more (their call).** List the top five not-yet-demonstrated
 opportunities by name and ask exactly one question: *"Want another one
-demonstrated? Name or number — or no."* Each yes repeats step 8 for that unit
-(`--unit <unit_id>`, with `--append`) and re-renders. **Never generate a second
-demonstration without a fresh explicit yes** — the first one is the skill's
-second half; every one after it is marginal spend for marginal personalization.
+demonstrated? Name or number — or no."* Each yes repeats step 8 for that unit —
+re-point `$UNIT` at the chosen `unit_id` so **both** `demo brief` and `demo
+assemble` carry the same `--unit`, keep `--append`, and re-render. **Never
+generate a second demonstration without a fresh explicit yes** — the first one
+is the skill's second half; every one after it is marginal spend for marginal
+personalization.
 
 ---
 

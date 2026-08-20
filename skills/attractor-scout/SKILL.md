@@ -114,10 +114,37 @@ version-checks every `metadata.json` and **fails loud on a schema mismatch**,
 selects **prompt-carrying root sessions** (never top-N-by-workspace-size — the
 biggest recurring unit lives smeared across dozens of tiny workspaces and is
 invisible to size-ranked selection), reads errors from `tool:post.result.error`,
-folds children into their root via `parent_id`, keys on **full** session ids,
-and caps span at 7,200 s. It **fails loud on an empty root** with the exact
-message `looked in <root>, found 0` — if you see that, STOP and report it; do
-not fabricate a count from a shallower glob.
+keys on **full** session ids, and caps span at 7,200 s. It **fails loud on an
+empty root** with the exact message `looked in <root>, found 0` — if you see
+that, STOP and report it; do not fabricate a count from a shallower glob.
+
+**The same pass classifies PROVENANCE — whose work each session is.** A
+`prompt:submit` proves a prompt was submitted and nothing whatsoever about who
+submitted it: a harness firing one non-interactive run emits a byte-identical
+event. So every mined session is put through a deterministic ladder
+(`scripts/attractor_scout/provenance.py`) before anything downstream sees it:
+
+| Rung | Verdict | What fires it |
+| --- | --- | --- |
+| `R0` | agent | a parent session id, a delegate id shape, or a `session:fork` opener |
+| `R1` | agent | a pipeline or recipe start event |
+| `R2` | agent | an ephemeral or lane-shaped `working_dir` (tmp, scratch, worktree, lane) |
+| `R3` | likely-agent | a one-shot templated long brief |
+| `R4` | human-presumed | two or more prompts with a real gap between them |
+| `R5` | unknown | nothing decisive was recorded |
+
+Each verdict records **which rung fired, on what signal, with its evidence**,
+and that record is rendered in the artifact.
+
+**The policy, and it is not negotiable inside a run: opportunities are mined
+from `R4` only.** `R0`–`R3` are excluded and counted as an already-automated
+footprint (context — what agents already do for you — never an opportunity to
+hand back). `R5` is excluded and counted too: nothing recorded at session start
+says who launched a run, so a single-prompt session in a normal workspace
+genuinely cannot be told apart from an agent one-shot, and the contamination in
+that band is exactly the complaint this pass exists to fix. **`UNKNOWN` never
+silently becomes human.** Say the exclusion out loud when you report; do not
+present a shrunken ranking as if nothing was held back.
 
 **2 — Semantic label + cluster (`fast` role).** The deterministic spine dedups
 by tool-signature, but the large majority of real opportunities are found ONLY
@@ -142,13 +169,30 @@ labels; reasoning judges.
 
 **4 — Author adjudication (`general` role).** The deterministic spine already
 carries an author *prior* (harness / human / mixed) from fingerprints,
-sentinels, and machine-launch metadata. That prior **over-calls human**,
+sentinels, and the step-1 provenance verdict. That prior **over-calls human**,
 because it cannot read intent from prompt text — a templated autonomous "lane"
 mission looks human to it but is machine-launched. So adjudicate author at the
 **cluster level, reading the prompt text**, with a `general`-role sub-agent
 (the author-gate A/B, Gate 2 in `evals/README.md`, built this step: it admitted
 **0 of 2** harness clusters in **10/10** trials). The adjudicated label
 overrides the prior.
+
+**Give the adjudicator the provenance verdict, and bind it with one rule.**
+Each member record carries `provenance.rung`, `provenance.signal` and
+`provenance.evidence` (prompt count, session span, workspace class, first-prompt
+shape). Pass those into the adjudication prompt alongside the text — they are
+facts the prompt text cannot show, and withholding them is what made this step
+guess. State this rule verbatim in the prompt you send:
+
+> *You are given a deterministic provenance verdict per session. You may move a
+> cluster AWAY from human — to mixed or harness — when the prompt text shows
+> machine authorship the ladder could not see. You may NEVER move a cluster
+> toward human: a rung of R0, R1, R2 or R3 is evidence a machine started that
+> work, and no reading of prompt text overrides it. If the verdicts disagree
+> with each other inside one cluster, say mixed.*
+
+The adjudicator can tighten; it cannot launder an agent session into human
+work.
 
 After steps 2–4, write `$WORK/clusters.json` in exactly this shape — one entry
 per global cluster, carrying the fast-tier members and the reasoning/general
@@ -184,15 +228,22 @@ than no ranking. Re-run the label/cluster pass or fix the cluster JSON first.
 **6 — Rank (inside the same `rank` call).** `score = n_sessions × leverage ×
 fit / 100`, where `leverage = med_tool_calls + med_llm_cycles +
 med_span_capped/60 + 2·errs/n` (median within cluster, never p75; `n_prompts`
-carries zero signal and is dropped). Fit is binary {0,1}. **The author
-admission gate runs BEFORE scoring: only human/mixed units are ranked**; harness
-ceremony is routed to a separate waste-findings channel — reported (it is time
-you could reclaim), not offered as an opportunity to act on.
+carries zero signal and is dropped). Fit is binary {0,1}. **Two gates run
+BEFORE scoring, in this order.** First the provenance boundary narrows every
+unit's membership to its `R4` sessions; a unit left with none is reported in
+the provenance panel (as already-automated, or as unattributed) instead of
+ranked. Then the author admission gate admits **only human/mixed units**;
+harness ceremony is routed to the waste-findings channel — reported (it is time
+you could reclaim), not offered as an opportunity to act on. A unit carrying no
+author verdict at all is **not** treated as yours: it lands in `unattributed`,
+reported and unranked, because an absent verdict is an absence of evidence.
 
 **7 — Render (NO LLM).** The bundled deterministic renderer turns the ranked
 JSON into ONE self-contained HTML file — a sampled simple→complex range across
 the top, in-page modal deep-dives into the full list, honest-NOs shown with
-verdict and remediation, waste-findings in their own channel:
+verdict and remediation, waste-findings in their own channel, and a
+**provenance panel** carrying the per-rung counts, sample evidence, the
+already-automated footprint, and the honest UNKNOWN story:
 
 ```bash
 $CLI render --ranked "$WORK/ranked.json" --out "$OUTPUT_PATH"
@@ -382,6 +433,15 @@ Same ladder philosophy as the demo lint rung: a rung that could not run is
   (Tier A/B) is an *optional sharpener* for counts and joins; it is **never a
   precondition**. If no graph answers, run at Tier C and say so with an honest
   one-line note. Never let the graph become required for a rung to appear.
+- **Whose work it is is PRESUMED, never asserted — and never presumed to be
+  yours.** Nothing in the session record positively marks a human: there is no
+  argv, no mode, no tty flag, no launcher recorded at session start, so
+  `human-presumed` (`R4`) is the strongest claim the data supports and
+  `unknown` (`R5`) is a real answer, not a soft yes. Only `R4` sessions feed
+  the ranking; `R0`–`R3` and `R5` are counted in the provenance panel and kept
+  out of it. A unit with no author verdict is `unattributed`, never human. When
+  you report, name what was held back — a smaller, honest map beats a fuller
+  one that mixes an agent's work in with the user's.
 - **Honest-NOs are first-class output**, never dropped, never padded into the
   opportunity list to lengthen it. Each carries its verdict, the sub-test it
   failed (`recipe` / `one-shot` / `fragile`), and its remediation.
@@ -433,7 +493,10 @@ Same ladder philosophy as the demo lint rung: a rung that could not run is
 ## Output
 
 One **self-contained HTML** opportunity map (inlined CSS/JS, no network
-references), written to `$OUTPUT_PATH`. That is the current working directory
+references), written to `$OUTPUT_PATH`. It carries the ranked opportunities,
+the honest-NOs, the waste channel, and a **provenance panel**: how many of your
+sessions landed on each rung, sample evidence for each, the already-automated
+footprint, and the honest note about what could not be attributed and why. That is the current working directory
 by default, or an **`AGENTS.md`-guided output path** if the repo declares one.
 Never write the user's mined data into a shared repo — their session history
 belongs in their own artifact.

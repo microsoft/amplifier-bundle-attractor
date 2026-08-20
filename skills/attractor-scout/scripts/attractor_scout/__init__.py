@@ -8,6 +8,7 @@ Public surface:
 
     discover.enumerate_sessions / qualify   discovery spine (E1/E2/E3, fail-loud)
     extract.extract_all                     per-session records
+    provenance.classify / gate_units        R0-R5 human-vs-agent ladder
     author.classify_authors                 S8 deterministic prior
     frequency_signature                     S1 (A-rung dedup floor)
     leverage                                S2 (cost-now toil)

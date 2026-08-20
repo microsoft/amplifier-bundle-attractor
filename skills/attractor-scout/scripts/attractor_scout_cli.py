@@ -47,6 +47,7 @@ from attractor_scout import (
     graph,
     honest_no,
     pipeline,
+    provenance,
     ranking,
     render,
 )
@@ -168,7 +169,7 @@ def cmd_detect(args) -> int:
 
 
 def cmd_rank(args) -> int:
-    records = extract.read_extracts(args.extracts)
+    records = provenance.ensure_stamped(extract.read_extracts(args.extracts))
     if args.clusters:
         raw = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
         clusters = raw.get("clusters", raw) if isinstance(raw, dict) else raw
@@ -190,7 +191,16 @@ def cmd_rank(args) -> int:
                 )
     else:
         units = clustering.units_from_signatures(records)
-    _emit(ranking.rank(units), args.out)
+
+    # THE MINING BOUNDARY (skill step 1's provenance pass, enforced at the
+    # last moment before scoring): re-verification above has already checked
+    # every member id, so narrowing membership to R4 human-presumed sessions
+    # here cannot mask an invented count. Agent-authored and unattributable
+    # sessions are counted in the provenance panel instead of ranked.
+    gate = provenance.gate_units(units)
+    result = ranking.rank(gate.admitted)
+    result["provenance"] = provenance.summarize(records, gate=gate)
+    _emit(result, args.out)
     return 0
 
 

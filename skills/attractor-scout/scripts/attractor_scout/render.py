@@ -157,6 +157,19 @@ border-radius:0 6px 6px 0;margin-top:8px}
 """
 
 
+#: Appended to _CSS **only** when a provenance panel is rendered, so that a
+#: ranked result carrying no provenance data stays byte-identical to the
+#: pre-provenance-layer output. Same discipline as `_DEMO_CSS`.
+_PROVENANCE_CSS = """
+.prov{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-top:10px}
+.prov table{margin-top:6px}
+.prov .rung{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--dim)}
+.prov .honest{border-left:3px solid var(--acc);background:#1c2130;padding:10px 12px;
+border-radius:0 6px 6px 0;margin-top:12px}
+.prov .honest h4{margin:0 0 4px;font-size:13px}
+"""
+
+
 def _esc(value) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
@@ -382,6 +395,101 @@ def _demo_section(demo: dict) -> str:
     )
 
 
+def _provenance_rung_rows(panel: dict) -> str:
+    by_rung = panel.get("by_rung") or {}
+    labels = panel.get("rung_labels") or {}
+    rows = []
+    for rung in sorted(by_rung):
+        rows.append(
+            f'<tr><td class="rung">{_esc(rung)}</td>'
+            f"<td>{_esc(labels.get(rung, rung))}</td>"
+            f"<td>{_esc(by_rung.get(rung, 0))}</td></tr>"
+        )
+    return "\n".join(rows)
+
+
+def _provenance_sample_rows(panel: dict) -> str:
+    """Bounded evidence samples. Counts, classes and shapes only — never a path,
+    a session id, or a line of prompt text."""
+    rows = []
+    for sample in panel.get("samples") or []:
+        ev = sample.get("evidence") or {}
+        rows.append(
+            f'<tr><td class="rung">{_esc(sample.get("rung"))}</td>'
+            f"<td>{_esc(sample.get('signal'))}</td>"
+            f"<td>{_esc(ev.get('prompt_count'))}</td>"
+            f"<td>{_esc(ev.get('span_s'))}</td>"
+            f"<td>{_esc(ev.get('workspace_class'))}</td>"
+            f"<td>{_esc(ev.get('first_prompt_shape'))}</td></tr>"
+        )
+    return "\n".join(rows)
+
+
+def _unattributed_rows(units: list[dict]) -> str:
+    return "\n".join(
+        f"<tr><td>{_esc(u.get('name') or u.get('unit_id'))}</td>"
+        f"<td>{_esc(u.get('n_sessions'))}</td>"
+        f"<td>{_esc(u.get('note'))}</td></tr>"
+        for u in units
+    )
+
+
+def _provenance_block(result: dict) -> str:
+    """The provenance panel. Empty string when the run carried no provenance.
+
+    Additivity, same rule as the demonstration layer: a ranked result with no
+    provenance data (an older run, or a caller that never mined one) renders
+    the byte-identical artifact it rendered before this panel existed. Every
+    byte below — CSS included — is behind this guard.
+    """
+    panel = result.get("provenance") or {}
+    unattributed = result.get("unattributed") or []
+    if not panel and not unattributed:
+        return ""
+
+    parts = ["<h2>Session provenance &mdash; whose work this is</h2>"]
+    if panel:
+        parts.append(f'<p class="note">{_esc(panel.get("policy_note", ""))}</p>')
+        parts.append('<div class="prov">')
+        parts.append(
+            "<table><thead><tr><th>Rung</th><th>What fired</th><th>Sessions</th></tr></thead>"
+            f"<tbody>{_provenance_rung_rows(panel)}</tbody></table>"
+        )
+        parts.append(
+            f'<p class="note"><b>{_esc(panel.get("opportunity_pool", 0))}</b> session(s) qualified as '
+            f"human-presumed and fed the ranking. "
+            f"<b>{_esc(panel.get('already_automated', 0))}</b> ran as an already-automated footprint. "
+            f"<b>{_esc(panel.get('unknown_excluded', 0))}</b> could not be attributed.</p>"
+        )
+        parts.append(
+            f'<div class="honest"><h4>Already automated</h4>'
+            f'<p class="note">{_esc(panel.get("already_automated_note", ""))}</p></div>'
+        )
+        parts.append(
+            f'<div class="honest"><h4>What is still unknown</h4>'
+            f'<p class="note">{_esc(panel.get("unknown_note", ""))}</p>'
+            f'<p class="note">{_esc(panel.get("r4_residual_note", ""))}</p>'
+            f'<p class="note">{_esc(panel.get("upstream_fix_note", ""))}</p></div>'
+        )
+        sample_rows = _provenance_sample_rows(panel)
+        if sample_rows:
+            parts.append(
+                "<p class='note'>Sample evidence behind these verdicts (counts and classes only):</p>"
+                "<table><thead><tr><th>Rung</th><th>Signal</th><th>Prompts</th><th>Span (s)</th>"
+                "<th>Workspace</th><th>First prompt</th></tr></thead>"
+                f"<tbody>{sample_rows}</tbody></table>"
+            )
+        parts.append("</div>")
+    if unattributed:
+        parts.append(
+            "<p class='note'>Units held out of the ranking because no author verdict was produced for them &mdash; "
+            "reported here rather than presumed to be yours.</p>"
+            "<table><thead><tr><th>Unit</th><th>Sessions</th><th>Why it is not ranked</th></tr></thead>"
+            f"<tbody>{_unattributed_rows(unattributed)}</tbody></table>"
+        )
+    return "\n" + "\n".join(parts) + "\n"
+
+
 def _demos_block(demos: dict | None) -> str:
     """Primer + one section per demo. Empty string when nothing was supplied."""
     if not demos:
@@ -419,6 +527,10 @@ def render_html(
     # the artifact below is byte-identical to the pre-demo-layer output.
     demo_block = _demos_block(demos)
     demo_css = _DEMO_CSS if demo_block else ""
+    # Same additivity contract for the provenance panel: no provenance data in
+    # the ranked result => not one byte of it, CSS included.
+    provenance_block = _provenance_block(result)
+    provenance_css = _PROVENANCE_CSS if provenance_block else ""
     n_demonstrated = len((demos or {}).get("demos") or [])
     demo_count_note = f" &middot; {_esc(n_demonstrated)} demonstrated" if n_demonstrated else ""
     data_json = json.dumps({"units": _units_index(opportunities, honest_nos)}, sort_keys=True)
@@ -436,7 +548,7 @@ def render_html(
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_esc(SKILL_TITLE)} report</title>
-<style>{_CSS}{demo_css}</style></head><body><div class="wrap">
+<style>{_CSS}{demo_css}{provenance_css}</style></head><body><div class="wrap">
 <h1>{_esc(SKILL_TITLE)}</h1>
 <p class="sub">Generated {_esc(stamp)} &middot; own data only, computed locally &middot;
 {_esc(summary.get("n_opportunities", 0))} opportunities &middot;
@@ -464,7 +576,7 @@ that is a caveat on an opportunity, never a failure.</p>
 <p class="note">Recurring harness ceremony. Not opportunities to act on; time to reclaim.</p>
 <table><thead><tr><th>Unit</th><th>Sessions</th><th>Wall time</th><th>Author</th></tr></thead>
 <tbody>{waste_rows or '<tr><td colspan="4">none</td></tr>'}</tbody></table>
-
+{provenance_block}
 </div>
 <div class="modal" id="modal" onclick="if(event.target===this)closeModal()">
 <div class="modal-inner" id="modal-body"></div></div>

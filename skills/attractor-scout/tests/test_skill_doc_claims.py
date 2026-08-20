@@ -125,6 +125,58 @@ def test_step10_claims_are_sourced_in_code():
         )
 
 
+#: Step 1/4/6 provenance claims, pinned to the CODE that makes them true — same
+#: doctrine as the step-10 block above. A rung, a verdict name or a policy that
+#: drifts from `provenance.py` must break this test rather than mislead a reader.
+PROVENANCE_PINNED_CLAIMS = [
+    (
+        "scripts/attractor_scout/provenance.py",
+        'HUMAN_PRESUMED = "human-presumed"',
+        "scripts/attractor_scout/provenance.py",
+    ),
+    ("human-presumed", 'HUMAN_PRESUMED = "human-presumed"', "scripts/attractor_scout/provenance.py"),
+    ("likely-agent", 'LIKELY_AGENT = "likely-agent"', "scripts/attractor_scout/provenance.py"),
+    ("`session:fork` opener", 'FORK_FIRST_EVENT = "session:fork"', "scripts/attractor_scout/provenance.py"),
+    ("a pipeline or recipe start event", "ORCHESTRATION_START_EVENTS", "scripts/attractor_scout/provenance.py"),
+    ("`working_dir`", "def classify_workspace", "scripts/attractor_scout/provenance.py"),
+    (
+        "opportunities are mined\nfrom `R4` only",
+        "OPPORTUNITY_VERDICT = HUMAN_PRESUMED",
+        "scripts/attractor_scout/provenance.py",
+    ),
+    ("unattributed", 'unit["author"] = provenance.UNKNOWN', "scripts/attractor_scout/ranking.py"),
+    ("provenance panel", "def _provenance_block", "scripts/attractor_scout/render.py"),
+    # Step 4's never-promote-agent-to-human adjudication rule. Prose-only in
+    # SKILL.md, so pin it to the invariant comment at the seam that consumes
+    # the adjudicated label — a SKILL.md edit that drops the rule goes RED.
+    (
+        "may NEVER move a cluster",
+        "may NEVER move a\n        # cluster toward human",
+        "scripts/attractor_scout/clustering.py",
+    ),
+]
+
+
+def test_provenance_claims_are_sourced_in_code():
+    skill = _strip_emphasis(SKILL_MD.read_text(encoding="utf-8"))
+    for phrase, source, relpath in PROVENANCE_PINNED_CLAIMS:
+        assert _strip_emphasis(phrase) in skill, f"SKILL.md no longer contains the provenance claim {phrase!r}"
+        code = (SKILL_DIR / relpath).read_text(encoding="utf-8")
+        assert source in code, (
+            f"SKILL.md's provenance claim {phrase!r} is not sourced by {source!r} in {relpath} \u2014 "
+            f"the code moved; re-check the claim or update the pin."
+        )
+
+
+def test_skill_names_every_rung_of_the_ladder():
+    """All six rungs must be described in the guidance while all six run in code."""
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    from attractor_scout import provenance
+
+    for rung in provenance.RUNGS:
+        assert f"`{rung}`" in skill, f"SKILL.md no longer names provenance rung {rung}"
+
+
 def test_step10_names_all_six_gates():
     """Step 10 must describe every deterministic deck gate (a)-(f) by letter.
 

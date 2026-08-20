@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from . import author as author_mod
-from . import frequency_signature, honest_no
+from . import frequency_signature, honest_no, provenance
 from . import leverage as leverage_mod
 
 SCORE_DIVISOR = 100.0
@@ -144,22 +144,36 @@ def classify_trajectory(
     return CHRONIC_STABLE
 
 
-def apply_admission_gate(units: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Split units into (admitted, waste_findings) by AUTHOR, before scoring.
+def apply_admission_gate(units: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+    """Split units into (admitted, waste_findings, unattributed) by AUTHOR, before scoring.
 
     A unit's authoritative author is `author_adjudicated` when the
     cluster-level adjudication supplied one, else the deterministic prior.
     The prior over-calls human by design; the adjudication is what recovers
     that, and this function deliberately prefers it when present rather than
     averaging the two into something neither measured.
+
+    **FAIL-HONEST, not fail-open.** This chain used to end in `or HUMAN`: a
+    unit that carried no author verdict at all was silently ranked as the
+    user's own work. That default is exactly backwards — nothing in the
+    corpus positively marks a session as human (see `provenance`), so an
+    absent verdict is an absence of evidence, not evidence of a person. Such
+    a unit is now routed to `unattributed`: excluded from the ranking,
+    reported, and never counted as harness ceremony either, because calling
+    it the machine's would be the same unearned claim in the other direction.
     """
     admitted: list[dict] = []
     waste: list[dict] = []
+    unattributed: list[dict] = []
     for unit in units:
-        label = unit.get("author_adjudicated") or unit.get("author_prior") or unit.get("author") or author_mod.HUMAN
+        label = unit.get("author_adjudicated") or unit.get("author_prior") or unit.get("author")
+        if not label:
+            unit["author"] = provenance.UNKNOWN
+            unattributed.append(unit)
+            continue
         unit["author"] = label
         (admitted if label in ADMITTED_AUTHORS else waste).append(unit)
-    return admitted, waste
+    return admitted, waste, unattributed
 
 
 def rank(
@@ -180,7 +194,7 @@ def rank(
     """
     from . import fit_cycle, fit_gate, fit_recovery
 
-    admitted, waste_units = apply_admission_gate(units)
+    admitted, waste_units, unattributed_units = apply_admission_gate(units)
 
     opportunities: list[RankedUnit] = []
     honest_nos: list[RankedUnit] = []
@@ -254,15 +268,31 @@ def rank(
         )
     waste.sort(key=lambda w: (-(w["n_sessions"] or 0), str(w["unit_id"])))
 
+    # Units with NO author verdict at all. Reported, never ranked, and never
+    # relabelled as harness: "we do not know" is the finding.
+    unattributed = [
+        {
+            "unit_id": unit.get("unit_id") or unit.get("id"),
+            "name": unit.get("name"),
+            "author": provenance.UNKNOWN,
+            "n_sessions": frequency_signature.count_distinct_sessions(unit.get("members") or []),
+            "note": "no author verdict was produced for this unit - excluded from the ranking rather than presumed human",
+        }
+        for unit in unattributed_units
+    ]
+    unattributed.sort(key=lambda u: (-(u["n_sessions"] or 0), str(u["unit_id"])))
+
     return {
         "opportunities": [u.as_dict() for u in opportunities],
         "honest_no": [u.as_dict() for u in honest_nos],
         "waste_findings": waste,
+        "unattributed": unattributed,
         "below_frequency_floor": below_floor,
         "summary": {
             "n_units_in": len(units),
             "n_admitted": len(admitted),
             "n_waste": len(waste),
+            "n_unattributed": len(unattributed),
             "n_opportunities": len(opportunities),
             "n_honest_no": len(honest_nos),
             "n_below_floor": len(below_floor),

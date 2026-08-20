@@ -11,6 +11,11 @@ Responsibilities (design.md §1a):
   the #1 human opportunity lives across 66 workspaces of 1-5 sessions each
   and is invisible to any size-ranked selection.
 * **Fail loud on empty**: `looked in <root>, found 0`.
+* **Carry what decides PROVENANCE**: `working_dir` from the metadata, and the
+  first event / orchestration markers from the one qualification read. This
+  module never interprets them — `provenance.classify` is the only place that
+  decides what they mean — but it must not drop them, because a
+  `prompt:submit` alone says nothing about who submitted it.
 * Own-data scoping: own-source sessions only; a session whose metadata
   explicitly declares a DIFFERENT origin is honoured and excluded, and
   write-only / read-blocked endpoints are never touched. Counters are exposed
@@ -29,6 +34,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import provenance
 from .errors import EmptyCorpusError, JsonlSchemaMismatch
 
 REQUIRED_FORMAT = "context-intelligence"
@@ -108,8 +114,36 @@ class ScopeCounters:
 
 
 @dataclass
+class EventScan:
+    """What ONE qualification read of an events file saw.
+
+    Qualification used to answer a single question — "is there a
+    `prompt:submit` in here?" — and that question has ZERO discriminating
+    power: a harness-fired root emits a byte-identical event. The same read
+    now also returns the provenance markers that DO discriminate (which event
+    came first, and whether an orchestrator started this session), so the
+    qualifier can hand downstream a stamped session instead of an anonymous
+    one. Same file, same budget, one pass.
+    """
+
+    has_prompt: bool = False
+    first_event: str | None = None
+    orchestration_events: tuple[str, ...] = ()
+    n_prompts_in_window: int = 0
+    window_truncated: bool = False
+
+
+@dataclass
 class SessionRef:
-    """One discovered session directory."""
+    """One discovered session directory.
+
+    `working_dir` is carried deliberately: it is the single most discriminating
+    provenance field the corpus records, and dropping it here (as this class
+    used to) made every downstream stage blind to the difference between a
+    session you ran in your project and one a harness ran in a temp directory.
+    It is plumbed, never interpreted, here — the ladder in `provenance.py` is
+    the only place that decides what a path means.
+    """
 
     workspace: str
     session_dir: str
@@ -120,6 +154,9 @@ class SessionRef:
     status: str | None
     events_path: Path
     is_root: bool
+    working_dir: str | None = None
+    #: Filled in by `qualify` from the single qualification read (see EventScan).
+    prescan: EventScan | None = None
 
 
 @dataclass
@@ -209,6 +246,23 @@ def _load_endpoint_scope(root: Path, counters: ScopeCounters) -> None:
             counters.blocked_endpoints_declared += 1
 
 
+def working_dir_of(meta: dict) -> str | None:
+    """The session's recorded working directory, if the corpus carries one.
+
+    This is the single most discriminating provenance field available, and it
+    was being dropped on the floor here. Read under a small set of neutral,
+    forward-compatible keys for the same reason `_source_of` does: the schema
+    may name it differently in a later version, and an absent value must read
+    as ABSENT (never as a default path), because `provenance.classify_workspace`
+    treats an unrecorded workspace as evidence of nothing.
+    """
+    for key in ("working_dir", "cwd", "workdir"):
+        val = meta.get(key)
+        if isinstance(val, str) and val.strip():
+            return val
+    return None
+
+
 def _source_of(meta: dict) -> str:
     """Origin of a session's data — own vs a foreign source.
 
@@ -277,6 +331,7 @@ def enumerate_sessions(
                     status=meta.get("status"),
                     events_path=ci_dir / "events.jsonl",
                     is_root=_is_root(meta, sess.name),
+                    working_dir=working_dir_of(meta),
                 )
             )
             disc.workspaces[proj.name] = disc.workspaces.get(proj.name, 0) + 1
@@ -286,14 +341,23 @@ def enumerate_sessions(
     return disc
 
 
-def carries_prompt(events_path: Path) -> bool:
-    """Does this session actually carry a `prompt:submit`?
+def scan_events(events_path: Path) -> EventScan:
+    """ONE line-budgeted read that answers qualification AND provenance.
 
     LINE-budgeted (E2). Matches the top-level EVENT FIELD via `event_of`, not
     a raw substring, so a ~1 MB `session:config` payload that merely mentions
     the string cannot false-positive.
+
+    Beyond "is there a prompt", this records the FIRST event name and any
+    orchestration-start events inside the window. Those are what the
+    provenance ladder needs and what a prompt-only qualifier could never
+    supply: a `prompt:submit` proves a prompt was submitted, and nothing
+    whatsoever about who submitted it.
     """
+    scan = EventScan()
     read = 0
+    orchestration: list[str] = []
+    seen_events = 0
     try:
         with open(events_path, "rb") as fh:
             for _ in range(QUALIFY_MAX_LINES):
@@ -302,14 +366,37 @@ def carries_prompt(events_path: Path) -> bool:
                     break
                 read += len(line)
                 if read > QUALIFY_MAX_BYTES:
+                    scan.window_truncated = True
                     break
-                if b"prompt:submit" not in line:
+                name = event_of(line)
+                if not name:
                     continue
-                if event_of(line) == "prompt:submit":
-                    return True
+                seen_events += 1
+                if scan.first_event is None:
+                    scan.first_event = name
+                if name == "prompt:submit":
+                    scan.has_prompt = True
+                    scan.n_prompts_in_window += 1
+                elif name in provenance.ORCHESTRATION_START_EVENTS and name not in orchestration:
+                    orchestration.append(name)
+            else:
+                scan.window_truncated = True
     except OSError:
-        return False
-    return False
+        return EventScan()
+    scan.orchestration_events = tuple(orchestration)
+    return scan
+
+
+def carries_prompt(events_path: Path) -> bool:
+    """Does this session carry a `prompt:submit`?
+
+    NECESSARY, NEVER SUFFICIENT. This answers one narrow question and is kept
+    as its own name so nobody mistakes it for an authorship test: a harness
+    firing a single non-interactive run emits a byte-identical event to a
+    person typing. Selection uses it to find sessions with work in them;
+    `provenance.classify` decides whose work it was.
+    """
+    return scan_events(events_path).has_prompt
 
 
 def qualify(
@@ -338,7 +425,19 @@ def qualify(
     if selector != "prompt-carrying":
         raise ValueError(f"unknown selector: {selector!r}")
 
-    qualified = [r for r in roots if carries_prompt(r.events_path)]
+    qualified: list[SessionRef] = []
+    for ref in roots:
+        scan = scan_events(ref.events_path)
+        if not scan.has_prompt:
+            continue
+        # Stamp the provenance markers from the SAME read. Selection stays
+        # "prompt-carrying" (a session with no prompt has no work in it), but a
+        # qualified session is no longer anonymous: whoever consumes it can see
+        # what started it. Agent-authored roots are deliberately still
+        # qualified here — they are COUNTED downstream as an already-automated
+        # footprint, and dropping them at the door would make that count a lie.
+        ref.prescan = scan
+        qualified.append(ref)
     if not qualified:
         raise EmptyCorpusError(str(discovery.root), "prompt-carrying root sessions")
     return qualified

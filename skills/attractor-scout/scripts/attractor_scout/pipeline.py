@@ -18,7 +18,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import clustering, discover, extract, graph, ranking, render
+from . import clustering, discover, extract, graph, provenance, ranking, render
 
 
 @dataclass
@@ -76,6 +76,11 @@ def run(
         disc_root, n_disc, n_qual = str(disc.root), len(disc.sessions), len(refs)
         scope = disc.scope.as_dict()
 
+    # Provenance is stamped during extraction; a record read back from an
+    # existing extracts.jsonl (or produced by an older miner) is stamped here
+    # so nothing can reach the ranking unclassified.
+    provenance.ensure_stamped(records)
+
     unknown: list[str] = []
     if clusters_path:
         raw = json.loads(Path(clusters_path).read_text(encoding="utf-8"))
@@ -86,7 +91,13 @@ def run(
         units = clustering.units_from_signatures(records)
         source = "signatures"
 
-    ranked = ranking.rank(units)
+    # THE MINING BOUNDARY. Cluster membership has already been re-verified
+    # against the extract above, so an invented member id is still caught;
+    # only now is membership narrowed to R4 human-presumed sessions. Agent and
+    # unattributable sessions are counted in the panel, never ranked.
+    gate = provenance.gate_units(units)
+    ranked = ranking.rank(gate.admitted)
+    ranked["provenance"] = provenance.summarize(records, gate=gate)
     result = RunResult(
         root=disc_root,
         tier=decision.tier,

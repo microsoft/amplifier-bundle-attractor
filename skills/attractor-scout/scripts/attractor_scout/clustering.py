@@ -79,6 +79,13 @@ def units_from_clusters(records: list[dict], clusters: list[dict]) -> tuple[list
         # prior when supplied. Fit verdicts from the reasoning tier likewise
         # override the deterministic detectors — that is the whole reason
         # those tiers exist.
+        #
+        # ADJUDICATION INVARIANT (mirrored verbatim in SKILL.md step 4): the
+        # general tier may move a cluster AWAY from human, and may NEVER move a
+        # cluster toward human. A supplied `author_adjudicated` label is
+        # trusted here, but the prompt that produces it is bound by that rule,
+        # so a session the provenance ladder called agent (R0-R3) cannot be
+        # laundered into human work by a re-reading of its prompt text.
         for key_in, key_out in (
             ("author", "author_adjudicated"),
             ("author_adjudicated", "author_adjudicated"),

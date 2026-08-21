@@ -2139,11 +2139,16 @@ extension #18).
 
 > **depends-on:** §25
 >
-> **upstream action:** not applicable — spawned agent outcome transport is purely implementer-level semantics within the canonical spawn()/execute(...) -> str contract. This extension adds metadata transport to an already-implemented spawn boundary without changing the documented return contract or diverging from the canonical spec. No spec change is needed.
+> **upstream action:** not applicable — spawned-agent outcome transport is implementor-level semantics inside the canonical backend contract, not a divergence from it. Canonical §4.5 fixes the boundary as `run(node, prompt, context) -> String | Outcome` plus the `status.json` audit trail, and says so in as many words: "How you implement this interface is up to you. The pipeline engine only cares that it gets a String or Outcome back" (`specs/canonical/attractor-spec-canonical.md:715`, `:718`, `:709`). Canonical §1.4 delegates the same way one level up: "What that backend does internally is entirely up to the implementor" (`:58`). A tool-based verdict channel between a child session and its parent lives entirely inside that delegated space — the return contract and the status-file contract are unchanged — so there is nothing here to propose upstream.
 
 **What:** The `loop-agent` orchestrator transports a spawned child's semantic
 `report_outcome` verdict through the canonical `orchestrator:complete` event without changing the
-orchestrator's `execute(...) -> str` return contract.
+orchestrator's `execute(...) -> str` return contract. The mechanism is one chain: the child calls
+the `report_outcome` tool; `loop-agent` publishes that verdict as structured metadata on the
+completion envelope; foundation's `PreparedBundle.spawn` capture hook copies the metadata verbatim
+into the spawn result; and `loop-pipeline`'s backend prefers the explicit verdict over anything it
+could infer from the child's prose. `metadata.report_outcome` is the only channel by which a
+spawn-path `Outcome` carries `is_explicit=True`.
 
 ### Completion envelope
 
@@ -2182,6 +2187,16 @@ invocations do not promote a partial report. The mounted report tool's `last_out
 before each invocation so state cannot leak between calls. `turn_count` is the per-invocation
 number of attempted provider calls, computed from the cumulative provider-call counter.
 
+Because the envelope carries a real lifecycle status, an interrupted child does not reach its
+parent disguised as a clean one. Foundation's spawn-result assembly defaults `status` to
+`"success"` when no completion event arrives (`_prepared.py`), so the emission is what makes the
+difference observable: a child that burned its `max_turns` reports `status="incomplete"`, which is
+not in the backend's `_SPAWN_SUCCESS_STATUSES`, so an empty-output limit-terminated child is
+recorded FAIL (`"No output from child session"`) rather than a silent success. This is fail-loud
+by intent and consistent with §25's fail-closed direction; it is called out here because it
+determines an outcome, not merely an observability field. Children that produce output are
+unaffected — that path consults the lifecycle status only when no explicit verdict is present.
+
 ### Ordering barrier
 
 Ordinary assistant tool-call batches retain configured parallel execution. A batch containing
@@ -2200,54 +2215,21 @@ A child process may emit both an explicit structured verdict (via `report_outcom
 prose in its response. **The precedence rule is explicit: structured `report_outcome` status
 supersedes contradicting trailing prose.** A spawned agent that returns `status: fail` in its
 report-outcome metadata but then writes "all done, mission accomplished" as closing text is
-recorded as FAIL; the documented verdict takes precedence over cheerful prose. This mirrors the
-behavior already implemented in the direct tool-loop path where tool-command `report_outcome`
-verdicts were always the canonical judgment. The spawn path now offers explicit verdict transport
-to upstream callers who elect to consume it, placing both paths on equal footing for verdict
-reliability.
+recorded as FAIL; the documented verdict takes precedence over cheerful prose. The parent
+consults `metadata.report_outcome` BEFORE inspecting the prose output, whether that output is
+empty or not; only when no explicit verdict is present does the output content determine the
+outcome via the §25 verdict-recovery ladder. The spawn path and the direct tool-loop path sit on
+the same footing: in both, a tool-declared `report_outcome` is the canonical judgment.
 
 ### Compatibility
 
 This is additive at the spawn boundary:
 
-- `execute()` still returns the original final string unchanged.
-- Consumers that ignore `orchestrator:complete.metadata` continue to see the documented lifecycle
-  envelope.
-- Spawn consumers may opt into explicit verdict transport through
-  `metadata.report_outcome`; status-only spawn results remain non-explicit.
+- `execute()` returns the loop's final string unchanged.
+- Consumers that ignore `orchestrator:complete.metadata` see the documented lifecycle envelope.
+- Spawn consumers opt into explicit verdict transport through `metadata.report_outcome`;
+  status-only spawn results are non-explicit.
 - Parallel execution is unchanged for batches without `report_outcome`.
-
-*Addendum (2026-08-18, issue #285): **everything above this line described a transport that was
-not on `main`.** The entry's prose landed; its child-side implementation did not — the commit that
-would have carried it (`9251a6a`, "fix: preserve spawned agent outcomes") was written on a review
-branch and was never an ancestor of `main`. Measured at `701edc7`: `git log origin/main -S
-report_outcome -- modules/loop-agent` returned ZERO commits, and
-`modules/loop-agent/tests/test_orchestrator_completion.py` — named below as a contract test — did
-not exist. The only "Implementation location" that was real was `backend.py`, the CONSUMER,
-faithfully reading a `metadata.report_outcome` that nothing produced. The observable cost was the
-`#231` incident shape: a child that demonstrably called `report_outcome` (its own `events.jsonl`
-carrying `Outcome reported: fail (preferred_label=escalate)`) was nonetheless recorded on the
-parent node as `notes="Child session completed with empty final message"`, `is_explicit=false`,
-`preferred_next_label=null` — because `AgentOrchestrator.execute()` emitted no
-`orchestrator:complete` event at all, so foundation's `PreparedBundle.spawn` capture hook had
-nothing to copy and the spawn result's `metadata` was always `{}`. The envelope, the ordering
-barrier, the terminal report path and the per-invocation reset are now implemented and the
-locations below are true. Re-derived against current `main` rather than cherry-picked: `9251a6a`
-predates ~98 commits of consumer drift.*
-
-*Addendum (2026-08-18, issue #285) — one consequence the original text did not spell out: because
-the envelope now reports a REAL lifecycle status, an INTERRUPTED child no longer reaches its parent
-disguised as a clean one. Foundation's spawn-result assembly defaults `status` to `"success"` when
-no completion event arrives (`_prepared.py`), so before this shipped EVERY child — including one
-that burned its `max_turns` without a single provider call — arrived at `_outcome_from_spawn_result`
-carrying `status="success"`. An empty-output child in that state was recorded SUCCESS (with
-`is_explicit=false`, so a goal gate still failed closed, but a plain node passed). Such a child now
-reports `status="incomplete"`, which is not in `_SPAWN_SUCCESS_STATUSES`, so an empty-output
-limit-terminated child is recorded FAIL (`"No output from child session"`) rather than a silent
-success. This is fail-loud by intent and consistent with §25's fail-closed direction; it is called
-out here because it changes an outcome, not merely an observability field. Children that produce
-output are unaffected — that path never consults the lifecycle status unless an explicit verdict is
-present.*
 
 ### Implementation locations
 

@@ -168,6 +168,53 @@ def test_provenance_claims_are_sourced_in_code():
         )
 
 
+#: Step 2 (fast-tier labelling) claims, pinned to the CODE that makes them
+#: true. The pin here USED to read "zero invented ids" - a live 64-batch run
+#: disproved it, so the claim was replaced with the containment that is
+#: actually enforced. This guard's contract is doc-follows-reality: if the
+#: batch boundary is ever removed, the SKILL.md sentence describing it must go
+#: RED rather than keep promising a check that no longer runs.
+LABELLING_PINNED_CLAIMS = [
+    (
+        "checked against the ids THAT batch was handed",
+        "def validate_batch_labels",
+        "scripts/attractor_scout/clustering.py",
+    ),
+    (
+        "`invented_ids_rejected` in the run summary",
+        '"invented_ids_rejected": self.invented_ids_rejected',
+        "scripts/attractor_scout/pipeline.py",
+    ),
+    ("label-merge", "def cmd_label_merge", "scripts/attractor_scout_cli.py"),
+]
+
+
+def test_labelling_claims_are_sourced_in_code():
+    skill = _strip_emphasis(SKILL_MD.read_text(encoding="utf-8"))
+    for phrase, source, relpath in LABELLING_PINNED_CLAIMS:
+        assert _strip_emphasis(phrase) in skill, f"SKILL.md no longer contains the labelling claim {phrase!r}"
+        code = (SKILL_DIR / relpath).read_text(encoding="utf-8")
+        assert source in code, (
+            f"SKILL.md's labelling claim {phrase!r} is not sourced by {source!r} in {relpath} \u2014 "
+            f"the code moved; re-check the claim or update the pin."
+        )
+
+
+def test_the_retired_zero_invented_ids_pin_never_comes_back():
+    """The old step-2 pin claimed a property the machine did not have.
+
+    A full-corpus run measured the fast tier returning session ids that were
+    in no supplied batch. "Zero" was therefore never a discipline this skill
+    could keep - only a containment it could enforce. Re-asserting the old
+    wording would be a doc claiming a guarantee the code does not give.
+    """
+    skill = _strip_emphasis(SKILL_MD.read_text(encoding="utf-8"))
+    assert "zero invented ids" not in skill.lower(), (
+        "SKILL.md re-asserted 'zero invented ids'. The enforced truth is that invented ids are "
+        "REJECTED at the batch boundary and COUNTED - say that instead."
+    )
+
+
 def test_skill_names_every_rung_of_the_ladder():
     """All six rungs must be described in the guidance while all six run in code."""
     skill = SKILL_MD.read_text(encoding="utf-8")

@@ -154,10 +154,23 @@ sessions**, run in **waves of 5 batches in series**. Those two numbers are the
 calibrated shape: ~40 keeps a batch inside one workspace's coherence so a
 cluster is not split across unrelated work, and 5-at-a-time in series stays
 under provider rate limits on a corpus of any size. The `fast`
-role does this reliably at scale — every batch measured in this build placed
-every session with **zero invented ids**. Each batch returns cluster
-assignments as JSON; collect them into an intermediate `$WORK/fast-clusters.json`
-(the verdict-carrying `$WORK/clusters.json` is assembled in step 4).
+role does this reliably at scale but **not perfectly**: a full-corpus run
+measured it returning a small number of session ids that were in no supplied
+batch. So the discipline is ENFORCED rather than assumed — **every id a batch
+returns is checked against the ids THAT batch was handed; one that is not is
+dropped, counted, and reported as `invented_ids_rejected` in the run summary.**
+Write each batch's response next to the ids that batch was handed, and collect
+them THROUGH that check into `$WORK/fast-clusters.json` (the verdict-carrying
+`$WORK/clusters.json` is assembled in step 4):
+
+```json
+{"batch_id": "b07", "session_ids": ["<sid>", "<sid>"],
+ "clusters": [{"id": "b07-c1", "name": "short label", "members": ["<sid>"]}]}
+```
+
+```bash
+$CLI label-merge --batches "$WORK/label-batches" --out "$WORK/fast-clusters.json"
+```
 
 **3 — Merge + fit verdicts (`reasoning` role).** Merge the per-batch clusters
 (staged: batch → regional → global) and assign each cluster its **fit verdict**

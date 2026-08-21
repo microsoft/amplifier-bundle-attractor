@@ -168,11 +168,70 @@ def cmd_detect(args) -> int:
     raise ValueError(f"unknown signal: {args.signal!r}")
 
 
+def _load_batches(paths: list[str]) -> list[dict]:
+    """Read the `fast` tier's per-batch responses from files and/or directories."""
+    files: list[Path] = []
+    for raw in paths:
+        path = Path(raw)
+        if path.is_dir():
+            files.extend(sorted(path.glob("*.json")))
+        elif path.is_file():
+            files.append(path)
+        else:
+            raise AttractorScoutError(f"--batches path does not exist: {path}")
+    if not files:
+        raise AttractorScoutError(f"--batches matched 0 JSON files under: {', '.join(paths)}")
+
+    batches: list[dict] = []
+    for path in files:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and isinstance(payload.get("batches"), list):
+            found = payload["batches"]
+        elif isinstance(payload, list):
+            found = payload
+        else:
+            found = [payload]
+        for item in found:
+            if isinstance(item, dict):
+                item.setdefault("batch_id", path.stem)
+            batches.append(item)
+    return batches
+
+
+def cmd_label_merge(args) -> int:
+    """Collect the fast-tier labelling batches THROUGH the batch boundary.
+
+    Every id a batch returns must be one of the ids THAT batch was handed.
+    Invented ids are dropped, counted, and printed - a live 64-batch run
+    measured 4 of them, so this counter is load-bearing, not decorative.
+    """
+    merged = clustering.merge_fast_batches(_load_batches(args.batches))
+    summary = merged.as_dict()
+    _emit({"clusters": merged.clusters, "labelling": summary}, args.out)
+    print(
+        f"labelling: batches={summary['n_batches']} ids_supplied={summary['n_ids_supplied']} "
+        f"ids_placed={summary['n_ids_placed']} invented_ids_rejected={summary['invented_ids_rejected']}",
+        file=sys.stderr,
+    )
+    if summary["invented_ids_rejected"]:
+        for batch_id, ids in summary["rejected_by_batch"].items():
+            print(f"  REJECTED (not in batch {batch_id}): {', '.join(ids[:10])}", file=sys.stderr)
+        if args.strict:
+            raise AttractorScoutError(
+                f"batch-boundary validation rejected {summary['invented_ids_rejected']} invented id(s). "
+                f"--strict was given, so this is fatal: re-run the labelling pass."
+            )
+    return 0
+
+
 def cmd_rank(args) -> int:
     records = provenance.ensure_stamped(extract.read_extracts(args.extracts))
+    labelling: dict | None = None
     if args.clusters:
         raw = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
         clusters = raw.get("clusters", raw) if isinstance(raw, dict) else raw
+        if isinstance(raw, dict) and isinstance(raw.get("labelling"), dict):
+            labelling = raw["labelling"]
         units, unknown = clustering.units_from_clusters(records, clusters)
         if unknown:
             # Deterministic re-verification (skill step 5): a member id the LLM
@@ -200,6 +259,15 @@ def cmd_rank(args) -> int:
     gate = provenance.gate_units(units)
     result = ranking.rank(gate.admitted)
     result["provenance"] = provenance.summarize(records, gate=gate)
+    if labelling is not None:
+        # Carry the batch-boundary counter forward into the run summary. It is
+        # a fact ABOUT this ranking's inputs; a reader who never saw the merge
+        # step's stderr still gets `invented_ids_rejected` here.
+        result["labelling"] = labelling
+        print(
+            f"labelling (from {args.clusters}): invented_ids_rejected={labelling.get('invented_ids_rejected', 0)}",
+            file=sys.stderr,
+        )
     _emit(result, args.out)
     return 0
 
@@ -378,6 +446,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--extracts", default="extracts.jsonl")
     p.add_argument("--out")
     p.set_defaults(func=cmd_detect)
+
+    p = sub.add_parser(
+        "label-merge",
+        help="collect the fast-tier labelling batches through the batch boundary (skill step 2)",
+    )
+    p.add_argument(
+        "--batches",
+        nargs="+",
+        required=True,
+        help="per-batch response JSON files and/or directories of them; each carries its supplied session_ids",
+    )
+    p.add_argument("--out", default=None, help="fast-clusters.json to write (default: stdout)")
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="batch-boundary rejection is FATAL: exit 2 if the labeller returned any id outside its own batch",
+    )
+    p.set_defaults(func=cmd_label_merge)
 
     p = sub.add_parser("rank")
     p.add_argument("--extracts", default="extracts.jsonl")

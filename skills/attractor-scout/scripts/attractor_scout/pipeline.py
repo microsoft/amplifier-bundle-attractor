@@ -34,6 +34,14 @@ class RunResult:
     ranked: dict = field(default_factory=dict)
     artifact: str | None = None
     source: str = "signatures"
+    #: The batch-boundary ledger carried on the clusters file by `label-merge`.
+    #: Empty when no labelling pass ran (the deterministic A-rung floor).
+    labelling: dict = field(default_factory=dict)
+
+    @property
+    def invented_ids_rejected(self) -> int:
+        """Ids the fast tier returned that were in no supplied batch."""
+        return int(self.labelling.get("invented_ids_rejected", 0) or 0)
 
     def as_dict(self) -> dict:
         return {
@@ -45,6 +53,10 @@ class RunResult:
             "n_sessions_qualified": self.n_sessions_qualified,
             "n_records": self.n_records,
             "unknown_cluster_members": self.unknown_cluster_members,
+            # The fail-loud counter, ALWAYS emitted - a counter that only shows
+            # up when it is non-zero is a counter nobody is watching.
+            "invented_ids_rejected": self.invented_ids_rejected,
+            "labelling": self.labelling,
             "own_data_scope": self.scope,
             "artifact": self.artifact,
             **self.ranked,
@@ -82,9 +94,15 @@ def run(
     provenance.ensure_stamped(records)
 
     unknown: list[str] = []
+    labelling: dict = {}
     if clusters_path:
         raw = json.loads(Path(clusters_path).read_text(encoding="utf-8"))
         clusters = raw.get("clusters", raw) if isinstance(raw, dict) else raw
+        # The batch-boundary ledger `label-merge` stamped on this file, carried
+        # into the run summary so `invented_ids_rejected` survives the hand-off
+        # between the labelling pass and the report.
+        if isinstance(raw, dict) and isinstance(raw.get("labelling"), dict):
+            labelling = raw["labelling"]
         units, unknown = clustering.units_from_clusters(records, clusters)
         source = "semantic-clusters"
     else:
@@ -109,6 +127,7 @@ def run(
         scope=scope,
         ranked=ranked,
         source=source,
+        labelling=labelling,
     )
     if render_to is not None:
         result.artifact = str(render.write_report(ranked, render_to, tier_note=decision.note))

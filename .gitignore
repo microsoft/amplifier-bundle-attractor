@@ -16,3 +16,4 @@ uv.lock
 # doesn't misfire on its own scratch writes (.ai/budget etc.) when this repo
 # is used as a pipeline's target_dir -- see .github/capsule-pipeline/.
 .ai/
+DONE.json

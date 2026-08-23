@@ -1145,10 +1145,10 @@ lint`:
   `-1`, `1.5`, and `"invalid"`.
 
 **Spec note:** The structural errors above are also run-time validation
-errors. The topology and command-content rules below are lint-only: they do
-not change run-time behaviour and require no `specs/EXTENSIONS.md` entry.
-They enforce the canonical attractor spec's routing semantics statically, at
-author time.
+errors. The topology, command-content, vocabulary and render-compliance rules
+below are lint-only: they do not change run-time behaviour and require no
+`specs/EXTENSIONS.md` entry. They enforce the canonical attractor spec's
+routing semantics statically, at author time.
 
 ---
 
@@ -1871,6 +1871,118 @@ but `fidelity="stateless"` / `"fresh"` are not among its six values, and
 **0** on a graph whose every prompt was dropped. Relay the *findings*, not the
 exit code — the only clean verdict is
 `attractor lint: <file>: OK (no findings)`.
+
+---
+
+### RENDER-001 — Unescaped inner quote closes an attribute string early
+
+**What it detects:** A raw `"` inside a `"…"` attribute value. It terminates
+the string, and everything after it is read as a bare identifier.
+
+**Why it matters:** A `.dot` file is read by **two** validators with different
+strictness — this engine's `dot_parser` (lenient) and `dot -Tsvg` (strict, the
+real GraphViz grammar). Our tokenizer never re-checks that the token stream
+after a string is grammatical, so a mangled value parses; GraphViz refuses the
+file outright. The graph **runs and cannot be drawn**.
+
+Worse, the value the engine actually stores is silently truncated at the stray
+quote. Measured on `examples/patterns/task-runner.dot` before this fix, the
+`verify` gate's 663-character `tool_command` was parsed as the 13-character
+fragment `n=$(grep -c '` — a live defect the render failure was pointing at.
+
+```dot
+// WRONG — the " before gate closes the string; the command is truncated
+verify [shape=parallelogram,
+    tool_command="n=$(grep -c '"gate": "verify"' .ai/convergence.jsonl); printf $n"]
+
+// CORRECT — interior quotes escaped; renders, and the full command survives
+verify [shape=parallelogram,
+    tool_command="n=$(grep -c '\"gate\": \"verify\"' .ai/convergence.jsonl); printf $n"]
+```
+
+**Severity:** WARNING — consistent with CMD-001/002, TOPO-002…010 and
+VOCAB-001. It must never be an ERROR: a non-rendering graph is *conforming to
+the runtime contract* (this parser accepts it, the engine runs it), so
+promoting renderability to an ERROR would break a community author's working
+pipeline for a reason unrelated to whether it works.
+
+**What this rule does NOT flag:** a correctly escaped `\"` (the escape is
+consumed *inside* the string token, so it is structurally incapable of firing
+the rule); a string abutting `= , ; [ ] { } : +` or the `->` edge operator;
+anything inside a `//` or `/* */` comment.
+
+**Honest limit — that list is not exhaustive:** the rule flags the common
+single-abutment case but does **not** catch every GraphViz string-quoting
+violation — a value that re-opens a string mid-attribute (`prompt="a " b "c"`)
+leaves every token separator-clean, so the rule stays silent even though
+`dot -Tsvg` still rejects the file.
+
+The CI render gate (Tier 3, `dot-render-gate` in `.github/workflows/ci.yml`)
+runs `dot -Tsvg` over every git-tracked `.dot` and is the exhaustive backstop
+for what this static rule misses.
+
+---
+
+### RENDER-002 — Dotted bare attribute key
+
+**What it detects:** A bare identifier containing `.` — matching neither
+GraphViz's `NAME` production (`[A-Za-z_][A-Za-z_0-9]*`, **no dot**) nor its
+`NUMERAL` production.
+
+**Why it matters:** A dotted key is legal DOT **only when quoted**. This
+engine's tokenizer deliberately diverges — its ident pattern allows the
+qualified form `ident(.ident)*`, which is load-bearing for the folder-node
+`context.*` injection mechanism and the `manager.*` / `stack.*` manager-loop
+attributes. So `manager.max_cycles=5` parses for us and is a syntax error for
+GraphViz: `syntax error in line 40 near '.'`. Again, the graph **runs and
+cannot be drawn**.
+
+```dot
+// WRONG — bare dotted keys; the file will not render
+manager [shape=house, prompt="Supervise",
+    manager.max_cycles=5,
+    stack.child_dotfile="child.dot"]
+
+gate1 [shape=folder, dot_file="conversational-gate.dot",
+    context.gate_topic="Rate this project's decomposability."]
+
+// CORRECT — quote the key; renders, and nothing else changes
+manager [shape=house, prompt="Supervise",
+    "manager.max_cycles"=5,
+    "stack.child_dotfile"="child.dot"]
+
+gate1 [shape=folder, dot_file="conversational-gate.dot",
+    "context.gate_topic"="Rate this project's decomposability."]
+```
+
+**Quoting a key is semantically inert.** `dot_parser._unquote_key` strips the
+surrounding quotes and does **not** coerce types, so the parsed attribute dict
+is byte- and type-identical either way — `manager.max_cycles` stays the int
+`5`, and `node.attrs["manager.max_cycles"]` lookups are untouched. This is
+asserted, not assumed, by
+`modules/loop-pipeline/tests/test_dot_render_compliance.py::test_quoting_a_dotted_key_is_semantically_inert`.
+
+**Severity:** WARNING — same reasoning as RENDER-001. The qualified-ident form
+is a deliberate engine extension that runs correctly today; the rule advises,
+it does not forbid.
+
+**What this rule does NOT flag:** a quoted dotted key (that is the fix); a `.`
+inside a legal `NUMERAL` (`1.5`, `.5`, `1.`); a dotted key mentioned only in a
+`//` or `/* */` comment (comments are blanked before scanning, with byte
+offsets preserved so reported line numbers stay exact).
+
+**Honest limit:** both RENDER rules see what the *engine's own tokenizer* sees.
+A pathological form the tokenizer splits into two individually-legal tokens
+(`a.5` → ident `a` + numeral `.5`) is not caught. This repository's CI carries
+a `dot -Tsvg` sweep over every git-tracked `.dot` (`dot-render-gate` in
+`.github/workflows/ci.yml`) as the backstop; that gate is scoped to **this
+repo's own corpus** and imposes nothing on community authors.
+
+Both rules are pure-lexer: they read `graph.dot_source` with the engine's own
+tokenizer regex and take **no GraphViz dependency** — `attractor lint` stays
+sub-second and hermetic on a machine with no `dot` binary. They are silent on a
+programmatically-constructed `Graph` (no source text to check). Design
+rationale: `docs/designs/2026-08-23-dot-render-compliance.md`.
 
 ---
 

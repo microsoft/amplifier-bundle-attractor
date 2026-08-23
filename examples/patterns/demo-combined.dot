@@ -12,15 +12,15 @@ digraph demo_combined {
     start [shape=Mdiamond]
 
     gather_requirements [shape=folder, dot_file="conversational-gate.dot",
-        context.gate_topic="What artifact should we generate? Describe the file name, purpose, and acceptance criteria.",
-        context.gate_criteria="Must include: file name, clear purpose, at least 2 concrete acceptance criteria.",
-        context.gate_output_path=".ai/requirements.md"]
+        "context.gate_topic"="What artifact should we generate? Describe the file name, purpose, and acceptance criteria.",
+        "context.gate_criteria"="Must include: file name, clear purpose, at least 2 concrete acceptance criteria.",
+        "context.gate_output_path"=".ai/requirements.md"]
 
     generate_artifact [shape=folder, dot_file="convergence-factory.dot",
-        context.artifact_goal="Generate the artifact described in .ai/requirements.md",
-        context.artifact_path="output.py",
-        context.validation_criteria="File exists, matches the requirements in .ai/requirements.md, all acceptance criteria met",
-        context.validation_command="python3 -c 'import output; print(output)'"]
+        "context.artifact_goal"="Generate the artifact described in .ai/requirements.md",
+        "context.artifact_path"="output.py",
+        "context.validation_criteria"="File exists, matches the requirements in .ai/requirements.md, all acceptance criteria met",
+        "context.validation_command"="python3 -c 'import output; print(output)'"]
 
     done [shape=Msquare]
 

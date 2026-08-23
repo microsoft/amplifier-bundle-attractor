@@ -12,10 +12,10 @@ digraph demo_factory {
     start [shape=Mdiamond]
 
     generate_utils [shape=folder, dot_file="convergence-factory.dot",
-        context.artifact_goal="Create a Python file with a function 'greet(name)' that returns 'Hello, {name}!'",
-        context.artifact_path="utils.py",
-        context.validation_criteria="File exists, contains def greet, returns correct greeting format",
-        context.validation_command="python3 -c 'from utils import greet; assert greet(\"World\") == \"Hello, World!\"'"]
+        "context.artifact_goal"="Create a Python file with a function 'greet(name)' that returns 'Hello, {name}!'",
+        "context.artifact_path"="utils.py",
+        "context.validation_criteria"="File exists, contains def greet, returns correct greeting format",
+        "context.validation_command"="python3 -c 'from utils import greet; assert greet(\"World\") == \"Hello, World!\"'"]
 
     done [shape=Msquare]
 

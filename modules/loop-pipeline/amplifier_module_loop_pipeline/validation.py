@@ -23,6 +23,14 @@ VOCAB-001 is an inert-vocabulary lint rule: an LLM node that carries no
 ``prompt=`` at all but does carry an invented spelling the parser keeps and no
 handler ever reads (``instruction=``, ``agent=``, ...).  It is lint-only
 (WARNING severity) and does not change run-time behaviour.
+
+RENDER-001 and RENDER-002 are render-compliance lint rules.  They read ``graph.dot_source``
+with the engine's own tokenizer and flag the two shapes this parser accepts but
+GraphViz refuses: an unescaped inner ``"`` that closes an attribute string early
+(RENDER-001) and a bare identifier containing ``.`` (RENDER-002).  Such a graph
+RUNS -- it just cannot be drawn.  Both are lint-only, WARNING severity, take no
+GraphViz dependency, and do not change run-time behaviour.  See
+docs/designs/2026-08-23-dot-render-compliance.md.
 """
 
 from __future__ import annotations
@@ -166,6 +174,8 @@ def lint(graph: Graph) -> list[Diagnostic]:
     _check_pipe_masked_exit_code(graph, diags)
     _check_always_true_sentinel(graph, diags)
     _check_inert_prompt_vocabulary(graph, diags)
+    _check_unescaped_inner_quote(graph, diags)
+    _check_dotted_bare_identifier(graph, diags)
     return diags
 
 
@@ -3147,5 +3157,301 @@ def _check_inert_prompt_vocabulary(graph: Graph, diags: list[Diagnostic]) -> Non
                 ),
                 node_id=node.id,
                 fix=fix,
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# Render-compliance rules -- RENDER-001 and RENDER-002
+#
+# A `.dot` file is read by TWO validators with different strictness: our own
+# `dot_parser` (lenient -- a hand-written tokenizer over the spec Section 2
+# subset) and `dot -Tsvg` (strict -- the real GraphViz grammar).  They do not
+# agree.  Measured on this repository: 6 of 63 git-tracked `.dot` files parsed
+# and linted cleanly while failing `dot -Tsvg` with a syntax error.  They ran
+# fine.  They just could not be drawn.
+#
+# That matters because the spec chose DOT *because* it renders -- "free
+# visualization, PR-reviewable" is the stated reason the format was picked.  A
+# shipped graph that cannot be drawn has quietly stopped paying that rent.
+#
+# Both divergence classes are statically decidable from the tokens the engine's
+# own tokenizer already produces, so these rules take NO GraphViz dependency:
+# they never shell out, and they work on a machine with no `dot` binary.
+#
+# Severity is WARNING and must stay WARNING.  A non-rendering graph is
+# CONFORMING to the runtime contract -- our parser accepts it and the engine
+# runs it.  Promoting renderability to an ERROR would break a community
+# author's working pipeline for a reason unrelated to whether it works.  See
+# docs/designs/2026-08-23-dot-render-compliance.md for the tier split (runtime
+# contract unchanged / lint advisory for everyone / CI render gate for this
+# repo only).
+# ---------------------------------------------------------------------------
+
+# Characters that may legally abut a quoted string in DOT.  `->` is handled
+# separately as a two-character sequence.
+#
+# `:` (port syntax, `node:port:compass`) and `+` (string concatenation,
+# `"a" + "b"`) are included for false-positive discipline: both are legal DOT
+# that this repo's subset does not use, and neither our tokenizer nor this rule
+# should claim a community graph is broken for using them.
+_RENDER_SEPARATOR_CHARS = frozenset("=,;[]{}:+")
+
+# GraphViz's own NAME production (lexer, `graphviz/lib/cgraph/scan.l`):
+# an alphabetic character or underscore, followed by alphanumerics or
+# underscores.  Notably NO `.`.  The \200-\377 range is GraphViz's allowance
+# for high-byte characters in the C locale.
+_GRAPHVIZ_NAME_RE = re.compile(r"^[A-Za-z_\u0080-\u00ff][A-Za-z_\u0080-\u00ff0-9]*$")
+
+# GraphViz's NUMERAL production: an optional sign, then digits with an optional
+# fractional part, or a leading-dot fraction.  `1.5`, `.5` and `1.` are legal
+# NUMERALs -- a `.` in a NUMERAL is not a defect.
+_GRAPHVIZ_NUMERAL_RE = re.compile(r"^-?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)$")
+
+
+def _blank_comments(source: str) -> str:
+    """Blank out `//` and `/* */` comments, preserving every byte offset.
+
+    ``dot_parser._strip_comments`` DELETES comment text, which shifts every
+    subsequent offset and would make reported line numbers wrong.  This helper
+    replaces comment characters with spaces instead (newlines are preserved
+    verbatim), so ``source`` and the returned string are the same length and a
+    match offset maps to the same line in the original file.
+
+    Blanking is required, not cosmetic: ``parent.dot`` documents the dotted-key
+    form in a ``//`` comment, and a rule that scanned raw source would flag the
+    documentation rather than the code.
+
+    Quoted-string handling mirrors ``_strip_comments`` exactly -- a ``//``
+    inside a string (a URL, a shell command) is content, not a comment.
+    """
+    out: list[str] = []
+    i = 0
+    length = len(source)
+    while i < length:
+        ch = source[i]
+        if ch == '"':
+            # Inside a quoted string -- copy verbatim, honouring backslash escapes.
+            j = i + 1
+            while j < length:
+                if source[j] == "\\" and j + 1 < length:
+                    j += 2
+                    continue
+                if source[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            out.append(source[i:j])
+            i = j
+        elif source[i : i + 2] == "//":
+            j = source.find("\n", i)
+            if j == -1:
+                j = length
+            out.append(" " * (j - i))
+            i = j
+        elif source[i : i + 2] == "/*":
+            j = source.find("*/", i + 2)
+            end = length if j == -1 else j + 2
+            # Preserve newlines so line numbers after a multi-line block
+            # comment stay correct.
+            out.append("".join("\n" if c == "\n" else " " for c in source[i:end]))
+            i = end
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _line_of(source: str, offset: int) -> int:
+    """1-based line number of a byte offset in ``source``."""
+    return source.count("\n", 0, offset) + 1
+
+
+def _abuts_separator(source: str, before: int, after: int) -> tuple[bool, bool]:
+    """Report whether the characters bracketing ``[before, after)`` are legal.
+
+    Returns ``(left_ok, right_ok)``.  A boundary is OK when it is the start/end
+    of the source, whitespace, one of ``_RENDER_SEPARATOR_CHARS``, or part of
+    the two-character ``->`` edge operator.
+    """
+    left_ok = True
+    if before > 0:
+        c = source[before - 1]
+        left_ok = (
+            c.isspace()
+            or c in _RENDER_SEPARATOR_CHARS
+            # `a->"b"` -- the `>` of the edge operator is a legal neighbour.
+            or (before >= 2 and source[before - 2 : before] == "->")
+        )
+
+    right_ok = True
+    if after < len(source):
+        c = source[after]
+        right_ok = (
+            c.isspace()
+            or c in _RENDER_SEPARATOR_CHARS
+            # `"a"->b` -- the `-` opening the edge operator is legal.
+            or source[after : after + 2] == "->"
+        )
+    return left_ok, right_ok
+
+
+def _check_unescaped_inner_quote(graph: Graph, diags: list[Diagnostic]) -> None:
+    """RENDER-001: a raw ``"`` inside a quoted attribute string closes it early.
+
+    GraphViz requires an interior double-quote to be escaped as ``\\"``.  An
+    unescaped one terminates the string, and the grammar then sees a bare
+    identifier where it expects ``,`` or ``]``::
+
+        tool_command="n=$(grep -c '"gate": "verify"' log.jsonl)"
+                                   ^ closes the string here
+
+    Our tokenizer survives this because it never re-checks that the token
+    stream following a string is grammatical.  GraphViz does, and refuses.
+
+    Detection is purely lexical: tokenize with the engine's own ``_TOKEN_RE``
+    and flag any STRING token that ABUTS a non-separator character on either
+    side (no whitespace, no ``= , ; [ ] { } : +``, no ``->``).  A correctly
+    escaped ``\\"`` is consumed INSIDE the string token by the same regex, so
+    legitimate escapes are structurally incapable of firing this rule.
+
+    One finding per source line -- a mangled command string produces a cascade
+    of abutting tokens, and reporting each one would bury the actual location.
+
+    Honest limit: this flags the common single-abutment case but does NOT catch
+    every GraphViz string-quoting violation -- a value that re-opens a string
+    mid-attribute (``prompt="a " b "c"``) leaves every token separator-clean
+    and so stays silent here even though ``dot -Tsvg`` rejects the file; Tier
+    3's ``dot -Tsvg`` CI render gate is the exhaustive backstop.
+
+    Silent when ``graph.dot_source`` is empty: a programmatically-constructed
+    Graph has no source text, and inventing a finding there would be a lie.
+
+    Severity: WARNING.  See the family comment above.
+    """
+    source = graph.dot_source
+    if not source:
+        return
+
+    from .dot_parser import _TOKEN_RE  # local import -- avoids an import cycle
+
+    scan = _blank_comments(source)
+    seen_lines: set[int] = set()
+    for m in _TOKEN_RE.finditer(scan):
+        if not m.group("string"):
+            continue
+        left_ok, right_ok = _abuts_separator(scan, m.start(), m.end())
+        if left_ok and right_ok:
+            continue
+        line = _line_of(scan, m.start())
+        if line in seen_lines:
+            continue
+        seen_lines.add(line)
+        # Honest limit (see docstring): this abutment test flags the common
+        # single-abutment case but does NOT catch every GraphViz string-quoting
+        # violation -- a value that re-opens a string mid-attribute
+        # (`prompt="a " b "c"`) keeps every token separator-clean and slips
+        # through; Tier 3's `dot -Tsvg` CI render gate is the exhaustive
+        # backstop.
+        diags.append(
+            Diagnostic(
+                rule="RENDER-001",
+                severity="WARNING",
+                message=(
+                    f"Line {line}: a quoted attribute string is closed early by an "
+                    f"unescaped inner double-quote, so the text immediately after it "
+                    f"is read as a bare identifier.  The engine's tokenizer tolerates "
+                    f"this, but `dot -Tsvg` rejects the file, so this graph runs and "
+                    f"cannot be drawn.  See DOT-AUTHORING-GUIDE.md (RENDER-001)."
+                ),
+                fix=(
+                    "Escape every interior double-quote inside the attribute "
+                    "value as backslash-quote.  A raw inner quote ends the "
+                    "string; an escaped one is part of it.  Escaping does not "
+                    "change the value the engine parses -- it repairs it, since "
+                    "the engine currently stores the truncated prefix."
+                ),
+            )
+        )
+
+
+def _check_dotted_bare_identifier(graph: Graph, diags: list[Diagnostic]) -> None:
+    """RENDER-002: a bare identifier containing ``.`` is not a legal GraphViz ID.
+
+    GraphViz's ``NAME`` production is ``[A-Za-z_][A-Za-z_0-9]*`` -- no dot.  A
+    dotted attribute key is legal ONLY when quoted.  This engine's tokenizer
+    deliberately diverges: its ident pattern allows the qualified form
+    ``ident(.ident)*``, which is load-bearing for the folder-node
+    ``context.*`` injection mechanism and the ``manager.*`` / ``stack.*``
+    manager-loop attributes.  So ``manager.max_cycles=5`` parses for us and is
+    a syntax error for GraphViz::
+
+        manager [shape=house, manager.max_cycles=5]      // WRONG -- no picture
+        manager [shape=house, "manager.max_cycles"=5]    // CORRECT
+
+    Quoting the key is semantically inert: ``dot_parser._unquote_key`` strips
+    the quotes and does NOT coerce types, so the attribute dict is byte- and
+    type-identical either way (``manager.max_cycles`` stays the int ``5``).
+
+    A dot inside a NUMERAL (``1.5``, ``.5``, ``1.``) is legal and never flagged.
+
+    Honest limit: this sees what the tokenizer sees.  A pathological form the
+    tokenizer splits into two individually-legal tokens (``a.5`` -> ident ``a``
+    + numeral ``.5``) is not caught here.  Tier 3's ``dot -Tsvg`` CI sweep is
+    the backstop for anything static analysis of our own token stream misses.
+
+    Silent when ``graph.dot_source`` is empty.
+
+    Severity: WARNING.  See the family comment above.
+    """
+    source = graph.dot_source
+    if not source:
+        return
+
+    from .dot_parser import _TOKEN_RE  # local import -- avoids an import cycle
+
+    scan = _blank_comments(source)
+    seen: set[tuple[int, str]] = set()
+    for m in _TOKEN_RE.finditer(scan):
+        text = m.group("ident") or m.group("number")
+        if not text or "." not in text:
+            continue
+        if _GRAPHVIZ_NAME_RE.match(text) or _GRAPHVIZ_NUMERAL_RE.match(text):
+            continue
+
+        line = _line_of(scan, m.start())
+        if (line, text) in seen:
+            continue
+        seen.add((line, text))
+
+        # Position hint -- the fix is the same either way (quote it), but
+        # naming the role makes the finding actionable at a glance.
+        after = scan[m.end() :].lstrip()
+        before = scan[: m.start()].rstrip()
+        if after[:1] == "=":
+            role = "attribute key"
+        elif before[-1:] == "=":
+            role = "attribute value"
+        else:
+            role = "identifier"
+
+        diags.append(
+            Diagnostic(
+                rule="RENDER-002",
+                severity="WARNING",
+                message=(
+                    f"Line {line}: bare {role} `{text}` contains a `.`, which "
+                    f"GraphViz's NAME production does not allow (it is neither a "
+                    f"legal NAME nor a NUMERAL).  This engine's tokenizer accepts "
+                    f"the qualified form, so the graph runs -- but `dot -Tsvg` "
+                    f"rejects the file, so it cannot be drawn.  See "
+                    f"DOT-AUTHORING-GUIDE.md (RENDER-002)."
+                ),
+                fix=(
+                    f'Quote it: write "{text}"=... instead of {text}=... .  '
+                    f"Quoting an attribute key is semantically inert -- "
+                    f"`_unquote_key` strips the quotes without coercing types, so "
+                    f"the parsed attribute dict is identical."
+                ),
             )
         )

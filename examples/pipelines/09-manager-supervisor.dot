@@ -37,10 +37,10 @@ digraph ManagerSupervisor {
         shape=house,
         label="Supervise Implementation",
         prompt="Oversee the implementation and testing cycle. Steer the child toward success.",
-        manager.max_cycles=5,
-        manager.poll_interval="0s",
-        manager.stop_condition="outcome=success",
-        manager.actions="observe,steer,wait"
+        "manager.max_cycles"=5,
+        "manager.poll_interval"="0s",
+        "manager.stop_condition"="outcome=success",
+        "manager.actions"="observe,steer,wait"
     ]
 
     // Child subgraph nodes -- these are executed by the manager on each cycle.

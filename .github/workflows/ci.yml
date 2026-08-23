@@ -115,6 +115,79 @@ jobs:
         working-directory: modules/loop-pipeline
         run: uv run pytest tests/test_live_graph_gate.py -v
 
+  dot-render-gate:
+    # Tier 3 of docs/designs/2026-08-23-dot-render-compliance.md: every
+    # git-tracked *.dot in THIS repository must render under `dot -Tsvg`.
+    #
+    # Why this is a gate and not a lint rule: the spec chose DOT *because* it
+    # renders -- "free visualization, PR-reviewable" is the stated reason the
+    # format was picked over YAML/JSON. A shipped graph that cannot be drawn
+    # has quietly stopped paying that rent. Six of sixty-three files had
+    # drifted that way before this gate existed, because nothing ever asked
+    # GraphViz whether they still rendered.
+    #
+    # SCOPE -- deliberately OUR CORPUS ONLY. The shipped engine does NOT
+    # require renderability: a non-rendering graph is conforming and still
+    # runs, and the RENDER-001/RENDER-002 lint rules are WARNING severity for
+    # exactly that reason. This job is where "our own files must render" is
+    # enforced, because this is the only place the audience is us. It never
+    # touches a community author.
+    #
+    # This job installs graphviz, so the render check ALWAYS actually runs
+    # here. The in-repo pytest twin
+    # (modules/loop-pipeline/tests/test_dot_render_compliance.py::
+    # test_shipped_dot_renders) skips with an explicit reason when `dot` is
+    # absent -- that skip is a local-developer affordance and is NOT the CI
+    # behaviour. A missing `dot` in this job is a hard failure, not a skip.
+    name: DOT Render Gate (every tracked .dot renders)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install graphviz
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz
+          dot -V
+
+      - name: Render every git-tracked .dot
+        run: |
+          set -uo pipefail
+
+          # Exclusions must stay identical to _SWEEP_EXCLUDED_PREFIXES in
+          # modules/loop-pipeline/tests/test_dot_render_compliance.py.
+          # These hold runtime scratch and captured artifacts, not authored
+          # corpus.
+          failed=0
+          checked=0
+          while IFS= read -r f; do
+            case "$f" in
+              .ai/*|.amplifier/*|evals/*) continue ;;
+            esac
+            checked=$((checked + 1))
+            if err="$(dot -Tsvg "$f" -o /dev/null 2>&1)"; then
+              continue
+            fi
+            failed=$((failed + 1))
+            echo "::error file=${f}::does not render under 'dot -Tsvg': ${err}"
+          done < <(git ls-files '*.dot')
+
+          echo ""
+          echo "Checked ${checked} git-tracked .dot file(s); ${failed} failed to render."
+
+          if [ "$failed" -ne 0 ]; then
+            echo ""
+            echo "Run 'attractor lint <file>' on each -- RENDER-001 (unescaped"
+            echo "inner quote) and RENDER-002 (dotted bare key) name the cause"
+            echo "and the exact fix. See docs/DOT-AUTHORING-GUIDE.md."
+            exit 1
+          fi
+
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::No .dot files were checked -- the sweep is vacuous. Failing rather than reporting a false green."
+            exit 1
+          fi
+
   type-check:
     # Static type checking. This replaces a former pytest case
     # (tests/unit/test_pyright_clean.py) that shelled out to pyright with a
@@ -203,6 +276,7 @@ jobs:
     needs:
       - unit-tests
       - live-graph-gate
+      - dot-render-gate
       - type-check
     runs-on: ubuntu-latest
     steps:
@@ -213,6 +287,7 @@ jobs:
           declare -A results=(
             [unit-tests]="${{ needs.unit-tests.result }}"
             [live-graph-gate]="${{ needs.live-graph-gate.result }}"
+            [dot-render-gate]="${{ needs.dot-render-gate.result }}"
             [type-check]="${{ needs.type-check.result }}"
           )
 

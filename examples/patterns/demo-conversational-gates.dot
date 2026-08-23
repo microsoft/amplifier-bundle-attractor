@@ -12,19 +12,19 @@ digraph demo_gates {
     start [shape=Mdiamond]
 
     gate1 [shape=folder, dot_file="conversational-gate.dot",
-        context.gate_topic="Rate this project's DECOMPOSABILITY (0-100). Can it break into hundreds of small, independently testable units? Provide concrete evidence.",
-        context.gate_criteria="Look for: feature count estimate, independence between features, repeating implementation patterns.",
-        context.gate_output_path=".ai/gate1_decomposability.md"]
+        "context.gate_topic"="Rate this project's DECOMPOSABILITY (0-100). Can it break into hundreds of small, independently testable units? Provide concrete evidence.",
+        "context.gate_criteria"="Look for: feature count estimate, independence between features, repeating implementation patterns.",
+        "context.gate_output_path"=".ai/gate1_decomposability.md"]
 
     gate2 [shape=folder, dot_file="conversational-gate.dot",
-        context.gate_topic="Rate this project's VERIFIABLE CORRECTNESS (0-100). Can each unit be machine-verified with fast feedback?",
-        context.gate_criteria="Look for: test framework, build speed, type system, CI pipeline.",
-        context.gate_output_path=".ai/gate2_correctness.md"]
+        "context.gate_topic"="Rate this project's VERIFIABLE CORRECTNESS (0-100). Can each unit be machine-verified with fast feedback?",
+        "context.gate_criteria"="Look for: test framework, build speed, type system, CI pipeline.",
+        "context.gate_output_path"=".ai/gate2_correctness.md"]
 
     gate3 [shape=folder, dot_file="conversational-gate.dot",
-        context.gate_topic="Rate this project's ARCHITECTURE QUALITY (0-100). Is there a stable constitution that prevents drift?",
-        context.gate_criteria="Look for: data model, module boundaries, documented interfaces, technology choices.",
-        context.gate_output_path=".ai/gate3_architecture.md"]
+        "context.gate_topic"="Rate this project's ARCHITECTURE QUALITY (0-100). Is there a stable constitution that prevents drift?",
+        "context.gate_criteria"="Look for: data model, module boundaries, documented interfaces, technology choices.",
+        "context.gate_output_path"=".ai/gate3_architecture.md"]
 
     done [shape=Msquare]
 

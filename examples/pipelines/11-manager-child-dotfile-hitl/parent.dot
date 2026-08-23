@@ -22,11 +22,15 @@
 // When driven interactively, approve with "A".
 // When driven by AutoApproveInterviewer (DTU / CI), the gate is auto-approved.
 //
-// DOT parser note: attribute keys with dots (e.g. manager.max_cycles) must be written
-// WITHOUT surrounding double-quotes. The attractor DOT parser stores quoted keys with
-// their embedded quote characters, which breaks lookups using bare key strings.
-// Correct:  manager.max_cycles=1
-// Wrong:    "manager.max_cycles"="1"
+// DOT parser note: attribute keys with dots (e.g. manager.max_cycles) MUST be written
+// WITH surrounding double-quotes. GraphViz's NAME production forbids `.` in a bare
+// identifier, so the unquoted form is a `dot -Tsvg` syntax error and the graph cannot
+// be drawn. The attractor DOT parser accepts both forms and `_unquote_key` strips the
+// quotes without coercing types, so quoting is semantically inert -- the parsed
+// attribute dict is identical either way (manager.max_cycles stays the int 1).
+// Correct:  "manager.max_cycles"=1
+// Wrong:    manager.max_cycles=1        (runs, but renders as a syntax error)
+// See DOT-AUTHORING-GUIDE.md (RENDER-002).
 
 digraph ManagerChildDotfileHITL {
     graph [
@@ -46,15 +50,16 @@ digraph ManagerChildDotfileHITL {
     // manager.actions=observe — no steering or wait needed for this reproduction case.
     // stack.child_dotfile resolves relative to this file's directory (source_dir).
     //
-    // NOTE: attribute keys with dots are written WITHOUT surrounding double-quotes so
-    // the attractor DOT parser stores them as bare strings (matching the lookup code).
+    // NOTE: attribute keys with dots are QUOTED so the file renders under `dot -Tsvg`.
+    // The parser's `_unquote_key` strips the quotes before storing, so lookups still
+    // use the bare key string ("manager.max_cycles") and the value keeps its type.
     manager [
         shape=house,
         label="Supervise Approval Sprint",
         prompt="Oversee the approval-gate child pipeline.",
-        manager.max_cycles=1,
-        manager.actions=observe,
-        stack.child_dotfile="child-with-gate.dot"
+        "manager.max_cycles"=1,
+        "manager.actions"=observe,
+        "stack.child_dotfile"="child-with-gate.dot"
     ]
 
     // Flow: start -> manager -> done

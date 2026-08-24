@@ -58,6 +58,49 @@ def _effort_to_budget(effort: str) -> int:
     return _EFFORT_TO_BUDGET.get(effort.lower(), 8000)
 
 
+# ---------------------------------------------------------------------------
+# anthropic 1.0.0: wire-only params
+# ---------------------------------------------------------------------------
+
+# Params the Anthropic Messages API still accepts ON THE WIRE but the SDK no
+# longer exposes as typed keyword arguments on Messages.create/.stream.
+#
+#   temperature / top_p / top_k
+#       Removed from the typed Messages surface in anthropic 1.0.0.  Verified
+#       by introspecting both SDKs: present in 0.100.0's
+#       ``AsyncMessages.create`` signature, absent from 1.0.0's.  The API
+#       still honours all three; only the SDK signature dropped them.
+#   speed
+#       Never present in the typed surface on any 0.x or 1.x release, though
+#       the API accepts it when the fast-mode beta header is sent.  Listed
+#       here to match the sibling ``provider-anthropic`` module so a caller
+#       may pass it through ``provider_options`` without a TypeError.
+#
+# Passing any of these as a top-level keyword under 1.0.0 raises
+# ``TypeError: ... got an unexpected keyword argument 'temperature'``.  They
+# must instead travel in ``extra_body``, which the SDK forwards verbatim into
+# the request body — identical bytes on the wire, just relocated off the
+# typed surface.
+_WIRE_ONLY_PARAMS: tuple[str, ...] = ("temperature", "top_p", "top_k", "speed")
+
+
+def _relocate_wire_only_params(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Move wire-only params off the typed surface into ``extra_body``.
+
+    Mutates and returns ``kwargs``.  A key already present in ``extra_body``
+    wins — an explicit caller-supplied override (via ``provider_options``) is
+    never clobbered by the value this adapter derived.
+    """
+    for key in _WIRE_ONLY_PARAMS:
+        if key not in kwargs:
+            continue
+        value = kwargs.pop(key)
+        extra_body = dict(kwargs.get("extra_body") or {})
+        extra_body.setdefault(key, value)
+        kwargs["extra_body"] = extra_body
+    return kwargs
+
+
 def _serialize_raw(obj: Any) -> dict[str, Any] | None:
     """Defensively serialize a provider SDK response to a JSON-serializable dict.
 
@@ -491,6 +534,13 @@ class AnthropicAdapter:
 
         if auto_cache:
             self._inject_cache_control(kwargs)
+
+        # anthropic 1.0.0 removed temperature/top_p/top_k from the typed
+        # Messages surface.  Relocate them (and anything else wire-only that
+        # arrived via provider_options) into extra_body LAST, so this catches
+        # every producer above — the generation params, the extended-thinking
+        # temperature=1.0 override, and the provider_options escape hatch.
+        _relocate_wire_only_params(kwargs)
 
         return kwargs
 

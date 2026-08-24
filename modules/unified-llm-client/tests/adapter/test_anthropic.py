@@ -236,7 +236,12 @@ class TestRequestTranslation:
         assert kwargs["tool_choice"] == {"type": "tool", "name": "get_weather"}
 
     def test_generation_params_passed(self) -> None:
-        """temperature, top_p, stop_sequences forwarded."""
+        """temperature/top_p travel in extra_body; stop_sequences stays typed.
+
+        anthropic 1.0.0 dropped temperature/top_p from the typed Messages
+        surface, so the adapter relocates them into ``extra_body`` (the API
+        still honours them there).  stop_sequences is still typed.
+        """
         adapter = _make_adapter()
         request = Request(
             model="claude-sonnet-4-20250514",
@@ -246,8 +251,10 @@ class TestRequestTranslation:
             stop_sequences=["END"],
         )
         kwargs = adapter._translate_request(request)
-        assert kwargs["temperature"] == 0.7
-        assert kwargs["top_p"] == 0.9
+        assert "temperature" not in kwargs
+        assert "top_p" not in kwargs
+        assert kwargs["extra_body"]["temperature"] == 0.7
+        assert kwargs["extra_body"]["top_p"] == 0.9
         assert kwargs["stop_sequences"] == ["END"]
 
     def test_provider_options_passthrough(self) -> None:
@@ -854,7 +861,10 @@ class TestCompleteIntegration:
             call_kwargs = mock_client.messages.with_raw_response.create.call_args[1]
             assert call_kwargs["model"] == "claude-sonnet-4-20250514"
             assert call_kwargs["max_tokens"] == 1024
-            assert call_kwargs["temperature"] == 0.5
+            # anthropic 1.0.0 dropped temperature from the typed surface — it
+            # rides in extra_body now, never as a top-level kwarg.
+            assert "temperature" not in call_kwargs
+            assert call_kwargs["extra_body"]["temperature"] == 0.5
             assert "system" in call_kwargs
 
     def test_complete_translates_api_errors(self) -> None:
@@ -1341,3 +1351,150 @@ class TestPromptCaching:
         beta = kwargs["extra_headers"]["anthropic-beta"]
         assert "prompt-caching-2024-07-31" in beta
         assert "max-tokens-3-5-sonnet-2024-07-15" in beta
+
+
+# ---------------------------------------------------------------------------
+# anthropic 1.0.0: wire-only param relocation (regression guard)
+# ---------------------------------------------------------------------------
+
+
+class TestWireOnlyParamRelocation:
+    """anthropic 1.0.0 removed temperature/top_p/top_k from the typed surface.
+
+    Passing them as top-level kwargs to ``messages.create``/``.stream`` raises
+    ``TypeError: got an unexpected keyword argument``.  The adapter must
+    relocate them into ``extra_body``, which the SDK forwards verbatim onto
+    the wire.  These tests fail RED against the pre-fix adapter.
+    """
+
+    def test_installed_sdk_messages_create_rejects_wire_only_params(self) -> None:
+        """Real-signature guard: document WHY the relocation is needed.
+
+        Introspects the *installed* SDK rather than trusting a changelog.  If
+        a future SDK restores these as typed params this test goes red and the
+        relocation can be revisited.
+        """
+        import inspect
+
+        from anthropic.resources.messages import AsyncMessages
+
+        typed_params = set(inspect.signature(AsyncMessages.create).parameters)
+        for removed in ("temperature", "top_p", "top_k"):
+            assert removed not in typed_params, (
+                f"{removed!r} is a typed param of AsyncMessages.create in "
+                f"anthropic {anthropic.__version__} — the extra_body relocation "
+                "may no longer be necessary."
+            )
+        # extra_body IS accepted — that is where the relocated params land.
+        assert "extra_body" in typed_params
+
+    def test_complete_never_passes_temperature_or_top_p_as_kwargs(self) -> None:
+        """complete(): temperature/top_p reach the SDK via extra_body only."""
+        with patch(
+            "unified_llm.adapters.anthropic.anthropic.AsyncAnthropic"
+        ) as mock_cls:
+            adapter = AnthropicAdapter(api_key="test-key")
+            mock_client = mock_cls.return_value
+            _mock_raw = MagicMock()
+            _mock_raw.parse.return_value = _mock_anthropic_response()
+            _mock_raw.headers = {}
+            mock_client.messages.with_raw_response.create = AsyncMock(
+                return_value=_mock_raw
+            )
+
+            request = Request(
+                model="claude-sonnet-4-20250514",
+                messages=[Message.user("Hi")],
+                temperature=0.3,
+                top_p=0.8,
+            )
+            asyncio.run(adapter.complete(request))
+
+            call_kwargs = mock_client.messages.with_raw_response.create.call_args[1]
+            assert "temperature" not in call_kwargs, (
+                "temperature must not be a top-level kwarg — anthropic 1.0.0 "
+                "raises TypeError for it"
+            )
+            assert "top_p" not in call_kwargs, (
+                "top_p must not be a top-level kwarg — anthropic 1.0.0 raises "
+                "TypeError for it"
+            )
+            # ...but the values must still travel on the wire.
+            assert call_kwargs["extra_body"]["temperature"] == 0.3
+            assert call_kwargs["extra_body"]["top_p"] == 0.8
+
+    def test_stream_never_passes_temperature_or_top_p_as_kwargs(self) -> None:
+        """stream(): temperature/top_p reach the SDK via extra_body only."""
+        adapter = _make_adapter()
+        request = Request(
+            model="claude-sonnet-4-20250514",
+            messages=[Message.user("Hi")],
+            temperature=0.3,
+            top_p=0.8,
+        )
+        mock_create = AsyncMock(
+            return_value=_MockAsyncStream(_make_stream_events_text())
+        )
+        with patch.object(adapter._client.messages, "create", mock_create):
+
+            async def run() -> None:
+                async for _ in adapter.stream(request):
+                    pass
+
+            asyncio.run(run())
+
+        call_kwargs = mock_create.call_args[1]
+        assert "temperature" not in call_kwargs
+        assert "top_p" not in call_kwargs
+        assert call_kwargs["extra_body"]["temperature"] == 0.3
+        assert call_kwargs["extra_body"]["top_p"] == 0.8
+        assert call_kwargs["stream"] is True
+
+    def test_thinking_temperature_override_relocated(self) -> None:
+        """The extended-thinking temperature=1.0 constraint rides extra_body."""
+        adapter = _make_adapter()
+        request = Request(
+            model="claude-sonnet-4-20250514",
+            messages=[Message.user("Hi")],
+            temperature=0.2,
+            reasoning_effort="high",
+            max_tokens=20000,
+        )
+        kwargs = adapter._translate_request(request)
+        assert "temperature" not in kwargs
+        assert kwargs["extra_body"]["temperature"] == 1.0
+
+    def test_top_k_from_provider_options_relocated(self) -> None:
+        """top_k (also removed in 1.0.0) is relocated from provider_options."""
+        adapter = _make_adapter()
+        request = Request(
+            model="claude-sonnet-4-20250514",
+            messages=[Message.user("Hi")],
+            provider_options={"anthropic": {"top_k": 40}},
+        )
+        kwargs = adapter._translate_request(request)
+        assert "top_k" not in kwargs
+        assert kwargs["extra_body"]["top_k"] == 40
+
+    def test_caller_supplied_extra_body_wins(self) -> None:
+        """A key already in extra_body is never clobbered by the relocation."""
+        adapter = _make_adapter()
+        request = Request(
+            model="claude-sonnet-4-20250514",
+            messages=[Message.user("Hi")],
+            temperature=0.7,
+            provider_options={"anthropic": {"extra_body": {"temperature": 0.1}}},
+        )
+        kwargs = adapter._translate_request(request)
+        assert "temperature" not in kwargs
+        assert kwargs["extra_body"]["temperature"] == 0.1
+
+    def test_no_generation_params_leaves_extra_body_absent(self) -> None:
+        """No wire-only params → no spurious empty extra_body is added."""
+        adapter = _make_adapter()
+        request = Request(
+            model="claude-sonnet-4-20250514",
+            messages=[Message.user("Hi")],
+        )
+        kwargs = adapter._translate_request(request)
+        assert "extra_body" not in kwargs

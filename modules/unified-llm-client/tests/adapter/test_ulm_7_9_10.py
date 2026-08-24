@@ -71,7 +71,13 @@ class TestULM7AnthropicReasoning:
         assert thinking["budget_tokens"] < kwargs["max_tokens"], (
             "budget_tokens must be strictly less than max_tokens"
         )
-        assert kwargs["temperature"] == 1.0, (
+        # Anthropic requires temperature=1.0 when thinking is enabled, but
+        # anthropic 1.0.0 removed temperature from the typed Messages surface,
+        # so the adapter sends it via extra_body instead of as a kwarg.
+        assert "temperature" not in kwargs, (
+            "temperature must not be a top-level kwarg under anthropic 1.0.0"
+        )
+        assert kwargs["extra_body"]["temperature"] == 1.0, (
             "Anthropic requires temperature=1.0 when thinking is enabled"
         )
 

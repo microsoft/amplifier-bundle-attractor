@@ -517,6 +517,23 @@ def _mock_anthropic_response(
     )
 
 
+def _mock_raw_http(
+    parsed: SimpleNamespace,
+    headers: dict[str, str] | None = None,
+) -> MagicMock:
+    """Mock the object ``messages.with_raw_response.create`` resolves to.
+
+    On anthropic 1.0.0 that is an ``AsyncAPIResponse``, whose ``.parse()`` is a
+    **coroutine function** — so the mock uses ``AsyncMock``.  Stubbing it with a
+    plain sync ``MagicMock`` (as these tests used to) models a surface the SDK
+    no longer has and hides a missing ``await`` in the adapter.
+    """
+    raw_http = MagicMock()
+    raw_http.parse = AsyncMock(return_value=parsed)
+    raw_http.headers = headers if headers is not None else {}
+    return raw_http
+
+
 class TestResponseTranslation:
     """Task 23: Verify Anthropic response → unified Response."""
 
@@ -813,11 +830,11 @@ class TestCompleteIntegration:
         ) as mock_cls:
             adapter = AnthropicAdapter(api_key="test-key")
             mock_client = mock_cls.return_value
-            _mock_raw = MagicMock()
-            _mock_raw.parse.return_value = _mock_anthropic_response(
-                content=[SimpleNamespace(type="text", text="Hello from Claude!")],
+            _mock_raw = _mock_raw_http(
+                _mock_anthropic_response(
+                    content=[SimpleNamespace(type="text", text="Hello from Claude!")],
+                )
             )
-            _mock_raw.headers = {}
             mock_client.messages.with_raw_response.create = AsyncMock(
                 return_value=_mock_raw
             )
@@ -840,9 +857,7 @@ class TestCompleteIntegration:
         ) as mock_cls:
             adapter = AnthropicAdapter(api_key="test-key")
             mock_client = mock_cls.return_value
-            _mock_raw = MagicMock()
-            _mock_raw.parse.return_value = _mock_anthropic_response()
-            _mock_raw.headers = {}
+            _mock_raw = _mock_raw_http(_mock_anthropic_response())
             mock_client.messages.with_raw_response.create = AsyncMock(
                 return_value=_mock_raw
             )
@@ -912,19 +927,19 @@ class TestCompleteIntegration:
         ) as mock_cls:
             adapter = AnthropicAdapter(api_key="test-key")
             mock_client = mock_cls.return_value
-            _mock_raw = MagicMock()
-            _mock_raw.parse.return_value = _mock_anthropic_response(
-                content=[
-                    SimpleNamespace(
-                        type="tool_use",
-                        id="toolu_1",
-                        name="get_weather",
-                        input={"city": "SF"},
-                    ),
-                ],
-                stop_reason="tool_use",
+            _mock_raw = _mock_raw_http(
+                _mock_anthropic_response(
+                    content=[
+                        SimpleNamespace(
+                            type="tool_use",
+                            id="toolu_1",
+                            name="get_weather",
+                            input={"city": "SF"},
+                        ),
+                    ],
+                    stop_reason="tool_use",
+                )
             )
-            _mock_raw.headers = {}
             mock_client.messages.with_raw_response.create = AsyncMock(
                 return_value=_mock_raw
             )
@@ -1395,9 +1410,7 @@ class TestWireOnlyParamRelocation:
         ) as mock_cls:
             adapter = AnthropicAdapter(api_key="test-key")
             mock_client = mock_cls.return_value
-            _mock_raw = MagicMock()
-            _mock_raw.parse.return_value = _mock_anthropic_response()
-            _mock_raw.headers = {}
+            _mock_raw = _mock_raw_http(_mock_anthropic_response())
             mock_client.messages.with_raw_response.create = AsyncMock(
                 return_value=_mock_raw
             )
@@ -1498,3 +1511,145 @@ class TestWireOnlyParamRelocation:
         )
         kwargs = adapter._translate_request(request)
         assert "extra_body" not in kwargs
+
+
+# ---------------------------------------------------------------------------
+# anthropic 1.0.0: AsyncAPIResponse.parse is a coroutine (regression guard)
+# ---------------------------------------------------------------------------
+
+
+class TestRawResponseParseIsAwaited:
+    """anthropic 1.0.0 removed the legacy *sync* raw-response surface.
+
+    ``with_raw_response.create`` on an async client now resolves to
+    ``AsyncAPIResponse``, whose ``.parse()`` is a **coroutine function**.
+    Calling it without ``await`` yields a coroutine object, and the very next
+    attribute access (``raw.content``, inside ``_translate_response``) raises
+    ``AttributeError: 'coroutine' object has no attribute 'content'``.
+
+    The pre-existing mocks were blind to exactly this: they stubbed ``.parse``
+    with a *sync* ``MagicMock`` returning a plain object — a surface the 1.0.0
+    SDK no longer has — so the un-awaited call looked fine under test and blew
+    up against the real API.  The mocks below are ``AsyncMock``, matching the
+    installed SDK, and fail RED against the pre-fix adapter.
+    """
+
+    def test_installed_sdk_async_raw_response_parse_is_coroutine(self) -> None:
+        """Real-signature guard: document WHY the ``await`` is needed.
+
+        Introspects the *installed* SDK rather than trusting a changelog.  If a
+        future SDK makes ``parse`` sync again — or restores the legacy sync
+        response class that ``with_raw_response`` used to return — this goes
+        red and the ``await`` must be revisited.
+        """
+        import inspect
+
+        from anthropic._response import AsyncAPIResponse
+
+        assert inspect.iscoroutinefunction(AsyncAPIResponse.parse), (
+            "AsyncAPIResponse.parse is not a coroutine function in anthropic "
+            f"{anthropic.__version__} — the `await` in complete() may no "
+            "longer be correct."
+        )
+        # The legacy sync raw-response surface is gone in 1.0.0.  While it is
+        # absent, with_raw_response can only resolve to AsyncAPIResponse.
+        assert not hasattr(anthropic._response, "LegacyAPIResponse"), (
+            "LegacyAPIResponse is back in anthropic "
+            f"{anthropic.__version__} — re-check which response class "
+            "with_raw_response.create returns before trusting the `await`."
+        )
+
+    def test_complete_awaits_raw_response_parse(self) -> None:
+        """★ complete() must ``await`` the coroutine returned by ``.parse()``.
+
+        RED against the pre-fix adapter with:
+            AttributeError: 'coroutine' object has no attribute 'content'
+        """
+        with patch(
+            "unified_llm.adapters.anthropic.anthropic.AsyncAnthropic"
+        ) as mock_cls:
+            adapter = AnthropicAdapter(api_key="test-key")
+            mock_client = mock_cls.return_value
+            _mock_raw = MagicMock()
+            # Matches anthropic 1.0.0: AsyncAPIResponse.parse is a coroutine fn.
+            _mock_raw.parse = AsyncMock(
+                return_value=_mock_anthropic_response(
+                    content=[SimpleNamespace(type="text", text="Awaited!")],
+                )
+            )
+            _mock_raw.headers = {}
+            mock_client.messages.with_raw_response.create = AsyncMock(
+                return_value=_mock_raw
+            )
+
+            request = Request(
+                model="claude-sonnet-4-20250514",
+                messages=[Message.user("Hi")],
+            )
+            response = asyncio.run(adapter.complete(request))
+
+            # The parsed Message — not a coroutine — reached translation.
+            assert response.text == "Awaited!"
+            _mock_raw.parse.assert_awaited_once()
+
+    def test_complete_serializes_the_awaited_message_not_a_coroutine(self) -> None:
+        """The awaited object must also reach ``_serialize_raw``/``response.raw``.
+
+        ``complete()`` consumes ``raw`` twice — ``_translate_response(raw)`` and
+        ``_serialize_raw(raw)``.  Both must see the resolved Message.
+        """
+        with patch(
+            "unified_llm.adapters.anthropic.anthropic.AsyncAnthropic"
+        ) as mock_cls:
+            adapter = AnthropicAdapter(api_key="test-key")
+            mock_client = mock_cls.return_value
+            _mock_raw = MagicMock()
+            _mock_raw.parse = AsyncMock(return_value=_mock_anthropic_response())
+            _mock_raw.headers = {}
+            mock_client.messages.with_raw_response.create = AsyncMock(
+                return_value=_mock_raw
+            )
+
+            response = asyncio.run(
+                adapter.complete(
+                    Request(
+                        model="claude-sonnet-4-20250514",
+                        messages=[Message.user("Hi")],
+                    )
+                )
+            )
+
+            assert isinstance(response.raw, dict)
+            assert response.raw["id"] == "msg_test123"
+
+    def test_adapter_never_calls_parse_without_await(self) -> None:
+        """Structural guard: every ``.parse()`` in the adapter is awaited.
+
+        The DTU reported ``stream()`` as fine, but a second un-awaited site
+        anywhere in the module would fail the same way and be equally
+        invisible to mocked tests.  This walks the module's AST instead of
+        trusting a grep, so any future ``.parse()`` added without ``await``
+        goes red here.
+        """
+        import ast
+        import inspect
+
+        import unified_llm.adapters.anthropic as anthropic_adapter
+
+        tree = ast.parse(inspect.getsource(anthropic_adapter))
+        awaited = {
+            id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Await)
+        }
+        unawaited = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "parse"
+            and id(node) not in awaited
+        ]
+        assert not unawaited, (
+            f"un-awaited .parse() call(s) at line(s) {unawaited} of "
+            "unified_llm/adapters/anthropic.py — AsyncAPIResponse.parse is a "
+            "coroutine function in anthropic 1.0.0"
+        )

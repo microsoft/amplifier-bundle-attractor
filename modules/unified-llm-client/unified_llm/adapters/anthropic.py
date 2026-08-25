@@ -251,7 +251,10 @@ class AnthropicAdapter:
             # ULM-5/ULM-6: use with_raw_response to access HTTP headers for
             # rate-limit info while still getting the parsed SDK object.
             raw_http = await self._client.messages.with_raw_response.create(**kwargs)
-            raw = raw_http.parse()
+            # anthropic 1.0.0 dropped the legacy sync raw-response surface:
+            # with_raw_response on an async client yields AsyncAPIResponse,
+            # whose .parse() is a coroutine function and MUST be awaited.
+            raw = await raw_http.parse()
             headers = raw_http.headers
             response = self._translate_response(raw)
             response.raw = _serialize_raw(raw)

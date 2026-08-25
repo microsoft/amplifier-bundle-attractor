@@ -160,7 +160,7 @@ class TestCompleteReturnsResponse:
             usage=SimpleNamespace(input_tokens=10, output_tokens=3),
         )
         _mock_raw_http = MagicMock()
-        _mock_raw_http.parse.return_value = mock_raw
+        _mock_raw_http.parse = AsyncMock(return_value=mock_raw)
         _mock_raw_http.headers = {}
         adapter._client.messages.with_raw_response.create = AsyncMock(
             return_value=_mock_raw_http

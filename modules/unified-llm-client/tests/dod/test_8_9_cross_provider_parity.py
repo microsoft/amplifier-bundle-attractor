@@ -161,7 +161,7 @@ def _setup_complete_mock(adapter: Any, provider: str, response: Any) -> None:
         )
     elif provider == "anthropic":
         _raw_http = MagicMock()
-        _raw_http.parse.return_value = response
+        _raw_http.parse = AsyncMock(return_value=response)
         _raw_http.headers = {}
         adapter._client.messages.with_raw_response.create = AsyncMock(
             return_value=_raw_http

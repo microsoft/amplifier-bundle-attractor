@@ -225,7 +225,7 @@ class TestULM5ResponseRaw:
         raw = _anthropic_raw()
 
         mock_raw_http = MagicMock()
-        mock_raw_http.parse.return_value = raw
+        mock_raw_http.parse = AsyncMock(return_value=raw)
         mock_raw_http.headers = _mock_headers(include_rate_limits=False)
         adapter._client.messages.with_raw_response.create = AsyncMock(  # type: ignore[attr-defined]
             return_value=mock_raw_http
@@ -248,7 +248,7 @@ class TestULM5ResponseRaw:
         raw = _anthropic_raw()
 
         mock_raw_http = MagicMock()
-        mock_raw_http.parse.return_value = raw
+        mock_raw_http.parse = AsyncMock(return_value=raw)
         mock_raw_http.headers = _mock_headers(include_rate_limits=False)
         adapter._client.messages.with_raw_response.create = AsyncMock(  # type: ignore[attr-defined]
             return_value=mock_raw_http
@@ -416,7 +416,7 @@ class TestULM6RateLimit:
         headers = _mock_headers(include_rate_limits=True)
 
         mock_raw_http = MagicMock()
-        mock_raw_http.parse.return_value = raw
+        mock_raw_http.parse = AsyncMock(return_value=raw)
         mock_raw_http.headers = headers
         adapter._client.messages.with_raw_response.create = AsyncMock(  # type: ignore[attr-defined]
             return_value=mock_raw_http
@@ -441,7 +441,7 @@ class TestULM6RateLimit:
         raw = _anthropic_raw()
 
         mock_raw_http = MagicMock()
-        mock_raw_http.parse.return_value = raw
+        mock_raw_http.parse = AsyncMock(return_value=raw)
         mock_raw_http.headers = _mock_headers(include_rate_limits=False)
         adapter._client.messages.with_raw_response.create = AsyncMock(  # type: ignore[attr-defined]
             return_value=mock_raw_http

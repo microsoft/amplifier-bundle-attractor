@@ -189,7 +189,7 @@ def wrap_tool_with_hooks(tool: Any, hooks: Any) -> Any:
 
         result = await original_execute(**kwargs)
 
-        await hooks.emit(
+        post_result = await hooks.emit(
             "tool:post",
             {
                 "tool_name": tool.name,
@@ -197,6 +197,30 @@ def wrap_tool_with_hooks(tool: Any, hooks: Any) -> Any:
                 "node_id": node_ctx.get("node_id"),
             },
         )
+
+        # Honor a tool:post hook modification (e.g. hooks-tool-truncation).
+        #
+        # amplifier-core's HookRegistry.emit() (hooks.rs) never returns
+        # action="modify" to this caller -- Modify only chains data between
+        # handlers inside emit()'s own dispatch loop; the action returned
+        # here always collapses to "continue" (same defect class as
+        # amplifier-support#485 in loop-agent's agent_session.py). Read
+        # post_result.data directly instead of gating on action, and guard
+        # for "result" being absent (Modify REPLACES the data dict, so a
+        # partial-data hook can drop it) or non-string.
+        modified_result = (
+            post_result.data.get("result")
+            if isinstance(post_result.data, dict)
+            else None
+        )
+        if isinstance(modified_result, str) and modified_result != result:
+            logger.debug(
+                "tool:post hook modified output for %s: %d -> %d chars",
+                tool.name,
+                len(result) if isinstance(result, str) else -1,
+                len(modified_result),
+            )
+            return modified_result
 
         return result
 

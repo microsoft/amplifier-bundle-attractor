@@ -63,7 +63,7 @@ Maintainer ruling, 2026-08-14. The four rules that decide every disposition in t
 | Spec | Areas reviewed | Off-spec gaps | Resolved | Open |
 |------|----------------|---------------|----------|------|
 | unified-llm | ~35 | 13 | 4 (structured output, all providers) | 9 |
-| coding-agent-loop | ~17 | 9 | 2 (bugs CAL-1, CAL-2) | 7 |
+| coding-agent-loop | ~17 | 10 | 3 (bugs CAL-1, CAL-2, CAL-10) | 7 |
 | attractor | ~30 | 12 | 9 (ATX-1, ATX-2, ATX-4, ATX-5, ATX-10, ATX-11, ATX-12, ATX-13, ATX-14) | 3 (ATX-3, ATX-6, ATX-7) |
 
 The engine layer (attractor) is the strongest — substantially a **superset** of the spec. The
@@ -114,6 +114,7 @@ keys. Do not mark "live" until exercised against real providers (e.g. in a DTU w
 | CAL-7 | System prompt: recent commit messages + knowledge-cutoff line (§6.4) | `:1036`, `:1025` | omitted | OPEN | ALIGN (cheap) |
 | CAL-8 | Subagents: start-then-`wait` semantics, default unlimited turns | `:1069`, `:1075` | lazy spawn, default 50, host-dependent | OPEN | DIVERGE-or-ALIGN |
 | CAL-9 | Graceful shutdown closes active subagents + cancels in-flight stream | `:1436-1449` | partial | OPEN | ALIGN |
+| CAL-10 | Tool output truncation (§5.1 MUST) silently discarded: `tool:post` hook `Modify` results (e.g. `hooks-tool-truncation`) never reached the LLM because the consumer gated on `post_result.action == "modify"`, a value amplifier-core's `HookRegistry.emit()` (`hooks.rs`) never returns to its caller (Modify only chains data between handlers inside `emit()`'s own dispatch loop; the returned action always collapses to `continue`) | `:852-854` (§5.1: truncation MUST happen before the LLM sees oversized output) | `agent_session.py:912-945` (fixed); `loop-pipeline/hook_bridge.py:190-224` (`wrap_tool_with_hooks`, same discard-class, unwired/dead in production) | **DONE — PROVEN (RED→GREEN)** | ALIGN |
 
 ---
 
@@ -226,6 +227,41 @@ are the current state; these are the reasoning behind it.
 ---
 
 ## Changelog
+
+### 2026-08-26 — CAL-10 DONE: tool:post hook modifications (truncation) reach the LLM again (amplifier-support#485)
+
+- **CAL-10 NEW → DONE — ALIGN.** §5.1's MUST ("tool output exceeds the configured limit, it MUST be
+  truncated before being sent to the LLM") was silently unmet in production: `agent_session.py`'s
+  tool:post consumer gated on `post_result.action == "modify"`, a value amplifier-core's
+  `HookRegistry.emit()` (`hooks.rs`) never returns to its caller — Modify only chains `current_data`
+  between handlers *inside* `emit()`'s own dispatch loop; the action returned to the caller always
+  collapses to `continue` (or deny/ask_user/inject_context if some handler in the chain requested one
+  of those). Dead since `fc85653`. Every `hooks-tool-truncation` modification was a no-op; the LLM
+  always received the raw, untruncated output.
+  - **Fix (toward-spec, decision-matrix tier):** read `post_result.data` directly — it is the merged
+    (possibly hook-modified) event data, delivered under `action="continue"` in the normal case — and
+    guard for `"result"` being a `str` that differs from the raw output before using it, because
+    Modify *replaces* `current_data` rather than merging it, so `"result"` is not guaranteed present.
+    Fixed at both sites in the same class found by grep: `agent_session.py:912-945` (loop-agent's
+    live tool-call path) and `loop-pipeline/hook_bridge.py:190-224`'s `wrap_tool_with_hooks` (same
+    discard, more severe — it never read `post_result` at all; currently unwired in production, fixed
+    as defense-in-depth so it isn't a landmine if wired in later).
+  - **Loudness:** both sites now `logger.debug` original→modified char counts whenever a modification
+    is actually applied — the incident was a modifier silently no-op'ing for months undetected.
+  - **Tests:** `test_truncation_wiring.py` fakes rewritten to be faithful to the real kernel contract
+    (`action="continue"`, data replaced) instead of fabricating `action="modify"` back to the caller —
+    the old fakes are what let this bug ship silently; `test_tool_post_modification_reaches_llm` is
+    RED at `origin/main` (proven: fails against the pre-fix file) and GREEN after the fix; 3 new guard
+    tests (missing `"result"`, non-str `"result"`, identical `"result"` → no spurious log). New
+    `test_truncation_e2e_real_hook.py` mounts the REAL `hooks-tool-truncation` module on a REAL
+    `amplifier_core.HookRegistry` (not a fake) and proves oversized output is truncated to the
+    configured `char_limit` before reaching the LLM.
+  - **Live-run evidence:** a real `AgentSession` run against a live provider, oversized `bash` output,
+    truncation hook mounted — event-stream slice saved outside the repo (see PR notes / report).
+  - **EXTENSIONS.md:** not touched — this is a bug fix restoring documented §5.1 behavior, not a new
+    or changed behavior surface.
+  - loop-agent suite, hooks-tool-truncation suite, loop-pipeline suite, pipeline-runner suite all green
+    after the fix (see PR notes for exact counts).
 
 ### 2026-08-16 — issue #234 decided: ATX-13 + ATX-14 ledgered as divergences (F1/F4 from the matrix build)
 

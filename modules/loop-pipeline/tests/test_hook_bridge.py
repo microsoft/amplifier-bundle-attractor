@@ -4,6 +4,7 @@ Validates that create_hook_bridge() returns a middleware function that
 bridges unified-llm-client middleware to Amplifier's hook system.
 """
 
+import logging
 import sys
 import types
 from dataclasses import dataclass, field
@@ -73,32 +74,64 @@ def test_create_hook_bridge_returns_callable():
 
 
 class RecordingHooks:
-    """Records emitted events and returns configurable HookResults."""
+    """Records emitted events and returns configurable, kernel-faithful HookResults.
+
+    amplifier-core's HookRegistry.emit() (hooks.rs:230-274) never returns
+    action="modify" to its caller -- Modify only chains `current_data`
+    between handlers *inside* emit()'s own dispatch loop; the action
+    returned to the caller always collapses to "continue" (or deny/
+    ask_user/inject_context, per hooks.rs's documented precedence) once no
+    handler requests one of those. A double that fabricates action="modify"
+    back to the caller is unfaithful to the kernel and can mask a broken
+    consumer -- which is the exact anti-pattern amplifier-support#485 /
+    PR #318 indicts (and which this class's own now-removed `set_modify()`
+    used to model).
+
+    For a "no handler touched this event" default, emit() echoes the event
+    data back unchanged under action="continue" -- the real no-op shape.
+    Use `set_deny()` for deny, or `set_tool_post_data()` to model a tool:post
+    handler that replaced `current_data` (mirrors
+    modules/loop-agent/tests/test_truncation_wiring.py's
+    `_make_modifying_hooks`).
+    """
 
     def __init__(self, action: str = "continue"):
         self.events: list[tuple[str, dict]] = []
         self._action = action
         self._reason: str | None = None
-        self._modified_data: dict | None = None
+        self._tool_post_data: dict | None = None
 
     def set_deny(self, reason: str = "blocked"):
         self._action = "deny"
         self._reason = reason
 
-    def set_modify(self, data: dict):
-        self._action = "modify"
-        self._modified_data = data
+    def set_tool_post_data(self, data: dict) -> None:
+        """Model a tool:post handler that returned Modify.
+
+        Kernel-faithful: the caller-visible action is still "continue" --
+        only the returned `data` for the tool:post event differs from what
+        was emitted (current_data is REPLACED by the handler's dict, not
+        merged with the emitted event data).
+        """
+        self._tool_post_data = data
 
     async def emit(self, event: str, data: dict) -> Any:
         self.events.append((event, data))
+        if self._action == "deny":
+            return type(
+                "HookResult",
+                (),
+                {"action": "deny", "data": dict(data), "reason": self._reason},
+            )()
+        result_data = (
+            self._tool_post_data
+            if event == "tool:post" and self._tool_post_data is not None
+            else dict(data)
+        )
         return type(
             "HookResult",
             (),
-            {
-                "action": self._action,
-                "data": self._modified_data,
-                "reason": self._reason,
-            },
+            {"action": "continue", "data": result_data, "reason": None},
         )()
 
     @property
@@ -371,6 +404,107 @@ async def test_wrap_tool_with_no_execute_returns_none():
     )
     wrapped = wrap_tool_with_hooks(original_tool, hooks)
     assert wrapped.execute is None
+
+
+# ---------------------------------------------------------------------------
+# wrap_tool_with_hooks honors a tool:post hook modification
+# (amplifier-support#485 / PR #318 -- same defect class as loop-agent's
+# agent_session.py, but more severe here: pre-fix, wrap_tool_with_hooks
+# never read post_result at all). Doubles are kernel-faithful
+# (action="continue", data replaced) -- see RecordingHooks above and
+# modules/loop-agent/tests/test_truncation_wiring.py's `_make_modifying_hooks`,
+# whose pattern this copies.
+# ---------------------------------------------------------------------------
+
+
+async def _wrap_and_run(
+    hooks: RecordingHooks, raw_output: Any, **exec_kwargs: Any
+) -> Any:
+    """Build a wrapped tool returning `raw_output` and execute it once."""
+    original_tool = unified_llm.Tool(
+        name="read_file",
+        description="Read a file",
+        parameters={},
+        execute=None,
+    )
+
+    async def original_execute(**kwargs):
+        return raw_output
+
+    original_tool.execute = original_execute
+
+    token = set_node_context({"node_id": "step1"})
+    try:
+        wrapped = wrap_tool_with_hooks(original_tool, hooks)
+        return await wrapped.execute(**exec_kwargs)
+    finally:
+        _current_node_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_wrap_tool_post_modification_reaches_output():
+    """REGRESSION (amplifier-support#485): a tool:post hook's modified
+    `result` must reach wrap_tool_with_hooks's returned output.
+
+    This is the dead-branch proof for wrap_tool_with_hooks specifically:
+    pre-fix, the wrapper never read `post_result` at all (unlike
+    agent_session.py, it wasn't even gated on the wrong action -- it simply
+    discarded the hook's return value), so the raw, untruncated output was
+    always what the caller received. After the fix (reading
+    `post_result.data` directly, guarded by isinstance/!=), a kernel-faithful
+    modification reaches the output.
+    """
+    big_output = "x" * 100_000
+    truncated = "truncated_version"
+    hooks = RecordingHooks()
+    hooks.set_tool_post_data(
+        {"tool_name": "read_file", "node_id": "step1", "result": truncated}
+    )
+
+    result = await _wrap_and_run(hooks, big_output, path="/tmp/big.txt")
+
+    assert result == truncated
+
+
+@pytest.mark.asyncio
+async def test_wrap_tool_post_missing_result_key_no_crash_raw_preserved():
+    """post_result.data without a "result" key: no crash, raw output used.
+
+    Modify REPLACES current_data rather than merging it, so a hook that
+    returns a partial data dict can legitimately drop "result" entirely.
+    """
+    hooks = RecordingHooks()
+    hooks.set_tool_post_data({"tool_name": "read_file"})  # no "result" key at all
+
+    result = await _wrap_and_run(hooks, "raw output")
+
+    assert result == "raw output"
+
+
+@pytest.mark.asyncio
+async def test_wrap_tool_post_non_string_result_ignored():
+    """A non-string "result" in post_result.data must be ignored, not returned."""
+    hooks = RecordingHooks()
+    hooks.set_tool_post_data({"tool_name": "read_file", "result": 12345})
+
+    result = await _wrap_and_run(hooks, "raw output")
+
+    assert result == "raw output"
+
+
+@pytest.mark.asyncio
+async def test_wrap_tool_post_identical_result_no_spurious_log(caplog):
+    """A hook that echoes back an identical "result" must not log a modification."""
+    hooks = RecordingHooks()
+    hooks.set_tool_post_data({"tool_name": "read_file", "result": "unchanged output"})
+
+    with caplog.at_level(
+        logging.DEBUG, logger="amplifier_module_loop_pipeline.hook_bridge"
+    ):
+        result = await _wrap_and_run(hooks, "unchanged output")
+
+    assert result == "unchanged output"
+    assert not any("modified output" in rec.message for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------

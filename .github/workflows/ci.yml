@@ -188,6 +188,51 @@ jobs:
             exit 1
           fi
 
+  opinionated-guards:
+    # Root guard harness (DESIGN-repo-split.md Track A, \u00a71.4 / \u00a75 risk #2).
+    #
+    # ~14 guard tests used to live inside modules/loop-pipeline/tests/ purely
+    # because that module's cell in the unit-tests matrix above was the
+    # repo's only CI job that ever executed root `tests/` -- and yet asserted
+    # on repo-root docs/, examples/, skills/, agents/, context/, bundles/,
+    # behaviors/ content, NOT on loop-pipeline's own engine behavior. When
+    # loop-pipeline is extracted to the runner repo (the amplifier-dot-runner
+    # split), those guards would leave with it and silently stop running,
+    # with CI staying green. This job is what makes the guards survive that
+    # move: they were relocated to repo-root `tests/` (Track A of the split)
+    # BEFORE anything is extracted, and run here independently of every
+    # module.
+    #
+    # Deliberately independent of every module/, by construction: every
+    # moved guard was refactored (where needed) to assert FILE CONTENT --
+    # doc text, YAML/dot files, script logic loaded by path -- rather than
+    # importing engine code, so this job installs nothing but pytest itself.
+    # A handful of guards that genuinely could not be decoupled from the
+    # live engine parser/linter (e.g. the examples/ lint-clean sweep, the
+    # shipped-graph structural contract checks) deliberately stayed behind
+    # in modules/loop-pipeline/tests/ -- see each split file's docstring.
+    name: Opinionated Guards (repo root)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install pytest
+        run: uv pip install --system pytest pyyaml
+
+      - name: Run root opinionated-layer guard suite
+        # tests/e2e/ is a separate, manual-only live/docker smoke-test lane
+        # (see tests/e2e/MANUAL_E2E.md) that needs API keys/Docker neither
+        # available nor appropriate in this job -- excluded by design, not
+        # an oversight.
+        run: python -m pytest tests/ -q --ignore=tests/e2e
+
   type-check:
     # Static type checking. This replaces a former pytest case
     # (tests/unit/test_pyright_clean.py) that shelled out to pyright with a
@@ -277,6 +322,7 @@ jobs:
       - unit-tests
       - live-graph-gate
       - dot-render-gate
+      - opinionated-guards
       - type-check
     runs-on: ubuntu-latest
     steps:
@@ -288,6 +334,7 @@ jobs:
             [unit-tests]="${{ needs.unit-tests.result }}"
             [live-graph-gate]="${{ needs.live-graph-gate.result }}"
             [dot-render-gate]="${{ needs.dot-render-gate.result }}"
+            [opinionated-guards]="${{ needs.opinionated-guards.result }}"
             [type-check]="${{ needs.type-check.result }}"
           )
 

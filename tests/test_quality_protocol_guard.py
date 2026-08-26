@@ -1,5 +1,12 @@
 """Drift guard for docs/QUALITY_PROTOCOL.md and docs/VISION.md -- Q-300..Q-312.
 
+# --- Relocated from modules/loop-pipeline/tests/test_quality_protocol_guard.py as part of the repo
+# split's Track A (root guard harness, DESIGN-repo-split.md §1.4/§5#2). This
+# guard asserts on the OPINIONATED layer (repo-root docs/examples/skills/
+# agents/context/bundles/behaviors), not on engine behavior, so it now runs
+# from the repo-root `tests/` suite in CI instead of riding along inside the
+# loop-pipeline module's own test tree. ---
+
 Guards the quality protocol itself against its own external references going
 stale.  The doc is binding on contributors and on AI coding agents working
 here, and section 2's "Docs making factual claims" row demands a guard for
@@ -123,9 +130,7 @@ def _find_bundle_root() -> Path | None:
     rather than pointing at a plausible-but-wrong directory.
     """
     for candidate in Path(__file__).resolve().parents:
-        if (candidate / "docs").is_dir() and (
-            candidate / "modules" / "loop-pipeline"
-        ).is_dir():
+        if (candidate / "docs").is_dir() and (candidate / "bundle.md").is_file():
             return candidate
     return None
 

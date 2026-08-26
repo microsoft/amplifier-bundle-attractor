@@ -2,16 +2,29 @@
 
 Verifies that when hooks-tool-truncation is active, the agent loop:
 1. Emits tool:post after tool execution
-2. Reads back HookResult(action="modify") data
+2. Reads back the tool:post hook's (merged) output data
 3. Uses truncated output for the ToolResult sent to LLM
 4. Preserves full output in agent:tool_call_end event
+
+IMPORTANT: these tests wrap a REAL ``amplifier_core.HookRegistry`` (the
+Rust-backed engine), not a hand-rolled fake. A prior version of this file
+used a bare ``MagicMock`` whose fake ``emit()`` directly fabricated
+``HookResult(action="modify", ...)`` -- something the real registry's
+``emit()`` never returns to a caller (see hooks.rs: ``Modify`` only chains
+data between handlers; the terminal result returned to the caller always
+carries ``action=Continue``, with the merged data preserved). That fake let
+`test_truncated_output_sent_to_llm` pass while production discarded every
+hook-truncated tool output. Routing every emit through the real registry
+means these tests now exercise the actual merge-and-collapse contract.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
+from amplifier_core import HookRegistry, HookResult
+from amplifier_core.events import TOOL_POST
 from amplifier_core.message_models import ChatResponse, ToolCall, Usage
-from amplifier_core.models import HookResult, ToolResult
+from amplifier_core.models import ToolResult
+from unittest.mock import AsyncMock, MagicMock
 
 from amplifier_module_loop_agent.agent_session import AgentSession
 from amplifier_module_loop_agent.config import SessionConfig
@@ -42,15 +55,42 @@ def _make_mock_tool(name: str, output: str = "ok") -> MagicMock:
     return tool
 
 
-def _make_hooks():
-    hooks = MagicMock()
-    hooks._emitted = []
+class RecordingHookRegistry:
+    """Thin recorder around a REAL ``amplifier_core.HookRegistry``.
 
-    async def _emit(event, data):
-        hooks._emitted.append((event, data))
-        return MagicMock(action="continue")
+    This is deliberately NOT a ``MagicMock``. ``.emit()`` below delegates to
+    the actual Rust-backed ``HookRegistry.emit()``, so whatever that engine
+    truly returns to a caller (merged ``data``, collapsed ``action``) is what
+    ``AgentSession`` sees -- exactly like production. Handlers are attached
+    via the real registry's own ``.register()``. ``.emitted`` additionally
+    records every ``(event, data)`` pair passed through, purely so these
+    tests can assert on emission the same way the old MagicMock-based tests
+    did -- it plays no part in computing the returned HookResult.
+    """
 
-    hooks.emit = AsyncMock(side_effect=_emit)
+    def __init__(self) -> None:
+        self._registry = HookRegistry()
+        self.emitted: list[tuple[str, dict]] = []
+
+    def register(self, event: str, handler) -> None:
+        self._registry.register(event, handler)
+
+    async def emit(self, event: str, data: dict):
+        self.emitted.append((event, dict(data)))
+        return await self._registry.emit(event, data)
+
+
+def _make_truncating_hooks(truncated: str) -> RecordingHookRegistry:
+    """Real HookRegistry with a tool:post handler that truncates `result`."""
+    hooks = RecordingHookRegistry()
+
+    async def truncate_handler(event: str, data: dict) -> HookResult:
+        return HookResult(
+            action="modify",
+            data={"result": truncated, "full_output": data.get("result")},
+        )
+
+    hooks.register(TOOL_POST, truncate_handler)
     return hooks
 
 
@@ -66,22 +106,7 @@ async def test_tool_post_emitted_after_execution():
         _text_response("done."),
     ])
 
-    emitted_events: list[tuple[str, dict]] = []
-
-    async def recording_emit(event: str, data: dict):
-        emitted_events.append((event, data))
-        if event == "tool:post":
-            return HookResult(
-                action="modify",
-                data={
-                    "result": "truncated_output",
-                    "full_output": data.get("result"),
-                },
-            )
-        return MagicMock(action="continue")
-
-    hooks = MagicMock()
-    hooks.emit = AsyncMock(side_effect=recording_emit)
+    hooks = _make_truncating_hooks("truncated_output")
 
     session = AgentSession(
         config=SessionConfig(system_prompt="You are a test coding agent."),
@@ -92,7 +117,7 @@ async def test_tool_post_emitted_after_execution():
     await session.process_input("read big.txt")
 
     # Verify tool:post was emitted
-    post_events = [(e, d) for e, d in emitted_events if e == "tool:post"]
+    post_events = [(e, d) for e, d in hooks.emitted if e == "tool:post"]
     assert len(post_events) == 1
     assert post_events[0][1]["tool_name"] == "read_file"
     assert post_events[0][1]["result"] == big_output
@@ -100,7 +125,15 @@ async def test_tool_post_emitted_after_execution():
 
 @pytest.mark.asyncio
 async def test_truncated_output_sent_to_llm():
-    """When tool:post returns modify, the LLM sees truncated output."""
+    """When tool:post's handler modifies `result`, the LLM sees the modified output.
+
+    This is the test that a fabricated ``MagicMock`` HookResult let pass
+    while production shipped with truncation silently disabled. It now runs
+    against the real ``amplifier_core.HookRegistry``, so it fails on the old
+    (buggy) `agent_session.py` gate of `post_result.action == "modify"` --
+    that condition is never true from the real engine -- and passes once the
+    caller instead reads the merged `data["result"]`.
+    """
     big_output = "x" * 100_000
     truncated = "truncated_version"
     tool = _make_mock_tool("read_file", output=big_output)
@@ -111,16 +144,7 @@ async def test_truncated_output_sent_to_llm():
         _text_response("done."),
     ])
 
-    async def truncating_emit(event: str, data: dict):
-        if event == "tool:post":
-            return HookResult(
-                action="modify",
-                data={"result": truncated, "full_output": data.get("result")},
-            )
-        return MagicMock(action="continue")
-
-    hooks = MagicMock()
-    hooks.emit = AsyncMock(side_effect=truncating_emit)
+    hooks = _make_truncating_hooks(truncated)
 
     session = AgentSession(
         config=SessionConfig(system_prompt="You are a test coding agent."),
@@ -150,19 +174,7 @@ async def test_full_output_in_tool_call_end_event():
         _text_response("done."),
     ])
 
-    emitted_events: list[tuple[str, dict]] = []
-
-    async def recording_emit(event: str, data: dict):
-        emitted_events.append((event, data))
-        if event == "tool:post":
-            return HookResult(
-                action="modify",
-                data={"result": "short", "full_output": data.get("result")},
-            )
-        return MagicMock(action="continue")
-
-    hooks = MagicMock()
-    hooks.emit = AsyncMock(side_effect=recording_emit)
+    hooks = _make_truncating_hooks("short")
 
     session = AgentSession(
         config=SessionConfig(system_prompt="You are a test coding agent."),
@@ -173,7 +185,7 @@ async def test_full_output_in_tool_call_end_event():
     await session.process_input("read big.txt")
 
     # agent:tool_call_end should have the FULL output
-    end_events = [(e, d) for e, d in emitted_events
+    end_events = [(e, d) for e, d in hooks.emitted
                   if e == "agent:tool_call_end"]
     assert len(end_events) == 1
     assert end_events[0][1]["output"] == big_output
@@ -181,7 +193,13 @@ async def test_full_output_in_tool_call_end_event():
 
 @pytest.mark.asyncio
 async def test_no_truncation_when_hook_continues():
-    """When tool:post returns action=continue, output is unchanged."""
+    """When no tool:post handler modifies `result`, output is unchanged.
+
+    No handler is registered on the real registry at all here: an
+    unregistered event naturally collapses to `action=continue` with the
+    input data unchanged, which is precisely the "nothing modified this"
+    case the fix must leave as a no-op.
+    """
     tool = _make_mock_tool("read_file", output="small output")
 
     provider = AsyncMock()
@@ -190,11 +208,7 @@ async def test_no_truncation_when_hook_continues():
         _text_response("done."),
     ])
 
-    async def passthrough_emit(event: str, data: dict):
-        return MagicMock(action="continue")
-
-    hooks = MagicMock()
-    hooks.emit = AsyncMock(side_effect=passthrough_emit)
+    hooks = RecordingHookRegistry()
 
     session = AgentSession(
         config=SessionConfig(system_prompt="You are a test coding agent."),

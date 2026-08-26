@@ -912,15 +912,29 @@ class AgentSession:
             # If a hook modified the result (e.g. truncation), use the
             # modified output for the LLM while preserving full output
             # in the event stream.
+            #
+            # NOTE: we deliberately do NOT gate this on
+            # `post_result.action == "modify"`. Per amplifier-core's
+            # HookRegistry.emit() (crates/amplifier-core/src/hooks.rs),
+            # `Modify` is a handler-to-handler data-chaining mechanism only:
+            # each handler's returned `data` is merged into the data passed
+            # to the *next* handler, but the terminal HookResult returned to
+            # the caller always carries `action=Continue` (the merged data
+            # is preserved; the action is not). A caller-side check for
+            # `action == "modify"` can therefore never be true and silently
+            # discards any hook-modified output -- which is exactly what
+            # happened here, disabling tool-output truncation in
+            # production. The merged `data` dict IS the contract; `action`
+            # is not. Since the input payload already included
+            # `"result": raw_output`, `post_result.data["result"]` is always
+            # present -- either unchanged (no hook modified it) or replaced
+            # by a hook. The `isinstance`/`!=` guards make this a provable
+            # no-op whenever no hook modifies the result.
             llm_output = raw_output
-            if (
-                hasattr(post_result, "action")
-                and post_result.action == "modify"
-                and hasattr(post_result, "data")
-                and post_result.data
-                and "result" in post_result.data
-            ):
-                llm_output = post_result.data["result"]
+            if post_result.data:
+                modified = post_result.data.get("result")
+                if isinstance(modified, str) and modified != raw_output:
+                    llm_output = modified
 
             # Emit tool output delta for UI streaming (spec TOOL_CALL_OUTPUT_DELTA)
             await self._hooks.emit(

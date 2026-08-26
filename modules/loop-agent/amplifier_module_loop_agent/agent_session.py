@@ -912,15 +912,42 @@ class AgentSession:
             # If a hook modified the result (e.g. truncation), use the
             # modified output for the LLM while preserving full output
             # in the event stream.
+            #
+            # amplifier-core's HookRegistry.emit() (hooks.rs) never returns
+            # action="modify" to *this* caller: Modify is a handler-to-handler
+            # chaining mechanism only -- inside emit()'s dispatch loop, each
+            # Modify result's data REPLACES current_data for the next handler,
+            # but the action returned to the caller of emit() always collapses
+            # to "continue" (or deny/ask_user/inject_context, if some handler
+            # in the chain requested one of those). Gating on
+            # `post_result.action == "modify"` here can therefore never fire
+            # -- it is what silently discarded every hooks-tool-truncation
+            # modification since fc85653 (amplifier-support#485, PR #318).
+            #
+            # The correct read: post_result.data IS the (possibly
+            # hook-modified) merged event data, delivered under action=
+            # "continue" in the normal case. Because Modify REPLACES
+            # current_data rather than merging it, a hook that returns a
+            # partial data dict can drop "result" entirely -- it is NOT
+            # guaranteed present, so this must be a guarded read, not a
+            # dict index.
             llm_output = raw_output
-            if (
-                hasattr(post_result, "action")
-                and post_result.action == "modify"
-                and hasattr(post_result, "data")
-                and post_result.data
-                and "result" in post_result.data
-            ):
-                llm_output = post_result.data["result"]
+            modified_result = (
+                post_result.data.get("result")
+                if isinstance(post_result.data, dict)
+                else None
+            )
+            if isinstance(modified_result, str) and modified_result != raw_output:
+                llm_output = modified_result
+                # Loudness: a hook silently no-op'ing here (as it did for
+                # months, undetected) is the actual incident. Make every
+                # real application of a tool:post modification observable.
+                logger.debug(
+                    "tool:post hook modified output for %s: %d -> %d chars",
+                    tool_call.name,
+                    len(raw_output),
+                    len(modified_result),
+                )
 
             # Emit tool output delta for UI streaming (spec TOOL_CALL_OUTPUT_DELTA)
             await self._hooks.emit(

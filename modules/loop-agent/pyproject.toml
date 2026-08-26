@@ -51,4 +51,8 @@ dev = [
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 asyncio_mode = "strict"
-pythonpath = [".", "../unified-llm-client"]
+# ../hooks-tool-truncation: test_truncation_e2e_real_hook.py mounts the real
+# hooks-tool-truncation module on a real amplifier_core.HookRegistry to prove
+# the tool:post wiring fix end-to-end (amplifier-support#485), not just
+# against a fake hook double.
+pythonpath = [".", "../unified-llm-client", "../hooks-tool-truncation"]

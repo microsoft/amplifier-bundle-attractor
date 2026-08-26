@@ -1,5 +1,12 @@
 """No-re-flip guard for `session.orchestrator` sources -- OSP-001..OSP-003.
 
+# --- Relocated from modules/loop-pipeline/tests/test_orchestrator_source_pin_guard.py as part of the repo
+# split's Track A (root guard harness, DESIGN-repo-split.md §1.4/§5#2). This
+# guard asserts on the OPINIONATED layer (repo-root docs/examples/skills/
+# agents/context/bundles/behaviors), not on engine behavior, so it now runs
+# from the repo-root `tests/` suite in CI instead of riding along inside the
+# loop-pipeline module's own test tree. ---
+
 Every orchestrator-class ``source:`` in this bundle's composition surfaces must
 stay an absolute ``git+`` pin.  Flipping one to a repo-relative path (``./`` or
 ``../``) is a change that *looks* obviously right, passes review, and breaks
@@ -217,7 +224,9 @@ def _all_orchestrator_sources() -> list[tuple[str, str, Any]]:
         except yaml.YAMLError:
             continue  # OSP-002 owns parse failures
         rel = path.relative_to(_root()).as_posix()
-        results.extend((rel, dotted, value) for dotted, value in _walk_sources(data, ""))
+        results.extend(
+            (rel, dotted, value) for dotted, value in _walk_sources(data, "")
+        )
     return results
 
 
@@ -231,9 +240,7 @@ def test_osp001_every_orchestrator_source_is_a_git_pin():
     offenders = [
         f"{rel} :: {dotted} = {value!r}"
         for rel, dotted, value in _all_orchestrator_sources()
-        if not (
-            isinstance(value, str) and value.startswith(REQUIRED_SOURCE_PREFIX)
-        )
+        if not (isinstance(value, str) and value.startswith(REQUIRED_SOURCE_PREFIX))
     ]
     assert not offenders, (
         "orchestrator `source:` is no longer an absolute `git+` pin:\n"
@@ -241,9 +248,9 @@ def test_osp001_every_orchestrator_source_is_a_git_pin():
         + "\n"
         "  This exact change was made once and measured: PR #255's first build\n"
         "  (commit af29e80) flipped these to `./modules/loop-agent`, and the DTU\n"
-        "  install refused to start -- \"5 of 117 modules failed to activate\n"
+        '  install refused to start -- "5 of 117 modules failed to activate\n'
         "  (strict mode): loop-agent: File not found:\n"
-        "  .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent\" -- because a\n"
+        '  .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent" -- because a\n'
         "  `session.orchestrator` source is kept RAW at parse time and resolved LATE\n"
         "  against the COMPOSED root's base_path, which in a real session is the host\n"
         "  APP's bundle directory, not this repo's installed snapshot, so no relative\n"
@@ -289,7 +296,9 @@ def test_osp002b_every_scanned_file_parses():
         try:
             _load(path)
         except yaml.YAMLError as exc:
-            first_line = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+            first_line = (
+                str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+            )
             broken.append(f"{path.relative_to(_root()).as_posix()}: {first_line}")
     assert not broken, (
         "composition files failed to parse:\n"

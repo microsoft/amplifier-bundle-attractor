@@ -215,11 +215,11 @@ claim to something that fails when the *code* moves:
 | Guard file | What it pins |
 |---|---|
 | `test_extensions_ledger_integrity.py` | `specs/EXTENSIONS.md` numbered headings form a contiguous `1..max` sequence -- no gaps, no duplicates -- and every `upstream action:` value is one of the legal forms, with `deferred` carrying a real `review-by` date. Written after a `git rebase -Xtheirs` silently discarded three already-merged ledger entries and left plausible-looking numbering behind |
-| `test_doc_consistency.py` | The retry-ceiling default, read from the canonical spec snapshot and cross-checked against the authoring guide; and the `house` shape's LLM classification agreeing across `DOT-AUTHORING-GUIDE.md` and `DOT-SYNTAX.md` |
-| `test_engine_semantics_doc_guard.py` | `context/engine-semantics.md`, the bundle's declared source of truth for shipped-engine behavior -- both text-anchored claims (the no-matching-edge and stale-label rules) and behavior-anchored ones (a real engine run asserting the main loop hard-fails on no matching edge) |
-| `test_explainer_doc_guard.py` | The published explainer page, `docs/attractor-explained.html`: feedback-critique caps, the parallel-branch default, `last_response` truncation, the summary budgets, the fidelity vocabulary and its default, the lifecycle phases, and the shape-to-execution-tier vocabulary -- each read from its source module, never from the page |
+| `tests/test_doc_consistency.py` | The retry-ceiling default, read from the canonical spec snapshot and cross-checked against the authoring guide; and the `house` shape's LLM classification agreeing across `DOT-AUTHORING-GUIDE.md` and `DOT-SYNTAX.md` |
+| `tests/test_engine_semantics_doc_guard.py` | `context/engine-semantics.md`, the bundle's declared source of truth for shipped-engine behavior -- the text-anchored claims (the no-matching-edge and stale-label rules); the behavior-anchored half (a real engine run asserting the main loop hard-fails on no matching edge) rides with the engine module's own tests |
+| `tests/test_explainer_doc_guard.py` | The published explainer page, `docs/attractor-explained.html`: feedback-critique caps, the parallel-branch default, `last_response` truncation, the summary budgets, the fidelity vocabulary and its default, the lifecycle phases, and the shape-to-execution-tier vocabulary -- each read from its source module, never from the page |
 | `test_examples_lint_clean.py` | Every `.dot` under `examples/` lints with zero ERROR diagnostics. Written because the dead-corrective-edge class shipped in eight examples for months, because nothing could see topology |
-| `test_quality_protocol_guard.py` | This document's own external references: every guard-test filename it names exists; the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records; the Changelog exists with a dated entry. Also the vision wiring (Q-304..Q-307): `docs/VISION.md` exists with its own dated Changelog and names the decision matrix; this page carries the decision-matrix section and the literal `vision-observation` label; and the decision matrix's canonical articulation reads identically in both pages. Also the leak-defense wiring (Q-308..Q-312): the pre-publication section exists naming all three layers, the outsider brief appears verbatim, the two reference implementations it names exist on disk, `.github/PULL_REQUEST_TEMPLATE.md` carries the leak-review line, and the Changelog records the amendment's date. Written because section 8 set its own adoption condition and this file has to keep it (section 8) |
+| `tests/test_quality_protocol_guard.py` | This document's own external references: every guard-test filename it names exists; the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records; the Changelog exists with a dated entry. Also the vision wiring (Q-304..Q-307): `docs/VISION.md` exists with its own dated Changelog and names the decision matrix; this page carries the decision-matrix section and the literal `vision-observation` label; and the decision matrix's canonical articulation reads identically in both pages. Also the leak-defense wiring (Q-308..Q-312): the pre-publication section exists naming all three layers, the outsider brief appears verbatim, the two reference implementations it names exist on disk, `.github/PULL_REQUEST_TEMPLATE.md` carries the leak-review line, and the Changelog records the amendment's date. Written because section 8 set its own adoption condition and this file has to keep it (section 8) |
 
 **The rule this layer imposes: a new claim-bearing doc ships with its guard.** The explainer guard
 states the reason plainly -- a page nobody re-reads rots silently and keeps being shared, which is
@@ -281,7 +281,7 @@ Executed as an agent wave until now. **The executor is
 [`examples/drift-review/`](../examples/drift-review/)** -- a self-review attractor pipeline (section
 8), whose findings gate re-opens every cited `file:line` on *both* sides outside every reviewer's
 context, and whose shape is guarded by
-`modules/loop-pipeline/tests/test_drift_review_gate.py`. It reports; a human triages and files.
+`tests/test_drift_review_gate.py`. It reports; a human triages and files.
 
 ### Layer 4 -- the meta-protocol
 
@@ -449,7 +449,7 @@ not left in place "just in case." This is the self-ablation discipline, and it i
 design that usually goes undone: yesterday's scaffolding is today's tax.
 
 **This document's own guard.** It has one:
-`modules/loop-pipeline/tests/test_quality_protocol_guard.py`. The stated adoption condition -- *the
+`tests/test_quality_protocol_guard.py`. The stated adoption condition -- *the
 first time one of those references is found stale, or the Layer-2 matrix lands, whichever comes
 first* -- **fired with the matrix**, and the guard shipped in the same PR rather than in the next
 one. It was extended with the vision wave (Q-304..Q-307) and again with the leak-defense wave
@@ -573,7 +573,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
   **New public content class** row naming the leak-lens as required evidence and a note that the row
   buys a *reading*, not an artifact; `.github/PULL_REQUEST_TEMPLATE.md` gains one honest-N/A
   checklist line; section 10 adds the model to the portable set;
-  `modules/loop-pipeline/tests/test_quality_protocol_guard.py` gains Q-308..Q-312.
+  `tests/test_quality_protocol_guard.py` gains Q-308..Q-312.
 - **Renumbering, stated rather than silent.** Old sections 7-9 are now 8-10. Cross-references
   throughout the page -- including inside earlier Changelog entries -- were repointed, and the one
   external citation (`evals/guidance/README.md`, which cites the retirement review) was updated in
@@ -677,7 +677,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
 - **Changed.** Layer 3's closing line flipped from *"that pipeline does not exist yet"* to naming
   [`examples/drift-review/`](../examples/drift-review/): the holistic review is now run by an
   attractor, with `check_findings.py` as the gate that decides which proposed findings are shaped
-  and `modules/loop-pipeline/tests/test_drift_review_gate.py` guarding both. Nothing about Layer
+  and `tests/test_drift_review_gate.py` guarding both. Nothing about Layer
   3's *scope* changed -- docs, examples, guidance surfaces and both ledgers, read against the
   canonical spec and `docs/VISION.md`.
 - **Evidence that justified it: the triggers in section 6 fired, and the layer had no executor to
@@ -708,7 +708,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
   verbatim -- is replaced by a single authored articulation of the same rule. The attribution line,
   the three-tier toll table and every piece of wiring around it are untouched; only the quotation
   is. The identical paragraph is now the canonical statement in [`docs/VISION.md`](VISION.md), and
-  `test_quality_protocol_guard.py`'s Q-307 pins the two copies to each other as before,
+  `tests/test_quality_protocol_guard.py`'s Q-307 pins the two copies to each other as before,
   re-anchored on the new text.
 - **Evidence that justified it: the maintainer read the shipped page and ruled** (2026-08-15) that
   his verbatim words be replaced with an accurate representation of what he was communicating. A
@@ -751,7 +751,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
   no document stated it, and its findings only ever arrived in batches at review time -- so an
   observation noticed during unrelated work had nowhere to go but a reviewer's memory.
 - **Scope of this change: documentation only.** No engine, handler, example or ledger *behavior*
-  changed. `docs/VISION.md` is new; `test_quality_protocol_guard.py` gains Q-304..Q-307.
+  changed. `docs/VISION.md` is new; `tests/test_quality_protocol_guard.py` gains Q-304..Q-307.
 - **Proven red before green.** Each new assertion was mutated in a scratch copy and observed to fail
   naming the specific stale reference, then restored byte-identically. A guard never seen red is an
   unproven guard.
@@ -768,7 +768,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
 ### 2026-08-15 -- this document's own guard shipped (entry 3)
 
 - **Changed.** Section 8's "**This document's own guard**" passage flipped from *owed next* to
-  shipped, naming `modules/loop-pipeline/tests/test_quality_protocol_guard.py`. Layer 1 goes from
+  shipped, naming `tests/test_quality_protocol_guard.py`. Layer 1 goes from
   five guard files to six and the new guard gets its table row. Section 2's and section 10's
   pointers at "the five existing guards" / "the five named guard files" were updated with it.
 - **Evidence that justified it: the protocol's own rule fired, and the deferral was the finding.**

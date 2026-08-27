@@ -1,0 +1,127 @@
+bundle:
+  name: attractor-pipeline-copilot
+  version: 0.1.0
+  description: >
+    GitHub Copilot variant of the Attractor pipeline, for key-free runs where
+    auth is a GitHub token instead of Anthropic/OpenAI/Gemini API keys. All
+    worker nodes route to Copilot by default.
+
+    Provide a DOT graph via orchestrator config:
+      config.dot_file:   path to a .dot file
+      config.dot_source: inline DOT digraph string
+
+includes:
+  - bundle: attractor:behaviors/attractor-core
+
+# --- Pipeline orchestrator provider (used for orchestrator reasoning) -------
+providers:
+  - module: provider-github-copilot
+    source: git+https://github.com/microsoft/amplifier-module-provider-github-copilot@main
+    config:
+      default_model: claude-sonnet-4.6
+
+# --- Pipeline orchestrator session ------------------------------------------
+session:
+  orchestrator:
+    module: loop-pipeline
+    # NOTE: the same-repo `@main` pin is DELIBERATE, and cannot currently be removed.
+    # Unlike tools:/hooks:/providers: sources (resolved at PARSE time against this file's
+    # own directory), a session.orchestrator `source:` is resolved LATE against the
+    # COMPOSED ROOT's base_path -- which in a real amplifier session is the APP's own
+    # bundle directory, not this bundle's.  Measured, from a DTU install of a branch that
+    # made these relative:  "loop-agent: File not found:
+    # .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent" -- and the session
+    # refused to start.  See docs/designs/2026-08-15-composition-fix.md.
+    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline
+    config:
+      # Maps llm_provider values in DOT node attributes to agent names.
+      # The model stylesheet sets llm_provider per node; the engine looks
+      # up this map to spawn the correct child agent session.
+      profiles:
+        anthropic: attractor-agent-anthropic
+        openai: attractor-agent-openai
+        gemini: attractor-agent-gemini
+        github-copilot: attractor-agent-copilot
+      # User must provide one of:
+      #   dot_file:   ./path/to/pipeline.dot
+      #   dot_source: "digraph { ... }"
+  context:
+    module: context-simple
+    source: git+https://github.com/microsoft/amplifier-module-context-simple@main
+
+# --- Pipeline orchestrator tools (filesystem access for the orchestrator) ----
+tools:
+  - module: tool-filesystem
+    source: git+https://github.com/microsoft/amplifier-module-tool-filesystem@main
+  - module: tool-bash
+    source: git+https://github.com/microsoft/amplifier-module-tool-bash@main
+    config:
+      timeout: 120
+  - module: tool-search
+    source: git+https://github.com/microsoft/amplifier-module-tool-search@main
+
+# --- Child agents (one per provider, spawned by the pipeline engine) ---------
+# IMPORTANT: inline session.orchestrator is REQUIRED here.  The spawn capability merges
+# the agent's session: key onto the parent config; without an explicit session.orchestrator
+# the child inherits the parent's loop-pipeline orchestrator and recurses.
+agents:
+  # Inline session.orchestrator is REQUIRED (passes the loop-pipeline recursion
+  # guard, which checks orchestrator.module). The Layer-1 base prompt is supplied
+  # by loop-agent's provider default (context/system-<provider>.md), so no
+  # per-agent system_prompt_file is needed here.
+  attractor-agent-anthropic:
+    description: >
+      Anthropic coding agent (Claude Code aligned).
+      Uses edit_file with old_string/new_string, 120s shell timeout.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 120000
+  attractor-agent-openai:
+    description: >
+      OpenAI coding agent (codex-rs aligned).
+      Uses native apply_patch (Responses API built-in), restricted filesystem, 10s shell timeout.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 10000
+  attractor-agent-gemini:
+    description: >
+      Gemini coding agent (gemini-cli aligned).
+      Uses edit_file, includes web tools for grounding.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 10000
+  attractor-agent-copilot:
+    description: >
+      GitHub Copilot coding agent (Claude Code aligned).
+      Uses edit_file with old_string/new_string, 120s shell timeout.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 120000
+          # Layer-1 base prompt selection follows the MOUNTED TOOLSET, not
+          # the provider/model: context/system-<name>.md files are toolset
+          # prompts (anthropic = edit_file toolset, openai = apply_patch
+          # toolset, gemini = web-tools toolset), not model-family prompts.
+          # canonical_provider("github-copilot") returns None (Copilot can
+          # run several underlying model families, so it can't be derived
+          # from the provider name alone) -- this agent declares
+          # prompt_profile: anthropic because it mounts the SAME toolset
+          # (tool-filesystem full + tool-bash + tool-search) as the
+          # anthropic agent. This is an accurate declaration of what this
+          # agent mounts, not a workaround.
+          prompt_profile: anthropic

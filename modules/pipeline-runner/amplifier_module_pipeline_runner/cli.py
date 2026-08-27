@@ -235,18 +235,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"attractor: {e}", file=sys.stderr)
         return 1
 
-    # --- Fail loud: unknown --provider is a CLI-argument error ---
-    if args.provider not in runner.PROVIDER_KEY_ENV:
-        print(
-            f"attractor: unknown provider {args.provider!r}. Known providers: "
-            f"{', '.join(sorted(runner.PROVIDER_KEY_ENV))}",
-            file=sys.stderr,
-        )
-        return 1
-
-    # --- Fail loud: provider API key must be present BEFORE we run anything ---
-    key_env = runner.PROVIDER_KEY_ENV[args.provider]
-    if not os.environ.get(key_env):
+    # --- Fail loud on a missing key ONLY for providers with a known key env.
+    # A provider whose credential is a token, not a <X>_API_KEY (e.g.
+    # github-copilot), has no env to check here -- defer auth to the provider
+    # module, which fails loud at composition if it cannot authenticate.
+    key_env = runner.PROVIDER_KEY_ENV.get(args.provider)
+    if key_env is not None and not os.environ.get(key_env):
         print(
             f"attractor: missing API key -- set {key_env} for provider {args.provider!r}",
             file=sys.stderr,
@@ -391,16 +385,12 @@ def cmd_resume(args: argparse.Namespace) -> int:
         print(f"attractor resume: {e}", file=sys.stderr)
         return 1
 
-    if args.provider not in runner.PROVIDER_KEY_ENV:
-        print(
-            f"attractor resume: unknown provider {args.provider!r}. Known providers: "
-            f"{', '.join(sorted(runner.PROVIDER_KEY_ENV))}",
-            file=sys.stderr,
-        )
-        return 1
-
-    key_env = runner.PROVIDER_KEY_ENV[args.provider]
-    if not os.environ.get(key_env):
+    # Fail loud on a missing key ONLY for providers with a known key env.
+    # A provider whose credential is a token, not a <X>_API_KEY (e.g.
+    # github-copilot), has no env to check here -- defer auth to the provider
+    # module, which fails loud at composition if it cannot authenticate.
+    key_env = runner.PROVIDER_KEY_ENV.get(args.provider)
+    if key_env is not None and not os.environ.get(key_env):
         print(
             f"attractor resume: missing API key -- set {key_env} for provider "
             f"{args.provider!r}",

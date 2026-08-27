@@ -1,0 +1,57 @@
+bundle:
+  name: attractor-profile-copilot
+  version: 1.0.0
+  description: >
+    GitHub Copilot coding agent profile (Claude Code aligned).
+    Uses edit_file with old_string/new_string for edits, 120s default
+    shell timeout, and a system prompt mirroring Claude Code conventions.
+
+includes:
+  - bundle: attractor:behaviors/attractor-core
+
+providers:
+  - module: provider-github-copilot
+    source: git+https://github.com/microsoft/amplifier-module-provider-github-copilot@main
+    config:
+      default_model: claude-sonnet-4.6
+      timeout: 600
+
+session:
+  orchestrator:
+    module: loop-agent
+    # NOTE: the same-repo `@main` pin is DELIBERATE, and cannot currently be removed.
+    # Unlike tools:/hooks:/providers: sources (resolved at PARSE time against this file's
+    # own directory), a session.orchestrator `source:` is resolved LATE against the
+    # COMPOSED ROOT's base_path -- which in a real amplifier session is the APP's own
+    # bundle directory, not this bundle's.  Measured, from a DTU install of a branch that
+    # made these relative:  "loop-agent: File not found:
+    # .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent" -- and the session
+    # refused to start.  See docs/designs/2026-08-15-composition-fix.md.
+    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+    config:
+      default_command_timeout_ms: 120000
+      # INTERIM PIN (issue #0 workaround): loop-agent derives the Layer-1 base
+      # prompt via canonical_provider(provider_name), which returns None for
+      # "github-copilot" and RAISES at every spawn. Pinning an explicit
+      # system_prompt_file bypasses that lookup entirely. This hand-pins ONE
+      # prompt family (anthropic's) for every node using this agent -- it is
+      # not provider-accurate, just unblocking -- until canonical_provider
+      # gains a github-copilot->family mapping (deferred fix).
+      system_prompt_file: context/system-anthropic.md
+  # session.context is REQUIRED by core 1.6.0 ("Configuration must specify
+  # session.context"). This profile only includes attractor-core (which provides
+  # no context module) -- unlike attractor-agent.yaml which pulls it from
+  # amplifier-foundation -- so it must be declared explicitly here.
+  context:
+    module: context-simple
+    source: git+https://github.com/microsoft/amplifier-module-context-simple@main
+
+tools:
+  - module: tool-filesystem
+    source: git+https://github.com/microsoft/amplifier-module-tool-filesystem@main
+  - module: tool-bash
+    source: git+https://github.com/microsoft/amplifier-module-tool-bash@main
+    config:
+      timeout: 120
+  - module: tool-search
+    source: git+https://github.com/microsoft/amplifier-module-tool-search@main

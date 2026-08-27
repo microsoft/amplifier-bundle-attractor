@@ -41,6 +41,7 @@ session:
         anthropic: attractor-agent-anthropic
         openai: attractor-agent-openai
         gemini: attractor-agent-gemini
+        github-copilot: attractor-agent-copilot
       # User must provide one of:
       #   dot_file:   ./path/to/pipeline.dot
       #   dot_source: "digraph { ... }"
@@ -101,3 +102,23 @@ agents:
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 10000
+  attractor-agent-copilot:
+    description: >
+      GitHub Copilot coding agent (Claude Code aligned).
+      Uses edit_file with old_string/new_string, 120s shell timeout.
+    session:
+      orchestrator:
+        module: loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        config:
+          max_tool_rounds_per_input: 50
+          default_command_timeout_ms: 120000
+          # INTERIM PIN (issue #0 workaround): loop-agent derives the Layer-1
+          # base prompt via canonical_provider(provider_name), which returns
+          # None for "github-copilot" and RAISES at every spawn. Pinning an
+          # explicit system_prompt_file bypasses that lookup entirely. This
+          # hand-pins ONE prompt family (anthropic's) for every node using
+          # this agent -- not provider-accurate, just unblocking -- until
+          # canonical_provider gains a github-copilot->family mapping
+          # (deferred fix).
+          system_prompt_file: context/system-anthropic.md

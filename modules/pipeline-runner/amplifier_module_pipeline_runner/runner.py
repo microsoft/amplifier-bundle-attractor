@@ -52,6 +52,7 @@ DEFAULT_PROFILES: dict[str, str] = {
     "anthropic": "attractor-agent-anthropic",
     "openai": "attractor-agent-openai",
     "gemini": "attractor-agent-gemini",
+    "github-copilot": "attractor-agent-copilot",   # provided by FIX 3
 }
 
 # Env var name per provider -- used by the CLI's fail-loud preflight check

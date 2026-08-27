@@ -2,6 +2,11 @@
 # Uses native apply_patch (Responses API built-in), restricted filesystem, 10s shell timeout.
 # Shared definition — referenced by attractor-pipeline, attractor-interactive,
 # and pipeline-runner bundles.
+#
+# Everything identical across the four provider agents (attractor-core, the
+# loop-agent orchestrator + its load-bearing @main self-pin,
+# max_tool_rounds_per_input, context-simple, tool-search) lives in
+# behaviors/attractor-agent-base.yaml.  Only this provider's residue is below.
 
 bundle:
   name: attractor-agent-openai
@@ -11,7 +16,7 @@ bundle:
     Uses native apply_patch (Responses API built-in), restricted filesystem, 10s shell timeout.
 
 includes:
-  - bundle: attractor:behaviors/attractor-core
+  - bundle: attractor:behaviors/attractor-agent-base
 
 providers:
   - module: provider-openai
@@ -22,23 +27,12 @@ providers:
       timeout: 600
 
 session:
+  # Deep-merged OVER attractor-agent-base's session.orchestrator (foundation
+  # composes includes first, then this file; session is deep-merged, later wins
+  # for scalars).  module/source/max_tool_rounds_per_input come from the base.
   orchestrator:
-    module: loop-agent
-    # NOTE: the same-repo `@main` pin is DELIBERATE, and cannot currently be removed.
-    # Unlike tools:/hooks:/providers: sources (resolved at PARSE time against this file's
-    # own directory), a session.orchestrator `source:` is resolved LATE against the
-    # COMPOSED ROOT's base_path -- which in a real amplifier session is the APP's own
-    # bundle directory, not this bundle's.  Measured, from a DTU install of a branch that
-    # made these relative:  "loop-agent: File not found:
-    # .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent" -- and the session
-    # refused to start.  See docs/designs/2026-08-15-composition-fix.md.
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
     config:
-      max_tool_rounds_per_input: 50
       default_command_timeout_ms: 10000
-  context:
-    module: context-simple
-    source: git+https://github.com/microsoft/amplifier-module-context-simple@main
 
 tools:
   - module: tool-apply-patch

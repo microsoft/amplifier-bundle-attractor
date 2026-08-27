@@ -1,0 +1,67 @@
+# Shared skeleton for the four per-provider attractor coding agents.
+#
+# agents/attractor-agent-{anthropic,openai,gemini,copilot}.yaml were ~90%
+# byte-identical copies of each other.  Everything that was IDENTICAL across all
+# four now lives here, once; each agent keeps only its real per-provider residue
+# (its provider module + config, its shell timeouts, its mounted toolset, and --
+# for copilot -- its prompt_profile declaration).
+#
+# HOW THIS COMPOSES (foundation, verified against the installed foundation source):
+#   amplifier_foundation/registry.py:_load_includes --
+#     "Compose: includes first, then current bundle overrides (order matters here)"
+#     result = included[0].compose(included[1])... ; return result.compose(bundle)
+#   amplifier_foundation/bundle/_dataclass.py:Bundle.compose --
+#     "session/spawn: deep merge (nested dicts merged, later wins for scalars)"
+#     result.session = deep_merge(result.session, other.session)
+# So the `session.orchestrator` block declared HERE is the parent layer, and each
+# including agent's own `session.orchestrator.config` is deep-merged OVER it --
+# which is exactly how `default_command_timeout_ms` (and copilot's
+# `prompt_profile`) stay per-agent while `module`/`source`/
+# `max_tool_rounds_per_input` are stated once.
+#
+# This file is NOT a general-purpose behavior: it is the agents' shared base and
+# is included ONLY by agents/attractor-agent-*.yaml.  Do not include it from a
+# pipeline or root composition -- it would install loop-agent as that
+# composition's orchestrator.
+
+bundle:
+  name: attractor-agent-base
+  version: 0.1.0
+  description: >
+    Shared base for the per-provider attractor coding agents: attractor-core,
+    the loop-agent orchestrator (with its load-bearing self-pin), and the
+    context-simple context module.  Tools stay per-agent (see the tools note
+    below) to keep the composed tool order byte-identical.
+
+includes:
+  - bundle: attractor:behaviors/attractor-core
+
+session:
+  orchestrator:
+    module: loop-agent
+    # NOTE: the same-repo `@main` pin is DELIBERATE, and cannot currently be removed.
+    # Unlike tools:/hooks:/providers: sources (resolved at PARSE time against this file's
+    # own directory), a session.orchestrator `source:` is resolved LATE against the
+    # COMPOSED ROOT's base_path -- which in a real amplifier session is the APP's own
+    # bundle directory, not this bundle's.  Measured, from a DTU install of a branch that
+    # made these relative:  "loop-agent: File not found:
+    # .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent" -- and the session
+    # refused to start.  See docs/designs/2026-08-15-composition-fix.md.
+    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+    config:
+      # Identical across all four provider agents.  Per-agent knobs
+      # (default_command_timeout_ms, copilot's prompt_profile) are deep-merged
+      # over this by the including agent.
+      max_tool_rounds_per_input: 50
+  context:
+    module: context-simple
+    source: git+https://github.com/microsoft/amplifier-module-context-simple@main
+
+# NOTE: `tools:` is intentionally NOT deduplicated here.  Every provider agent
+# mounts tool-search, but foundation's merge_module_lists is parent-first, so a
+# tool-search entry declared in this base would compose in BEFORE each agent's
+# tool-filesystem/tool-bash instead of after them -- reordering the composed
+# tools list and changing the tool-schema order presented to the model.  This
+# refactor is pure relocation with ZERO behavioral delta, so tool-search stays
+# in each agent file at its original (last) position.  The dedup win here is the
+# session.orchestrator self-pin + max_tool_rounds_per_input + context-simple.

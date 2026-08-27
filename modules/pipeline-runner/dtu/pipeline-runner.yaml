@@ -67,7 +67,7 @@ provision:
     # Install the attractor CLI (this module). It declares
     # amplifier-module-loop-pipeline as a real dependency, so a plain install
     # pulls the attractor engine.
-    - uv tool install -vv "git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/pipeline-runner"
+    - uv tool install -vv "git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/pipeline-runner"
 
     # Verify the CLI is on PATH
     - attractor doctor
@@ -76,12 +76,12 @@ provision:
     # Fixtures then live at /root/attractor-src/modules/pipeline-runner/tests/fixtures/
     # e.g. cd /root/attractor-src/modules/pipeline-runner/tests/fixtures
     #      attractor run fixture_box_writes_cwd.dot --cwd /root/attractor-out
-    - git clone --depth 1 https://github.com/microsoft/amplifier-bundle-attractor /root/attractor-src
+    - git clone --depth 1 https://github.com/microsoft/amplifier-bundle-dot-runner /root/attractor-src
 
 update:
   cmds:
     # Pull the latest published runner (and its @main deps).
-    - uv tool install --reinstall -vv "git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/pipeline-runner"
+    - uv tool install --reinstall -vv "git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/pipeline-runner"
     - attractor doctor
 
 readiness:

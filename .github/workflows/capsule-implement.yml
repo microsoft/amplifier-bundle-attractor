@@ -281,6 +281,15 @@ jobs:
           ENGINE_SRC="$RUNNER_TEMP/engine-src"
           rm -rf "$ENGINE_SRC"
           mkdir -p "$ENGINE_SRC"
+          # REPO-SPLIT FLIP: modules/ moved to microsoft/amplifier-bundle-dot-runner
+          # (Track B). bundles/ STAYS in this repo (opinionated layer), so it is still
+          # tar'd locally; modules/ is now fetched from the runner repo instead of the
+          # workspace checkout, matching what every other consumer's git+ pin does.
+          RUNNER_ENGINE_SOURCE="https://github.com/microsoft/amplifier-bundle-dot-runner"
+          git clone --quiet --depth 1 "$RUNNER_ENGINE_SOURCE" "$ENGINE_SRC/_runner_src"
+          RUNNER_SHA="$(git -C "$ENGINE_SRC/_runner_src" rev-parse HEAD)"
+          mv "$ENGINE_SRC/_runner_src/modules" "$ENGINE_SRC/modules"
+          rm -rf "$ENGINE_SRC/_runner_src"
           # tar, not `cp -a`: the exclusions apply at ARCHIVE time, so a
           # .venv/.git/__pycache__ that somehow already exists in the tree never
           # enters the snapshot at all rather than being copied in and then
@@ -290,10 +299,10 @@ jobs:
             --exclude='.git' \
             --exclude='__pycache__' \
             --exclude='*.pyc' \
-            modules bundles \
+            bundles \
           | tar -xf - -C "$ENGINE_SRC"
-          echo "engine snapshot: $GITHUB_WORKSPACE/{modules,bundles} -> $ENGINE_SRC/"
-          echo "engine snapshot provenance: base SHA $(git rev-parse HEAD)"
+          echo "engine snapshot: modules <- $RUNNER_ENGINE_SOURCE ; bundles <- $GITHUB_WORKSPACE/bundles -> $ENGINE_SRC/"
+          echo "engine snapshot provenance: base SHA $(git rev-parse HEAD); runner SHA $RUNNER_SHA"
           for required in \
             "modules/pipeline-runner/pyproject.toml" \
             "modules/loop-pipeline/pyproject.toml" \

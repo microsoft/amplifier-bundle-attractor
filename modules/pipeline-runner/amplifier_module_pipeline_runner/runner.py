@@ -354,6 +354,39 @@ async def drive_engine(
         # ``hooks is not None`` guard preserves an explicit caller override.
         effective_hooks = hooks if hooks is not None else getattr(coordinator, "hooks", None)
 
+        # FIX A: thread the MOUNTED provider set into AmplifierBackend so a
+        # bare node (no explicit llm_provider) can resolve the engine default
+        # exactly as the mounted-orchestrator path does (FIX 1,
+        # `_resolve_default_provider` below). Before this fix, drive_engine
+        # constructed AmplifierBackend with `default_provider`/
+        # `mounted_providers` left at their keyword-only defaults
+        # (`None`/`()`) -- i.e. "0 mounted" from the backend's point of view
+        # -- so EVERY bare node hit the ">1 mounted OR unknown" ambiguous
+        # branch and raised, for any provider, on the standalone-CLI path.
+        #
+        # The mounted set comes from `coordinator.get("providers")` -- the
+        # SAME mount point amplifier_core's own module-execute dispatch reads
+        # (see e.g. `coordinator.get("providers") or {}` in amplifier_core's
+        # `_session_exec.py`/`session.py`), which is how the
+        # mounted-orchestrator path (`PipelineOrchestrator.execute()`)
+        # receives its `providers` argument. It is deliberately NOT
+        # `--provider` (that CLI arg is only a preflight/provenance flag, not
+        # a mount-time provider set) and NOT `resolved_profiles.keys()`
+        # (those are routable profile targets, not what is actually mounted).
+        #
+        # `getattr(coordinator, "get", None)` + a `callable()` guard keeps
+        # bare test-stub coordinators (which may not implement `.get()` at
+        # all -- see e.g. `_StubCoordinator` in
+        # test_provider_preflight_drive_engine.py) safe, mirroring the
+        # `effective_hooks` guard just above; `or {}` covers a real
+        # coordinator whose "providers" mount point is empty or absent.
+        from amplifier_module_loop_pipeline import _resolve_default_provider
+
+        _get_mount_point = getattr(coordinator, "get", None)
+        _mounted_providers = (
+            _get_mount_point("providers") if callable(_get_mount_point) else None
+        ) or {}
+
         backend = AmplifierBackend(
             # The SAME coordinator the preflight above read
             # `config["agents"]` from, and the SAME profiles dict it judged:
@@ -363,6 +396,8 @@ async def drive_engine(
             # Nothing between that call and this one mutates either.
             coordinator=coordinator,
             profiles=resolved_profiles,
+            default_provider=_resolve_default_provider(_mounted_providers),
+            mounted_providers=tuple(_mounted_providers.keys()),
         )
         registry = HandlerRegistry(
             HandlerContext(

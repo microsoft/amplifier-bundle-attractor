@@ -313,7 +313,7 @@ If `attractor` is missing it will say so in the artifact rather than imply a
 pass. You may then ask the user ONCE whether to fetch the public linter via
 `uvx` — **an inbound package fetch; none of their mined data leaves the machine;
 never run it without their yes**. On yes, re-run assemble with
-`--lint-cmd "uvx --from git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/pipeline-runner attractor"`.
+`--lint-cmd "uvx --from git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/pipeline-runner attractor"`.
 If the gates reject the draft it exits non-zero and leaves the verbatim reports
 at `$WORK/demo/$SLUG/gate-report.txt`: re-delegate **ONCE** with those reports
 appended, and if it is still red, do not publish — say so and move on. Then

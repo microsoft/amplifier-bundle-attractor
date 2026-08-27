@@ -87,14 +87,14 @@ asyncio.run(main())
 ### Requirements
 
 ```
-pip install "amplifier-module-loop-pipeline @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline"
+pip install "amplifier-module-loop-pipeline @ git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-pipeline"
 ```
 
 This automatically installs `unified-llm-client` (bundled at `modules/unified-llm-client/`
 in the same repo). If you need `unified-llm-client` standalone:
 
 ```
-pip install "unified-llm-client @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/unified-llm-client"
+pip install "unified-llm-client @ git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/unified-llm-client"
 ```
 
 Plus at least one API key: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY`.

@@ -357,7 +357,7 @@ Requirements: install `amplifier-module-loop-pipeline` from the bundle (this pul
 `unified-llm-client` automatically):
 
 ```
-pip install "amplifier-module-loop-pipeline @ git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline"
+pip install "amplifier-module-loop-pipeline @ git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-pipeline"
 ```
 
 Plus an API key in environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY`).

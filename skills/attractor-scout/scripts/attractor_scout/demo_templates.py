@@ -39,13 +39,13 @@ EXPLAINER_URL = "https://microsoft.github.io/amplifier-bundle-attractor/attracto
 
 #: The single source of the install line, quoted in every demo's panel.
 CLI_INSTALL_CMD = (
-    'uv tool install "git+https://github.com/microsoft/amplifier-bundle-attractor'
+    'uv tool install "git+https://github.com/microsoft/amplifier-bundle-dot-runner'
     '@main#subdirectory=modules/pipeline-runner"'
 )
 
 #: The ASK-FIRST inbound fetch. Never run without an explicit yes (rung 2).
 UVX_LINT_CMD = (
-    "uvx --from git+https://github.com/microsoft/amplifier-bundle-attractor"
+    "uvx --from git+https://github.com/microsoft/amplifier-bundle-dot-runner"
     "@main#subdirectory=modules/pipeline-runner attractor"
 )
 

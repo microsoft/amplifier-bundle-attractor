@@ -6,6 +6,15 @@
 # byte-identical to the source file below this header -- do not hand-edit
 # the body; re-sync from source and re-apply this header instead.
 #
+# LEDGERED DIVERGENCE FROM THE PINNED SOURCE (2026-08-27, engine repo split):
+# the two module `source:` lines in the body below (loop-pipeline and
+# tool-report-outcome) were flipped from amplifier-bundle-attractor to
+# amplifier-bundle-dot-runner -- the engine now installs from its extracted
+# repo. Any future re-sync from the private source at d859909 MUST re-apply
+# this flip (or re-sync from a source commit that already carries it); a
+# blind re-sync would silently revert the engine repo split for BOTH
+# workflows that mount this bundle.
+#
 # UNCONDITIONALLY WIRED INTO BOTH WORKFLOWS (OPENAI_API_KEY exists as a
 # proven repo secret; issue #155 closed the conditional-fallback trap):
 # - .github/workflows/capsule-implement.yml mounts this bundle via
@@ -69,7 +78,7 @@ providers:
 session:
   orchestrator:
     module: loop-pipeline
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-pipeline
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-pipeline
     config:
       profiles:
         anthropic: attractor-agent-anthropic
@@ -92,7 +101,7 @@ tools:
   # From attractor-core (inlined; no namespace include so this file is
   # loadable from any path):
   - module: tool-report-outcome
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/tool-report-outcome
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/tool-report-outcome
 
 hooks:
   - module: hooks-tool-truncation

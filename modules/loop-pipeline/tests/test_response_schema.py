@@ -475,6 +475,8 @@ class TestBackendToolLoopWiring:
             profiles={},
             provider=MagicMock(),
             unified_client=mock_client,
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
 
         await backend._run_with_tool_loop(
@@ -507,6 +509,8 @@ class TestBackendToolLoopWiring:
             profiles={},
             provider=MagicMock(),
             unified_client=mock_client,
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
 
         await backend._run_with_tool_loop(
@@ -537,6 +541,8 @@ class TestBackendToolLoopWiring:
             profiles={},
             provider=MagicMock(),
             unified_client=mock_client,
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
 
         outcome = await backend._run_with_tool_loop(
@@ -573,6 +579,8 @@ class TestBackendToolLoopWiring:
             profiles={},
             provider=MagicMock(),
             unified_client=mock_client,
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
 
         outcome = await backend._run_with_tool_loop(
@@ -605,6 +613,8 @@ class TestBackendSpawnPathFail:
         backend = AmplifierBackend(
             coordinator=coordinator,
             profiles={"anthropic": "attractor-anthropic"},
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
         backend.ensure_spawn_resolved()
 
@@ -629,6 +639,8 @@ class TestBackendSpawnPathFail:
         backend = AmplifierBackend(
             coordinator=coordinator,
             profiles={"anthropic": "attractor-anthropic"},
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
         backend.ensure_spawn_resolved()
 
@@ -660,6 +672,8 @@ class TestDirectProviderBackendWiring:
         backend = DirectProviderBackend(
             provider=MagicMock(),
             unified_client=mock_client,
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
 
         outcome = await backend.run(node, "Extract please", _make_context())
@@ -687,6 +701,8 @@ class TestDirectProviderBackendWiring:
         backend = DirectProviderBackend(
             provider=MagicMock(),
             unified_client=mock_client,
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
 
         await backend.run(node, "Do work", _make_context())
@@ -712,6 +728,8 @@ def _make_tool_loop_backend(text: str) -> "AmplifierBackend":
         profiles={},
         provider=MagicMock(),
         unified_client=_MockUnifiedClient(text=text),
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
 
 
@@ -808,6 +826,8 @@ class TestStructuredOutputVerdictPolicy:
             unified_client=_MockUnifiedClient(
                 text=json.dumps({"assessment": "NOT CONVERGED"})
             ),
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
         node = _make_node_with_schema(_INLINE_SCHEMA_DICT)
         outcome = await backend.run(node, "Judge", _make_context())
@@ -820,6 +840,8 @@ class TestStructuredOutputVerdictPolicy:
             unified_client=_MockUnifiedClient(
                 text=json.dumps({"status": "success", "notes": "converged"})
             ),
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
         outcome2 = await backend2.run(node, "Judge", _make_context())
         assert outcome2.status == StageStatus.SUCCESS
@@ -843,6 +865,8 @@ class TestGoalGateStructuredOutput:
         backend = DirectProviderBackend(
             provider=MagicMock(),
             unified_client=_MockUnifiedClient(text=response_text),
+            default_provider="anthropic",
+            mounted_providers=("anthropic",),
         )
         return PipelineEngine(
             graph=graph,

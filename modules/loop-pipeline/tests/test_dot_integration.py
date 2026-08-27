@@ -210,6 +210,11 @@ def _make_integration_engine(
         provider=object(),  # truthy sentinel
         unified_client=mock_client,
         hooks=hooks,
+        # These fixtures' nodes declare no llm_provider -- a sole mounted
+        # "test" provider makes the engine-resolved default route bare
+        # nodes to it (see _resolve_default_provider/_resolve_node_provider).
+        default_provider="test",
+        mounted_providers=("test",),
     )
 
     # Engine passes itself to handlers via execute(engine=...) — no closure needed.
@@ -841,6 +846,9 @@ def _make_production_engine(
         provider=object(),  # truthy sentinel
         unified_client=mock_client,
         hooks=hooks,
+        # See _make_integration_engine above for the same rationale.
+        default_provider="test",
+        mounted_providers=("test",),
     )
 
     # Engine passes itself to handlers via execute(engine=...) — no closure needed.

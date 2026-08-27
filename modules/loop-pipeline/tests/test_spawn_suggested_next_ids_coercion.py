@@ -143,6 +143,10 @@ def _make_backend(coordinator: _SequencedSpawnCoordinator) -> AmplifierBackend:
     return AmplifierBackend(
         coordinator=coordinator,
         profiles={"anthropic": "attractor-anthropic"},
+        # Sole mounted provider is anthropic -- engine-resolved default routes
+        # bare nodes to it (see _resolve_default_provider/_resolve_node_provider).
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
 
 

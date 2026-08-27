@@ -76,6 +76,38 @@ _STATUS_MAP: dict[str, StageStatus] = {s.value: s for s in StageStatus}
 _MAX_TOOL_LOOP_ROUNDS = 20
 
 
+def _resolve_node_provider(
+    node: Any,
+    default_provider: str | None,
+    mounted_providers: tuple[str, ...],
+) -> str:
+    """Resolve the llm_provider a bare (unannotated) node should run on.
+
+    Shared by both backends (``AmplifierBackend`` and ``DirectProviderBackend``)
+    so the rule lives in exactly one place (EXTENSIONS.md \u00a736 extension):
+
+    1. Explicit ``node.llm_provider`` or ``node.attrs["llm_provider"]`` wins.
+    2. Else the engine-resolved default (the sole mounted provider \u2014 see
+       ``_resolve_default_provider`` in ``__init__.py``).
+    3. Else (no default resolvable \u2014 zero or >1 mounted providers with no
+       explicit declaration) fail loud naming the mounted providers, rather
+       than silently picking one family (the issue #155 anti-pattern this
+       repo explicitly forbids).
+    """
+    explicit = getattr(node, "llm_provider", None) or node.attrs.get("llm_provider")
+    if explicit:
+        return explicit
+    if default_provider is not None:
+        return default_provider
+    raise ValueError(
+        f"Node '{node.id}' declares no llm_provider and the engine cannot pick "
+        f"a default: {len(mounted_providers)} providers are mounted "
+        f"({sorted(mounted_providers) or 'none'}). Set the node's llm_provider, "
+        f"add a model_stylesheet '* {{ llm_provider: <name> }}' default, or mount "
+        f"a single provider. Refusing to silently pick one family (issue #155)."
+    )
+
+
 class AmplifierBackend:
     """CodergenBackend implementation using Amplifier session spawning.
 
@@ -103,6 +135,9 @@ class AmplifierBackend:
         tools: dict[str, Any] | None = None,
         unified_client: Any | None = None,
         hooks: Any | None = None,
+        *,
+        default_provider: str | None = None,
+        mounted_providers: tuple[str, ...] = (),
     ) -> None:
         """Initialize the backend.
 
@@ -116,6 +151,15 @@ class AmplifierBackend:
             unified_client: Optional ``unified_llm.Client`` for LLM calls.
                             Created lazily via ``Client.from_env()`` if not provided.
             hooks: Optional HookRegistry for emitting provider-level events.
+            default_provider: Engine-resolved default llm_provider for bare
+                nodes (the sole mounted provider, or ``None`` when zero or
+                more than one provider is mounted). See
+                ``_resolve_default_provider`` in ``__init__.py`` and
+                ``_resolve_node_provider`` above. Keyword-only and defaulted
+                so existing positional call sites keep compiling.
+            mounted_providers: Names of all mounted providers, used only to
+                compose a clear error message when ``default_provider`` is
+                ``None`` and a bare node needs one.
         """
         self._coordinator = coordinator
         self._profiles = profiles
@@ -123,6 +167,8 @@ class AmplifierBackend:
         self._tools = tools or {}
         self._unified_client = unified_client
         self._hooks = hooks
+        self._default_provider = default_provider
+        self._mounted_providers = mounted_providers
         self._spawn_fn: Any | None = None
         self._spawn_checked = False
         # _thread_transcripts: thread_key → list of (node_id, instruction, output) triples.
@@ -151,6 +197,8 @@ class AmplifierBackend:
         new._provider = self._provider
         new._unified_client = self._unified_client
         new._hooks = self._hooks
+        new._default_provider = self._default_provider
+        new._mounted_providers = self._mounted_providers
 
         # Copy tools: stateless tools are shared across clones (safe); stateful tools
         # (those exposing last_outcome) get an independent shallow copy with last_outcome
@@ -238,7 +286,9 @@ class AmplifierBackend:
             self._spawn_checked = True
 
         # 2. Resolve provider and profile from node attributes
-        provider = node.attrs.get("llm_provider", "anthropic")
+        provider = _resolve_node_provider(
+            node, self._default_provider, self._mounted_providers
+        )
         model = node.attrs.get("llm_model")
         model = await _resolve_concrete_model(provider, model, emit=self._emit)
         reasoning_effort = node.attrs.get("reasoning_effort")
@@ -707,7 +757,9 @@ class AmplifierBackend:
         import unified_llm
 
         client = self._get_or_create_unified_client()
-        provider_name = node.llm_provider or node.attrs.get("llm_provider", "anthropic")
+        provider_name = _resolve_node_provider(
+            node, self._default_provider, self._mounted_providers
+        )
         model = await _resolve_concrete_model(
             provider_name, _resolve_model(node), emit=self._emit
         )

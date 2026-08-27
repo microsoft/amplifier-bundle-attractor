@@ -358,6 +358,10 @@ async def test_backend_default_provider_is_anthropic():
     backend = AmplifierBackend(
         coordinator=coordinator,
         profiles={"anthropic": "attractor-anthropic"},
+        # Sole mounted provider is anthropic -- engine-resolved default routes
+        # the bare node to it (see _resolve_default_provider/_resolve_node_provider).
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
     node = _make_node(attrs={})  # No llm_provider
     await backend.run(node, "task", _make_context())
@@ -374,6 +378,8 @@ async def test_backend_passes_parent_session():
     backend = AmplifierBackend(
         coordinator=coordinator,
         profiles={"anthropic": "attractor-anthropic"},
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
     await backend.run(_make_node(attrs={}), "task", _make_context())
     assert "parent_session" in coordinator.last_spawn_kwargs
@@ -398,6 +404,8 @@ async def test_backend_passes_agent_configs():
     backend = AmplifierBackend(
         coordinator=coordinator,
         profiles={"anthropic": "attractor-anthropic"},
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
     await backend.run(_make_node(attrs={}), "task", _make_context())
     assert coordinator.last_spawn_kwargs.get("agent_configs") == agents
@@ -431,6 +439,8 @@ async def test_recursion_guard_raises_on_missing_session_orchestrator():
     backend = AmplifierBackend(
         coordinator=coordinator,
         profiles={"anthropic": "attractor-anthropic"},
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
     with pytest.raises(ValueError, match="recursion guard"):
         await backend.run(_make_node(attrs={}), "task", _make_context())
@@ -456,6 +466,8 @@ async def test_recursion_guard_raises_on_loop_pipeline_module():
     backend = AmplifierBackend(
         coordinator=coordinator,
         profiles={"anthropic": "attractor-anthropic"},
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
     with pytest.raises(ValueError, match="recursion guard"):
         await backend.run(_make_node(attrs={}), "task", _make_context())
@@ -481,6 +493,8 @@ async def test_recursion_guard_passes_on_non_pipeline_module():
     backend = AmplifierBackend(
         coordinator=coordinator,
         profiles={"anthropic": "attractor-anthropic"},
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
     # Must not raise; spawn must be called normally.
     result = await backend.run(_make_node(attrs={}), "task", _make_context())

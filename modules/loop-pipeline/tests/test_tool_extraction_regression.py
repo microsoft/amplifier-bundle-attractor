@@ -142,6 +142,10 @@ def _make_amplifier_backend(
         profiles={},
         provider=MagicMock(),
         unified_client=unified_client,
+        # Sole mounted provider is anthropic -- engine-resolved default routes
+        # bare nodes to it (see _resolve_default_provider/_resolve_node_provider).
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
 
 
@@ -155,6 +159,8 @@ def _make_direct_backend(
         hooks=None,
         coordinator=None,
         unified_client=unified_client,
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
 
 

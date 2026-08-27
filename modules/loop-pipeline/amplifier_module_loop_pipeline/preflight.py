@@ -25,11 +25,18 @@ still statically, still with no live call and no spawn.
 Scope decisions (deliberate, documented):
 
 - **Declared providers only.**  A node with no ``llm_provider`` uses the
-  engine default (``"anthropic"``, see ``backend.py``).  The implicit default
-  is NOT policed here: policing it would make simulation mode (no providers
-  mounted at all -- a documented degraded mode used heavily by tests) and
-  mock-provider harnesses unreachable.  The CLI separately preflights the
-  default provider's credential before any run (``pipeline-runner cli.py``).
+  engine-resolved default: the SOLE mounted provider when exactly one is
+  mounted, ``None`` (simulation mode) when zero are mounted, and -- when
+  more than one provider is mounted and the node names none -- a fail-loud
+  ``ValueError`` at resolution time rather than a silent pick of one family
+  (see ``_resolve_default_provider()`` in ``__init__.py`` and
+  ``_resolve_node_provider()`` in ``backend.py``).  The implicit default is
+  NOT policed by this *startup* preflight: policing it would make simulation
+  mode (no providers mounted at all -- a documented degraded mode used
+  heavily by tests) and mock-provider harnesses unreachable.  The >1-mounted
+  ambiguous case instead fails loud per-node at resolution time, not here.
+  The CLI separately preflights the default provider's credential before any
+  run (``pipeline-runner cli.py``).
 - **Root graph only.**  Nested ``dot_file`` child pipelines are loaded
   mid-walk by the pipeline handler; their nodes are not visible at startup.
   A child graph's unserviceable declaration fails loud at its first

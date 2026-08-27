@@ -52,12 +52,21 @@ class DirectProviderBackend:
         hooks: Any = None,
         coordinator: Any = None,
         unified_client: Any | None = None,
+        *,
+        default_provider: str | None = None,
+        mounted_providers: tuple[str, ...] = (),
     ) -> None:
         self._provider = provider
         self._tools = tools or {}
         self._hooks = hooks
         self._coordinator = coordinator
         self._unified_client = unified_client
+        # Engine-resolved default llm_provider for bare nodes (sole mounted
+        # provider, or None when zero/multiple are mounted -- see
+        # _resolve_default_provider() below and _resolve_node_provider() in
+        # .backend, the single shared resolution rule for both backends).
+        self._default_provider = default_provider
+        self._mounted_providers = mounted_providers
         # Fidelity state (H-9): track completed nodes and message history
         self._completed_nodes: dict[str, Any] = {}
         self._message_pools: dict[str, list] = {}  # thread_key -> unified_llm Messages
@@ -88,6 +97,7 @@ class DirectProviderBackend:
             _parse_outcome,
             _resolve_concrete_model,
             _resolve_model,
+            _resolve_node_provider,
             _STATUS_MAP,
             _MAX_TOOL_LOOP_ROUNDS,
         )
@@ -104,10 +114,8 @@ class DirectProviderBackend:
             )
 
         # Resolve model, provider, tools, reasoning, max_agent_turns
-        provider_name = (
-            node.llm_provider
-            if hasattr(node, "llm_provider") and node.llm_provider
-            else node.attrs.get("llm_provider", "anthropic")
+        provider_name = _resolve_node_provider(
+            node, self._default_provider, self._mounted_providers
         )
         model = await _resolve_concrete_model(
             provider_name, _resolve_model(node), emit=self._emit
@@ -486,6 +494,20 @@ def _spawn_resolvable_agents(coordinator: Any | None) -> frozenset[str] | None:
     return frozenset(str(name) for name in agents)
 
 
+def _resolve_default_provider(providers: dict[str, Any]) -> str | None:
+    """Engine default llm_provider when a node declares none.
+
+    Sole-mounted -> that provider (provider-agnostic completion of engine intent;
+    also byte-for-byte legacy behavior for shipped single-orchestrator-provider bundles).
+    >1 mounted and unspecified is ambiguous -> None here, resolution sites raise.
+    Zero mounted -> None -> simulation mode.
+    """
+    if not providers:
+        return None
+    names = list(providers.keys())
+    return names[0] if len(names) == 1 else None
+
+
 def _build_backend(
     providers: dict[str, Any],
     tools: dict[str, Any],
@@ -506,6 +528,8 @@ def _build_backend(
        simulation mode).
     """
     first_provider = next(iter(providers.values()), None) if providers else None
+    default_provider = _resolve_default_provider(providers)
+    mounted_names = tuple(providers.keys())
 
     # Try the full spawn-based backend first
     if coordinator is not None:
@@ -541,12 +565,21 @@ def _build_backend(
                 provider=first_provider,
                 tools=tools,
                 hooks=hooks,
+                default_provider=default_provider,
+                mounted_providers=mounted_names,
             )
 
     # Fall back to direct provider tool loop
     if first_provider is not None:
         logger.info("Using DirectProviderBackend (direct provider tool loop)")
-        return DirectProviderBackend(first_provider, tools, hooks, coordinator)
+        return DirectProviderBackend(
+            first_provider,
+            tools,
+            hooks,
+            coordinator,
+            default_provider=default_provider,
+            mounted_providers=mounted_names,
+        )
 
     logger.warning(
         "No providers available \u2014 codergen nodes will run in simulation mode"

@@ -298,6 +298,10 @@ def _make_backend_with_mock_spawn():
     backend = AmplifierBackend(
         coordinator=coordinator,
         profiles={"anthropic": "test-profile"},
+        # Sole mounted provider is anthropic -- engine-resolved default routes
+        # the bare node to it (see _resolve_default_provider/_resolve_node_provider).
+        default_provider="anthropic",
+        mounted_providers=("anthropic",),
     )
     return backend, mock_spawn
 

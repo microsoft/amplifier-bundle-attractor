@@ -2298,10 +2298,15 @@ never a drained budget or a silent substitution):**
 
 **Deliberate scope boundaries (documented in `preflight.py`):**
 
-- **Declared providers only.** A node with no `llm_provider` uses the engine default
-  (`"anthropic"`); the implicit default is NOT policed by the preflight — policing it would make
-  simulation mode (no providers mounted; a documented degraded mode) and mock-provider harnesses
-  unreachable. The CLI separately preflights the default provider's credential (`cli.py`).
+- **Declared providers only.** A node with no `llm_provider` uses the engine-resolved default: the
+  SOLE mounted provider when exactly one is mounted, `None` (simulation mode) when zero are
+  mounted, and — when more than one provider is mounted and the node names none — a fail-loud
+  `ValueError` at resolution time rather than a silent pick of one family (the issue #155
+  anti-pattern; see `_resolve_default_provider()` in `__init__.py` and `_resolve_node_provider()`
+  in `backend.py`). The implicit default is NOT policed by the *startup* preflight — policing it
+  would make simulation mode (no providers mounted; a documented degraded mode) and mock-provider
+  harnesses unreachable — the ambiguous->1-mounted case instead fails loud per-node at resolution
+  time. The CLI separately preflights the default provider's credential (`cli.py`).
 - **Root graph only.** Nested `dot_file` children are loaded mid-walk; their unserviceable
   declarations fail loud at first execution via change 2 rather than at startup.
 - **Injected backends skip the preflight.** `execute(..., backend=...)` is the invoker taking
@@ -2320,12 +2325,21 @@ disease, not a remedy).
 **Implementation locations:**
 
 - `modules/loop-pipeline/amplifier_module_loop_pipeline/preflight.py` — the check + refusal
-- `modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py` — orchestrator wiring (step 5b)
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/__init__.py` — orchestrator wiring (step
+  5b); `_resolve_default_provider()` computes the engine default from the MOUNTED provider set
+  (the only place that set is visible) and `_build_backend()` threads it (plus the mounted-name
+  tuple) into both backend constructors as `default_provider=`/`mounted_providers=`
 - `modules/pipeline-runner/amplifier_module_pipeline_runner/runner.py` — `drive_engine` wiring
-- `modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py` — no-fallback profile resolution
+- `modules/loop-pipeline/amplifier_module_loop_pipeline/backend.py` — no-fallback profile
+  resolution; `_resolve_node_provider()` is the single shared per-node resolution rule (explicit
+  attr > engine default > fail loud), consumed by both `AmplifierBackend.run()` and
+  `AmplifierBackend._run_with_tool_loop()`, and by `DirectProviderBackend.run()` in `__init__.py`
 - `modules/loop-pipeline/tests/test_provider_preflight.py`,
   `modules/pipeline-runner/tests/test_provider_preflight_drive_engine.py` — contract + regression
   tests (including the provider-not-in-profiles class, ruling R5)
+- `modules/loop-pipeline/tests/test_default_provider_resolution.py` — sole-mounted-provider
+  default routing, >1-mounted ambiguity fail-loud, and single-anthropic-mount legacy-behavior
+  regression
 
 *Addendum (2026-08-17): the "never a drained budget" claim above OVERSTATED what change 1
 guaranteed, and issue #195 named the residual. A profile is a STRING naming an agent, and the

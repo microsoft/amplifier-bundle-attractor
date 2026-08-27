@@ -1060,3 +1060,151 @@ async def test_magicmock_coordinator_not_coerced_to_string():
         f"Working directory value is not an absolute path: {wd_value!r} — "
         "MagicMock was coerced to string instead of falling back to os.getcwd()"
     )
+
+
+# ---------------------------------------------------------------------------
+# Opt-in prompt_profile fallback (FIX #0): multi-family providers like
+# "github-copilot" don't map to a known KNOWN_PROVIDERS family via
+# canonical_provider(), so an agent can declare which TOOLSET prompt it
+# mounts via prompt_profile, instead of loop-agent raising.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_with_prompt_profile_loads_declared_toolset_prompt():
+    """Unknown provider + prompt_profile: anthropic -> loads system-anthropic.md, no raise.
+
+    This is the core FIX #0 behavior: "github-copilot" does not canonicalize
+    (canonical_provider returns None), but the agent declares prompt_profile:
+    anthropic because it mounts the same edit_file toolset as the anthropic
+    agent. loop-agent must resolve context/system-anthropic.md and must NOT
+    raise.
+    """
+    context = MagicMock()
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={
+            "prompt_profile": "anthropic",
+            "max_tool_rounds_per_input": 1,
+        },
+    )
+    # "github-copilot" is not a KNOWN_PROVIDERS family -> canonical_provider()
+    # returns None -> prompt_profile must be consulted instead of raising.
+    await orch.execute(
+        "hello", context, {"github-copilot": provider}, {}, hooks
+    )
+
+    request = provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+    assert "Anthropic Profile" in system_content or "Claude Code" in system_content, (
+        f"prompt_profile did not load the declared toolset prompt. "
+        f"Got: {system_content[:200]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_without_prompt_profile_still_raises():
+    """Unknown provider + no prompt_profile (and no explicit base) still raises loud.
+
+    prompt_profile is opt-in: an unknown provider that does NOT declare one
+    must keep failing loud rather than silently picking a base.
+    """
+    context = MagicMock()
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={"max_tool_rounds_per_input": 1},  # no prompt_profile set
+    )
+    with pytest.raises(RuntimeError, match="not one of the known providers"):
+        await orch.execute(
+            "hello", context, {"github-copilot": provider}, {}, hooks
+        )
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_file_overrides_prompt_profile():
+    """Explicit system_prompt_file still overrides prompt_profile (precedence 2 > 4).
+
+    prompt_profile sits at the same layer as the provider-name default: it is
+    only consulted when there is no explicit system_prompt / system_prompt_file
+    AND canonical_provider() returns None. An explicit system_prompt_file must
+    win outright, even when prompt_profile is also set.
+    """
+    FILE_SENTINEL = "SYSTEM-PROMPT-FILE-WINS-OVER-PROFILE"
+    context = MagicMock()
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        prompt_file = os.path.join(tmp, "base.md")
+        with open(prompt_file, "w", encoding="utf-8") as f:
+            f.write(f"# Explicit File\n\n{FILE_SENTINEL}")
+
+        orch = AgentOrchestrator(
+            coordinator=coordinator,
+            config={
+                "system_prompt_file": prompt_file,
+                # Deliberately also set, to prove it's ignored when
+                # system_prompt_file is present.
+                "prompt_profile": "anthropic",
+                "max_tool_rounds_per_input": 1,
+            },
+        )
+        await orch.execute(
+            "hello", context, {"github-copilot": provider}, {}, hooks
+        )
+
+        request = provider.complete.call_args[0][0]
+        system_content = request.messages[0].content
+        assert FILE_SENTINEL in system_content, (
+            f"system_prompt_file not used. Got: {system_content[:200]}"
+        )
+        assert "Anthropic Profile" not in system_content, (
+            "prompt_profile leaked through despite system_prompt_file being set"
+        )
+
+
+@pytest.mark.asyncio
+async def test_known_provider_path_unchanged_by_prompt_profile():
+    """A known provider (anthropic) still resolves its own default, ignoring
+    prompt_profile even if (incorrectly) set -- prompt_profile is only
+    consulted when canonical_provider() returns None (precedence 3 beats 4)."""
+    context = MagicMock()
+    provider = AsyncMock()
+    provider.complete = AsyncMock(return_value=_text_response("done"))
+    hooks = _make_hooks()
+    coordinator = MagicMock()
+    coordinator.register_capability = MagicMock()
+
+    orch = AgentOrchestrator(
+        coordinator=coordinator,
+        config={
+            "prompt_profile": "gemini",  # must be ignored: anthropic canonicalizes
+            "max_tool_rounds_per_input": 1,
+        },
+    )
+    await orch.execute("hello", context, {"anthropic": provider}, {}, hooks)
+
+    request = provider.complete.call_args[0][0]
+    system_content = request.messages[0].content
+    assert "Anthropic Profile" in system_content or "Claude Code" in system_content, (
+        f"known-provider default not loaded; prompt_profile wrongly took over. "
+        f"Got: {system_content[:200]}"
+    )

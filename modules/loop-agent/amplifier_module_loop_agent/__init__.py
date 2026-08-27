@@ -150,7 +150,7 @@ class AgentOrchestrator:
     def _resolve_base_prompt(
         self, config_dict: dict[str, Any], provider_name: str
     ) -> str:
-        """Resolve the Layer-1 base prompt with a 4-step precedence.
+        """Resolve the Layer-1 base prompt with a 5-step precedence.
 
         Precedence (first that applies wins):
           1. explicit ``system_prompt`` in config        -> used as-is
@@ -159,11 +159,25 @@ class AgentOrchestrator:
              resolver), where ``<provider>`` is the canonical provider derived
              from the agent's own mounted provider — the same provider used for
              the actual completion, so the base always matches the model called.
-          4. unknown provider, or a configured/default file that does not exist
-             -> a CLEAR, ACTIONABLE error (never a silent wrong/empty base).
+          4. opt-in ``prompt_profile`` in config, consulted ONLY when the
+             provider name does not map to a known family (step 3 is None) ->
+             ``context/system-<prompt_profile>.md``, loaded the same way as
+             ``system_prompt_file``. This is NOT a model/provider guess: the
+             ``system-<name>.md`` files are TOOLSET prompts (anthropic =
+             edit_file toolset, openai = apply_patch toolset, gemini = web-tools
+             toolset), not model-family prompts. A multi-family provider (e.g.
+             "github-copilot", which can run several underlying model families)
+             cannot be resolved from its provider name alone, so its agent
+             declares which toolset prompt matches what it actually MOUNTS
+             (e.g. ``prompt_profile: anthropic`` when it mounts the same
+             tool-filesystem/tool-bash/tool-search set as the anthropic agent).
+          5. unknown provider with no declared ``prompt_profile``, or a
+             configured/default file that does not exist -> a CLEAR, ACTIONABLE
+             error (never a silent wrong/empty base).
 
-        Explicit config (1, 2) always overrides the provider default (3), so a
-        non-coding agent (e.g. attractor-expert) can pin its own persona base.
+        Explicit config (1, 2) always overrides the provider default (3) and the
+        opt-in profile (4), so a non-coding agent (e.g. attractor-expert) can pin
+        its own persona base.
 
         See docs/designs/layer-1-profile-owned-system-prompt.md §Mechanism.
         """
@@ -172,25 +186,40 @@ class AgentOrchestrator:
         if existing:
             return existing
 
-        # (2) explicit system_prompt_file, else (3) provider default.
+        # (2) explicit system_prompt_file, else (3) provider default, else (4)
+        # opt-in prompt_profile.
         spf = config_dict.get("system_prompt_file", "")
         if not spf:
             canonical = canonical_provider(provider_name)
             if canonical is None:
-                # (4) unknown provider — do NOT guess a base; fail loud and clear.
-                raise RuntimeError(
-                    f"loop-agent cannot select a Layer-1 base prompt: no "
-                    f"system_prompt or system_prompt_file is configured, and the "
-                    f"provider {provider_name!r} is not one of the known providers "
-                    f"{KNOWN_PROVIDERS} (so no default context/system-<provider>.md "
-                    f"applies). Set an explicit system_prompt_file in "
-                    f"session.orchestrator.config, or run under a known provider. "
-                    f"See docs/designs/layer-1-profile-owned-system-prompt.md."
-                )
-            spf = f"context/system-{canonical}.md"
+                # (4) opt-in prompt_profile: the agent declares which toolset
+                # prompt it mounts, for providers whose name doesn't map to a
+                # known family (e.g. "github-copilot").
+                declared = config_dict.get("prompt_profile")
+                if not declared:
+                    # (5) unknown provider, no declared profile — do NOT guess
+                    # a base; fail loud and clear.
+                    raise RuntimeError(
+                        f"loop-agent cannot select a Layer-1 base prompt: no "
+                        f"system_prompt or system_prompt_file is configured, and "
+                        f"the provider {provider_name!r} is not one of the known "
+                        f"providers {KNOWN_PROVIDERS} (so no default "
+                        f"context/system-<provider>.md applies). Set an explicit "
+                        f"system_prompt_file in session.orchestrator.config, run "
+                        f"under a known provider, or — for multi-family "
+                        f"providers like 'github-copilot' that mount an existing "
+                        f"toolset — set prompt_profile to the toolset prompt "
+                        f"this agent's mounted tools match, e.g. "
+                        f"prompt_profile: anthropic. "
+                        f"See docs/designs/layer-1-profile-owned-system-prompt.md."
+                    )
+                spf = f"context/system-{declared}.md"
+            else:
+                spf = f"context/system-{canonical}.md"
 
-        # (2)/(3) load via the robust, CWD-independent resolver. A missing file
-        # raises a clear FileNotFoundError naming the value and path tried — (4).
+        # (2)/(3)/(4) load via the robust, CWD-independent resolver. A missing
+        # file raises a clear FileNotFoundError naming the value and path
+        # tried — (5).
         return _resolve_system_prompt_file(spf).read_text(encoding="utf-8")
 
     async def _execute_session(

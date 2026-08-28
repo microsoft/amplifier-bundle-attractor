@@ -30,7 +30,22 @@ build-backend = "hatchling.build"
 package = true
 
 [tool.uv.sources]
-amplifier-unified-llm-client = { path = "../unified-llm-client" }
+# NOTE: no local `path` override for amplifier-unified-llm-client here
+# (there used to be one). worker-parity-kit (below) transitively depends on
+# amplifier-module-loop-pipeline -> amplifier-unified-llm-client, both
+# declared (in amplifier-bundle-dot-runner, the kit's home repo) via git+
+# URLs pointing at that same repo. `[tool.uv.sources]` entries are honored
+# only for a package's OWN direct dependency edge, not for a same-named
+# package required transitively by a different project -- so a local path
+# override here would only redirect loop-agent's own edge, leaving the
+# kit's transitive edge on the git+ URL, and uv refuses to resolve one
+# package name to two different sources. Letting loop-agent's own
+# unified-llm-client dependency resolve via its already-declared git+ URL
+# (unmodified, no override) makes it match the kit's transitive chain
+# exactly. This has no effect on what code loop-agent's OWN tests actually
+# import: `pythonpath` below still points `../unified-llm-client` first, so
+# the in-repo source tree is what's imported regardless of which copy `uv
+# sync` resolves/installs into this module's own venv.
 
 [tool.hatch.build.targets.wheel]
 packages = ["amplifier_module_loop_agent"]
@@ -43,6 +58,29 @@ dev = [
     "amplifier-core",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.0.0",
+    # worker-parity-kit: executed tests pinning the dot-runner worker seam
+    # (WorkerHarness protocol, M1-M3 + TARGET suite) across orchestrator
+    # workers -- see modules/loop-agent/tests/test_worker_parity.py and the
+    # kit's own README ("Why this exists") in amplifier-bundle-dot-runner.
+    # Direct git reference (mirrors this same dependency-group's sibling-repo
+    # pattern; no local path override exists because the kit's home repo is
+    # not checked out alongside this one).
+    "amplifier-worker-parity-kit @ git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/worker-parity-kit",
+    # Listed explicitly (not just pulled in transitively via the kit above)
+    # to pin this dependency-group's own edge to the same git+ URL/ref the
+    # kit's transitive edge onto this package already resolves to -- NOT
+    # because of a `[tool.uv.sources]` redirect: that table (above, on
+    # `[tool.uv.sources]`) is empty now, by design (see the NOTE there).
+    # With no override, this package resolves via its declared git+ URL,
+    # byte-identical to the kit's own transitive chain into the same
+    # repo/subdirectory, so there is only ever one source for the name --
+    # nothing for uv to conflict on. This has no bearing on what this
+    # module's own tests actually import either way: `pythonpath` below
+    # still points `../unified-llm-client` first, so the in-repo source
+    # tree wins over whatever `uv sync` installs into this module's venv
+    # (empirically verified: suite green and hermetic with the override
+    # removed).
+    "amplifier-module-loop-pipeline @ git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-pipeline",
 ]
 
 

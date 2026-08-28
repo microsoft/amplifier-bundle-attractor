@@ -55,6 +55,20 @@ package = true
 # bump reaches installed users; see compat.py's module docstring.
 override-dependencies = [
     "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation@4490bf5f3cf9e5a7829365e84c318a7fd9db7e3d",
+    # amplifier-unified-llm-client pin (CI-only, same root-only scoping as the
+    # foundation pin above): loop-agent (test-only path dep below, issue #285)
+    # declares this package via its own git+ URL into amplifier-bundle-dot-runner
+    # (no local-path override -- see modules/loop-agent/pyproject.toml), while
+    # loop-pipeline's own compat-copy (path-sourced below) declares it via a
+    # local path into THIS repo's modules/unified-llm-client. Two different
+    # sources for one package name is exactly the conflict `[tool.uv.sources]`
+    # cannot repair here -- it only redirects a *direct* dependency of the
+    # project declaring it, and neither conflicting edge belongs to this
+    # project. override-dependencies is root-scoped and package-name-keyed
+    # regardless of which project declared the edge, so it collapses both
+    # edges onto one target when this project resolves as root, without
+    # touching either module's own dependency declaration.
+    "amplifier-unified-llm-client @ git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/unified-llm-client",
 ]
 
 [tool.uv.sources]

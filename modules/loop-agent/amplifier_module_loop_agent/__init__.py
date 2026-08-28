@@ -344,6 +344,16 @@ class AgentOrchestrator:
                 follow_up_queue=self._follow_up_queue,
                 coordinator=self._coordinator,
                 provider_name=provider_name,
+                # support#497: the mounted context (Orchestrator protocol's
+                # `context` param). For a fidelity="full" spawn, foundation's
+                # spawn path seeds prior-turn messages onto THIS session's own
+                # mounted context (child_context.set_messages(parent_messages))
+                # BEFORE execute() is ever called -- see
+                # AgentSession._hydrate_history_from_context, which reads it
+                # back once, before turn 1, so the seeded history actually
+                # reaches _convert_history_to_messages (and thus the provider
+                # request) instead of sitting inert on the mount.
+                context=context,
             )
             # Register subagent depth on coordinator for tool-delegate
             self._coordinator.register_capability(

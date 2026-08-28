@@ -3,6 +3,7 @@
 
 ## Verification checklist
 
+- [ ] Checked what the strongdm/attractor nlspec says about this (cite section) — or N/A with reason
 - [ ] Unit tests pass (`pytest modules/loop-pipeline/`)
 - [ ] Live pipeline run exercising changed code path — required when touching `engine.py` or any handler; paste `events.jsonl` analysis or test-run output in the section below
 - [ ] AGENTS.md reviewed; repo-specific gates met

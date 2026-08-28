@@ -68,9 +68,38 @@ This ecosystem has five documented recurring bug species: incomplete assembly, l
 - **Designing a change**: read [`docs/designs/RECURRING-BUG-CLASSES.md`](docs/designs/RECURRING-BUG-CLASSES.md).
 - **Reviewing a PR**: read [`docs/designs/CODE-REVIEW-CHECKLIST.md`](docs/designs/CODE-REVIEW-CHECKLIST.md).
 
-## Spec authority
+## Before you design, file, or submit
 
-When behavior is ambiguous, the canonical spec at `github.com/strongdm/attractor` is authoritative. Our implementation extends but does not contradict the spec. If you find yourself "fixing" something that is spec-conformant, stop and check `specs/` first.
+Before any design proposal, issue report, or code change touching engine or
+spec-adjacent behavior, ask: **"Did you check what the strongdm/attractor
+nlspec has to say about this first?"** This is "Walk upstream first"
+(`PRINCIPLES.md`) made explicit as a gate:
+
+1. **Check the nlspec first.** The canonical, pinned copies and the
+   compatibility doctrine now live in
+   [`amplifier-bundle-dot-runner`](https://github.com/microsoft/amplifier-bundle-dot-runner)
+   (`specs/canonical/`) — this repo's own `specs/` copy is a temporary
+   compat window, not the source of truth. Cite the section in your issue,
+   PR, or design doc.
+2. **Conform-fixes are easy yeses.** If the nlspec clearly defines the
+   behavior and we implement it wrong or not at all, that's a "yes, fix it"
+   (recent examples: support#497, support#498 — both spec-behavior holes,
+   both sailed through review).
+3. **Need it at all?** If the nlspec is silent, ask whether the need can be
+   met *outside* the engine first: an extension/wrapper, pre/post-processing,
+   or composing pipelines into something larger. Prefer those.
+4. **True extensions/divergences face the hard bar.**
+   [`SPEC_CONFORMANCE.md`](https://github.com/microsoft/amplifier-bundle-dot-runner/blob/main/SPEC_CONFORMANCE.md)'s
+   Compatibility doctrine (including rule 5, "Anchoring survives scope")
+   plus a ledgered
+   [`specs/EXTENSIONS.md`](https://github.com/microsoft/amplifier-bundle-dot-runner/blob/main/specs/EXTENSIONS.md)
+   entry — both authoritative in `amplifier-bundle-dot-runner` now — are
+   required. Not the wild-west; "the spec didn't anticipate this shape"
+   files an entry, it doesn't skip one.
+
+When behavior is ambiguous, the canonical spec is authoritative. Our
+implementation extends but does not contradict it. If you find yourself
+"fixing" something that is spec-conformant, stop and check first.
 
 ## Dependency awareness rule
 

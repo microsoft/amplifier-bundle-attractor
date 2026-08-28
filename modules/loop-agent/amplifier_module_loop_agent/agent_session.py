@@ -132,6 +132,7 @@ class AgentSession:
         coordinator: Any = None,
         provider_name: str = "",
         model: str = "",
+        context: Any = None,
     ) -> None:
         self._config = config
         self._provider = provider
@@ -164,6 +165,17 @@ class AgentSession:
         # every process_input() so a prior invocation's ending can never
         # classify this one's lifecycle status.
         self._termination_reason = "natural"
+        # support#497: the Orchestrator protocol's ``context`` argument (the
+        # PARENT session's mounted ContextManager). For a fidelity="full" spawn,
+        # foundation's spawn path seeds prior-turn messages onto THIS session's
+        # own mounted context via ``set_messages`` BEFORE execute() is ever
+        # called (see AgentOrchestrator._execute_session, which threads it
+        # through here). Stored, not consumed yet -- ``_hydrate_history_from_context``
+        # reads it back exactly once, from the top of the first process_input()
+        # call, so seeded history always precedes turn 1's own UserTurn. See
+        # that method for the full mechanism and the system-message decision.
+        self._context = context
+        self._context_hydrated = False
 
     # ------------------------------------------------------------------
     # Streaming detection
@@ -344,6 +356,15 @@ class AgentSession:
         execution, and returns the final text response.  The loop exits
         on natural completion (no tool calls), round limit, or turn limit.
         """
+        # support#497: hydrate seeded cross-node history from the mounted
+        # context BEFORE anything else this invocation does -- in particular
+        # before the current prompt's own UserTurn is appended below, so
+        # seeded history always precedes it.  Runs at most once per session
+        # (see _hydrate_history_from_context's own guard), so a session
+        # reused across several process_input() calls (follow-ups, steering,
+        # resume_with_input) never re-seeds on turn 2+.
+        await self._hydrate_history_from_context()
+
         # EXTENSIONS.md 35: per-invocation reset -- a prior invocation's
         # terminal condition must never classify this one.
         self._termination_reason = "natural"
@@ -678,6 +699,127 @@ class AgentSession:
             project_docs=project_docs,
             user_override=user_override,
         )
+
+    # ------------------------------------------------------------------
+    # Seeded cross-node history (support#497)
+    # ------------------------------------------------------------------
+
+    async def _hydrate_history_from_context(self) -> None:
+        """Replay prior-turn messages seeded on the mounted context, once.
+
+        THE BUG (support#497): for a ``fidelity="full"`` spawn, the
+        loop-pipeline engine's backend carries a thread's prior (instruction,
+        output) exchanges and hands them to foundation's spawn path, which
+        seeds them onto THIS session's own mounted context via
+        ``child_context.set_messages(parent_messages)`` -- BEFORE this
+        orchestrator's ``execute()`` is ever called
+        (``amplifier_foundation.bundle._prepared.PreparedBundle.spawn``).
+        AgentSession, however, keeps its own independent ``SessionHistory``
+        and never read that mounted context back -- ``coordinator.get("context")``
+        / ``context.get_messages()`` appeared nowhere -- so the seeded messages
+        were vestigial: they reached the mount, never the provider request
+        built by ``_convert_history_to_messages``. Live evidence from the
+        ticket: "Restored 2 messages to context" followed by "Final message
+        count for API: 1".
+
+        THE FIX: read them back here and replay them into ``self._history``
+        as ordinary turns, so they flow through the exact same
+        ``_convert_history_to_messages`` path every other turn does.
+
+        Runs AT MOST ONCE per session (``self._context_hydrated`` guard) --
+        called from the top of every ``process_input()``, but a session
+        persists across multiple calls (follow-ups, steering,
+        ``resume_with_input``) and seeded history belongs only at turn 1,
+        before the first prompt's own ``UserTurn``.
+
+        System-message handling: loop-agent rebuilds its OWN 5-layer system
+        prompt fresh on EVERY request (spec PROV-002) and
+        ``_convert_history_to_messages`` already strips ANY ``role="system"``
+        message out of the assembled list before prepending that fresh one
+        (see below) -- a replayed system message would be silently discarded
+        downstream regardless. Skipping it HERE instead is the honest
+        choice: it documents the decision at the point it's made, and avoids
+        burning a ``SessionHistory`` slot (and ``max_turns`` / turn-count
+        budget) on a turn that could never surface to the model.
+
+        Honest failure: a context present but whose ``get_messages()`` raises,
+        or returns something other than a list, is logged as a loud warning
+        and treated as "nothing to replay" -- degraded continuity, never a
+        crashed node. A per-message shape that cannot be safely replayed
+        (missing/unknown role, non-dict entry) is skipped individually and
+        counted, rather than fabricated or allowed to raise.
+        """
+        if self._context_hydrated:
+            return
+        self._context_hydrated = True  # exactly once, success or failure
+
+        context = self._context
+        if context is None or not hasattr(context, "get_messages"):
+            return
+
+        try:
+            messages = await context.get_messages()
+        except Exception:
+            logger.warning(
+                "loop-agent: context.get_messages() raised while seeding "
+                "cross-node history (fidelity='full' continuity) -- "
+                "proceeding without seeded history for this node.",
+                exc_info=True,
+            )
+            return
+
+        if not isinstance(messages, list) or not messages:
+            return
+
+        seeded = 0
+        skipped = 0
+        for message in messages:
+            if not isinstance(message, dict):
+                skipped += 1
+                continue
+            role = message.get("role")
+            content = message.get("content", "")
+            if not isinstance(content, str):
+                content = str(content)
+            if role == "system":
+                # Own Layer-1 framing is rebuilt fresh every request and any
+                # stored system message is stripped before the request is
+                # built (see _convert_history_to_messages) -- replaying it
+                # would be inert at best. Skip explicitly rather than
+                # silently round-tripping a turn that can never surface.
+                continue
+            if role == "user":
+                self._history.append(UserTurn(content=content))
+                seeded += 1
+            elif role == "assistant":
+                # Only text is replayed -- never a seeded message's tool_calls
+                # (if present): this session has no correlated ToolResultsTurn
+                # to pair with a replayed tool call, and fabricating one would
+                # hand the provider a dangling tool_use with no result.
+                self._history.append(AssistantTurn(content=content))
+                seeded += 1
+            else:
+                # tool-role (or any other/unknown role) entries cannot be
+                # safely replayed without a correlated tool_call_id from a
+                # matching AssistantTurn in THIS session's own history --
+                # never fabricate one. Degraded continuity, not a crash.
+                skipped += 1
+
+        if skipped:
+            logger.warning(
+                "loop-agent: %d seeded context message(s) could not be "
+                "replayed into session history (unsupported role/shape); "
+                "%d replayed.",
+                skipped,
+                seeded,
+            )
+        if seeded:
+            logger.info(
+                "loop-agent: seeded %d prior-turn message(s) from the "
+                "mounted context into session history before turn 1 "
+                "(fidelity='full' continuity, support#497).",
+                seeded,
+            )
 
     # ------------------------------------------------------------------
     # History -> Messages conversion

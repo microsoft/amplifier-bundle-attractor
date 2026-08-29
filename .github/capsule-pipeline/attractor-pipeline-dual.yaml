@@ -15,6 +15,16 @@
 # blind re-sync would silently revert the engine repo split for BOTH
 # workflows that mount this bundle.
 #
+# FURTHER LEDGERED DIVERGENCE (P4, second extraction consumer flip): the
+# loop-agent orchestrator source (3x, one per child agent) and the three
+# hooks: sources (hooks-tool-truncation, hooks-pipeline-progress,
+# hooks-pipeline-observability) were likewise flipped from
+# amplifier-bundle-attractor to amplifier-bundle-dot-runner -- those modules
+# moved there too (DESIGN-worker-registry-core-split.md P2). A run-level
+# `worker: "spawn"` was also added to the pipeline orchestrator config,
+# citing dot-runner EXTENSIONS.md §40 (see the inline comment below). A
+# future re-sync MUST re-apply both flips and the worker declaration.
+#
 # UNCONDITIONALLY WIRED INTO BOTH WORKFLOWS (OPENAI_API_KEY exists as a
 # proven repo secret; issue #155 closed the conditional-fallback trap):
 # - .github/workflows/capsule-implement.yml mounts this bundle via
@@ -80,6 +90,10 @@ session:
     module: loop-pipeline
     source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-pipeline
     config:
+      # Explicit worker-selection declaration (dot-runner EXTENSIONS.md §40).
+      # "spawn" is the reserved sentinel reaching the loop-agent child agents
+      # below via the profiles map -- declared rather than left implicit.
+      worker: "spawn"
       profiles:
         anthropic: attractor-agent-anthropic
         openai: attractor-agent-openai
@@ -105,11 +119,11 @@ tools:
 
 hooks:
   - module: hooks-tool-truncation
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/hooks-tool-truncation
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/hooks-tool-truncation
   - module: hooks-pipeline-progress
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/hooks-pipeline-progress
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/hooks-pipeline-progress
   - module: hooks-pipeline-observability
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/hooks-pipeline-observability
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/hooks-pipeline-observability
 
 # --- Child agents (one per provider, spawned by the pipeline engine) ---------
 # IMPORTANT: inline session.orchestrator is REQUIRED (loop-pipeline recursion
@@ -122,7 +136,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-agent
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 120000
@@ -133,7 +147,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-agent
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 10000
@@ -155,7 +169,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-agent
         config:
           max_tool_rounds_per_input: 50
           default_command_timeout_ms: 10000

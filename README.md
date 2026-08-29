@@ -77,6 +77,25 @@ The agent can generate pipelines on-the-fly or use any of the included examples.
 
 **4. Or run an example directly from the CLI:**
 
+**Two CLIs exist, and they are not the same thing.** `attractor` is this
+bundle's opinionated wrapper -- it auto-loads the attractor pipeline bundle
+(`loop-agent` default worker, the three-provider profile map, capsule-lane
+integration) so `attractor run`/`attractor lint`/`attractor resume` keep
+working exactly as documented below. It ships today from
+[`amplifier-bundle-dot-runner`](https://github.com/microsoft/amplifier-bundle-dot-runner)'s
+`pipeline-runner` module as a **deprecation-window** entry point (prints a
+one-line stderr notice) -- the engine-native default it will eventually fall
+back to is deliberately NOT this bundle. The engine's OWN command,
+`dot-runner`, has zero reach into this repo: engine-native defaults
+(`direct` worker, provider bootstrap from env keys), no attractor bundle,
+no capsule lanes. Use `attractor` for the opinionated coding-agent
+experience this README describes; use `dot-runner` if you want the bare
+engine with no pattern-layer opinions. This bundle does not ship its own
+`attractor` console script (that would collide with the one above during
+the deprecation window) -- only bundle-level wiring (the explicit `worker:
+"spawn"` + `profiles` declarations described under
+[Backend Selection / Worker Selection](#backend-selection--worker-selection)).
+
 The `attractor run` CLI executes a `.dot` with no config file. The
 `bug-fix` / `refactor` / `test-gen` [practical examples](examples/pipelines/practical/)
 ship a runnable sample target, so they work walk-up. From a clone of this repo:
@@ -523,13 +542,29 @@ amplifier-bundle-attractor/
 | `tool-dashboard-query` | tool | Pipeline status queries and management via HTTP API |
 | `tool-pipeline-status` | tool | Returns pipeline execution state |
 
-### Backend Selection
+### Backend Selection / Worker Selection
 
-The pipeline orchestrator auto-selects the execution backend:
+The pipeline orchestrator (`loop-pipeline`, now living in
+[`amplifier-bundle-dot-runner`](https://github.com/microsoft/amplifier-bundle-dot-runner))
+resolves ONE adapter class (`AmplifierBackend`) that internally dispatches
+per node to a named **worker** (dot-runner `specs/EXTENSIONS.md` §40):
 
-1. If `session.spawn` capability is registered --> `AmplifierBackend` (full sub-sessions per node, tools included)
-2. Else if a provider is available --> `DirectProviderBackend` (per-node **agentic tool loop** via `unified_llm` -- whatever tools are mounted are passed through, and `unified-llm-client` drives the call -> tool -> call rounds internally. Node tools are only absent when the host mounts none, e.g. the bare programmatic path above. Requires an explicit `llm_model` on every node; there is no default)
-3. Otherwise --> simulation mode (for testing)
+1. The node's own `worker=` attribute, if set.
+2. The run-level default -- this bundle's pipeline orchestrators declare it
+   EXPLICITLY as `config.worker: "spawn"` (see `bundles/attractor-pipeline.yaml`,
+   `agents/pipeline-runner.yaml`, `bundle.md`) rather than relying on
+   capability-fallback.
+3. Capability fallback (unchanged): `"spawn"` if `session.spawn` resolved for
+   this run, else `"direct"`.
+
+`"spawn"` reaches a hosted child-agent session (full sub-session per node,
+tools included) via the `profiles` map, spawning `loop-agent` by default in
+this bundle. `"direct"` is a single in-process agentic tool loop against a
+provider with no hosted session -- requires an explicit `llm_model` on every
+node; there is no default. See the
+[DOT Authoring Guide's Worker Selection section](docs/DOT-AUTHORING-GUIDE.md#worker-selection)
+for the full picture, including `llm_provider` (model family) vs `worker`
+(execution mechanism).
 
 </details>
 

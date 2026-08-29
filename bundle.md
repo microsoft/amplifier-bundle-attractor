@@ -67,7 +67,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-agent
         config:
           default_command_timeout_ms: 120000
   attractor-profile-openai:
@@ -75,7 +75,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-agent
         config:
           default_command_timeout_ms: 10000
   attractor-profile-gemini:
@@ -83,7 +83,7 @@ agents:
     session:
       orchestrator:
         module: loop-agent
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-agent
         config:
           default_command_timeout_ms: 10000
   attractor-pipeline-runner:
@@ -93,6 +93,12 @@ agents:
         module: loop-pipeline
         source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-pipeline
         config:
+          # Explicit worker-selection declaration (dot-runner EXTENSIONS.md
+          # §40). "spawn" is the reserved sentinel the adapter recognizes for
+          # the hosted session.spawn path that reaches the loop-agent child
+          # agents below via the profiles map -- declared here rather than
+          # left to capability-fallback.
+          worker: "spawn"
           profiles:
             anthropic: attractor-agent-anthropic
             openai: attractor-agent-openai

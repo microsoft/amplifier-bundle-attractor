@@ -46,11 +46,11 @@ tools:
 
 hooks:
   - module: hooks-tool-truncation
-    source: ../modules/hooks-tool-truncation
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/hooks-tool-truncation
   - module: hooks-pipeline-progress
-    source: ../modules/hooks-pipeline-progress
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/hooks-pipeline-progress
   - module: hooks-pipeline-observability
-    source: ../modules/hooks-pipeline-observability
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/hooks-pipeline-observability
 
 agents:
   # ONE expert, ONE definition.  agents/attractor-expert.md carries its own metadata,

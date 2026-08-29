@@ -1,4 +1,5 @@
 """Live end-to-end DOT pipeline test against real APIs."""
+
 import asyncio
 import sys
 import tempfile
@@ -62,18 +63,20 @@ digraph MultiProvider {
 }
 """
 
+
 async def run_pipeline(name, dot_source):
-    from amplifier_module_loop_pipeline.dot_parser import parse_dot
-    from amplifier_module_loop_pipeline.transforms import apply_transforms
-    from amplifier_module_loop_pipeline.validation import validate_or_raise
+    import unified_llm
+    from amplifier_module_loop_pipeline.backend import AmplifierBackend
     from amplifier_module_loop_pipeline.context import PipelineContext
+    from amplifier_module_loop_pipeline.dot_parser import parse_dot
     from amplifier_module_loop_pipeline.engine import PipelineEngine
     from amplifier_module_loop_pipeline.handlers import HandlerRegistry
-    from amplifier_module_loop_pipeline import DirectProviderBackend
+    from amplifier_module_loop_pipeline.transforms import apply_transforms
+    from amplifier_module_loop_pipeline.validation import validate_or_raise
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  PIPELINE: {name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # 1. Parse and validate
     graph = parse_dot(dot_source)
@@ -82,8 +85,17 @@ async def run_pipeline(name, dot_source):
     validate_or_raise(graph)
     print(f"✓ Parsed {len(graph.nodes)} nodes, {len(graph.edges)} edges")
 
-    # 2. Create backend (provider=None lets it auto-create unified_llm.Client.from_env())
-    backend = DirectProviderBackend(provider=None, tools={}, hooks=None)
+    # 2. Create backend -- unified_llm.Client.from_env() auto-creates the client
+    #    from env vars; no coordinator means the `direct` worker handles every
+    #    node (EXTENSIONS.md Sec40).
+    client = unified_llm.Client.from_env()
+    backend = AmplifierBackend(
+        provider=client,
+        tools={},
+        hooks=None,
+        unified_client=client,
+        default_worker="direct",
+    )
 
     # 3. Build engine
     logs_root = tempfile.mkdtemp(prefix=f"pipeline-{name}-")
@@ -111,8 +123,10 @@ async def run_pipeline(name, dot_source):
         elapsed = time.time() - start_time
         print(f"✗ FAILED after {elapsed:.1f}s: {type(e).__name__}: {e}")
         import traceback
+
         traceback.print_exc()
         return False
+
 
 async def main():
     results = {}
@@ -124,15 +138,17 @@ async def main():
     results["multi_provider"] = await run_pipeline("multi_provider", DOT_MULTI_PROVIDER)
 
     # Test 3: Multi-stage pipeline (plan -> implement -> validate)
-    results["plan_implement_review"] = await run_pipeline("plan_implement_review", DOT_PLAN_IMPLEMENT_REVIEW)
+    results["plan_implement_review"] = await run_pipeline(
+        "plan_implement_review", DOT_PLAN_IMPLEMENT_REVIEW
+    )
 
     # Test 4: Conditional routing with retry loop
     results["conditional"] = await run_pipeline("conditional", DOT_CONDITIONAL)
 
     # Summary
-    print(f"\n{'='*60}")
-    print(f"  RESULTS")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("  RESULTS")
+    print(f"{'=' * 60}")
     for name, passed in results.items():
         status = "✓ PASS" if passed else "✗ FAIL"
         print(f"  {status}: {name}")
@@ -140,6 +156,7 @@ async def main():
     all_passed = all(results.values())
     print(f"\n  {'ALL PASSED' if all_passed else 'SOME FAILED'}")
     return 0 if all_passed else 1
+
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))

@@ -1,4 +1,4 @@
-"""E2E test for a Gemini-based pipeline via the Python API (DirectProviderBackend).
+"""E2E test for a Gemini-based pipeline via the Python API (AmplifierBackend's direct worker).
 
 Unlike the CLI-based approach, this test drives loop-pipeline directly through
 the Python API, avoiding workspace settings interference and remote module
@@ -32,9 +32,9 @@ pytestmark = [
 PIPELINE_TIMEOUT = 600  # seconds
 
 # Inline DOT: simple single-node pipeline using Gemini.
-# No tools registered — DirectProviderBackend has tools={}.
+# No tools registered — AmplifierBackend's direct worker has tools={}.
 # goal_gate is intentionally omitted: goal_gate=true requires a report_outcome
-# tool call that agents make; DirectProviderBackend just runs LLM text generation.
+# tool call that agents make; the direct worker just runs LLM text generation.
 # The model generates a text response and the pipeline completes with SUCCESS.
 DOT_GEMINI_SIMPLE = r"""
 digraph simple_gemini_test {
@@ -53,21 +53,44 @@ async def _run_pipeline(dot_source: str) -> object:
     """Run a DOT pipeline via the Python API and return the final Outcome."""
     # Imports are inside the function so pyright doesn't see them as possibly
     # unbound, and because this function is only called when HAS_PIPELINE=True.
-    from amplifier_module_loop_pipeline import DirectProviderBackend  # type: ignore[import-untyped]
-    from amplifier_module_loop_pipeline.context import PipelineContext  # type: ignore[import-untyped]
-    from amplifier_module_loop_pipeline.dot_parser import parse_dot  # type: ignore[import-untyped]
-    from amplifier_module_loop_pipeline.engine import PipelineEngine  # type: ignore[import-untyped]
-    from amplifier_module_loop_pipeline.handlers import HandlerRegistry  # type: ignore[import-untyped]
-    from amplifier_module_loop_pipeline.transforms import apply_transforms  # type: ignore[import-untyped]
-    from amplifier_module_loop_pipeline.validation import validate_or_raise  # type: ignore[import-untyped]
+    import unified_llm  # type: ignore[import-untyped]
+    from amplifier_module_loop_pipeline.backend import (
+        AmplifierBackend,  # type: ignore[import-untyped]
+    )
+    from amplifier_module_loop_pipeline.context import (
+        PipelineContext,  # type: ignore[import-untyped]
+    )
+    from amplifier_module_loop_pipeline.dot_parser import (
+        parse_dot,  # type: ignore[import-untyped]
+    )
+    from amplifier_module_loop_pipeline.engine import (
+        PipelineEngine,  # type: ignore[import-untyped]
+    )
+    from amplifier_module_loop_pipeline.handlers import (
+        HandlerRegistry,  # type: ignore[import-untyped]
+    )
+    from amplifier_module_loop_pipeline.transforms import (
+        apply_transforms,  # type: ignore[import-untyped]
+    )
+    from amplifier_module_loop_pipeline.validation import (
+        validate_or_raise,  # type: ignore[import-untyped]
+    )
 
     graph = parse_dot(dot_source)
     context = PipelineContext()
     apply_transforms(graph, context)
     validate_or_raise(graph)
 
-    # provider=None → auto-creates unified_llm.Client.from_env(), picks up GOOGLE_API_KEY
-    backend = DirectProviderBackend(provider=None, tools={}, hooks=None)
+    # unified_llm.Client.from_env() picks up GOOGLE_API_KEY; no coordinator means
+    # the `direct` worker handles every node (EXTENSIONS.md Sec40).
+    client = unified_llm.Client.from_env()
+    backend = AmplifierBackend(
+        provider=client,
+        tools={},
+        hooks=None,
+        unified_client=client,
+        default_worker="direct",
+    )
     logs_root = tempfile.mkdtemp(prefix="pipeline-gemini-e2e-")
     registry = HandlerRegistry(backend=backend)
     engine = PipelineEngine(
@@ -84,7 +107,7 @@ def test_gemini_pipeline_simple(tmp_path):
 
     Graph: start -> implement -> done
     The implement node is assigned llm_provider="gemini" with goal_gate=true.
-    DirectProviderBackend drives the LLM call directly (no CLI, no workspace interference).
+    AmplifierBackend's direct worker drives the LLM call directly (no CLI, no workspace interference).
     """
     outcome = asyncio.run(_run_pipeline(DOT_GEMINI_SIMPLE))
 

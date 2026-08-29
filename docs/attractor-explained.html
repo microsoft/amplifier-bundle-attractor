@@ -726,7 +726,7 @@ footer .fine{font-size:12.5px;line-height:1.6;color:var(--faint);max-width:600px
   <figure>
     <svg class="dg" viewBox="0 0 960 420" role="img" aria-labelledby="d8t d8d" xmlns="http://www.w3.org/2000/svg">
       <title id="d8t">Architecture: orchestrator, sub-session, backend selection</title>
-      <desc id="d8d">The loop-pipeline orchestrator reads the dot file, spawns a loop-agent sub-session per LLM node, and receives a report_outcome back. Backends are auto-selected: AmplifierBackend if session spawn is available, otherwise DirectProviderBackend. With no backend at all, LLM nodes fail loud and only model-free graphs still walk.</desc>
+      <desc id="d8d">The loop-pipeline orchestrator reads the dot file, spawns a loop-agent sub-session per LLM node, and receives a report_outcome back. AmplifierBackend auto-selects a worker per node: the spawn worker if session spawn is available, otherwise the direct worker. With no backend at all, LLM nodes fail loud and only model-free graphs still walk.</desc>
 
       <path class="n-q" d="M 20 78 h 122 l 28 26 v 58 h -150 z"/>
       <path class="e-m" d="M 142 78 v 26 h 28" style="stroke-dasharray:none"/>
@@ -763,7 +763,7 @@ footer .fine{font-size:12.5px;line-height:1.6;color:var(--faint);max-width:600px
       <text class="el" x="20" y="344">else: provider configured</text>
       <line class="e" x1="250" y1="338" x2="288" y2="338" marker-end="url(#ar)"/>
       <rect class="n" x="296" y="320" width="624" height="36" rx="2"/>
-      <text class="nl-s" x="312" y="343" style="fill:#1b1813">DirectProviderBackend &mdash; a per-node agentic tool loop; needs an explicit llm_model</text>
+      <text class="nl-s" x="312" y="343" style="fill:#1b1813">AmplifierBackend's direct worker &mdash; a per-node agentic tool loop; needs an explicit llm_model</text>
       <text class="el" x="20" y="392">else</text>
       <line class="e" x1="250" y1="386" x2="288" y2="386" marker-end="url(#ar)"/>
       <rect class="n-q" x="296" y="368" width="624" height="36" rx="2"/>

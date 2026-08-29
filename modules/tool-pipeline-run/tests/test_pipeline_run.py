@@ -738,3 +738,137 @@ async def test_no_params_omits_key_from_orchestrator_config():
 
     orch_config = spawn_kwargs_capture["orchestrator_config"]
     assert "params" not in orch_config
+
+
+# ---------------------------------------------------------------------------
+# De-attractorization: "mention_example" config (attractor-24e stage 1)
+#
+# The tool's own `description` and `input_schema["dot_file"]["description"]`
+# used to hard-code the "@attractor:" mention namespace as an illustrative
+# example for the calling LLM. That's real coupling (a non-"attractor"
+# bundle mounting this tool unconfigured would show its LLM an example
+# mention that resolves nowhere), even though it never touched actual
+# @mention *resolution* logic (mention_resolver.resolve() handles any
+# namespace generically -- see test_resolve_at_mention_path above, which is
+# unaffected by any of this). "mention_example" makes the illustrative
+# text configurable; its default preserves today's exact "attractor" text
+# byte-for-byte for existing (attractor) consumers.
+# ---------------------------------------------------------------------------
+
+
+def test_custom_mention_example_lands_in_input_schema():
+    """A configured mention_example overrides the dot_file schema description.
+
+    RED pre-change: input_schema's dot_file description was a fixed string
+    hard-coding "@attractor:examples/pipelines/01-simple-linear.dot" with no
+    config indirection at all, so this assertion could not pass no matter
+    what config was supplied.
+    """
+    tool = PipelineRunTool(config={"mention_example": "@my-bundle:pipelines/demo.dot"})
+    schema = tool.input_schema
+    description = schema["properties"]["dot_file"]["description"]
+    assert "@my-bundle:pipelines/demo.dot" in description
+    assert "attractor" not in description.lower()
+
+
+def test_custom_mention_example_lands_in_tool_description():
+    """A configured mention_example's namespace overrides the tool description.
+
+    RED pre-change: `description` was a class-level constant hard-coding
+    "@attractor:... mentions", unreachable via config.
+    """
+    tool = PipelineRunTool(config={"mention_example": "@my-bundle:pipelines/demo.dot"})
+    assert "@my-bundle:... mentions" in tool.description
+    assert "attractor" not in tool.description.lower()
+
+
+def test_default_mention_example_matches_todays_text_byte_identical():
+    """Unconfigured mount reproduces today's exact @attractor: example text.
+
+    Pins both surfaces byte-for-byte so an unconfigured (existing attractor)
+    consumer sees zero behavior change.
+    """
+    tool = PipelineRunTool(config={})
+    assert tool.description == (
+        "Run a DOT graph pipeline. Provide a pipeline definition via "
+        "'dot_file' (path to a .dot file, supports @attractor:... mentions) "
+        "or 'dot_source' (inline DOT digraph string), plus a 'goal' "
+        "describing the task. The pipeline executes as a child session "
+        "and returns the result when complete."
+    )
+    schema = tool.input_schema
+    assert schema["properties"]["dot_file"]["description"] == (
+        "Path to a .dot pipeline file. Supports @mention "
+        "syntax (e.g. @attractor:examples/pipelines/01-simple-linear.dot)."
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_default_runner_agent_matches_todays_value_when_unconfigured():
+    """Unconfigured mount still spawns the pre-existing default runner agent.
+
+    "runner_agent" was already config-driven before this change (only its
+    *default* is attractor-specific); this pins that default explicitly so
+    a future stage-2 move can prove it never silently changed.
+    """
+    spawn_kwargs_capture = {}
+
+    async def mock_spawn(**kwargs):
+        spawn_kwargs_capture.update(kwargs)
+        return {
+            "output": '{"status": "success"}',
+            "session_id": "child-default-runner",
+        }
+
+    mock_coordinator = MagicMock()
+    mock_coordinator.get_capability = lambda name: (
+        mock_spawn if name == "session.spawn" else None
+    )
+    mock_coordinator.config = {"agents": {"attractor-pipeline-runner": {}}}
+    mock_coordinator.session = MagicMock()
+
+    tool = PipelineRunTool(config={}, coordinator=mock_coordinator)
+    result = await tool.execute(
+        {
+            "goal": "test goal",
+            "dot_source": SIMPLE_DOT,
+        }
+    )
+
+    assert result.success
+    assert spawn_kwargs_capture["agent_name"] == "attractor-pipeline-runner"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_custom_runner_agent_lands_in_spawn_call():
+    """A configured runner_agent (not the attractor default) is what gets spawned."""
+    spawn_kwargs_capture = {}
+
+    async def mock_spawn(**kwargs):
+        spawn_kwargs_capture.update(kwargs)
+        return {
+            "output": '{"status": "success"}',
+            "session_id": "child-custom-runner",
+        }
+
+    mock_coordinator = MagicMock()
+    mock_coordinator.get_capability = lambda name: (
+        mock_spawn if name == "session.spawn" else None
+    )
+    mock_coordinator.config = {"agents": {"my-custom-pipeline-runner": {}}}
+    mock_coordinator.session = MagicMock()
+
+    tool = PipelineRunTool(
+        config={"runner_agent": "my-custom-pipeline-runner"},
+        coordinator=mock_coordinator,
+    )
+    result = await tool.execute(
+        {
+            "goal": "test goal",
+            "dot_source": SIMPLE_DOT,
+        }
+    )
+
+    assert result.success
+    assert spawn_kwargs_capture["agent_name"] == "my-custom-pipeline-runner"
+    assert result.output["runner_agent"] == "my-custom-pipeline-runner"

@@ -56,8 +56,11 @@ Search the web for information. Use this when you need documentation, examples, 
 ### web_fetch
 Fetch content from a URL. Use this to read documentation pages, API references, or other web content.
 
-### report_outcome
-When you have completed the task (or determined you cannot), report the outcome with a status and notes.
+### status.json (the taught verdict channel)
+If your instructions name a status.json contract path, write your verdict there as JSON (`outcome`/`preferred_label`/`suggested_next_ids`/`context_updates`/`notes`) when you finish or determine you cannot -- this is a spec-native audit trail the engine reads back, and the mechanism a spawned worker should use.
+
+### report_outcome (legacy compatibility window)
+When you have completed the task (or determined you cannot), you may also report the outcome with this tool. It still works, but a node-written status.json wins over it on conflict, and it is not the primary, taught mechanism.
 
 ## Project Instructions
 

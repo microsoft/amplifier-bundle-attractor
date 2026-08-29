@@ -19,11 +19,18 @@ Complete reference for the Attractor pipeline engine's routing system.
 The routing system determines which node executes next after each node
 completes. Three mechanisms work together to produce a routing decision:
 
-**`report_outcome` tool** — The executing agent calls this at the end of a
-node's work to signal the outcome. It carries the `status`, an optional
-`preferred_label` routing signal, optional `suggested_next_ids`, and optional
-`context_updates` that are merged into the pipeline context before edge
-selection runs.
+**An explicit-verdict channel** — something on the node's path writes the
+`status`, an optional `preferred_label` routing signal, optional
+`suggested_next_ids`, and optional `context_updates` that are merged into the
+pipeline context before edge selection runs. The taught, primary channels are
+an artifact file read by a downstream tool-node exit code, and a node-written
+`status.json` (canonical spec §4.5 / Appendix C) for out-of-band or spawned
+outcomes -- see [DOT-AUTHORING-GUIDE.md's escalation
+ladder](DOT-AUTHORING-GUIDE.md#spec-intended-pipeline-design). The
+**`report_outcome` tool** (§2 below) provides the same envelope from inside an
+agent's own turn; it is a **legacy compatibility window**, not the taught
+mechanism -- a node-written `status.json` wins over it on conflict, and a
+self-reported tool call is still a self-report, not machine evidence.
 
 **Edge conditions** — Each outgoing edge may carry a `condition` attribute
 containing a boolean expression evaluated against the outcome and the current
@@ -43,7 +50,21 @@ failure cases.
 
 ---
 
-## 2. The `report_outcome` Tool
+## 2. The `report_outcome` Tool (legacy compatibility window)
+
+> **Not the taught mechanism.** `report_outcome` is RETCONNED as of the
+> 2026-08-29 maintainer ruling: the spec's own channels -- an artifact file +
+> tool-node exit code, and a node-written `status.json` (canonical spec §4.5 /
+> Appendix C) -- are what pipeline authors should reach for. `report_outcome`
+> is not deleted and still functions exactly as documented below; a
+> node-written `status.json` simply wins over it when both are present and
+> diverge. It remains here as full reference for pipelines and agent
+> integrations that already depend on it. See
+> [DOT-AUTHORING-GUIDE.md's escalation
+> ladder](DOT-AUTHORING-GUIDE.md#spec-intended-pipeline-design) and
+> `PIPELINE_PATTERNS.md` §6's anti-pattern catalog ("`report_outcome`-as-primary")
+> for why: a tool call is still a self-report from inside the same context
+> that produced the work, and machine evidence outranks it.
 
 The agent calls `report_outcome` at the end of a node's execution to
 communicate the outcome back to the pipeline engine. The engine reads
@@ -134,7 +155,8 @@ stripped before comparison. An empty condition is always eligible.
 Canonical §10.4 defines `outcome` as `outcome.status` **only**, with `preferred_label` as a separate
 key. This engine resolves `outcome` to `preferred_label` when one is set, falling back to
 `status.value` — `conditions.py`, ledgered as `specs/EXTENSIONS.md` §22 / `SPEC_CONFORMANCE.md`
-ATX-5. It is load-bearing: it is how a node steers its own routing through `report_outcome`.
+ATX-5. It is load-bearing: it is how a node steers its own routing via `preferred_label`,
+whichever channel set it -- a node-written `status.json` (taught) or, legacy, `report_outcome`.
 
 It is also **not behavior-neutral**, and that is the trap: one key, two meanings.
 
@@ -316,6 +338,14 @@ WARNING: Node "decide" has unrecognized type "stack.steer" -- defaulting to code
 ---
 
 ## 6. Common Patterns and Pitfalls
+
+> **A note on the examples below.** They show the `report_outcome` call because it is the
+> most compact way to illustrate which `preferred_label` / `context_updates` values make each
+> condition match -- the resolution mechanics are identical no matter which channel set those
+> fields. `report_outcome` itself is a legacy compatibility window (§2); the taught way to
+> produce the same fields is an artifact file + tool-node exit code, or a node-written
+> `status.json` for out-of-band/spawned outcomes -- see [DOT-AUTHORING-GUIDE.md's escalation
+> ladder](DOT-AUTHORING-GUIDE.md#spec-intended-pipeline-design).
 
 ### Pattern: Pass/retry routing
 

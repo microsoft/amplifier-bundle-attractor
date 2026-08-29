@@ -67,18 +67,11 @@ degrade to FAIL — the replan loop never fires as intended.
 **Self-check question:** Does every `goal_gate=true` node have an explicit
 outcome instruction in its prompt?
 
-**Three compliant patterns:**
+**Compliant patterns, in escalation order (RETCON, 2026-08-29 -- `report_outcome`
+is no longer the taught mechanism):**
 
-1. **`report_outcome` tool call** (most explicit — authoritative):
-   > "You MUST report your verdict by calling the `report_outcome` tool with
-   > `status: success` or `status: fail`. Prose verdicts are discarded."
-
-2. **Pure JSON response**:
-   > "Respond with ONLY a JSON object: `{\"status\": \"success\"}` or
-   > `{\"status\": \"fail\", \"reason\": \"...\"}`. No surrounding prose."
-
-3. **Verdict file + deterministic gate** (route on evidence, not typed
-   sentinels — preferred for complex judges):
+1. **Verdict file + deterministic gate** (route on evidence, not typed
+   sentinels -- preferred for complex judges, and the default choice):
    ```dot
    judge [shape=box, prompt="... Write verdict to .ai/verdict.txt: first
        line must be exactly CONVERGED or NOT_CONVERGED."]
@@ -88,6 +81,25 @@ outcome instruction in its prompt?
    verdict_gate -> done  [condition="tool.last_line=ok"]
    verdict_gate -> fix   [condition="tool.last_line=fail"]
    ```
+
+2. **Node-written `status.json`** (canonical spec §4.5 / Appendix C), for
+   out-of-band or spawned-worker outcomes -- the engine reads it back and now
+   auto-injects the path + envelope into every spawned worker's instruction:
+   > "Write your verdict to the status.json contract path given in your
+   > instructions, with `outcome: success` or `outcome: fail`."
+
+3. **Pure JSON response**:
+   > "Respond with ONLY a JSON object: `{\"status\": \"success\"}` or
+   > `{\"status\": \"fail\", \"reason\": \"...\"}`. No surrounding prose."
+
+4. **`report_outcome` tool call** (legacy compatibility window, not the taught
+   mechanism -- still honored, a node-written `status.json` wins over it on
+   conflict). A tool call is still a self-report from inside the same context
+   that produced the work: it is not an exemption from "verification inside
+   the context that produced the evidence is not verification"
+   (`context/dot-reference.md`). Machine evidence (patterns 1-2 above)
+   outranks it. See `docs/PIPELINE_PATTERNS.md` §6's anti-pattern catalog
+   ("`report_outcome`-as-primary", alongside "LLM-Emitted Routing Sentinel").
 
 **Cross-reference:** engine-semantics.md §5 (verdict-recovery ladder, fail-closed
 goal-gate contract, `is_explicit` field).

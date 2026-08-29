@@ -286,6 +286,50 @@ hierarchy of right and wrong.
 
 ---
 
+### AP-4: `report_outcome`-as-primary
+
+```dot
+// PROBLEM: the tool call is treated as sufficient verdict evidence
+judge [shape=box, goal_gate=true,
+       prompt="Evaluate the work. Call the report_outcome tool with status=success
+               if it passes, status=fail otherwise."]
+```
+
+**Why it fails:** this looks more rigorous than AP-2's bare sentinel -- it is a structured tool
+call with a validated `status` enum, not a typed keyword -- but the verdict inside it is
+produced by the same node, in the same context, that did the work being judged. Wrapping a
+self-report in a tool call does not make it evidence: "verification inside the context that
+produced the evidence is not verification" (`context/dot-reference.md`) applies exactly as much
+to a `report_outcome` call as to a plain-prose sentinel. As of the 2026-08-29 maintainer ruling,
+`report_outcome` is RETCONNED to a legacy compatibility window: still honored (a node-written
+`status.json` wins over it on conflict), but no longer the taught, primary mechanism.
+
+**Measured:** across this repository's own shipped `.dot` corpus, **0 of 9** sampled
+community-style pipeline files ever instructed a worker to call `report_outcome` -- every one
+gates on files, exit codes, or a prose convention a downstream `parallelogram` node checks. The
+anti-pattern is one this repo's own guidance used to teach and its own graphs never practiced.
+
+**Fix:** climb the escalation ladder in
+[DOT-AUTHORING-GUIDE.md's "Spec-Intended Pipeline Design"](DOT-AUTHORING-GUIDE.md#spec-intended-pipeline-design):
+
+```dot
+// FIX: verdict is a file; a parallelogram outside the worker's context checks it
+judge      [shape=box, prompt="Evaluate the work. Write your verdict to verdict.txt:
+                                first line must be exactly PASS or FAIL."]
+judge_gate [shape=parallelogram, goal_gate=true, max_retries=0,
+            tool_command="head -n1 verdict.txt | grep -qx PASS && printf ok || printf fail"]
+judge -> judge_gate
+judge_gate -> done [condition="context.tool.last_line=ok"]
+judge_gate -> fix  [condition="context.tool.last_line=fail"]
+```
+
+Or, for an out-of-band / spawned worker with no other channel back, a node-written
+`status.json` (canonical spec §4.5 / Appendix C) -- the engine reads it back and now injects
+the contract path directly into a spawned worker's instruction, so this is reachable without
+extra prompting.
+
+---
+
 ### AP-3: Prompt/Validator Drift
 
 ```dot

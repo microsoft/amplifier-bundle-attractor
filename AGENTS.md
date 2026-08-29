@@ -96,6 +96,13 @@ nlspec has to say about this first?"** This is "Walk upstream first"
    entry — both authoritative in `amplifier-bundle-dot-runner` now — are
    required. Not the wild-west; "the spec didn't anticipate this shape"
    files an entry, it doesn't skip one.
+5. **Evidence bar.** Cite the section(s) *and* state what the surrounding
+   context says — proof the nlspec was read holistically, not a
+   cherry-picked line wielded as leverage to push an agenda or design
+   change. Spec silence is not support for a change: it routes to point 3
+   above and to `amplifier-bundle-dot-runner`'s SPEC_CONFORMANCE rule 5 /
+   `specs/EXTENSIONS.md` (point 4), and the preferred first answer to "the
+   spec doesn't do X" is a different pipeline design, not a new feature.
 
 When behavior is ambiguous, the canonical spec is authoritative. Our
 implementation extends but does not contradict it. If you find yourself

@@ -881,7 +881,8 @@ Every node in a DOT pipeline can have these attributes:
 | `thread_id` | String | derived | Thread identifier for session reuse under `full` fidelity. |
 | `class` | String | `""` | Comma-separated CSS classes for model stylesheet targeting. |
 | `llm_model` | String | inherited | LLM model identifier. Overrides stylesheet. |
-| `llm_provider` | String | auto | Provider key (`anthropic`, `openai`, `gemini`). |
+| `llm_provider` | String | auto | Provider key (`anthropic`, `openai`, `gemini`). Selects a MODEL FAMILY only -- orthogonal to `worker` below, which selects the EXECUTION MECHANISM. |
+| `worker` | String | unset (falls through to the run-level default, then capability-fallback) | Which registered worker executes this node -- see [Worker Selection](#worker-selection) below. A conformant `.dot` file never needs this: it is fully defaulted. |
 | `reasoning_effort` | String | unset (provider default) | `low`, `medium`, or `high`. No engine default is injected: unset means the provider's own default applies. The canonical spec's `high` default deliberately does not hold here — set it per node, via `model_stylesheet`, or in a profile (`specs/EXTENSIONS.md` §39, ledger ATX-14). |
 | `timeout` | Duration | unset | Max execution time (e.g., `900s`, `15m`). |
 | `auto_status` | Boolean | `false` | Auto-generate SUCCESS if handler writes no status. |
@@ -1017,6 +1018,73 @@ graph [model_stylesheet="
     #final_check { llm_model: claude-opus-*; reasoning_effort: high; }
 "]
 ```
+
+## Worker Selection
+
+A **worker** is the mechanism that actually executes an LLM (codergen) node --
+distinct from `llm_provider`, which only picks the model family. Selection
+precedence (highest to lowest), per dot-runner `specs/EXTENSIONS.md` §40:
+
+1. The node's own `worker=` attribute, if set (e.g. `worker="direct"`).
+2. The run-level default, set via the pipeline orchestrator's
+   `config.worker` key (e.g. `worker: "spawn"`).
+3. Capability fallback (unchanged): `"spawn"` if `session.spawn` resolved
+   for this run, else `"direct"`.
+
+An unrecognized value at either level raises `ValueError` naming every known
+worker -- never a silent fallback. **A conformant `.dot` file never needs
+`worker=`**: it is defaulted at every level, and the run-level default is the
+primary control surface for an opinionated layer (like this one) that wants
+to pin a mechanism without touching individual nodes.
+
+**What the two names mean:**
+
+- **`direct`** -- the one worker the engine registers by name today: a single
+  in-process tool-loop against a provider, no hosted session, no spawn.
+  Cheapest, no sub-agent identity, no Amplifier-specific capabilities.
+- **`"spawn"`** -- a reserved sentinel, not a registry entry. It tells the
+  adapter to reach a hosted child agent session via `session.spawn`, using
+  the (unchanged) `profiles` map to pick which agent to spawn per node's
+  `llm_provider`. Which orchestrator that spawned agent itself runs under
+  (`loop-agent`, `loop-amplifier-agent`, or a bespoke profile) is decided
+  entirely by that agent's own `session.orchestrator.module` -- the registry
+  has no opinion on it.
+- **`loop-agent`** -- the general Amplifier agent-loop orchestrator,
+  reachable ONLY as a spawned child agent's own orchestrator (never a
+  registry name). This is what the attractor layer's spawned coding agents
+  run today.
+- **`amplifier-agent`** -- the opt-in adapter over the standalone
+  `amplifier-agent` peer library. Also reachable only as a spawned child
+  agent's orchestrator, and never pulled in by a root bundle -- explicitly
+  opt-in via a behavior partial (e.g.
+  `behaviors/dot-runner-amplifier-agent.yaml` in dot-runner).
+
+**What this layer declares.** The attractor bundles (`bundles/*.yaml`,
+`agents/pipeline-runner.yaml`, `bundle.md`) declare their pipeline
+orchestrator's worker EXPLICITLY, rather than relying on the
+capability-fallback tier:
+
+```yaml
+session:
+  orchestrator:
+    module: loop-pipeline
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-pipeline
+    config:
+      worker: "spawn"       # explicit -- see specs/EXTENSIONS.md §40
+      profiles:
+        anthropic: attractor-agent-anthropic
+        openai: attractor-agent-openai
+        gemini: attractor-agent-gemini
+```
+
+Each spawned child agent (`attractor-agent-{anthropic,openai,gemini}`, one
+per profile) in turn declares an explicit inline `session.orchestrator:
+module: loop-agent` -- required regardless of the `worker` declaration
+above, so the spawned child does not inherit the parent's `loop-pipeline`
+orchestrator and recurse. The `worker: "spawn"` declaration and the
+per-child `loop-agent` orchestrator answer two different questions: the
+former picks the MECHANISM the pipeline uses to reach a node's agent; the
+latter picks what THAT AGENT runs once reached.
 
 ## Graph-Level Attributes
 

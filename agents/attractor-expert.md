@@ -73,7 +73,7 @@ session:
     # through the attractor namespace) but MAIN's Layer-1 persona, because loop-agent
     # anchors a relative `system_prompt_file` on its own installed location.
     # See docs/designs/2026-08-15-composition-fix.md, "Two resolution classes".
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-agent
     config:
       # Layer-1 base prompt.  attractor-expert is provider-agnostic (a consultant,
       # not a coding agent), so it gets its OWN persona base rather than a provider

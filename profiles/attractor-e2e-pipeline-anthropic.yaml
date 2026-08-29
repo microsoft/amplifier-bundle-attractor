@@ -24,7 +24,7 @@ agents:
         # made these relative:  "loop-agent: File not found:
         # .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent" -- and the session
         # refused to start.  See docs/designs/2026-08-15-composition-fix.md.
-        source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+        source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-agent
         config:
           default_command_timeout_ms: 120000
 
@@ -41,6 +41,10 @@ session:
     module: loop-pipeline
     source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-pipeline
     config:
+      # Explicit worker-selection declaration (dot-runner EXTENSIONS.md §40).
+      # "spawn" is the reserved sentinel reaching the loop-agent child agent
+      # below via the profiles map -- declared rather than left implicit.
+      worker: "spawn"
       dot_file: ./tests/e2e/fixtures/simple_file_creation.dot
       profiles:
         anthropic: attractor-anthropic

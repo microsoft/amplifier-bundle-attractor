@@ -25,7 +25,7 @@ session:
     # made these relative:  "loop-agent: File not found:
     # .../amplifier_app_cli/_bundle/behaviors/modules/loop-agent" -- and the session
     # refused to start.  See docs/designs/2026-08-15-composition-fix.md.
-    source: git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=modules/loop-agent
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/loop-agent
     config:
       max_tool_rounds_per_input: 20
       reasoning_effort: high
@@ -47,4 +47,4 @@ tools:
 
 hooks:
   - module: hooks-tool-truncation
-    source: ../modules/hooks-tool-truncation
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/hooks-tool-truncation

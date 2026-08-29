@@ -12,6 +12,7 @@ to review. Point it at your repo:
 DOT="/path/to/attractor/examples/pipelines/practical/pr-review.dot"
 cd /path/to/your/repo          # checked out on the feature branch to review
 dot-runner run "$DOT" \
+    --worker loop-agent \
     --param goal="Review the changes on this branch for quality and security" \
     --cwd .
 ```

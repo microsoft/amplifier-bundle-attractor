@@ -35,6 +35,7 @@ cp -r examples/patterns/task-runner-fixture /tmp/task-runner-demo
 cd /tmp/task-runner-demo
 git init -q && git add -A && git commit -qm "fixture baseline"
 dot-runner run "$DOT" \
+    --worker loop-agent \
     --param task_file="$PWD/sample-task.md" \
     --param target_dir="$PWD" \
     --param max_iterations=6 \

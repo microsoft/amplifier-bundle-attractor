@@ -9,6 +9,7 @@
 //   cd <target_repo>
 //   DOT=/abs/path/to/task-runner.dot
 //   dot-runner run "$DOT" \
+//       --worker loop-agent \
 //       --param task_file=/abs/path/to/task.md \
 //       --param target_dir=$PWD \
 //       --param max_iterations=6 \

@@ -23,6 +23,7 @@ exit — never through the success door.
 OBJ="$PWD/examples/objective"          # capture the absolute path BEFORE cd
 cd /path/to/your/workspace
 dot-runner run "$OBJ/objective-runner.dot" \
+    --worker loop-agent \
     --param goal="get_display_name() raises TypeError when a user has no avatar. Fix it and add a regression test." \
     --param runner_dir="$OBJ" \
     --param target_dir="$PWD" \
@@ -96,8 +97,10 @@ cat .objective/disposition        # satisfied | redirected | escalated
 
 ### 1. The first routing decision runs on a machine artifact, not a self-report
 
-The obvious design has `frame` call `report_outcome(preferred_label="bugfix")`
-and routes on that. This graph deliberately does not. `frame` writes a JSON
+The obvious (and, pre-0.2.0, tempting) design would have had `frame` call
+`report_outcome(preferred_label="bugfix")` and routed on that --
+`report_outcome` is removed as of the engine's 0.2.0 repair release, and this graph
+deliberately never relied on it even when it existed. `frame` writes a JSON
 record; `triage_gate` — code, outside the worker's context — validates it and
 prints the token.
 

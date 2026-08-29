@@ -366,13 +366,13 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
 
 6. **Lint it, and put the verdict in the handback.** Run, verbatim:
    ```
-   bash -c "attractor lint <path>"
+   bash -c "dot-runner lint <path>"
    ```
    **The artifact is not delivered until this has been RUN on it and its output
    is in what you hand back.** Not "lint before handing back" -- an obligation
    you can discharge inside your own reasoning is not an obligation, which is
    why this one names where the result lands. A `.dot` that fails
-   `attractor lint` (TOPO-001 through TOPO-010, CMD-001/002 and VOCAB-001, all
+   `dot-runner lint` (TOPO-001 through TOPO-010, CMD-001/002 and VOCAB-001, all
    documented in `docs/DOT-AUTHORING-GUIDE.md`) is not a runnable artifact: fix
    the findings, re-run, and relay the final verdict with any surviving warnings
    quoted. If the linter cannot be run here, say that in the handback, in those
@@ -383,7 +383,7 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    "passed" / "exit 0" / "no errors" are all true of a graph whose every prompt
    was silently dropped -- the measured shape of issue #261, which `VOCAB-001`
    now reports as a WARNING at rc=0. The only clean verdict is the linter's own
-   `attractor lint: <file>: OK (no findings)`. See
+   `dot-runner lint: <file>: OK (no findings)`. See
    `@attractor:context/dot-reference.md` for the full contract.
 
    **The other half of the same contract: you do not certify what you wrote.**
@@ -396,7 +396,7 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    answer *"yes, I'm sure"*. Answer in three parts, naming where each result
    landed:
 
-   1. **What a machine checked, and what it said** -- `attractor lint`'s
+   1. **What a machine checked, and what it said** -- `dot-runner lint`'s
       verdict verbatim, warnings included; the diagnosis form gate's PASS; the
       independent verifier's `VERIFIER: VALID`, if it ran. Facts, stated as
       facts.
@@ -411,7 +411,7 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    Frame it as the rule, not as modesty: *this is the same
    gates-outside-workers rule the pipeline runs on, and it applies to me.*
    Measured, not hypothetical: a graded session authored a graph, ran
-   `attractor lint` on it, and then answered *"Yes. **I'm sure.** [...] 1. **No
+   `dot-runner lint` on it, and then answered *"Yes. **I'm sure.** [...] 1. **No
    self-report gates** [...] **Ship it to your team.**"* -- certifying the
    absence of self-report gates by self-report.
 
@@ -429,7 +429,7 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
    design step has produced a validated intent — a named sink, a machine
    check, and the caps — offer `examples/authoring/pipeline-author.dot`, which
    takes that intent as a `--param brief=` and converges the `.dot` under
-   `attractor lint`, a structural authoring contract, and an independent
+   `dot-runner lint`, a structural authoring contract, and an independent
    doctrine critique, publishing it with provenance. The same offer applies
    when the honest answer here was `attractor` but the graph is larger than a
    conversation should hand-build. It is an **offer**: launching a pipeline
@@ -438,7 +438,7 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
 
    **This is also the concrete answer to "are you sure it's good?"** -- the
    independent path Step 6 owes the user. Name what it adds that no reading of
-   yours can: `attractor lint` and `check_authored_pipeline.py`'s A0-A10
+   yours can: `dot-runner lint` and `check_authored_pipeline.py`'s A0-A10
    structural contract, both executed, plus a `critique` node at
    `fidelity="truncate"` that inherits nothing from the author's context. (A8
    -- no failure outcome routed into the terminal success node -- is the
@@ -453,7 +453,7 @@ the objection's disposition recorded (`caveats:` line if unresolved). Then:
 - `docs/PIPELINE_DESIGN_PRINCIPLES.md` §0 — one-sentence rule, control-plane vs
   recipe-plane line, **three-question test**, design order
 - `docs/DOT-AUTHORING-GUIDE.md` — node contract, DOT syntax, TOPO-001..009 lint
-  rules, `attractor lint` CLI
+  rules, `dot-runner lint` CLI
 - `context/dot-reference.md` — **the** attribute vocabulary: what the engine
   parses, the invented spellings it silently ignores, and the lint output
   contract. Consult it while writing the `.dot`, not after

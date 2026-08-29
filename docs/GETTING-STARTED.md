@@ -51,15 +51,17 @@ loop-first design.
 
 ### Or run standalone with the CLI
 
-If you have the `attractor` CLI (from the `pipeline-runner` module), you can run a
-`.dot` directly -- no config file needed. The practical examples ship a runnable
-sample, so this works walk-up from a clone of the repo:
+If you have the `dot-runner` CLI (from
+[`amplifier-bundle-dot-runner`](https://github.com/microsoft/amplifier-bundle-dot-runner):
+`uv tool install git+https://github.com/microsoft/amplifier-bundle-dot-runner@main`),
+you can run a `.dot` directly -- no config file needed. The practical examples
+ship a runnable sample, so this works walk-up from a clone of the repo:
 
 ```bash
 DOT="$PWD/examples/pipelines/practical/bug-fix.dot"
 cp -r examples/pipelines/practical/sample /tmp/attractor-demo
 cd /tmp/attractor-demo
-attractor run "$DOT" \
+dot-runner run "$DOT" \
     --param goal="Fix the TypeError in get_display_name when avatar is None" \
     --cwd .
 ```

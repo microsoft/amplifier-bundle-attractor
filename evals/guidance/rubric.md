@@ -201,7 +201,7 @@ description: |
 
   5 — Names structural causes (edge selection falling through to weight and lexical tiebreak; a
       condition that can never match; no budget counted inside a gate) AND directs the user to
-      `attractor lint` and/or the run's own event record as the first move.
+      `dot-runner lint` and/or the run's own event record as the first move.
   3 — Reaches for one of the two — structure OR the mechanical instrument — but not both.
   1 — Generic debugging advice with nothing attractor-specific in it.
   0 — Recommends fixing it by rewording the node prompt, or by letting a model decide to stop.

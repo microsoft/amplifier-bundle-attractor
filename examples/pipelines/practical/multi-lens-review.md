@@ -12,10 +12,10 @@ disagreement) is itself signal.
 ## Usage
 
 ```bash
-attractor run examples/pipelines/practical/multi-lens-review.dot --cwd .
+dot-runner run examples/pipelines/practical/multi-lens-review.dot --cwd .
 ```
 
-Self-contained, so no `--param goal=...` is needed. Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`). Needs all three provider keys set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) — check with `attractor doctor`.
+Self-contained, so no `--param goal=...` is needed. Run from the repo root so box-node agents root their writes at `--cwd .` (see `modules/pipeline-runner/KNOWN_ISSUES.md`). Needs all three provider keys set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) — check with `dot-runner doctor`.
 
 Or via the interactive agent:
 > "Run the multi-lens review pipeline"

@@ -43,11 +43,11 @@ body:
         strongest possible input.
       render: shell
       placeholder: |
-        $ attractor lint --strict examples/pipelines/00-convergence-loop.dot
+        $ dot-runner lint --strict examples/pipelines/00-convergence-loop.dot
         WARNING: [goal_gate_has_retry] [test_gate] Node 'test_gate' has goal_gate=true but no retry_target
           fix: Add retry_target or fallback_retry_target attribute
 
-        attractor lint: examples/pipelines/00-convergence-loop.dot: 1 warning(s)
+        dot-runner lint: examples/pipelines/00-convergence-loop.dot: 1 warning(s)
     validations:
       required: true
   - type: textarea

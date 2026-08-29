@@ -15,7 +15,7 @@
 // Invocation (per KNOWN_ISSUES: process cwd MUST equal --cwd for box nodes):
 //   OBJ=/abs/path/to/examples/objective
 //   cd <workspace>
-//   attractor run "$OBJ/objective-runner.dot" \
+//   dot-runner run "$OBJ/objective-runner.dot" \
 //       --param goal="users report a crash when saving a file whose name has unicode" \
 //       --param runner_dir="$OBJ" \
 //       --param target_dir="$PWD" \
@@ -66,7 +66,7 @@
 //     the same reason and in the same way examples/patterns/
 //     convergence-factory.dot does. Letting `escalated` dead-end instead does
 //     NOT work: see the engine semantics below.
-//   - TWO LINT WARNINGS, BOTH DELIBERATE (`attractor lint` reports zero
+//   - TWO LINT WARNINGS, BOTH DELIBERATE (`dot-runner lint` reports zero
 //     ERRORs): `fail_routed_to_exit` on `escalated -> done` (above), and
 //     `goal_gate_has_retry` on `evidence_gate`. The second is a true
 //     observation about the wrong hop: this graph's corrective loop for a red
@@ -211,7 +211,7 @@ digraph ObjectiveRunner {
     // OBJECTIVE    Machine-reject a broken generated graph BEFORE executing it.
     // CONSTRAINTS  ERRORs block; WARNINGs pass but are recorded (no --strict).
     //              contract_gate owns the design-shape checks.
-    // CAPABILITIES `attractor lint` (exit 1 on errors, 0 on warnings).
+    // CAPABILITIES `dot-runner lint` (exit 1 on errors, 0 on warnings).
     // EVIDENCE     .objective/lint-report.txt, warning count in convergence.jsonl
     // EXIT         lint_pass | lint_fail | compose_exhausted | lint_unavailable(exit 1)
     // This node also carries the compose-fix budget: every re-entry from either
@@ -226,7 +226,7 @@ digraph ObjectiveRunner {
     // postmortem -- over a budget split across two gates that can disagree.
     lint_gate [
         shape=parallelogram, label="Lint Generated Child", max_retries=0,
-        tool_command="mc=$max_compose; B=${mc:-2}; n=$(($(cat .objective/compose-iter 2>/dev/null || echo 0)+1)); echo $n > .objective/compose-iter; if [ \"$n\" -gt $((B+1)) ]; then printf compose_exhausted; else command -v attractor >/dev/null 2>&1 || { echo 'FATAL: the attractor CLI is not on PATH; the generated child cannot be lint-gated' >&2; printf lint_unavailable; exit 1; }; if attractor lint .objective/gen/child.dot > .objective/lint-report.txt 2>&1; then res=lint_pass; else res=lint_fail; fi; w=$(grep -c '^WARNING' .objective/lint-report.txt 2>/dev/null); printf '{\"iteration\": %s, \"gate\": \"lint\", \"result\": \"%s\", \"warnings\": %s}\n' \"$n\" \"$res\" \"${w:-0}\" >> .objective/convergence.jsonl; printf %s \"$res\"; fi"
+        tool_command="mc=$max_compose; B=${mc:-2}; n=$(($(cat .objective/compose-iter 2>/dev/null || echo 0)+1)); echo $n > .objective/compose-iter; if [ \"$n\" -gt $((B+1)) ]; then printf compose_exhausted; else command -v dot-runner >/dev/null 2>&1 || { echo 'FATAL: the dot-runner CLI is not on PATH; the generated child cannot be lint-gated' >&2; printf lint_unavailable; exit 1; }; if dot-runner lint .objective/gen/child.dot > .objective/lint-report.txt 2>&1; then res=lint_pass; else res=lint_fail; fi; w=$(grep -c '^WARNING' .objective/lint-report.txt 2>/dev/null); printf '{\"iteration\": %s, \"gate\": \"lint\", \"result\": \"%s\", \"warnings\": %s}\n' \"$n\" \"$res\" \"${w:-0}\" >> .objective/convergence.jsonl; printf %s \"$res\"; fi"
     ]
 
     // ---------- contract_gate: the composed-child contract, structurally -----

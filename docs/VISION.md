@@ -84,7 +84,7 @@ as a step in a build order.
   `examples/objective/objective-runner.dot`.
 - **The engine is evidence-gated end to end.** Goal gates fail closed (`specs/EXTENSIONS.md`
   section 25); a `must_write=` artifact contract cannot be satisfied by declaring success (27); no
-  matching edge is a hard failure rather than an alphabetical guess (33); and `attractor lint` is a
+  matching edge is a hard failure rather than an alphabetical guess (33); and `dot-runner lint` is a
   gate an author can put *inside* a graph (32).
 - **An objective goes in; a verified outcome comes out.** Verified satisfaction, an honest
   redirect, or a loud escalation -- never a plausible report of success. The user need never pick an

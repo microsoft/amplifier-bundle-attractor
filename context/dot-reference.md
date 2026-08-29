@@ -26,15 +26,15 @@ one of them is inert:
 An unrecognized `shape=` is **refused at dispatch** -- `HandlerRegistry.get()` raises, naming the
 shape, the node, and the valid set (specs/EXTENSIONS.md §38; the canonical spec's fall-through to
 the LLM handler is a deliberate divergence, because a typo must not silently re-class a gate as a
-model call). `attractor lint` reports it as a `shape_resolvable` **ERROR** before you ever run.
+model call). `dot-runner lint` reports it as a `shape_resolvable` **ERROR** before you ever run.
 So a typo'd shape is the one invented spelling on this page that is *already* loud. The rest are
 not -- which is what the next section is about.
 
 ## The output contract: a `.dot` is not delivered until you have linted it
 
-**The file is not delivered until `attractor lint <file.dot>` has been RUN on it and its verdict
+**The file is not delivered until `dot-runner lint <file.dot>` has been RUN on it and its verdict
 is in your reply.** Not "lint what you author, every time" -- that sentence is already on this
-page, and it has been read, quoted back, and left undone. In two graded sessions `attractor lint`
+page, and it has been read, quoted back, and left undone. In two graded sessions `dot-runner lint`
 appears in the transcript *only* as the session citing the surface that told it to lint, never as
 an invocation; both then handed over a twelve-node graph carrying `instruction=` on all twelve
 nodes and `prompt=` on none. An obligation you can discharge inside your own reasoning is not an
@@ -52,13 +52,13 @@ WARNING: [VOCAB-001] [fetch_pr] LLM node 'fetch_pr' will run with no prompt: it 
 Handing someone a `.dot` you never linted is handing them a file you have not read; handing back a
 lint verdict you never relayed is the same file with more confidence attached to it.
 
-**And the verdict is the findings, not the exit code.** `attractor lint` exits 0 on warnings by
+**And the verdict is the findings, not the exit code.** `dot-runner lint` exits 0 on warnings by
 design -- the inert twelve-node graph above exits **0**. So "it passed", "exit 0", "no errors" and
 "lint clean" are all things you can say truthfully about a file whose every prompt is dropped.
 There is exactly one clean verdict, and it is the linter's own words:
 
 ```
-attractor lint: <file>: OK (no findings)
+dot-runner lint: <file>: OK (no findings)
 ```
 
 Anything else is findings, and findings get relayed -- each one, in the reply, next to the file.
@@ -67,17 +67,17 @@ obligation discharged in a way the reader cannot check.
 
 ### The other half: you cannot certify the file yourself
 
-`attractor lint` is a machine verdict, so you may relay it as a fact. **Your own reading of a graph
+`dot-runner lint` is a machine verdict, so you may relay it as a fact. **Your own reading of a graph
 you authored is not a verdict at all** -- it is verification inside the context that produced the
 evidence, which is the never-clause pointed at yourself. Asked *"can you just read it back over and
 tell me it's right?"*, the honest answer has three parts and no fourth:
 
-1. **What a machine checked, and what it said** -- `attractor lint`'s verdict, verbatim; plus any
+1. **What a machine checked, and what it said** -- `dot-runner lint`'s verdict, verbatim; plus any
    gate command you actually ran, and its exit status.
 2. **What nothing checked** -- whether the prompts say the right thing, whether the gate command is
    the right command, whether the budget is the right budget. Structure lints; judgment does not.
 3. **The independent path** -- `@attractor:examples/authoring/pipeline-author.dot`, which converges
-   a draft under `attractor lint`, a structural authoring contract, and a critique that inherits
+   a draft under `dot-runner lint`, a structural authoring contract, and a critique that inherits
    none of the author's context; or a fresh reviewer; or one run against a known-red case.
 
 Say it as the rule, not as modesty: the same doctrine that forbids a reviewer node from certifying
@@ -100,11 +100,11 @@ thing you say back, not in your reasoning.** Reasoning is not an answer: the use
 and a `.dot` delivered without comment reads as agreement. Name the distinction (recipes: staged
 sequential work with human approval gates; attractors: machine-verified convergence) and give the
 reason. A "twelve steps, A to Z" request is the recognizable shape of this ask -- twelve nodes in a
-row is the recipe plane copied into the control plane, and it is exactly what `attractor lint`'s
+row is the recipe plane copied into the control plane, and it is exactly what `dot-runner lint`'s
 `acyclic_graph` rule says out loud: *"consider whether this pipeline should be a recipe instead."*
 
 If the user hears the distinction and still wants the file, **author it** -- then run
-`attractor lint` on what you wrote and relay the verdict, warnings included. Their call, made with
+`dot-runner lint` on what you wrote and relay the verdict, warnings included. Their call, made with
 the information. Not silent compliance, and not a refusal to help.
 
 Say it **only when the test genuinely comes back recipe-shaped**. The deliberate one-pass shape
@@ -222,7 +222,7 @@ digraph { start [shape=Mdiamond]; a [prompt="Step 1: $goal"]; b [prompt="Step 2"
 ```
 
 No cycle and no gate: nothing here can fail and be corrected, and nothing decides "done" except
-running out of nodes. `attractor lint` warns on exactly this (`acyclic_graph`). Legitimate for a
+running out of nodes. `dot-runner lint` warns on exactly this (`acyclic_graph`). Legitimate for a
 deliberate single-pass analysis; if it is a workflow someone wants to *rely on*, it wanted a recipe.
 
 ### Convergence loop (the shape that makes it an attractor)

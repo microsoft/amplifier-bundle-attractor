@@ -118,7 +118,7 @@
 // model-resolution story is documented IN that file.
 //   cd <target_repo> && \
 //   ATTRACTOR_PIPELINE_BUNDLE=<runner_dir>/attractor-pipeline-dual.yaml \
-//   attractor run <runner_dir>/task-runner.dot \
+//   dot-runner run <runner_dir>/task-runner.dot \
 //       --param task_file=/abs/path/to/backlog/tasks/<ID>-<slug>.md \
 //       --param target_dir=$PWD \
 //       --param max_iterations=6 \

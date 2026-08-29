@@ -7,7 +7,7 @@ conflating them is how an artifact ends up implying a pass nobody earned:
                   that actually ran;
 * red          -> the demo is NOT published, at all, ever.
 
-Every rung is exercised for real: a fake `attractor` shim on PATH for rung 1,
+Every rung is exercised for real: a fake `dot-runner` shim on PATH for rung 1,
 an emptied PATH for rung 3-only, a deliberately broken checker for rung 4, and
 a fixture with its evidence gate deleted for the red path. Gates proven red,
 per repo doctrine — a gate that has only ever been seen passing is not a gate.
@@ -31,10 +31,10 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 
 
 def _shim(tmp_path: Path, payload: str, *, exit_code: int = 0) -> Path:
-    """A fake `attractor` on PATH that emits a canned lint verdict."""
+    """A fake `dot-runner` on PATH that emits a canned lint verdict."""
     bindir = tmp_path / "bin"
     bindir.mkdir(parents=True, exist_ok=True)
-    shim = bindir / "attractor"
+    shim = bindir / "dot-runner"
     shim.write_text(
         "#!/bin/sh\n"
         + "".join(f'printf "%s\\n" {json.dumps(line)}\n' for line in payload.splitlines())
@@ -54,7 +54,7 @@ RELPATH = "attractor-scout-demos/synthetic-demo.dot"
 
 # ------------------------------------------------------------------ rung 1
 def test_rung1_cli_on_path_gives_lint_plus_doctrine_and_relays_verbatim(tmp_path, monkeypatch):
-    verdict_text = "attractor lint: pipeline.dot: OK (no findings)"
+    verdict_text = "dot-runner lint: pipeline.dot: OK (no findings)"
     bindir = _shim(tmp_path, verdict_text)
     monkeypatch.setenv("PATH", str(bindir))
     wk = _draft(tmp_path)
@@ -94,14 +94,14 @@ def test_rung1_lint_errors_are_a_red_verdict(tmp_path, monkeypatch):
 def test_rung2_lint_cmd_override_is_used_when_supplied(tmp_path, monkeypatch):
     """Rung 2 arrives ONLY as an explicit override — never automatically."""
     monkeypatch.setenv("PATH", "")
-    bindir = _shim(tmp_path, "attractor lint: pipeline.dot: OK (no findings)")
+    bindir = _shim(tmp_path, "dot-runner lint: pipeline.dot: OK (no findings)")
     wk = _draft(tmp_path)
 
     result = demo.run_ladder(
         dot_path=wk / "pipeline.dot",
         companion_path=wk / "pipeline.md",
         relpath=RELPATH,
-        lint_cmd=str(bindir / "attractor"),
+        lint_cmd=str(bindir / "dot-runner"),
     )
     assert result.level == T.LEVEL_LINT_DOCTRINE
     assert "OK (no findings)" in (result.lint_verdict or "")
@@ -124,7 +124,7 @@ def test_rung3_no_cli_gives_doctrine_only_and_the_exact_not_run_label(tmp_path, 
     assert result.level == T.LEVEL_DOCTRINE_ONLY
     assert result.lint_verdict is None
     assert result.lint_not_run_reason == (
-        f"attractor lint: NOT RUN — the CLI is not installed here. Run it yourself: attractor lint {RELPATH}"
+        f"dot-runner lint: NOT RUN — the CLI is not installed here. Run it yourself: dot-runner lint {RELPATH}"
     )
     assert result.doctrine_verdict == "doctrine_ok"
     assert "[PASS] A4" in (result.doctrine_report or ""), "the per-check summary must be carried verbatim"
@@ -132,7 +132,7 @@ def test_rung3_no_cli_gives_doctrine_only_and_the_exact_not_run_label(tmp_path, 
 
 def test_rung3_runs_even_when_the_cli_is_present(tmp_path, monkeypatch):
     """The floor is a second opinion, not a fallback: it always runs."""
-    monkeypatch.setenv("PATH", str(_shim(tmp_path, "attractor lint: pipeline.dot: OK (no findings)")))
+    monkeypatch.setenv("PATH", str(_shim(tmp_path, "dot-runner lint: pipeline.dot: OK (no findings)")))
     wk = _draft(tmp_path)
     result = demo.run_ladder(dot_path=wk / "pipeline.dot", companion_path=wk / "pipeline.md", relpath=RELPATH)
     assert result.doctrine_report is not None

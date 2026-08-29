@@ -19,14 +19,14 @@ match. Numbers written INSIDE the generated `.dot` — budgets, `max_iterations`
 thresholds, a figure in a node's prompt or label — are NOT digit-whitelisted:
 a `.dot` legitimately carries pipeline parameters, and a whitelist there would
 false-positive on real ones. The `.dot` gets its own appropriate machine gate,
-`attractor lint` + the authoring contract (see property 2); its numbers are
+`dot-runner lint` + the authoring contract (see property 2); its numbers are
 checked for structure, not cross-checked against the verified stats. The
 self-certification panel's "what nothing checked" names that surface out loud
 (`demo_templates.PANEL_PART2_BODY`), and see `validate_narrative` for the two
 named limits of the whitelist itself.
 
 **2. Nothing is published before the gates finish.** `run_ladder` walks the
-degradation ladder — `attractor lint` when reachable, the vendored stdlib
+degradation ladder — `dot-runner lint` when reachable, the vendored stdlib
 doctrine checker always — and `assemble` copies the `.dot` and companion
 beside the HTML only after a green verdict. A red verdict raises
 `DemoGateRed`: the artifact never carries a broken demo. Unavailability of a
@@ -353,7 +353,7 @@ def validate_narrative(narrative, stats: dict, dot_text: str) -> dict:
 
     Scope, stated precisely so the claim can't quietly widen: this guards the
     SIX teaching-prose slots. Numbers inside the generated ``.dot`` are not its
-    business — that file gets ``attractor lint`` + the authoring contract, and
+    business — that file gets ``dot-runner lint`` + the authoring contract, and
     a whitelist over pipeline parameters (``max_iterations``, thresholds) would
     false-positive on legitimate ones.
 
@@ -547,7 +547,7 @@ def _run_lint(lint_argv: list[str], dot_path: Path) -> tuple[str, bool]:
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        return f"attractor lint: could not run ({exc})", False
+        return f"dot-runner lint: could not run ({exc})", False
     body = (proc.stdout or "") + (proc.stderr or "")
     body = body.strip() or f"(no output; exit {proc.returncode})"
     red = proc.returncode != 0 or bool(_LINT_ERROR_RE.search(body))
@@ -586,8 +586,8 @@ def run_ladder(
 
     if lint_cmd:
         lint_argv = shlex.split(lint_cmd)
-    elif shutil.which("attractor"):
-        lint_argv = ["attractor"]
+    elif shutil.which("dot-runner"):
+        lint_argv = ["dot-runner"]
     else:
         lint_argv = []
 
@@ -605,7 +605,7 @@ def run_ladder(
     lint_text, lint_red = _run_lint(lint_argv, dot_path)
     reasons: list[str] = []
     if lint_red:
-        reasons.append("attractor lint reported ERROR-level findings")
+        reasons.append("dot-runner lint reported ERROR-level findings")
     if doctrine_red:
         reasons.append(f"doctrine: {doctrine_verdict}")
     return LadderResult(
@@ -695,7 +695,7 @@ def assemble_demo(
             "\n\n".join(
                 part
                 for part in (
-                    "=== attractor lint ===\n" + (ladder.lint_verdict or "(not run)"),
+                    "=== dot-runner lint ===\n" + (ladder.lint_verdict or "(not run)"),
                     "=== authoring contract ===\n" + (ladder.doctrine_report or "(not run)"),
                 )
             ),

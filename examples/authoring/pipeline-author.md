@@ -10,7 +10,7 @@ it did its job. For what this pipeline *is* and how to run it, read
 ## The sink, named first
 
 **A new pipeline exists at `out/<name>.dot`, with a companion at
-`out/<name>.md`, that: lints clean under `attractor lint`; satisfies A1–A9 of
+`out/<name>.md`, that: lints clean under `dot-runner lint`; satisfies A1–A9 of
 [`check_authored_pipeline.py`](check_authored_pipeline.py); and a critic that
 never saw the author's reasoning said `VERDICT: SHIP` to.**
 
@@ -64,7 +64,7 @@ salvage path.
 
 ### Cheap gate before expensive gate
 
-`attractor lint` and the structural contract both run before an LLM is paid to
+`dot-runner lint` and the structural contract both run before an LLM is paid to
 critique anything. A graph that does not parse cannot be usefully judged, and
 judgment is the expensive tier. This is the composite pattern from
 `PIPELINE_DESIGN_PRINCIPLES.md` §2, applied to the authoring problem.

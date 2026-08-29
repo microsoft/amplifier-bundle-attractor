@@ -11,7 +11,7 @@ to review. Point it at your repo:
 ```bash
 DOT="/path/to/attractor/examples/pipelines/practical/pr-review.dot"
 cd /path/to/your/repo          # checked out on the feature branch to review
-attractor run "$DOT" \
+dot-runner run "$DOT" \
     --param goal="Review the changes on this branch for quality and security" \
     --cwd .
 ```

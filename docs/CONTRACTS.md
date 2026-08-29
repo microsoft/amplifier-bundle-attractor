@@ -122,7 +122,7 @@ provider module's responsibility.
 | Attractor-compatible resolver (DOT-graph style) | M5 substitution (engine enforces layer 1 only), fail-fast, structural concurrency. The resolver adds layers 2 and 3 of the default pattern on top. |
 | Attractor loaded as a tool inside an agent session | M5 substitution, fail-fast, structural concurrency. Pipeline author must use shell defaults (`${VAR:-value}`) for any context key that may be absent at execution time. |
 | Custom resolver | All contracts. The resolver implements its own param/default mechanism on top of the engine's absent-key pass-through. |
-| `attractor run` CLI | All contracts. Pipeline author owns defaults via shell-default syntax. |
+| `dot-runner run` CLI | All contracts. Pipeline author owns defaults via shell-default syntax. |
 
 ---
 

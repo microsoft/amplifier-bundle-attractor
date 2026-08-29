@@ -8,7 +8,7 @@ real authority:
                                  the thing that decides the run's first route.
   * ``check_child_contract.py`` -- the structural gate on a GENERATED child
                                  pipeline, enforcing the shape checks
-                                 ``attractor lint`` deliberately does not own.
+                                 ``dot-runner lint`` deliberately does not own.
 
 Both are gates, so both must **fail closed**: a missing file, an unreadable
 file, or a graph neither tool understands has to produce the rejecting token,
@@ -99,7 +99,7 @@ digraph ComposedChild {
 }
 """
 
-# Lint-clean enough to pass `attractor lint` with warnings only, and still not an
+# Lint-clean enough to pass `dot-runner lint` with warnings only, and still not an
 # attractor: acyclic, the gate is colocated inside the worker, no budget wall, no
 # fail-loud terminal, no failure route.  This is the case that justifies shipping
 # a contract checker in addition to the linter.

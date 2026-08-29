@@ -41,7 +41,7 @@
 # ============================================================================
 # Dual-provider base bundle for the task-runner's dual-family critique.
 #
-# WHY THIS FILE EXISTS: the attractor CLI's default base bundle
+# WHY THIS FILE EXISTS: the dot-runner CLI's default base bundle
 # (amplifier-bundle-attractor bundles/attractor-pipeline.yaml) mounts ONLY
 # provider-anthropic. A node with llm_provider="openai" still routes to the
 # attractor-agent-openai child agent, but the child session composes with the
@@ -54,7 +54,7 @@
 #
 # Fix: point the CLI at this bundle, which mounts BOTH families:
 #   ATTRACTOR_PIPELINE_BUNDLE=$PWD/runner/attractor-pipeline-dual.yaml \
-#     attractor run runner/task-runner.dot ...
+#     dot-runner run runner/task-runner.dot ...
 #
 # Provider order matters: provider-anthropic stays FIRST so nodes without an
 # explicit model keep the Anthropic default; critique_b's llm_model

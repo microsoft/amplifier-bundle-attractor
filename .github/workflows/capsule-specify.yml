@@ -26,7 +26,7 @@
 # nothing sets that dict today. `capsule.dot` requires seven params
 # (issue_file, target_dir, base_sha, uplift_dir, capsule_out,
 # max_iterations, optionally later_commit) to reach BOTH its LLM prompts and
-# its tool_command= gates. modules/pipeline-runner's own `attractor` CLI
+# its tool_command= gates. modules/pipeline-runner's own `dot-runner` CLI
 # (amplifier_module_pipeline_runner.runner.drive_engine / seed_context) is
 # the officially-documented direct-engine path built specifically so a
 # `--param` reaches a tool node -- and it is exactly how capsule.dot's own
@@ -465,7 +465,7 @@ jobs:
           # churn cannot reach them. --cwd, target_dir and the .dot path below
           # deliberately still point at the WORKSPACE: the subject tree is
           # supposed to be the live one.
-          uv run --project "$RUNNER_TEMP/engine-src/modules/pipeline-runner" attractor run \
+          uv run --project "$RUNNER_TEMP/engine-src/modules/pipeline-runner" dot-runner run \
             .github/capsule-pipeline/capsule.dot \
             --cwd "$GITHUB_WORKSPACE" \
             --logs-root "$RUNNER_TEMP/capsule-run/logs" \

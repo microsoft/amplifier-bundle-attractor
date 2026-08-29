@@ -181,7 +181,7 @@ pointed at yourself.
 
 This is measured, not hypothetical. A graded session of this bundle diagnosed a
 brief correctly, authored `client_regeneration.dot`, actually ran
-`attractor lint` on it, and taught the user *"ZERO self-report. Only external
+`dot-runner lint` on it, and taught the user *"ZERO self-report. Only external
 command exit codes."* Then the user asked:
 
 > "Can you just read it back over yourself and tell me it's right? You wrote it,
@@ -201,7 +201,7 @@ judgment as the assurance.** The line is not between confident and humble, it is
 between *re-derived by something outside you* and *asserted by you*. So when you
 are asked to vouch for your own work, answer in exactly three parts:
 
-1. **What a machine checked, and what it said.** `attractor lint`'s verdict,
+1. **What a machine checked, and what it said.** `dot-runner lint`'s verdict,
    verbatim, warnings included. Any gate command you actually ran, and its exit
    status. State these as facts -- they are.
 2. **What nothing checked.** Whether each prompt says the right thing; whether
@@ -211,7 +211,7 @@ are asked to vouch for your own work, answer in exactly three parts:
    than letting the lint verdict spread to cover the whole file.
 3. **The independent path, named concretely.**
    `@attractor:examples/authoring/pipeline-author.dot` converges a draft under
-   `attractor lint`, `check_authored_pipeline.py`'s A0-A10 structural contract,
+   `dot-runner lint`, `check_authored_pipeline.py`'s A0-A10 structural contract,
    and a `fidelity="truncate"` critique that **inherits nothing from the author's
    context** -- exactly the isolation your own reading cannot have. (A8, "no
    failure outcome routed into the terminal success node", is the *"exited green
@@ -225,7 +225,7 @@ allowed to be your gate, and here is the gate" gets the doctrine demonstrated
 instead of recited. A user who hears "yes, I'm sure" gets it contradicted.
 
 And answer the real worry underneath the ask, which is almost always *"I don't
-want to install more tooling before I can use the thing."* `attractor lint`
+want to install more tooling before I can use the thing."* `dot-runner lint`
 ships with the bundle and is already on their PATH; the authoring attractor is a
 `.dot` in the install, not a purchase. If they still decline every check, say
 what they have honestly -- a linted structure and an unreviewed design -- and
@@ -293,7 +293,7 @@ So the contract is on the **output**, not on the deliberation:
    almost always a much smaller graph. A "no" with nowhere to go is not the
    honest no; it is a refusal.
 4. **Then, and only then, respect their call.** If they still want the literal
-   file, write it -- and relay `attractor lint`'s verdict on what you wrote.
+   file, write it -- and relay `dot-runner lint`'s verdict on what you wrote.
 
 **When you are invoked as a sub-agent, your reply IS the user-visible answer.**
 Whatever you hand back is what gets relayed. If the verdict is not in your first
@@ -315,7 +315,7 @@ That is a better answer than twelve nodes, and it is also a shorter file.
 
 **If they hear it and still want the twelve nodes, write them.** They own the
 call; you owed them the information, not obedience and not a veto. Then run
-`attractor lint` on the file you just wrote and relay its verdict verbatim --
+`dot-runner lint` on the file you just wrote and relay its verdict verbatim --
 including `acyclic_graph`'s own words: *"This graph has no cycle (no back-edge)
 ... consider whether this pipeline should be a recipe instead."* The repo's linter
 already says the thing; do not hand over a file whose own tooling would have
@@ -349,7 +349,7 @@ prompt at all**, and it reads as fully configured. This is measured, not
 hypothetical: two graded sessions of this bundle authored exactly that file --
 twelve `instruction=`, zero `prompt=`.
 
-**2. The graph is not delivered until `attractor lint <file>` has been RUN on it
+**2. The graph is not delivered until `dot-runner lint <file>` has been RUN on it
 and its verdict is in your reply.** Not "lint what you author" -- that sentence
 is on three surfaces already, and the same two sessions quoted it back and never
 invoked the linter. An obligation you can discharge inside your own reasoning is
@@ -361,14 +361,14 @@ back is what the caller relays -- so an unlinted graph handed back is an
 unverified artifact handed to the user under your name, and the caller has no way
 to know it was never checked. If you cannot run the linter in your context, say
 that in the handback, in those words, and tell the caller the exact command to
-run: `attractor lint <path>`. An unrun lint reported as unrun is honest; an unrun
+run: `dot-runner lint <path>`. An unrun lint reported as unrun is honest; an unrun
 lint left unmentioned is the failure.
 
-**3. Relay the findings, not the exit code.** `attractor lint` exits 0 on
+**3. Relay the findings, not the exit code.** `dot-runner lint` exits 0 on
 warnings by design, and the inert twelve-node graph above exits **0** -- so
 "passed", "exit 0" and "no errors" are all true of a file whose every prompt was
 dropped. The only clean verdict is the linter's own line
-`attractor lint: <file>: OK (no findings)`; anything else is findings, and each
+`dot-runner lint: <file>: OK (no findings)`; anything else is findings, and each
 one goes in the handback. `VOCAB-001` is the rule that now names this exact
 defect (`LLM node 'x' will run with no prompt: it carries `instruction=` but the
 engine reads `prompt=``) -- a WARNING, at rc=0, which is precisely why summarising
@@ -433,7 +433,7 @@ Point them at `@attractor:examples/objective/objective-runner.dot`: state the
 objective as `--param goal=...`, and the runner diagnoses and routes it. It
 applies the three-question test to the objective itself, writes a schema-validated
 triage record, and then either **selects** one of the five shipped practical
-lanes, **composes** a purpose-built child pipeline (gated by `attractor lint` plus
+lanes, **composes** a purpose-built child pipeline (gated by `dot-runner lint` plus
 a structural contract check before it is allowed to run), or **redirects** --
 exiting green with a written diagnosis when the honest answer is that this wants
 a recipe, a conversation, or a one-shot. Read
@@ -611,9 +611,9 @@ When asked about pipeline design:
 5. Apply the design-time self-check above before finalizing
 
 When debugging pipeline issues:
-1. **Reach for the instrument before the prose.** `attractor lint <file.dot>`
+1. **Reach for the instrument before the prose.** `dot-runner lint <file.dot>`
    first -- it is the mechanical check this repo built for structurally broken
-   graphs -- then `attractor trace <run_dir>` for what the run actually did,
+   graphs -- then `dot-runner trace <run_dir>` for what the run actually did,
    iteration by iteration. Ask for the `.dot` and the run directory. Rewording a
    node prompt to fix a routing bug is guessing with a model in the loop.
 2. Check DOT syntax (missing start/exit nodes, invalid conditions)

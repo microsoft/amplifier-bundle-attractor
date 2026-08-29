@@ -18,7 +18,7 @@ root** and it works walk-up, no setup:
 DOT="$PWD/examples/pipelines/practical/bug-fix.dot"
 cp -r examples/pipelines/practical/sample /tmp/attractor-bugfix-demo
 cd /tmp/attractor-bugfix-demo
-attractor run "$DOT" \
+dot-runner run "$DOT" \
     --param goal="Fix the bug in user_service.py: get_display_name() raises TypeError when a user's avatar is None. Reproduce it first, apply the minimal fix, and add a regression test that covers the None-avatar case." \
     --cwd .
 ```
@@ -205,12 +205,12 @@ To see the pipeline converge, run it against the shipped sample:
 DOT="$PWD/examples/pipelines/practical/bug-fix.dot"
 cp -r examples/pipelines/practical/sample /tmp/attractor-bugfix-demo
 cd /tmp/attractor-bugfix-demo
-attractor run "$DOT" \
+dot-runner run "$DOT" \
     --param goal="Fix the bug in user_service.py: get_display_name() raises TypeError when a user's avatar is None. Reproduce it first, apply the minimal fix, and add a regression test that covers the None-avatar case." \
     --cwd .
 ```
 
-The engine writes a run directory (shown as `logs=...` by `attractor run`)
+The engine writes a run directory (shown as `logs=...` by `dot-runner run`)
 containing `manifest.json`, `checkpoint.json`, and per-node output
 directories. A real induced two-pass run against the current graph (20 edges,
 12 nodes) is committed at

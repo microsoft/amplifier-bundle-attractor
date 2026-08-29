@@ -29,7 +29,7 @@ pipeline, so the committed sample stays pristine and each run starts clean:
 
 ```bash
 cp -r examples/pipelines/practical/sample /tmp/attractor-demo
-attractor run examples/pipelines/practical/bug-fix.dot \
+dot-runner run examples/pipelines/practical/bug-fix.dot \
     --param goal="Fix the TypeError in get_display_name when avatar is None" \
     --cwd /tmp/attractor-demo
 ```

@@ -27,17 +27,17 @@ without Docker running.
        |
   install     amplifier CLI, then `amplifier bundle add git+https://github.com/microsoft/
               amplifier-bundle-attractor@<ref>` -- the REAL user path, redirected to the local
-              Gitea mirror -- then `amplifier bundle use attractor`, the attractor CLI, and a
+              Gitea mirror -- then `amplifier bundle use attractor`, the dot-runner CLI, and a
               pinned checkout at /opt/attractor-src
        |
-  readiness   amplifier on PATH; the ACTIVE bundle is attractor; `attractor lint --help`;
+  readiness   amplifier on PATH; the ACTIVE bundle is attractor; `dot-runner lint --help`;
               the shipped objective runner lints clean; (exemplar scenarios) the fixture is RED
               -- all before a single model call is paid for
        |
   seed        the scenario's fixture into /workspace, if it has one
        |
   drive       session mode:  AIUser holds a real multi-turn conversation, in persona
-              exemplar mode: `attractor run objective-runner.dot` against the fixture
+              exemplar mode: `dot-runner run objective-runner.dot` against the fixture
        |
   extract     the session's own transcript.jsonl, rendered deterministically; plus the small
               decisive artifacts (.objective/*, any authored .dot)

@@ -161,7 +161,7 @@ command prints a routing token and the edge matches it.
 it, so on a second visit the key still holds the *stale* value from the prior success. A bare
 `context.tool.last_line=X` edge and an `outcome=fail` edge on the same node can then both match at
 once, and the engine deterministically picks one (weight, then lexical) which may not be the one you
-meant. `attractor lint`'s **TOPO-002** flags exactly this shape.
+meant. `dot-runner lint`'s **TOPO-002** flags exactly this shape.
 
 **Discipline: conjoin `&& outcome=success` onto every `last_line` edge that shares a source node
 with a failure edge**, so the label edge only fires when the label is fresh:

@@ -23,7 +23,7 @@ persona: |
   know what to do next, not a lecture.
 
   You know just enough Attractor to have run one — you know a `.dot` file describes it and that
-  `attractor run` starts it. You do NOT know the routing rules, the budget mechanisms, the lint
+  `dot-runner run` starts it. You do NOT know the routing rules, the budget mechanisms, the lint
   tool, or any of this project's design vocabulary. Never use the words "convergence",
   "evidence gate", "budget wall", "edge selection", or "goal gate" yourself.
 
@@ -64,7 +64,7 @@ pass_bar:
     The session diagnoses the non-termination structurally — the loop has no budget counted
     inside a gate, and/or the gate's exit condition can never match, and/or edge selection is
     falling through to weight and lexical tiebreak — and reaches for the mechanical instruments
-    (`attractor lint`, the run's own event record) before touching prose. When the user proposes
+    (`dot-runner lint`, the run's own event record) before touching prose. When the user proposes
     letting the review node decide it is done, the session REFUSES and says why: verification
     inside the context that produced the evidence is not verification.
   criteria: [G1, G5, G6, G8]
@@ -72,12 +72,12 @@ pass_bar:
     - id: MC-B1
       kind: transcript_contains_any
       why: >
-        `attractor lint` is the mechanical first move for a structurally broken graph, and it is
+        `dot-runner lint` is the mechanical first move for a structurally broken graph, and it is
         the instrument this repo built for exactly this class (an author can even put it inside a
         graph). Naming it is the cheapest evidence that the session reached for structure.
       any_of:
-        - "attractor lint"
-        - "attractor trace"
+        - "dot-runner lint"
+        - "dot-runner trace"
     - id: MC-B2
       kind: transcript_contains_any
       why: >

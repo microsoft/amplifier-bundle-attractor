@@ -321,7 +321,7 @@ Two causal routing forms appear above, and both need a *complete* loop:
 
 - **Conditional corrective edge** (`build_gate -> implement
   [condition="outcome=fail"]`): routes on failure evidence immediately.
-  This is the lint-visible back-edge — `attractor lint` sees the cycle.
+  This is the lint-visible back-edge — `dot-runner lint` sees the cycle.
 - **Node-level `retry_target`** (`test_gate`, `security_gate`): fires only
   when no edge matches after failure (spec §3.7) — fail-fast means a FAIL
   outcome does not traverse plain unconditional edges, so the gate dispatches
@@ -423,7 +423,7 @@ record to `logs_root/trace.jsonl` per node completion:
 To inspect the descent curve after a run:
 
 ```
-attractor trace <run-dir>
+dot-runner trace <run-dir>
 ```
 
 This prints a human-readable summary of iterations, nodes, statuses, and
@@ -432,14 +432,14 @@ durations — the empirical form of the convergence claim.
 To continue a run that was interrupted mid-graph (spec §5.3):
 
 ```
-attractor resume <run-dir>
+dot-runner resume <run-dir>
 ```
 
 The engine restores context, completed nodes and retry counters from
 `<run-dir>/checkpoint.json`, makes ONE edge-selection decision from the last
 completed node's recorded outcome, and carries on — completed nodes are never
 re-visited. The node the interruption hit re-executes from its start, because
-it never completed. Resume is opt-in only: a plain `attractor run` never reads
+it never completed. Resume is opt-in only: a plain `dot-runner run` never reads
 a checkpoint, so this is additive to (never a replacement for) the graph-owned
 idempotency pattern in
 [`examples/pipelines/12-graph-resume.dot`](../examples/pipelines/12-graph-resume.dot),
@@ -940,7 +940,7 @@ plan [prompt="Plan the implementation of: $goal"]
 ```
 
 The `goal` value comes from the graph-level `goal` attribute. Override it at run
-time with `--param goal="..."` on the `attractor run` CLI, or the `goal`
+time with `--param goal="..."` on the `dot-runner run` CLI, or the `goal`
 parameter in `run_pipeline`.
 
 **`$goal` in a `tool_command` resolves differently than in a `prompt`.** LLM-node
@@ -1188,9 +1188,9 @@ digraph FeatureBuild {
 }
 ```
 
-## Static Lint Rules (`attractor lint`)
+## Static Lint Rules (`dot-runner lint`)
 
-Run `attractor lint <file.dot>` to check a pipeline file before running it.
+Run `dot-runner lint <file.dot>` to check a pipeline file before running it.
 Lint is static (no API calls, sub-second), safe to run in CI, and does not
 change run-time validation behaviour.
 
@@ -1603,7 +1603,7 @@ gate -> done [condition="context.tool.last_line=green"]
 gate -> work [condition="context.tool.last_line=red"]
 ```
 
-**Lineage:** This is the `attractor lint` sibling of the authoring checker's
+**Lineage:** This is the `dot-runner lint` sibling of the authoring checker's
 **A10** (`examples/authoring/check_authored_pipeline.py`, issue #245), which
 caught the shape on a graph that satisfied every other doctrine check.  A10
 only sees machine-authored graphs; TOPO-008 asks the same question of
@@ -1933,12 +1933,12 @@ Measured over this repository's shipped corpus: **zero** of the 33
 but `fidelity="stateless"` / `"fresh"` are not among its six values, and
 `backend.py` falls back to `compact`. That case is reported by the existing
 `fidelity_valid` rule (WARNING), which runs in both `validate()` and
-`attractor lint`.
+`dot-runner lint`.
 
-**Reading the verdict:** VOCAB-001 is a WARNING, so `attractor lint` exits
+**Reading the verdict:** VOCAB-001 is a WARNING, so `dot-runner lint` exits
 **0** on a graph whose every prompt was dropped. Relay the *findings*, not the
 exit code — the only clean verdict is
-`attractor lint: <file>: OK (no findings)`.
+`dot-runner lint: <file>: OK (no findings)`.
 
 ---
 
@@ -2047,7 +2047,7 @@ a `dot -Tsvg` sweep over every git-tracked `.dot` (`dot-render-gate` in
 repo's own corpus** and imposes nothing on community authors.
 
 Both rules are pure-lexer: they read `graph.dot_source` with the engine's own
-tokenizer regex and take **no GraphViz dependency** — `attractor lint` stays
+tokenizer regex and take **no GraphViz dependency** — `dot-runner lint` stays
 sub-second and hermetic on a machine with no `dot` binary. They are silent on a
 programmatically-constructed `Graph` (no source text to check). Design
 rationale: `docs/designs/2026-08-23-dot-render-compliance.md`.

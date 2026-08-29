@@ -38,16 +38,13 @@ from . import authoring_contract as _contract
 EXPLAINER_URL = "https://microsoft.github.io/amplifier-bundle-attractor/attractor-explained.html"
 
 #: The single source of the install line, quoted in every demo's panel.
-CLI_INSTALL_CMD = (
-    'uv tool install "git+https://github.com/microsoft/amplifier-bundle-dot-runner'
-    '@main#subdirectory=modules/pipeline-runner"'
-)
+#: Root form -- no #subdirectory (depends on the engine repo's root pyproject;
+#: the subdirectory form keeps working in the meantime -- see the dot-runner
+#: CLI rename note).
+CLI_INSTALL_CMD = 'uv tool install "git+https://github.com/microsoft/amplifier-bundle-dot-runner@main"'
 
 #: The ASK-FIRST inbound fetch. Never run without an explicit yes (rung 2).
-UVX_LINT_CMD = (
-    "uvx --from git+https://github.com/microsoft/amplifier-bundle-dot-runner"
-    "@main#subdirectory=modules/pipeline-runner attractor"
-)
+UVX_LINT_CMD = "uvx --from git+https://github.com/microsoft/amplifier-bundle-dot-runner@main dot-runner"
 
 #: The offered independent path --- never invoked automatically by this skill.
 AUTHOR_PIPELINE_PATH = "examples/authoring/pipeline-author.dot"
@@ -63,7 +60,7 @@ LEVEL_NONE = "none"
 #: Rung 3 ran, rungs 1-2 did not. The #270 doctrine: if the linter could not
 #: run, SAY SO in the artifact --- silence reads as a pass, and is not one.
 LABEL_LINT_NOT_RUN = (
-    "attractor lint: NOT RUN — the CLI is not installed here. Run it yourself: attractor lint {relpath}"
+    "dot-runner lint: NOT RUN — the CLI is not installed here. Run it yourself: dot-runner lint {relpath}"
 )
 
 #: Rung 4: nothing verified anything. Loud, and honest about it.
@@ -503,14 +500,14 @@ def author_brief_line(unit_name: str, verdict: str) -> str:
 
 def run_cmd(dot_relpath: str) -> str:
     """The exact invocation that runs the published demo pipeline."""
-    return f"attractor run {shlex.quote(dot_relpath)} --cwd ."
+    return f"dot-runner run {shlex.quote(dot_relpath)} --cwd ."
 
 
 def author_cmd(*, unit_name: str, verdict: str, slug: str) -> str:
     """The `pipeline-author.dot` invocation, with this demo's brief pre-filled."""
     brief = shlex.quote(author_brief_line(unit_name, verdict))
     return (
-        f"attractor run {AUTHOR_PIPELINE_PATH} --cwd . \\\n"
+        f"dot-runner run {AUTHOR_PIPELINE_PATH} --cwd . \\\n"
         f"    --param brief={brief} \\\n"
         f"    --param authoring_dir=examples/authoring \\\n"
         f"    --param target_dir=. \\\n"
@@ -521,7 +518,7 @@ def author_cmd(*, unit_name: str, verdict: str, slug: str) -> str:
 def uvx_consent_question(relpath: str) -> str:
     """The ask-first question for rung 2. Named as an inbound fetch, out loud."""
     return (
-        "The attractor CLI isn't installed. I can fetch and run the public linter via "
+        "The dot-runner CLI isn't installed. I can fetch and run the public linter via "
         f"`{UVX_LINT_CMD} lint {relpath}` — that downloads a public package (an inbound fetch; "
         "none of your mined data leaves this machine). Yes/no?"
     )

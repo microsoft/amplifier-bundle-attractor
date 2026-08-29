@@ -46,7 +46,7 @@ Key facts:
 - `shape=parallelogram` maps to the `tool` handler, which runs `tool_command` as a shell command
 - The last non-empty stdout line is stored in `context["tool.last_line"]` automatically
 - Route on `context.tool.last_line`, never on `tool.output` (full stdout never matches a condition exactly)
-- A diamond is only correct when routing on `context.*` keys set by *earlier* nodes (e.g., a `preferred_label` set by a node-written `status.json`, or legacy `report_outcome`) -- never on `outcome=` of the node before it
+- A diamond is only correct when routing on `context.*` keys set by *earlier* nodes (e.g., a `preferred_label` set by a node-written `status.json` -- `report_outcome` is removed as of the engine\047s 0.2.0 repair release) -- never on `outcome=` of the node before it
 
 ## Pipeline Structure
 

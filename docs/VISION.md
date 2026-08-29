@@ -126,14 +126,16 @@ a ledger row, not a vision. This page does not forge decisions the maintainer ha
   here unmodified; "an extension that breaks a conforming graph is a bug, not an extension."
 - **One command; opinion arrives by composition.** `dot-runner` is the only entry point. A
   bundle's opinion -- which worker runs a node, which model backs it -- reaches the engine through
-  composition (`--bundle`, config), never through a second command name. A second binary is not a
+  composition (`--worker`, config), never through a second command name; bundles themselves are
+  internal-only as of the engine's 0.2.0 repair release (`--bundle`/`DOT_RUNNER_BUNDLE` are removed
+  from the CLI surface -- worker NAMES are the whole user-facing concept). A second binary is not a
   feature; it is the `.dot` file losing its claim to be the complete, self-contained workflow
   definition (spec 1.2).
 - **The spec's own channels carry the outcome; extensions are retconned, not defended.** Artifact
   files, tool exit codes, and a node-written `status.json` (spec §4.5 / Appendix C) are the taught
   and implemented way a worker -- spawned or not -- delivers its verdict; a pure-JSON verdict is
-  the sharpest reading of that same channel, and a legacy report tool survives only as a dated
-  compatibility window, never as a parallel truth. When a deeper read of the nlspec shows a shipped
+  the sharpest reading of that same channel, and a legacy report tool was removed outright once its
+  compatibility window closed (engine 0.2.0 repair release), never kept on as a parallel truth. When a deeper read of the nlspec shows a shipped
   extension was never the right shape, the correct move is to undo it -- demote, back out,
   deprecate -- ledgered exactly as loudly as the extension itself was ledgered in. Shipping first
   earns no immunity from being retconned later.

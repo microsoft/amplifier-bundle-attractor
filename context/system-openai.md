@@ -57,8 +57,8 @@ Find files by name pattern. Results are sorted by modification time (newest firs
 ### status.json (the taught verdict channel)
 If your instructions name a status.json contract path, write your verdict there as JSON (`outcome`/`preferred_label`/`suggested_next_ids`/`context_updates`/`notes`) when you finish or determine you cannot -- this is a spec-native audit trail the engine reads back, and the mechanism a spawned worker should use.
 
-### report_outcome (legacy compatibility window)
-When you have completed the task (or determined you cannot), you may also report the outcome with this tool. It still works, but a node-written status.json wins over it on conflict, and it is not the primary, taught mechanism.
+### report_outcome (removed)
+`report_outcome` was removed in the engine's 0.2.0 repair release -- no tool by that name ships any more. Use status.json above; it is now the only out-of-band verdict channel.
 
 ## Best Practices
 

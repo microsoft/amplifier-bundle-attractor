@@ -42,10 +42,11 @@ gated on `verdict_gate` output -- implementation completing earns nothing.
 **`goal_gate` nodes require an explicit verdict (fail-closed).** A goal gate is
 satisfied only by an explicit verdict, and the escalation ladder below is the
 taught order for producing one: a `parallelogram` tool node's exit code, a
-node-written `status.json` (canonical spec §4.5 / Appendix C), a pure or fenced
-JSON response with a `status` field, an embedded trailing JSON verdict, or --
-as a legacy compatibility window, not the taught mechanism -- a `report_outcome`
-tool call. A plain-prose response ("looks good, all done") returns RETRY instead
+node-written `status.json` (canonical spec §4.5 / Appendix C), or a pure or
+fenced JSON response with a `status` field, or an embedded trailing JSON
+verdict. (`report_outcome` was a legacy compatibility window, never the taught
+mechanism, and is now removed outright in the engine 0.2.0 repair release.) A
+plain-prose response ("looks good, all done") returns RETRY instead
 of SUCCESS, so the gate is never satisfied by a defaulted response; even prose
 that says "CONVERGED" does not count (`specs/EXTENSIONS.md` §25). Make the gate a
 parallelogram tool node whose exit code is the verdict, or have the node write
@@ -112,12 +113,13 @@ the frame every pattern below and every gate in this repo implements:
 3. **A pure-JSON verdict** in the node's own LLM response, when neither of the above fits and
    the node must self-describe (fenced or bare `{...}` with a `status` field -- EXTENSIONS.md
    §25's recovery ladder, paths 2-4).
-4. **`report_outcome`** -- a legacy compatibility window, still honored, but not the taught
-   mechanism. It is a tool call, but the verdict it carries is still self-reported from inside
-   the same context that produced the work; machine evidence (rungs 1-2) outranks it. See the
-   anti-pattern catalog entry ("`report_outcome`-as-primary", `PIPELINE_PATTERNS.md` §6) and
-   the existing self-report anti-pattern ("LLM-Emitted Routing Sentinel", same section) --
-   wrapping a self-report in a tool call does not make it evidence.
+4. ~~`report_outcome`~~ -- **removed in the engine 0.2.0 repair release, no compat window.**
+   It was a legacy compatibility window, never the taught mechanism, and even while it existed
+   the verdict it carried was still self-reported from inside the same context that produced
+   the work; machine evidence (rungs 1-2) outranked it. Only rungs 1-3 above remain callable.
+   See the anti-pattern catalog entry ("`report_outcome`-as-primary", `PIPELINE_PATTERNS.md`
+   §6) and the existing self-report anti-pattern ("LLM-Emitted Routing Sentinel", same
+   section) -- wrapping a self-report in a tool call never made it evidence.
 
 Pointers: `docs/PIPELINE_PATTERNS.md` (the layering discipline this section summarizes),
 `docs/ROUTING-REFERENCE.md` (the routing mechanics `status.json` / `report_outcome` feed),
@@ -235,13 +237,14 @@ gate -> deploy [condition="outcome=success && context.tests_passed=true"]
 ```
 
 Keys available in conditions:
-- `outcome` -- resolves to `preferred_label` if one was set (by a node-written
-  `status.json`, or -- legacy -- by the agent via `report_outcome`), otherwise falls
-  back to the raw status value (`success`, `fail`, etc.)
+- `outcome` -- resolves to `preferred_label` if one was set by a node-written
+  `status.json`, otherwise falls back to the raw status value (`success`, `fail`,
+  etc.). (`report_outcome` used to be an alternate way to set these fields; it is
+  removed in the engine 0.2.0 repair release.)
 - `preferred_label` -- the custom routing label set via a node-written `status.json`
-  or (legacy) `report_outcome` (null if not set)
+  (null if not set)
 - `context.<key>` -- any value in the pipeline context (set via `context_updates` in
-  a node-written `status.json` or, legacy, `report_outcome`)
+  a node-written `status.json`)
 
 **Dynamic routing: prefer evidence over self-report.** Nodes that make routing
 decisions (review gates, test runners) should route on a `preferred_label` set by the
@@ -250,9 +253,9 @@ an artifact file a downstream `parallelogram` gate greps and turns into
 `context.tool.last_line`, or a node-written `status.json` for out-of-band/spawned
 outcomes. For example, a review node with edges `condition="outcome=pass"` and
 `condition="outcome=retry"` should write a verdict file (or `status.json`) carrying
-`preferred_label="pass"` or `"retry"`. `report_outcome` still sets the same fields and
-is still honored, but it is a legacy compatibility window, not the taught mechanism --
-a self-reported tool call is still a self-report.
+`preferred_label="pass"` or `"retry"`. (`report_outcome` used to set the same fields
+as a legacy compatibility window; it is removed outright in the engine 0.2.0 repair
+release -- a self-reported tool call was never an exemption from self-report anyway.)
 
 > **Common mistake: escaped-quote delimiters** — Condition (and all attribute)
 > values must use **plain double-quotes** as delimiters.  Writing
@@ -936,7 +939,7 @@ Every node in a DOT pipeline can have these attributes:
 | `label` | String | node ID | Display name. Used as prompt fallback if `prompt` is empty. |
 | `prompt` | String | `""` | Primary instruction for LLM nodes. Supports `$goal` expansion. |
 | `type` | String | `""` | Explicit handler type override. Takes precedence over shape. |
-| `goal_gate` | Boolean | `false` | Node must succeed **with an explicit verdict** (tool exit code / node-written `status.json` / JSON -- `report_outcome` is a legacy compatibility window) before pipeline can exit. Plain prose returns RETRY (fail-closed, EXTENSIONS.md §25). |
+| `goal_gate` | Boolean | `false` | Node must succeed **with an explicit verdict** (tool exit code / node-written `status.json` / JSON -- `report_outcome` was removed in the engine 0.2.0 repair release) before pipeline can exit. Plain prose returns RETRY (fail-closed, EXTENSIONS.md §25). |
 | `max_retries` | Integer | `0` | Additional attempts beyond the first. `max_retries=3` = 4 total. |
 | `retry_target` | String | `""` | Node to jump to when retries exhausted. |
 | `fallback_retry_target` | String | `""` | Secondary retry target if primary is missing. |
@@ -1197,7 +1200,7 @@ Set these on the `graph` element:
 | `tool_command="cmd 2>&1 \| tail -N"` (pipe-masked exit code, CMD-001) | In `/bin/sh`, the pipeline's exit code is `tail`'s — always 0.  The gate records SUCCESS even when `cmd` failed. | Redirect instead: `cmd > out.log 2>&1`.  See CMD-001 below. |
 | `tool_command="cmd \| tail -N && echo TOKEN"` (always-true sentinel, CMD-002) | `tail` exits 0, so `&& echo TOKEN` fires unconditionally.  `tool.last_line` becomes the sentinel regardless of `cmd`'s result. | Use the honest token gate: `cmd && printf ok \|\| printf fail` (no pipe).  See CMD-002 below. |
 
-| `report_outcome`-as-primary: prompting a `goal_gate=true` node to "call `report_outcome`" as the verdict mechanism | A tool call is still a self-report from inside the same context that produced the work -- structurally the same hazard as the LLM-emitted-sentinel anti-pattern above, just wearing a tool-call costume. `report_outcome` is a legacy compatibility window, not the taught mechanism. | Climb the escalation ladder instead: artifact file + tool-node exit code first, node-written `status.json` for out-of-band/spawned outcomes, pure JSON only if neither fits. See ["Spec-Intended Pipeline Design"](#spec-intended-pipeline-design). |
+| `report_outcome`-as-primary: prompting a `goal_gate=true` node to "call `report_outcome`" as the verdict mechanism | A tool call was still a self-report from inside the same context that produced the work -- structurally the same hazard as the LLM-emitted-sentinel anti-pattern above, just wearing a tool-call costume. `report_outcome` was a legacy compatibility window, never the taught mechanism, and is now removed outright (engine 0.2.0 repair release) -- the call is not even available any more. | Climb the escalation ladder instead: artifact file + tool-node exit code first, node-written `status.json` for out-of-band/spawned outcomes, pure JSON only if neither fits. See ["Spec-Intended Pipeline Design"](#spec-intended-pipeline-design). |
 
 ## Complete Example: Feature Build Pipeline
 
@@ -1314,8 +1317,9 @@ gate -> done [condition="context.preferred_label=done"]
 
 Diamond nodes are pure routing hubs.  They do not execute logic and cannot
 observe upstream outcomes.  Use `context.preferred_label` (set via a node-written
-`status.json`, or legacy `report_outcome`) or `context.tool.last_line` (set by a
-tool node -- the preferred, machine-checked source) to route.
+`status.json` -- `report_outcome` is removed as of engine 0.2.0) or
+`context.tool.last_line` (set by a tool node -- the preferred, machine-checked
+source) to route.
 
 ---
 
@@ -1716,8 +1720,9 @@ means.  Canonical defines it as `outcome.status` only; this engine resolves it
 to **`preferred_label` first**, falling back to `status` only when no label is
 set.  That divergence is deliberate and ledgered — `specs/EXTENSIONS.md` §22,
 `SPEC_CONFORMANCE.md` ATX-5 (disposition DIVERGE, decided) — because it is how
-a node steers its own routing via `preferred_label`, whether that label was set by a
-node-written `status.json` or, legacy, `report_outcome`.  The trap is that
+a node steers its own routing via `preferred_label`, set by a node-written
+`status.json` (the only channel now that `report_outcome` is removed, engine
+0.2.0).  The trap is that
 `preferred_label` is free-form and the status words are exactly the words an
 author reaches for as a label.  When they overlap, the label silently wins:
 

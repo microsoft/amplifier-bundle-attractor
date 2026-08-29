@@ -63,11 +63,15 @@ cp -r examples/pipelines/practical/sample /tmp/attractor-demo
 cd /tmp/attractor-demo
 dot-runner run "$DOT" \
     --param goal="Fix the TypeError in get_display_name when avatar is None" \
-    --bundle git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=bundles/attractor-pipeline.yaml \
+    --worker loop-agent \
     --cwd .
 ```
 
-The goal defaults to the graph's `goal=` attribute; override it with
+`--worker loop-agent` is the full coding agent (tools, file edits). Worker NAMES are
+the whole user surface now -- `direct`, `loop-agent`, `amplifier-agent` -- and there is
+no `--bundle`/`DOT_RUNNER_BUNDLE` any more (bundles are internal-only). Omit `--worker`
+and the CLI falls back to `amplifier-agent` if it's installed, else `direct` with a
+loud notice; pin it explicitly for anything unattended. The goal defaults to the graph's `goal=` attribute; override it with
 `--param goal="..."`. Run from a scratch dir whose path equals `--cwd` (box-node
 pipelines root their writes at the process cwd). See
 [examples/pipelines/](../examples/pipelines/) for the full run pattern and every

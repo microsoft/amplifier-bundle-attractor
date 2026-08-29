@@ -824,7 +824,7 @@ footer .fine{font-size:12.5px;line-height:1.6;color:var(--faint);max-width:600px
 review -&gt; Fix  [<span class="at">condition</span>=<span class="st">"outcome=retry"</span>]
 review -&gt; Test [<span class="at">condition</span>=<span class="st">"outcome!=retry"</span>, <span class="at">weight</span>=<span class="st">10</span>]</code></pre>
 
-    <h3>The verdict contract (<code>report_outcome</code> is now a legacy channel)</h3>
+    <h3>The verdict contract (<code>report_outcome</code> is removed, engine 0.2.0)</h3>
     <p>An LLM node communicates its result back to the orchestrator by calling a tool. This is the authoritative channel — everything else is recovery.</p>
 <pre><code>{
   <span class="at">"status"</span>: <span class="st">"success | fail | partial_success | retry"</span>,
@@ -840,7 +840,7 @@ review -&gt; Test [<span class="at">condition</span>=<span class="st">"outcome!=
   <figure>
     <svg class="dg" viewBox="0 0 960 330" role="img" aria-labelledby="d10t d10d" xmlns="http://www.w3.org/2000/svg">
       <title id="d10t">The verdict recovery ladder</title>
-      <desc id="d10d">Five fallbacks below the report_outcome tool call -- a legacy channel the engine still checks first internally, but no longer the taught, primary mechanism -- ending with plain prose which means success on ordinary nodes but retry on goal gate nodes, and an empty response which means fail.</desc>
+      <desc id="d10d">Five fallbacks below the report_outcome tool call -- removed outright in the engine 0.2.0 repair release, no longer checked at all -- ending with plain prose which means success on ordinary nodes but retry on goal gate nodes, and an empty response which means fail.</desc>
       <text class="cap" transform="rotate(-90 12 160)" x="12" y="160" text-anchor="middle">recovery order</text>
       <rect class="n-p" x="30" y="26" width="430" height="36" rx="2"/>
       <text class="nl-s" x="44" y="49" style="fill:#1b1813">report_outcome tool call</text>

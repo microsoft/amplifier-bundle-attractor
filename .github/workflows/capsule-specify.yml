@@ -132,9 +132,11 @@ jobs:
         # (`Path(__file__).resolve().parents[3] / "bundles" /
         # "attractor-pipeline.yaml"`). Moving the engine without that directory
         # would silently turn a local-sibling hit into a miss and push the
-        # engine onto its git fallback. These workflows all set
-        # ATTRACTOR_PIPELINE_BUNDLE explicitly, so that default is unreachable
-        # here -- but 20K of YAML is a cheap price for a snapshot that behaves
+        # engine onto its git fallback. WORKER-SURFACE FLIP (engine 0.2.0):
+        # this job no longer sets ATTRACTOR_PIPELINE_BUNDLE or
+        # DOT_RUNNER_BUNDLE (both --bundle forms are gone from the CLI), so
+        # this bare default-bundle path is the one every run actually takes
+        # -- but 20K of YAML is a cheap price for a snapshot that behaves
         # identically to the in-tree layout it replaces, and bundles/ is
         # engine-side content by the same rule as modules/.
         #
@@ -421,17 +423,19 @@ jobs:
         # capsule.dot's lean rebuild has exactly ONE judgment node,
         # `critique`, and it HARD-DECLARES llm_provider="openai" (a second
         # model family, deliberately -- the judge must not share the
-        # maker's family), and this job now unconditionally mounts
-        # attractor-pipeline-dual.yaml to serve it. So: check the one
-        # precondition that makes that mount meaningful BEFORE spending any
-        # of the run's multi-hour budget, and fail loudly, naming exactly
-        # what's missing and what capability is lost, if it isn't met.
+        # maker's family). WORKER-SURFACE FLIP (engine 0.2.0): with
+        # `--worker loop-agent`, that attribute now flows straight through
+        # the named-worker path and is honored directly -- no dual-provider
+        # bundle mount required any more. So: check the one precondition
+        # that makes that attribute serviceable BEFORE spending any of the
+        # run's multi-hour budget, and fail loudly, naming exactly what's
+        # missing and what capability is lost, if it isn't met.
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
           if [ -z "$OPENAI_API_KEY" ]; then
-            echo "::error::capsule-specify: OPENAI_API_KEY secret is missing. capsule.dot's critique node (the lean rebuild's ONE judgment node) requires llm_provider=\"openai\" -- a second model family is the point: the judge must be independent of the maker's family (see issue #155 for the proven failure) -- and this job unconditionally mounts attractor-pipeline-dual.yaml to serve it. Without OPENAI_API_KEY that mount cannot serve a real OpenAI model, and running anyway would either crash the node every round (draining the whole iteration budget on a crash loop) or silently degrade the judge to the maker's own family depending on engine version -- both are exactly the failure this preflight exists to prevent. Refusing to start. Provision OPENAI_API_KEY as a repo secret, then re-run." >&2
+            echo "::error::capsule-specify: OPENAI_API_KEY secret is missing. capsule.dot's critique node (the lean rebuild's ONE judgment node) requires llm_provider=\"openai\" -- a second model family is the point: the judge must be independent of the maker's family (see issue #155 for the proven failure) -- and the engine cross-checks every declared provider at startup and refuses to start without a serviceable credential for it. Without OPENAI_API_KEY that check fails fast at startup (fail-loud, no crash-loop, no silent same-family substitution). Refusing to start here too, so the failure is visible before the run's multi-hour budget is spent. Provision OPENAI_API_KEY as a repo secret, then re-run." >&2
             exit 1
           fi
           echo "OPENAI_API_KEY is present -- the second-family critique judge (OpenAI) can be honored. Proceeding."
@@ -446,25 +450,18 @@ jobs:
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # DUAL-FAMILY JUDGE, UNCONDITIONALLY WIRED (mirror of
+          # DUAL-FAMILY JUDGE, WORKER-SURFACE FLIP (engine 0.2.0, mirror of
           # capsule-implement.yml, issue #155): the vendored capsule.dot's
           # critique node declares llm_provider="openai" -- a design
-          # requirement, not optional -- so this bundle is ALWAYS mounted;
-          # there is no single-provider fallback path. If OPENAI_API_KEY is
-          # unset, the preflight step above fails the job LOUDLY before
-          # this step (and the multi-hour run it would otherwise start)
-          # ever runs.
+          # requirement, not optional. `--worker loop-agent` below (the
+          # named-worker path) now honors that attribute directly -- the
+          # old ATTRACTOR_PIPELINE_BUNDLE/DOT_RUNNER_BUNDLE dual-bundle
+          # mount is retired from this job entirely; --bundle and
+          # DOT_RUNNER_BUNDLE are gone from the CLI as of 0.2.0 anyway. If
+          # OPENAI_API_KEY is unset, the preflight step above fails the job
+          # LOUDLY before this step (and the multi-hour run it would
+          # otherwise start) ever runs.
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ATTRACTOR_PIPELINE_BUNDLE: ${{ format('{0}/.github/capsule-pipeline/attractor-pipeline-dual.yaml', github.workspace) }}
-          # POST-RIP SEAM FIX (review-driven, cli-rename-sweep follow-up):
-          # amplifier-bundle-dot-runner's band-aid rip deleted the engine's
-          # ATTRACTOR_PIPELINE_BUNDLE auto-load entirely -- the var above is
-          # inert against the root-form `dot-runner` this job now installs.
-          # DOT_RUNNER_BUNDLE is the ONE env var the post-rip CLI actually
-          # reads (cli.py's --bundle fallback); same value, so the dual-family
-          # (openai critique) bundle keeps mounting instead of silently
-          # falling back to the engine-native `direct` worker.
-          DOT_RUNNER_BUNDLE: ${{ format('{0}/.github/capsule-pipeline/attractor-pipeline-dual.yaml', github.workspace) }}
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-run/out" "$RUNNER_TEMP/capsule-run/logs"
@@ -476,6 +473,7 @@ jobs:
           # supposed to be the live one.
           uv run --project "$RUNNER_TEMP/engine-src/modules/pipeline-runner" dot-runner run \
             .github/capsule-pipeline/capsule.dot \
+            --worker loop-agent \
             --cwd "$GITHUB_WORKSPACE" \
             --logs-root "$RUNNER_TEMP/capsule-run/logs" \
             --param issue_file="${{ steps.issue.outputs.file }}" \

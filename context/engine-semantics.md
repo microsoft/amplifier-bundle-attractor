@@ -19,7 +19,7 @@ Source: nlspec §2.8; `validation.py:24-34` (`SHAPE_TO_HANDLER`).
 |---|---|---|---|---|---|
 | `Mdiamond` | `start` | no | no | no (no-op SUCCESS) `handlers/start.py` | [NLSPEC] |
 | `Msquare` | `exit` | no | no | no (engine checks goal gates) `handlers/exit.py` | [NLSPEC] |
-| `box` | `codergen` | **yes** | no | **YES via backend** (JSON / `report_outcome`) `backend.py:604-637` | [NLSPEC] |
+| `box` | `codergen` | **yes** | no | **YES via backend** (JSON; `report_outcome` removed 0.2.0) `backend.py:604-637` | [NLSPEC] |
 | `diamond` | `conditional` | no | no | no-op SUCCESS; engine routes `handlers/conditional.py` | [NLSPEC] |
 | `hexagon` | `wait.human` | no | no | yes — `suggested_next_ids` + `human.gate.*` `handlers/human.py` | [NLSPEC] |
 | `component` | `parallel` | no (orchestrates) | no | emits `branch.{i}.outcome` `handlers/parallel.py` | [NLSPEC] |
@@ -53,9 +53,10 @@ wrong about the running engine.
 1. **`box`/codergen nodes CAN route and set context.** Spec §4.5 shows `CodergenHandler`
    returning hard-coded SUCCESS. SHIPPED: the backend maps the LLM result to a full
    `Outcome` (status, `context_updates`, `preferred_label`, `suggested_next_ids`) via
-   (a) a response that is entirely JSON → `_parse_outcome` (`backend.py:903`), or
-   (b) the child calling the **`report_outcome` tool** → `_find_report_outcome_call`
-   (`backend.py:621,827-890`). LLM nodes are NOT routing-inert.
+   a response that is entirely (or fenced, or embedded-trailing) JSON → `_parse_outcome`
+   (`backend.py:903`). (The former second path, the child calling a `report_outcome`
+   tool → `_find_report_outcome_call`, was removed in the engine's 0.2.0 repair release
+   -- no compat window, the tool module is gone.) LLM nodes are NOT routing-inert.
 
 2. **FAIL is fail-fast — it does NOT traverse plain edges.** Spec §3.2 pseudocode advances
    on any selected edge. SHIPPED (`edge_selection.py:79-101`): on `status==FAIL`, plain
@@ -159,8 +160,9 @@ Source: `backend.py:_parse_outcome, _outcome_from_spawn_result`; `outcome.py`.
 
 **The verdict-recovery ladder** (tried in order for every LLM response):
 
-1. **`report_outcome` tool call** — authoritative; checked before any text parsing (tool-loop
-   path: `backend.py:_find_report_outcome_call`; spawn path: `metadata["report_outcome"]`).
+1. ~~`report_outcome` tool call~~ — **removed in the engine's 0.2.0 repair release** (was
+   checked before any text parsing; the check and the tool module are both gone repo-wide,
+   no compat window).
 2. **Fenced JSON** — ` ```json … ``` ` stripped, then parsed as JSON.
 3. **Pure JSON** — entire stripped response starts with `{`, parsed, `status` field honored.
 4. **Embedded verdict recovery** — last balanced `{…}` in prose extracted; if it carries a
@@ -187,10 +189,11 @@ Graph-level retries of a FAIL are a separate mechanism: `retry_target` and
 `condition="outcome=fail"` edges.
 
 **`is_explicit` field on `Outcome`:** `outcome.is_explicit=True` means the status was asserted
-by an unambiguous mechanism: paths 1–4 above, a tool (parallelogram) node's exit code
-(0 = explicit success, nonzero = explicit fail; `handlers/tool.py`), **verdict-shaped**
-`response_schema` structured output (a captured `report_outcome` call or a `status` field
-with a recognized value — `backend._outcome_from_structured_output`), or a deterministic
+by an unambiguous mechanism: paths 2–4 above (path 1, `report_outcome`, is removed as of
+engine 0.2.0), a tool (parallelogram) node's exit code (0 = explicit success, nonzero =
+explicit fail; `handlers/tool.py`), **verdict-shaped** `response_schema` structured output
+(a `status` field with a recognized value — `backend._outcome_from_structured_output`), or
+a deterministic
 handler verdict that cannot be LLM-defaulted (human-gate selections/freeform input,
 start/exit/conditional structural SUCCESS, fan-in ranking, parallel join-policy results).
 `is_explicit=False` means the status was defaulted: plain-prose fallback, empty-response
@@ -204,7 +207,7 @@ field, serialized into every node `status.json` (flat and iteration-scoped) and 
 
 **The gate check enforces both flags:** `_check_goal_gates()` (`engine.py`) treats a goal gate
 as satisfied only when `outcome.is_success AND outcome.is_explicit`. A SUCCESS with
-`is_explicit=False` (e.g. a spawn wrapper's clean exit with no `report_outcome`, or a schema
+`is_explicit=False` (e.g. a spawn wrapper's clean exit with no recognized verdict, or a schema
 node whose output carried no recognized verdict) does NOT satisfy the gate. This centralized enforcement
 closes bypass paths that never go through `_parse_outcome`. The RETRY-from-`_parse_outcome`
 rule above is the belt; the gate's `is_explicit` requirement is the suspenders.
@@ -227,12 +230,13 @@ reach; each step down is more machine-checkable than the one above it:
 3. **A pure-JSON verdict** in the node's own LLM response (paths 2–4 of the recovery ladder
    above — fenced, bare, or an embedded trailing `{...}` carrying a recognized `status`;
    EXTENSIONS.md §25).
-4. **`report_outcome` is a legacy compatibility window, not the taught mechanism.** It still
-   works — `is_explicit=True`, and a node-written `status.json` wins over it on conflict —
-   but it is a self-report from inside the same context that produced the work. A tool call
-   is not an exemption from that: machine evidence (paths 1–2) outranks a self-reported
-   verdict regardless of which channel carries the self-report. See `PIPELINE_PATTERNS.md`
-   §6's anti-pattern catalog ("`report_outcome`-as-primary").
+4. ~~`report_outcome`~~ -- **removed in the engine's 0.2.0 repair release, no compat
+   window.** It was a legacy compatibility window, never the taught mechanism, and even
+   while it existed it was still a self-report from inside the same context that produced
+   the work -- a tool call was never an exemption from that: machine evidence (rungs 1-2)
+   outranked a self-reported verdict regardless of which channel carried the self-report.
+   Only rungs 1-3 above remain. See `PIPELINE_PATTERNS.md` §6's anti-pattern catalog
+   ("`report_outcome`-as-primary").
 
 Do not rely on bare prose regardless of channel — even prose that says "CONVERGED" will
 return RETRY under the fail-closed contract.
@@ -339,9 +343,9 @@ of injected critique per iteration — bounded regardless of iteration count.
 3. **Copy the nearest proven pipeline before inventing.** Simplicity applies to the proven
    pattern, not to a minimal node count built on a wrong engine model.
 4. **Route verdicts via an artifact file + tool exit code, or a node-written
-   `status.json`, not free-text JSON** (§5 bug). `report_outcome` still works as a
-   legacy compatibility window, but it is not the taught mechanism -- see §5's
-   escalation ladder.
+   `status.json`, not free-text JSON** (§5 bug). `report_outcome` was removed in the
+   engine's 0.2.0 repair release (no compat window) -- see §5's escalation ladder for
+   the mechanisms that remain.
 5. **Run `dot_graph validate` after every edit** — catches isolated nodes, stray quotes,
    missing fallback edges before an expensive rebuild.
 6. **Author for fail-loud:** explicit FAIL edges (§2 #2), explicit `llm_model`, explicit

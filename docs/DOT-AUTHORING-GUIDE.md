@@ -40,19 +40,26 @@ Shipped positive example: `examples/pipelines/practical/bug-fix.dot`'s exit is
 gated on `verdict_gate` output -- implementation completing earns nothing.
 
 **`goal_gate` nodes require an explicit verdict (fail-closed).** A goal gate is
-satisfied only by an explicit verdict: a `report_outcome` tool call, a pure or
-fenced JSON response with a `status` field, an embedded trailing JSON verdict,
-or -- for `shape=parallelogram` tool nodes -- the command's exit code. A
-plain-prose response ("looks good, all done") returns RETRY instead of SUCCESS,
-so the gate is never satisfied by a defaulted response; even prose that says
-"CONVERGED" does not count (`specs/EXTENSIONS.md` §25). Prompt your gate nodes
-to call `report_outcome` (or emit pure JSON), or make the gate a parallelogram
-tool node whose exit code is the verdict:
+satisfied only by an explicit verdict, and the escalation ladder below is the
+taught order for producing one: a `parallelogram` tool node's exit code, a
+node-written `status.json` (canonical spec §4.5 / Appendix C), a pure or fenced
+JSON response with a `status` field, an embedded trailing JSON verdict, or --
+as a legacy compatibility window, not the taught mechanism -- a `report_outcome`
+tool call. A plain-prose response ("looks good, all done") returns RETRY instead
+of SUCCESS, so the gate is never satisfied by a defaulted response; even prose
+that says "CONVERGED" does not count (`specs/EXTENSIONS.md` §25). Make the gate a
+parallelogram tool node whose exit code is the verdict, or have the node write
+`status.json` directly:
 
 ```dot
 judge [shape=box, goal_gate=true, retry_target="implement",
-    prompt="Evaluate the work against the criteria. You MUST call the report_outcome tool with status=success only if all criteria pass; otherwise status=retry with what is missing."]
+    prompt="Evaluate the work against the criteria. Write your verdict to the
+    status.json contract path given in your instructions with status=success only
+    if all criteria pass; otherwise status=retry with what is missing."]
 ```
+
+See ["Spec-Intended Pipeline Design"](#spec-intended-pipeline-design) below for the
+full escalation ladder and why files-as-interface sits above self-report.
 
 **Recipes vs. attractor pipelines.** Recipes are for staged sequential workflows
 with human approval gates; attractor pipelines are for machine-verified
@@ -68,6 +75,54 @@ pipelines are legitimate -- the "probably" is load-bearing.)
 - Prefer fewer, well-prompted nodes over many thin ones
 - Use `goal_gate` on evidence-bearing nodes (test gates, acceptance checks, human gates)
 - Use conditional routing to handle success/failure paths explicitly
+
+## Spec-Intended Pipeline Design
+
+The spec's own shape for a node's outcome channel, restated as design discipline -- this is
+the frame every pattern below and every gate in this repo implements:
+
+- **Files-as-interface.** The durable handoff between a worker and the graph is a file the
+  worker wrote, not a claim the worker made about its own work. Prompts should tell a node to
+  *write evidence*, not to *announce a verdict*.
+- **Gates check artifacts via exit codes / `tool.last_line`.** A `parallelogram` node greps or
+  validates the artifact and turns the result into an exit code; `context.tool.last_line`
+  carries the routing token. This is machine evidence, produced outside the worker's own
+  context -- the worker cannot grade its own homework.
+- **Context is for routing scalars, not payloads.** `context_updates` / `preferred_label` carry
+  small, closed-vocabulary routing decisions (`"pass"`, `"retry"`, a lane name) between nodes.
+  They are not where a verdict's *evidence* lives -- the evidence lives in the file the gate
+  actually checked.
+- **Nodes are stateless between visits.** A node's prompt should not depend on the engine
+  remembering that node's own prior self-assessment; it depends on the file(s) on disk and the
+  context keys explicitly carried forward. Re-entry (`loop_restart`) is designed to reset
+  exactly this kind of accumulated, ungrounded state.
+- **`status.json` is the spec-native envelope for out-of-band and spawned outcomes** (canonical
+  spec §4.5 / Appendix C): `outcome` / `preferred_label` / `suggested_next_ids` /
+  `context_updates` / `notes`. The engine reads a node's stage-directory `status.json` back and
+  auto-injects the absolute path plus this envelope into every SPAWNED worker's instruction, so
+  a spawned child (which cannot return a Python `Outcome` in-process) always has a reachable
+  channel.
+
+**The escalation ladder this implies, in taught order:**
+
+1. **Artifact file + tool-node exit code, first.** The default answer for "how does this node's
+   result reach the graph."
+2. **Node-written `status.json`**, when the outcome is produced out-of-band or by a spawned
+   worker with no other channel back.
+3. **A pure-JSON verdict** in the node's own LLM response, when neither of the above fits and
+   the node must self-describe (fenced or bare `{...}` with a `status` field -- EXTENSIONS.md
+   §25's recovery ladder, paths 2-4).
+4. **`report_outcome`** -- a legacy compatibility window, still honored, but not the taught
+   mechanism. It is a tool call, but the verdict it carries is still self-reported from inside
+   the same context that produced the work; machine evidence (rungs 1-2) outranks it. See the
+   anti-pattern catalog entry ("`report_outcome`-as-primary", `PIPELINE_PATTERNS.md` §6) and
+   the existing self-report anti-pattern ("LLM-Emitted Routing Sentinel", same section) --
+   wrapping a self-report in a tool call does not make it evidence.
+
+Pointers: `docs/PIPELINE_PATTERNS.md` (the layering discipline this section summarizes),
+`docs/ROUTING-REFERENCE.md` (the routing mechanics `status.json` / `report_outcome` feed),
+`context/dot-reference.md` (the self-report doctrine at the authoring-review layer),
+`context/engine-semantics.md` §5 (the full verdict-recovery ladder and fail-closed contract).
 
 ## Pipeline Patterns
 
@@ -180,16 +235,24 @@ gate -> deploy [condition="outcome=success && context.tests_passed=true"]
 ```
 
 Keys available in conditions:
-- `outcome` -- resolves to `preferred_label` if set by the agent via `report_outcome`, otherwise falls back to the raw status value (`success`, `fail`, etc.)
-- `preferred_label` -- the custom routing label set via `report_outcome` (null if not set)
-- `context.<key>` -- any value in the pipeline context (set via `context_updates` in `report_outcome`)
+- `outcome` -- resolves to `preferred_label` if one was set (by a node-written
+  `status.json`, or -- legacy -- by the agent via `report_outcome`), otherwise falls
+  back to the raw status value (`success`, `fail`, etc.)
+- `preferred_label` -- the custom routing label set via a node-written `status.json`
+  or (legacy) `report_outcome` (null if not set)
+- `context.<key>` -- any value in the pipeline context (set via `context_updates` in
+  a node-written `status.json` or, legacy, `report_outcome`)
 
-**Dynamic routing with `report_outcome`:** Nodes that make routing decisions
-(review gates, test runners) should call the `report_outcome` tool with a
-`preferred_label` that matches their outgoing edge conditions. For example,
-a review node with edges `condition="outcome=pass"` and `condition="outcome=retry"`
-should call `report_outcome(status="success", preferred_label="pass")` or
-`report_outcome(status="fail", preferred_label="retry")`.
+**Dynamic routing: prefer evidence over self-report.** Nodes that make routing
+decisions (review gates, test runners) should route on a `preferred_label` set by the
+escalation ladder in ["Spec-Intended Pipeline Design"](#spec-intended-pipeline-design):
+an artifact file a downstream `parallelogram` gate greps and turns into
+`context.tool.last_line`, or a node-written `status.json` for out-of-band/spawned
+outcomes. For example, a review node with edges `condition="outcome=pass"` and
+`condition="outcome=retry"` should write a verdict file (or `status.json`) carrying
+`preferred_label="pass"` or `"retry"`. `report_outcome` still sets the same fields and
+is still honored, but it is a legacy compatibility window, not the taught mechanism --
+a self-reported tool call is still a self-report.
 
 > **Common mistake: escaped-quote delimiters** — Condition (and all attribute)
 > values must use **plain double-quotes** as delimiters.  Writing
@@ -873,7 +936,7 @@ Every node in a DOT pipeline can have these attributes:
 | `label` | String | node ID | Display name. Used as prompt fallback if `prompt` is empty. |
 | `prompt` | String | `""` | Primary instruction for LLM nodes. Supports `$goal` expansion. |
 | `type` | String | `""` | Explicit handler type override. Takes precedence over shape. |
-| `goal_gate` | Boolean | `false` | Node must succeed **with an explicit verdict** (report_outcome / JSON / tool exit code) before pipeline can exit. Plain prose returns RETRY (fail-closed, EXTENSIONS.md §25). |
+| `goal_gate` | Boolean | `false` | Node must succeed **with an explicit verdict** (tool exit code / node-written `status.json` / JSON -- `report_outcome` is a legacy compatibility window) before pipeline can exit. Plain prose returns RETRY (fail-closed, EXTENSIONS.md §25). |
 | `max_retries` | Integer | `0` | Additional attempts beyond the first. `max_retries=3` = 4 total. |
 | `retry_target` | String | `""` | Node to jump to when retries exhausted. |
 | `fallback_retry_target` | String | `""` | Secondary retry target if primary is missing. |
@@ -1134,6 +1197,8 @@ Set these on the `graph` element:
 | `tool_command="cmd 2>&1 \| tail -N"` (pipe-masked exit code, CMD-001) | In `/bin/sh`, the pipeline's exit code is `tail`'s — always 0.  The gate records SUCCESS even when `cmd` failed. | Redirect instead: `cmd > out.log 2>&1`.  See CMD-001 below. |
 | `tool_command="cmd \| tail -N && echo TOKEN"` (always-true sentinel, CMD-002) | `tail` exits 0, so `&& echo TOKEN` fires unconditionally.  `tool.last_line` becomes the sentinel regardless of `cmd`'s result. | Use the honest token gate: `cmd && printf ok \|\| printf fail` (no pipe).  See CMD-002 below. |
 
+| `report_outcome`-as-primary: prompting a `goal_gate=true` node to "call `report_outcome`" as the verdict mechanism | A tool call is still a self-report from inside the same context that produced the work -- structurally the same hazard as the LLM-emitted-sentinel anti-pattern above, just wearing a tool-call costume. `report_outcome` is a legacy compatibility window, not the taught mechanism. | Climb the escalation ladder instead: artifact file + tool-node exit code first, node-written `status.json` for out-of-band/spawned outcomes, pure JSON only if neither fits. See ["Spec-Intended Pipeline Design"](#spec-intended-pipeline-design). |
+
 ## Complete Example: Feature Build Pipeline
 
 This pipeline demonstrates multiple patterns working together:
@@ -1248,8 +1313,9 @@ gate -> done [condition="context.preferred_label=done"]
 ```
 
 Diamond nodes are pure routing hubs.  They do not execute logic and cannot
-observe upstream outcomes.  Use `context.preferred_label` (set via
-`report_outcome`) or `context.tool.last_line` (set by a tool node) to route.
+observe upstream outcomes.  Use `context.preferred_label` (set via a node-written
+`status.json`, or legacy `report_outcome`) or `context.tool.last_line` (set by a
+tool node -- the preferred, machine-checked source) to route.
 
 ---
 
@@ -1650,7 +1716,8 @@ means.  Canonical defines it as `outcome.status` only; this engine resolves it
 to **`preferred_label` first**, falling back to `status` only when no label is
 set.  That divergence is deliberate and ledgered — `specs/EXTENSIONS.md` §22,
 `SPEC_CONFORMANCE.md` ATX-5 (disposition DIVERGE, decided) — because it is how
-a node steers its own routing through `report_outcome`.  The trap is that
+a node steers its own routing via `preferred_label`, whether that label was set by a
+node-written `status.json` or, legacy, `report_outcome`.  The trap is that
 `preferred_label` is free-form and the status words are exactly the words an
 author reaches for as a label.  When they overlap, the label silently wins:
 

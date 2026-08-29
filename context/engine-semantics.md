@@ -209,10 +209,33 @@ node whose output carried no recognized verdict) does NOT satisfy the gate. This
 closes bypass paths that never go through `_parse_outcome`. The RETRY-from-`_parse_outcome`
 rule above is the belt; the gate's `is_explicit` requirement is the suspenders.
 
-**Author guidance:** For `goal_gate=true` nodes, always call the **`report_outcome` tool** or
-emit a pure JSON response (or use a parallelogram tool node — its exit code is the verdict).
-Do not rely on prose output — even prose that says "CONVERGED" will return RETRY under the
-fail-closed contract. The recovery ladder (paths 2–4) is a safety net, not a contract.
+**Author guidance — the escalation ladder (RETCON, 2026-08-29 maintainer ruling):**
+`report_outcome` is no longer the taught, primary mechanism for delivering a `goal_gate=true`
+node's explicit verdict. Reach for the mechanism **lowest** on this list that the node can
+reach; each step down is more machine-checkable than the one above it:
+
+1. **Artifact file + tool-node exit code, first.** Have the node write its verdict to a file;
+   a downstream `parallelogram` node greps it and its exit code (`context.tool.last_line`)
+   becomes the routing signal. Deterministic evidence, checked outside the worker's own
+   context — the strongest signal available.
+2. **Node-written `status.json`, for out-of-band or spawned-worker outcomes.** The engine
+   reads a node's stage-directory `status.json` back (canonical spec §4.5 / Appendix C —
+   the `outcome`/`preferred_label`/`suggested_next_ids`/`context_updates`/`notes` envelope)
+   and now auto-injects the absolute path plus that envelope contract into every SPAWNED
+   worker's instruction, so a spawned child always has a reachable, spec-native channel
+   without needing to be told separately.
+3. **A pure-JSON verdict** in the node's own LLM response (paths 2–4 of the recovery ladder
+   above — fenced, bare, or an embedded trailing `{...}` carrying a recognized `status`;
+   EXTENSIONS.md §25).
+4. **`report_outcome` is a legacy compatibility window, not the taught mechanism.** It still
+   works — `is_explicit=True`, and a node-written `status.json` wins over it on conflict —
+   but it is a self-report from inside the same context that produced the work. A tool call
+   is not an exemption from that: machine evidence (paths 1–2) outranks a self-reported
+   verdict regardless of which channel carries the self-report. See `PIPELINE_PATTERNS.md`
+   §6's anti-pattern catalog ("`report_outcome`-as-primary").
+
+Do not rely on bare prose regardless of channel — even prose that says "CONVERGED" will
+return RETRY under the fail-closed contract.
 
 **Plain-edge hazard:** RETRY (like FAIL) does not traverse plain unconditional edges — it
 routes only via `condition="outcome=fail"`, `retry_target`, or `runs_on=always|failure` nodes.
@@ -315,7 +338,10 @@ of injected critique per iteration — bounded regardless of iteration count.
 2. **Code nodes (`parallelogram`/tool) are glue only** — shell/IO/orchestration, not inference.
 3. **Copy the nearest proven pipeline before inventing.** Simplicity applies to the proven
    pattern, not to a minimal node count built on a wrong engine model.
-4. **Route verdicts via the `report_outcome` tool, not free-text JSON** (§5 bug).
+4. **Route verdicts via an artifact file + tool exit code, or a node-written
+   `status.json`, not free-text JSON** (§5 bug). `report_outcome` still works as a
+   legacy compatibility window, but it is not the taught mechanism -- see §5's
+   escalation ladder.
 5. **Run `dot_graph validate` after every edit** — catches isolated nodes, stray quotes,
    missing fallback edges before an expensive rebuild.
 6. **Author for fail-loud:** explicit FAIL edges (§2 #2), explicit `llm_model`, explicit

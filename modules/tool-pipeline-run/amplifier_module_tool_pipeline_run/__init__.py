@@ -37,17 +37,41 @@ class PipelineRunTool:
     """
 
     name = "run_pipeline"
-    description = (
-        "Run a DOT graph pipeline. Provide a pipeline definition via "
-        "'dot_file' (path to a .dot file, supports @attractor:... mentions) "
-        "or 'dot_source' (inline DOT digraph string), plus a 'goal' "
-        "describing the task. The pipeline executes as a child session "
-        "and returns the result when complete."
-    )
+
+    # Default @mention example shown in this tool's own description and
+    # input_schema (below) -- purely illustrative text for the calling LLM,
+    # not resolution logic (mention_resolver.resolve() handles any namespace
+    # generically; see _resolve_dot_file_path). Hard-coding a bundle-specific
+    # namespace here is nonetheless real coupling: a non-"attractor" bundle
+    # mounting this tool unconfigured would show its LLM an example mention
+    # that resolves nowhere. Config-worthy -- see "mention_example" in the
+    # module README. Default preserves today's exact text for existing
+    # (attractor) consumers.
+    _DEFAULT_MENTION_EXAMPLE = "@attractor:examples/pipelines/01-simple-linear.dot"
 
     def __init__(self, config: dict[str, Any], coordinator: Any = None) -> None:
         self.config = config
         self.coordinator = coordinator
+
+    def _mention_example(self) -> str:
+        """Return the configured (or default) @mention example path."""
+        return self.config.get("mention_example", self._DEFAULT_MENTION_EXAMPLE)
+
+    def _mention_namespace_prefix(self) -> str:
+        """Return just the '@namespace:' prefix of the mention example."""
+        return self._mention_example().split(":", 1)[0]
+
+    @property
+    def description(self) -> str:
+        """Return the tool description shown to the calling LLM."""
+        return (
+            "Run a DOT graph pipeline. Provide a pipeline definition via "
+            "'dot_file' (path to a .dot file, supports "
+            f"{self._mention_namespace_prefix()}:... mentions) "
+            "or 'dot_source' (inline DOT digraph string), plus a 'goal' "
+            "describing the task. The pipeline executes as a child session "
+            "and returns the result when complete."
+        )
 
     @property
     def input_schema(self) -> dict:
@@ -59,7 +83,7 @@ class PipelineRunTool:
                     "type": "string",
                     "description": (
                         "Path to a .dot pipeline file. Supports @mention "
-                        "syntax (e.g. @attractor:examples/pipelines/01-simple-linear.dot)."
+                        f"syntax (e.g. {self._mention_example()})."
                     ),
                 },
                 "dot_source": {

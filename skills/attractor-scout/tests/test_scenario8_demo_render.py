@@ -224,7 +224,7 @@ def test_doctrine_only_renders_the_exact_not_run_label(tmp_path: Path):
         },
     )
     html = render.render_html(ranked, generated_at=PINNED, demos=doc)
-    assert f"attractor lint: NOT RUN — the CLI is not installed here. Run it yourself: attractor lint {relpath}" in html
+    assert f"dot-runner lint: NOT RUN — the CLI is not installed here. Run it yourself: dot-runner lint {relpath}" in html
     assert T.LABEL_UNVERIFIED not in html, "doctrine-only is verified, just not by lint"
     assert "doctrine-only" in html
 
@@ -245,12 +245,12 @@ def test_level_none_renders_the_unverified_banner_and_never_reads_as_verified(tm
     assert T.LABEL_UNVERIFIED in html
     assert "doctrine_ok" not in html, "an unverified demo must never display a passing verdict"
     assert "unverified" in html, "the banner carries its own visual treatment"
-    assert "attractor lint" in html, "both commands to run yourself are offered"
+    assert "dot-runner lint" in html, "both commands to run yourself are offered"
 
 
 def test_lint_plus_doctrine_quotes_both_verdicts_verbatim(tmp_path: Path):
     ranked, demos, _ = _build(tmp_path)
-    verbatim = "attractor lint: pipeline.dot: OK (no findings)"
+    verbatim = "dot-runner lint: pipeline.dot: OK (no findings)"
     doc = _relabel(
         demos,
         {

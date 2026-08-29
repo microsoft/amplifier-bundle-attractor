@@ -6,7 +6,7 @@ child ``.dot`` and its definition-of-done script, then executes it. That is only
 safe if the generated graph is checked by something outside the composer's
 context before it is allowed to run. Two gates do that, in order:
 
-1. ``attractor lint`` -- executability and the topology bug classes the engine
+1. ``dot-runner lint`` -- executability and the topology bug classes the engine
    itself knows about (dead conditional edges, stale-label collisions,
    fail-routed-to-exit, pipe-masked gate exit codes). ERRORs block.
 2. this script -- the *design* checks lint deliberately does not own: does the

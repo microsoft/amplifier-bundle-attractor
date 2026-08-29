@@ -201,7 +201,7 @@
 // attractor-pipeline-dual.yaml exactly as capsule.dot's critique):
 //   cd <target_repo> && \
 //   ATTRACTOR_PIPELINE_BUNDLE=<runner_dir>/attractor-pipeline-dual.yaml \
-//   attractor run <runner_dir>/feature-capsule.dot \
+//   dot-runner run <runner_dir>/feature-capsule.dot \
 //       --param issue_file=/abs/path/to/issue.md \
 //       --param criteria_file=/abs/path/to/eligible-comments.md \
 //       --param target_dir=$PWD \

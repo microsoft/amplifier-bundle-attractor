@@ -51,7 +51,7 @@
 # (issue_file, criteria_file, target_dir, base_sha, uplift_dir, capsule_out,
 # max_iterations, gate_time_ceiling, optionally later_commit) to reach BOTH
 # its LLM prompts and its tool_command= gates, so this workflow installs and
-# runs modules/pipeline-runner's `attractor` CLI directly, exactly as
+# runs modules/pipeline-runner's `dot-runner` CLI directly, exactly as
 # capsule-specify.yml does and exactly as the vendored .dot's own header
 # says to invoke it.
 #
@@ -656,7 +656,7 @@ jobs:
           # churn cannot reach them. --cwd, target_dir and the .dot path below
           # deliberately still point at the WORKSPACE: the subject tree is
           # supposed to be the live one.
-          uv run --project "$RUNNER_TEMP/engine-src/modules/pipeline-runner" attractor run \
+          uv run --project "$RUNNER_TEMP/engine-src/modules/pipeline-runner" dot-runner run \
             .github/capsule-pipeline/feature-capsule.dot \
             --cwd "$GITHUB_WORKSPACE" \
             --logs-root "$RUNNER_TEMP/capsule-run/logs" \

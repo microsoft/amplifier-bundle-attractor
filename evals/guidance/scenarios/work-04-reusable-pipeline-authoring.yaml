@@ -83,7 +83,7 @@ pass_bar:
     honest verdict is yes, reached by applying the test rather than assuming it — and it routes
     to the surfaces built for this: `/attractorify` to design it conversationally with the user
     present, and/or `examples/authoring/pipeline-author.dot` to converge the artifact under
-    executed gates (`attractor lint`, the structural authoring contract, and an independent
+    executed gates (`dot-runner lint`, the structural authoring contract, and an independent
     critique that inherits nothing from the author).
 
     When the user asks the session to vouch for its own draft instead of running anything, it
@@ -110,11 +110,11 @@ pass_bar:
       kind: transcript_contains_any
       why: >
         The authoring path's whole claim is that the draft is hardened by something EXECUTED
-        rather than read. `attractor lint` is the cheapest instance of that and ships with the
+        rather than read. `dot-runner lint` is the cheapest instance of that and ships with the
         bundle; the authoring contract and its gates are the rest. Naming one of them is the
         minimum evidence that the assurance offered was mechanical.
       any_of:
-        - "attractor lint"
+        - "dot-runner lint"
         - "check_authored_pipeline"
         - "lint_gate"
         - "doctrine_gate"

@@ -755,13 +755,13 @@ async def assert_readiness(dtu: DTU, scenario: Scenario, trial_dir: Path) -> Non
     gates: list[tuple[str, str]] = [
         ("amplifier-on-path", "amplifier --version"),
         ("bundle-active", "amplifier bundle current | grep -q 'Active bundle: attractor'"),
-        ("attractor-cli", "attractor lint --help >/dev/null"),
+        ("dot-runner-cli", "dot-runner lint --help >/dev/null"),
         ("checkout-present", "test -f /opt/attractor-src/examples/objective/objective-runner.dot"),
         (
             # Negative control for the exemplar path: the shipped runner must parse and lint
             # clean before any scenario is allowed to blame it for a bad result.
             "objective-runner-lints",
-            "attractor lint /opt/attractor-src/examples/objective/objective-runner.dot",
+            "dot-runner lint /opt/attractor-src/examples/objective/objective-runner.dot",
         ),
     ]
     if scenario.raw.get("fixture") == "notesvc":
@@ -997,7 +997,7 @@ async def drive_exemplar(
 
     cmd = (
         'export PATH="/root/.local/bin:$PATH"; cd /workspace && '
-        f'attractor run /opt/attractor-src/{runner_rel} '
+        f'dot-runner run /opt/attractor-src/{runner_rel} '
         f'--param goal="$(cat /opt/eval/objective.txt)" '
         f'--param runner_dir="{runner_dir}" '
         f'--param target_dir="$PWD" '

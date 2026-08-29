@@ -321,12 +321,12 @@ def _demo_panel(demo: dict) -> str:
         if not_run:
             machine.append(f'<p class="note">{_esc(not_run)}</p>')
         machine.append(
-            f"<p class='note'>Run both yourself: <code>attractor lint {_esc(demo.get('dot_relpath'))}</code>"
+            f"<p class='note'>Run both yourself: <code>dot-runner lint {_esc(demo.get('dot_relpath'))}</code>"
             f" and the bundled authoring-contract checker.</p>"
         )
     else:
         if lint_verdict:
-            machine.append(f"<p><b>attractor lint</b>, verbatim:</p><pre class='cmd'>{_esc(lint_verdict)}</pre>")
+            machine.append(f"<p><b>dot-runner lint</b>, verbatim:</p><pre class='cmd'>{_esc(lint_verdict)}</pre>")
         elif not_run:
             machine.append(f"<pre class='cmd'>{_esc(not_run)}</pre>")
         if ver.get("doctrine_report"):

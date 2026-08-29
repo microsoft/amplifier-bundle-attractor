@@ -29,7 +29,7 @@
 // Invocation (per KNOWN_ISSUES: process cwd MUST equal --cwd for box nodes):
 //   AUTH="$PWD/examples/authoring"      # capture BEFORE cd
 //   cd <workspace>
-//   attractor run "$AUTH/pipeline-author.dot" \
+//   dot-runner run "$AUTH/pipeline-author.dot" \
 //       --param brief="Objective: ... Evidence: ... Budget: ..." \
 //       --param authoring_dir="$AUTH" \
 //       --param target_dir="$PWD" \
@@ -72,7 +72,7 @@
 //     (PIPELINE_DESIGN_PRINCIPLES section 3): a persistent failure bouncing
 //     between two separately-counted gates never exhausts either. Here there is
 //     one ledger and every leg pays into it.
-//   - CHEAP GATE BEFORE EXPENSIVE GATE. `attractor lint` and the structural
+//   - CHEAP GATE BEFORE EXPENSIVE GATE. `dot-runner lint` and the structural
 //     contract run before an LLM is paid to critique. Do not buy judgment on a
 //     graph that does not parse.
 //   - THE CRITIC INHERITS NOTHING. `critique` runs at fidelity="truncate" --
@@ -242,7 +242,7 @@ digraph PipelineAuthor {
     // instead of cycling until the engine's step cap kills the run.
     lint_gate [
         shape=parallelogram, class="gate", label="Lint the Draft", max_retries=0,
-        tool_command="mi=$max_iterations; B=${mi:-4}; n=$(($(cat .authoring/iter 2>/dev/null || echo 0)+1)); echo $n > .authoring/iter; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"lint\", \"budget\": \"exhausted\"}\\n' \"$n\" >> .authoring/convergence.jsonl; printf exhausted; else command -v attractor >/dev/null 2>&1 || { echo 'FATAL: the attractor CLI left PATH mid-run; the draft cannot be lint-gated' >&2; printf lint_unavailable; exit 1; }; if attractor lint .authoring/draft/pipeline.dot > .authoring/lint-report.txt 2>&1; then res=lint_pass; else res=lint_fail; fi; w=$(grep -c '^WARNING' .authoring/lint-report.txt 2>/dev/null); printf '{\"iteration\": %s, \"gate\": \"lint\", \"result\": \"%s\", \"warnings\": %s}\\n' \"$n\" \"$res\" \"${w:-0}\" >> .authoring/convergence.jsonl; printf %s \"$res\"; fi"
+        tool_command="mi=$max_iterations; B=${mi:-4}; n=$(($(cat .authoring/iter 2>/dev/null || echo 0)+1)); echo $n > .authoring/iter; if [ \"$n\" -gt \"$B\" ]; then printf '{\"iteration\": %s, \"gate\": \"lint\", \"budget\": \"exhausted\"}\\n' \"$n\" >> .authoring/convergence.jsonl; printf exhausted; else command -v dot-runner >/dev/null 2>&1 || { echo 'FATAL: the dot-runner CLI left PATH mid-run; the draft cannot be lint-gated' >&2; printf lint_unavailable; exit 1; }; if dot-runner lint .authoring/draft/pipeline.dot > .authoring/lint-report.txt 2>&1; then res=lint_pass; else res=lint_fail; fi; w=$(grep -c '^WARNING' .authoring/lint-report.txt 2>/dev/null); printf '{\"iteration\": %s, \"gate\": \"lint\", \"result\": \"%s\", \"warnings\": %s}\\n' \"$n\" \"$res\" \"${w:-0}\" >> .authoring/convergence.jsonl; printf %s \"$res\"; fi"
     ]
 
     // ---------- doctrine_gate: the authoring contract, structurally ----------
@@ -325,7 +325,7 @@ digraph PipelineAuthor {
     // EXIT         published | publish_failed (exit 1)
     package [
         shape=parallelogram, class="glue", label="Publish + Provenance", max_retries=0,
-        tool_command="N=$(cat .authoring/name 2>/dev/null || echo authored-pipeline); mkdir -p out; cp .authoring/draft/pipeline.dot \"out/$N.dot\" || { printf publish_failed; exit 1; }; cp .authoring/draft/pipeline.md \"out/$N.md\" || { printf publish_failed; exit 1; }; { echo \"# Provenance -- $N\"; echo; echo \"Authored by examples/authoring/pipeline-author.dot. Every gate below was executed, in this run, outside the authoring node's context.\"; echo; echo \"## Artifacts\"; echo; sha256sum \"out/$N.dot\" \"out/$N.md\"; echo; echo \"## Iterations\"; echo; echo \"author attempts spent: $(cat .authoring/iter 2>/dev/null || echo 0)\"; echo; echo \"## Convergence record\"; echo; sed 's/^/    /' .authoring/convergence.jsonl 2>/dev/null; echo; echo \"## Triage (the brief, restated, and the three-question test)\"; echo; sed 's/^/    /' .authoring/triage.md 2>/dev/null; echo; echo \"## attractor lint\"; echo; sed 's/^/    /' .authoring/lint-report.txt 2>/dev/null; echo; echo \"## Authoring contract (check_authored_pipeline.py)\"; echo; sed 's/^/    /' .authoring/doctrine-report.txt 2>/dev/null; echo; echo \"## Independent critique\"; echo; sed 's/^/    /' .authoring/critique.md 2>/dev/null; } > .authoring/PROVENANCE.md || { printf publish_failed; exit 1; }; printf '%s\\n' \"out/$N.dot out/$N.md\" > .authoring/published; printf published"
+        tool_command="N=$(cat .authoring/name 2>/dev/null || echo authored-pipeline); mkdir -p out; cp .authoring/draft/pipeline.dot \"out/$N.dot\" || { printf publish_failed; exit 1; }; cp .authoring/draft/pipeline.md \"out/$N.md\" || { printf publish_failed; exit 1; }; { echo \"# Provenance -- $N\"; echo; echo \"Authored by examples/authoring/pipeline-author.dot. Every gate below was executed, in this run, outside the authoring node's context.\"; echo; echo \"## Artifacts\"; echo; sha256sum \"out/$N.dot\" \"out/$N.md\"; echo; echo \"## Iterations\"; echo; echo \"author attempts spent: $(cat .authoring/iter 2>/dev/null || echo 0)\"; echo; echo \"## Convergence record\"; echo; sed 's/^/    /' .authoring/convergence.jsonl 2>/dev/null; echo; echo \"## Triage (the brief, restated, and the three-question test)\"; echo; sed 's/^/    /' .authoring/triage.md 2>/dev/null; echo; echo \"## dot-runner lint\"; echo; sed 's/^/    /' .authoring/lint-report.txt 2>/dev/null; echo; echo \"## Authoring contract (check_authored_pipeline.py)\"; echo; sed 's/^/    /' .authoring/doctrine-report.txt 2>/dev/null; echo; echo \"## Independent critique\"; echo; sed 's/^/    /' .authoring/critique.md 2>/dev/null; } > .authoring/PROVENANCE.md || { printf publish_failed; exit 1; }; printf '%s\\n' \"out/$N.dot out/$N.md\" > .authoring/published; printf published"
     ]
 
     // ---------- finalize: refuse a green exit without a disposition ----------

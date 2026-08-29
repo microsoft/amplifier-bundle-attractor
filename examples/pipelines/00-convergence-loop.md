@@ -45,7 +45,7 @@ Run from the repo root:
 ```bash
 DOT="$PWD/examples/pipelines/00-convergence-loop.dot"
 mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
-attractor run "$DOT" --cwd .
+dot-runner run "$DOT" --cwd .
 ```
 
 Two things about the command shape:

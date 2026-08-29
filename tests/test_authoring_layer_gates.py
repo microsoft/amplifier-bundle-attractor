@@ -3,7 +3,7 @@
 ``examples/authoring/pipeline-author.dot`` lets an LLM node WRITE a new reusable
 attractor pipeline, so the thing that decides whether the draft is any good has
 to live outside the author's context. Two machine gates do, in order:
-``attractor lint`` (the engine's own linter, already guarded by
+``dot-runner lint`` (the engine's own linter, already guarded by
 ``test_examples_lint_clean.py``) and ``check_authored_pipeline.py`` -- the
 *doctrine* checks lint deliberately does not own, or owns only as advice.
 
@@ -278,7 +278,7 @@ def test_a9_fires_on_an_empty_companion(checker, tmp_path, capsys):
 # a pipeline that is doctrinally sound in every respect EXCEPT that its evidence
 # gate's answer is discarded.  Both tokens route into the exit, so the run ends
 # green whether the tests passed or failed.  Against the checker as shipped in
-# PR #239 this printed `doctrine_ok` with A1-A9 all green, and `attractor lint`
+# PR #239 this printed `doctrine_ok` with A1-A9 all green, and `dot-runner lint`
 # had nothing to say about it either.
 # ---------------------------------------------------------------------------
 
@@ -702,7 +702,7 @@ def test_the_minimal_teaching_graph_is_correctly_not_production_shaped(
             True,
             id="test-suite",
         ),
-        pytest.param("attractor lint child.dot && printf pass", True, id="linter"),
+        pytest.param("dot-runner lint child.dot && printf pass", True, id="linter"),
         pytest.param(
             'n=$(cat .run/iter 2>/dev/null || echo 0); if [ "$n" -gt 3 ]; then printf exhausted; fi',
             True,

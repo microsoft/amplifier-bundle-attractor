@@ -6,7 +6,7 @@ from a design brief. That is only worth doing if the result is checked by
 something outside the author's context before anyone is asked to trust it. Three
 gates do that, in order:
 
-1. ``attractor lint`` -- executability and the topology bug classes the engine
+1. ``dot-runner lint`` -- executability and the topology bug classes the engine
    itself knows about (dead conditional edges, stale-label collisions,
    fail-routed-to-exit, pipe-masked gate exit codes). ERRORs block.
 2. this script -- the *doctrine* checks lint deliberately does not own, or owns
@@ -53,8 +53,8 @@ the author node is the one that was supposed to write it.
 DOT parsing is deliberately stdlib-only and self-contained, for the same reason
 ``examples/objective/check_child_contract.py`` is: this gate must run under
 whatever ``python3`` is on PATH in the target workspace, which is not the
-``attractor`` CLI's own virtualenv. It is a *second* opinion, and it runs only
-after the engine's own parser has already accepted the file via ``attractor
+``dot-runner`` CLI's own virtualenv. It is a *second* opinion, and it runs only
+after the engine's own parser has already accepted the file via ``dot-runner
 lint`` -- so a disagreement fails closed (``doctrine_bad``) rather than silently
 admitting a graph neither tool understood.
 
@@ -613,7 +613,7 @@ def substantive_commands(command: str) -> list[str]:
     """Head words in *command* that check or compute something real.
 
     ``[``, ``test``, ``grep``, ``pytest``, ``python3``, ``bash``, ``git``,
-    ``attractor`` -- anything that is not purely an emitter or a file
+    ``dot-runner`` -- anything that is not purely an emitter or a file
     arrangement.
     """
     found: list[str] = []

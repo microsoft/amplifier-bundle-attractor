@@ -67,19 +67,19 @@ after `00` when you need that specific feature:
 | 08 | [08-human-gate.md](08-human-gate.md) | `hexagon` human-approval gate |
 | 09 | [09-manager-supervisor.md](09-manager-supervisor.md) | `house` manager/supervisor loop |
 | 10 | [10-full-attractor.md](10-full-attractor.md) | Kitchen-sink — every feature together |
-| 11 | [11-manager-child-dotfile-hitl/](11-manager-child-dotfile-hitl/) | Multi-file: parent pipeline spawns a child pipeline with its own gate. **Regression fixture — known to fail via standalone `attractor run`; see its README.** |
+| 11 | [11-manager-child-dotfile-hitl/](11-manager-child-dotfile-hitl/) | Multi-file: parent pipeline spawns a child pipeline with its own gate. **Regression fixture — known to fail via standalone `dot-runner run`; see its README.** |
 | 12 | [12-graph-resume.md](12-graph-resume.md) | Graph-level resume via file-state guard nodes |
 
 ## Run any example from the CLI
 
-The `attractor run` CLI executes a `.dot` directly. Because these pipelines have
+The `dot-runner run` CLI executes a `.dot` directly. Because these pipelines have
 **box (agent) nodes**, the run command has a specific shape — run it **from the
 attractor repo root**:
 
 ```bash
 DOT="$PWD/examples/pipelines/00-convergence-loop.dot"
 mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
-attractor run "$DOT" --cwd .
+dot-runner run "$DOT" --cwd .
 ```
 
 The tutorials are self-contained (the goal is baked into the `.dot`), so no

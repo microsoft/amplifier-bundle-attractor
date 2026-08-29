@@ -4,7 +4,7 @@ A pipeline that authors pipelines, under executed machine gates.
 
 You state a **design brief** for work you want a reusable pipeline to do.
 `pipeline-author.dot` diagnoses the brief, drafts a new pipeline, hardens it
-against `attractor lint` and a structural authoring contract, submits it to an
+against `dot-runner lint` and a structural authoring contract, submits it to an
 independent doctrine critique that inherits nothing from the author, and
 publishes it with provenance — or tells you honestly that the work described
 does not want an attractor at all.
@@ -53,7 +53,7 @@ The relationship in one line each:
 
 - **attractorify DESIGNS** — conversationally, with a person, ending at an
   artifact and a recommendation. It never runs anything.
-- **this CONVERGES the artifact** — under `attractor lint`, a structural
+- **this CONVERGES the artifact** — under `dot-runner lint`, a structural
   contract, and an independent critique, ending at a published `.dot` + `.md`
   someone else can run next month.
 - **objective-runner's compose path AUTHORS RUN-TIME CHILDREN** — a
@@ -81,7 +81,7 @@ you can save the round trip by reading
 ```bash
 AUTH="$PWD/examples/authoring"        # capture the absolute path BEFORE cd
 cd /path/to/your/workspace
-attractor run "$AUTH/pipeline-author.dot" \
+dot-runner run "$AUTH/pipeline-author.dot" \
     --param brief="Objective: every factual claim in README.md that names a
                    command must actually run. Evidence: the commands are in
                    fenced bash blocks; a script can extract and execute them.
@@ -142,7 +142,7 @@ and published are different words on purpose.
 5. **`author`** (LLM) — writes `.authoring/draft/pipeline.dot` and its `.md`
    companion, having read the doctrine docs, the shipped exemplars, and any gate
    reports left by a previous attempt.
-6. **`lint_gate`** (tool) — `attractor lint`. ERRORs block; warnings are recorded.
+6. **`lint_gate`** (tool) — `dot-runner lint`. ERRORs block; warnings are recorded.
    **This node also owns the one budget counter**, checked on entry.
 7. **`doctrine_gate`** (tool) — `check_authored_pipeline.py`, the structural
    contract below. Failures route back to the author with the report.
@@ -168,10 +168,10 @@ Full node-by-node contracts are in
 ## The authoring contract
 
 `check_authored_pipeline.py` is the second gate. It owns the design checks
-`attractor lint` deliberately does not, or owns only as advice. It is
+`dot-runner lint` deliberately does not, or owns only as advice. It is
 stdlib-only for the same reason the objective layer's checker is: it has to run
 under whatever `python3` is on `PATH` in the target workspace, not the
-`attractor` CLI's own virtualenv.
+`dot-runner` CLI's own virtualenv.
 
 It is a **stated contract, not a guessing game** — the author node is pointed at
 this section by name, so every check below is something it was told before it

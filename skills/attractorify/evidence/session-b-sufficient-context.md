@@ -4,7 +4,7 @@
 > This file demonstrates intended skill behavior through a constructed scenario.
 > It has no session ID, timestamps, or external verifiability.
 > The generated `.dot` artifact (`session-b-generated.dot`) is real and passes
-> `attractor lint` clean (independently verified). The transcript is constructed.
+> `dot-runner lint` clean (independently verified). The transcript is constructed.
 > Live-session evidence is being collected separately and will replace or
 > supplement this file; the skill stays experimental until real transcripts land.
 
@@ -70,12 +70,12 @@ Node contract (from `docs/DOT-AUTHORING-GUIDE.md`):
 Writing artifact to `skills/attractorify/evidence/session-b-generated.dot`...
 
 ```
-attractor lint skills/attractorify/evidence/session-b-generated.dot
+dot-runner lint skills/attractorify/evidence/session-b-generated.dot
 ```
 
 **Lint output:**
 ```
-attractor lint: skills/attractorify/evidence/session-b-generated.dot: OK (no findings)
+dot-runner lint: skills/attractorify/evidence/session-b-generated.dot: OK (no findings)
 ```
 
 **Skill (handback):**
@@ -84,7 +84,7 @@ Artifact: `skills/attractorify/evidence/session-b-generated.dot`
 
 Invocation:
 ```bash
-attractor run skills/attractorify/evidence/session-b-generated.dot \
+dot-runner run skills/attractorify/evidence/session-b-generated.dot \
     --param pr_diff=/tmp/pr-123.diff \
     --param target_dir=$PWD \
     --cwd .
@@ -105,7 +105,7 @@ Structural choices:
 ## Lint output (captured)
 
 ```
-attractor lint: skills/attractorify/evidence/session-b-generated.dot: OK (no findings)
+dot-runner lint: skills/attractorify/evidence/session-b-generated.dot: OK (no findings)
 ```
 
 The generated `.dot` is at `skills/attractorify/evidence/session-b-generated.dot`.

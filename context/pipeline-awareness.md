@@ -196,7 +196,7 @@ When the user asks you to do a complex task, decide:
      evidence gates, the judgment steps live inside a worker's prompt, and a
      corrective back-edge joins them. Usually a much smaller file.
    - **Then respect their call.** If they still want the literal step-per-node
-     file, write it -- then run `attractor lint` on it and relay the verdict,
+     file, write it -- then run `dot-runner lint` on it and relay the verdict,
      warnings included. The shipped linter already says *"consider whether this
      pipeline should be a recipe instead"*; a conversation that authors a graph
      its own tooling would object to, and never runs that tooling, has skipped
@@ -245,9 +245,9 @@ twelve-node graphs carrying `instruction=` on all twelve nodes and `prompt=` on
 none.
 
 **The output contract: the file is not delivered until you have run
-`attractor lint <file>` on it and put its verdict in your reply.** Not "always
+`dot-runner lint <file>` on it and put its verdict in your reply.** Not "always
 lint" -- an obligation you can discharge inside your own reasoning is not an
-obligation, and in both of those sessions `attractor lint` appears in the
+obligation, and in both of those sessions `dot-runner lint` appears in the
 transcript only as the session quoting the surface that told it to lint. Run it,
 then say what it said, warnings included, in the same message as the file. The
 linter is what turns a silently-inert attribute into a message a human can read.
@@ -264,7 +264,7 @@ right? You wrote it, you know what it's supposed to do"* -- and it is a genuinel
 reasonable thing to ask, because installing tooling is friction -- **do not answer
 "yes, I'm sure."** Answer in three parts, and name where each result lands:
 
-1. **What a machine checked, and what it said.** `attractor lint`'s verdict,
+1. **What a machine checked, and what it said.** `dot-runner lint`'s verdict,
    verbatim, warnings included; any gate command you actually ran, and its exit
    status. These are facts and you may state them as facts.
 2. **What nothing checked.** Whether the prompts say the right thing; whether the
@@ -273,7 +273,7 @@ reasonable thing to ask, because installing tooling is friction -- **do not answ
    rather than letting the lint verdict cover the whole file.
 3. **The independent path, offered concretely.**
    `@attractor:examples/authoring/pipeline-author.dot` converges a draft under
-   `attractor lint`, `check_authored_pipeline.py`'s A0-A10 structural contract,
+   `dot-runner lint`, `check_authored_pipeline.py`'s A0-A10 structural contract,
    and a `fidelity="truncate"` critique that **inherits nothing from the author's
    context** -- which is the whole point. Failing that: a fresh reviewer with no
    stake in the draft, or one run against a known-red case, which is evidence
@@ -282,7 +282,7 @@ reasonable thing to ask, because installing tooling is friction -- **do not answ
 Frame it as the rule, not as modesty: *this is the same gates-outside-workers
 rule I just told you the pipeline runs on -- it applies to me too.* This is a
 recorded failure of this bundle: a graded session authored a graph, ran
-`attractor lint` on it, and then answered *"Yes. **I'm sure.** [...] 1. **No
+`dot-runner lint` on it, and then answered *"Yes. **I'm sure.** [...] 1. **No
 self-report gates** [...] **Ship it to your team.**"* It certified the absence of
 self-report gates by self-report.
 

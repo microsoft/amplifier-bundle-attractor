@@ -215,7 +215,7 @@ against the DENY list) is exercised directly by `leak_gate` in
    executable bit on any `.sh`/`.py` checker.
 4. Re-apply (or update) the provenance header comment at the top of each file
    with the new source commit and date.
-5. Run `attractor lint .github/capsule-pipeline/capsule.dot` and
+5. Run `dot-runner lint .github/capsule-pipeline/capsule.dot` and
    `vendor/backlog/check-upstream-leaks.sh --self-test`, and **prove the
    vendored checkers actually resolve** at the path the workflow sets
    `uplift_dir` to (`$GITHUB_WORKSPACE/.github/capsule-pipeline/vendor`) --
@@ -464,7 +464,7 @@ against the DENY list) is exercised directly by `leak_gate` in
   `check-witness-gate.py` ALONE reproduced the exact
   `FileNotFoundError: .../check-existing-tests.py` the import trap predicts
   -- and did NOT ask for `check-degenerate-hack.py`, proving the inline
-  really replaced that import. `attractor lint` on the re-synced `.dot`:
+  really replaced that import. `dot-runner lint` on the re-synced `.dot`:
   OK, no findings; node/edge parity with source confirmed (31 node
   declarations / 52 edges on both). `task-runner.dot` was checked against
   the same source range and found **untouched** at its own separately-
@@ -554,7 +554,7 @@ against the DENY list) is exercised directly by `leak_gate` in
   ask for `check-degenerate-hack.py`; `check-witness-gate.py
   --self-test` from the vendored directory: ALL PASSED, and a direct
   invocation against the scratch dodge patch returned
-  `VERDICT: witness_clean` (rc=0). `attractor lint` on the re-synced
+  `VERDICT: witness_clean` (rc=0). `dot-runner lint` on the re-synced
   `.dot`: OK, no findings; node/edge parity with source confirmed (33
   node declarations / 58 edges on both). `task-runner.dot` was checked
   against the same source range and found **untouched** (identical blob
@@ -625,7 +625,7 @@ against the DENY list) is exercised directly by `leak_gate` in
   becomes real shell only if the AUTHOR writes it into
   `DEFINITION.verify.sh`, where bash supplies `RANDOM` itself -- exactly
   the intent.)
-  `attractor lint` on the re-synced `.dot`: OK, no findings.
+  `dot-runner lint` on the re-synced `.dot`: OK, no findings.
   `vendor/backlog/check-upstream-leaks.sh --self-test`: PASS (RED x4,
   GREEN x2) -- note this is BETTER than the "2 of 6 failing"
   known-deviation documented above, which described an earlier fixture
@@ -696,7 +696,7 @@ against the DENY list) is exercised directly by `leak_gate` in
   TRIPS (rc=1, `.ai/gate.log` carrying
   `LEAK-HIT [...] pattern '\bprimer\b'` + the BLOCKED line,
   `last-stage-fail=round`) -- the retirement changed exactly the one seed
-  it claimed. (3) `attractor lint`: `capsule.dot` OK, no findings;
+  it claimed. (3) `dot-runner lint`: `capsule.dot` OK, no findings;
   `task-runner.dot` 1 pre-existing CMD-001 warning (`ship_check` pipe to
   grep) -- present identically on the previous vendored copy, 0 errors,
   rc=0 on both files. (4) Node/edge parity, same comment-stripped count
@@ -764,7 +764,7 @@ against the DENY list) is exercised directly by `leak_gate` in
   finding file created. (2) `package`'s `tool_command=` text with a
   capsule pair + that finding present: printed `packaged` (rc=0) and the
   new ship line landed `demo-fix.author-tree-dirt.md` in `$capsule_out`
-  alongside the pair. `attractor lint` on the re-synced `.dot`: OK, no
+  alongside the pair. `dot-runner lint` on the re-synced `.dot`: OK, no
   findings (rc=0). Node/edge parity, same comment-stripped count method on
   vendored and source: 34 node declarations / 60 edges on BOTH sides
   (33/58 at the prior pin -- exactly the one-node, two-edge delta the
@@ -834,7 +834,7 @@ against the DENY list) is exercised directly by `leak_gate` in
   (`max_pipeline_duration="18000s"`) and every timeout literal are
   untouched, so `capsule-specify.yml`'s 360-minute budget still clears it.
   No new token-shaped literal enters the prompt text (the RC-8 `$RANDOM`
-  analysis above remains the only such case). `attractor lint` on the
+  analysis above remains the only such case). `dot-runner lint` on the
   re-synced `.dot`: OK, no findings (rc=0).
 
 - **2026-08-10 (RC-10 interpreter-bytecode purge + RC-11 prescription
@@ -907,7 +907,7 @@ against the DENY list) is exercised directly by `leak_gate` in
   tree: `reset_proven` (rc=0), `"pyc_purged": "0"`, behavior otherwise
   unchanged from the pre-sync node; (3) `redgate`'s `tool_command=` text,
   same two cases: purge fires pre-measure, `"pyc_purged"` rides the
-  redgate ledger row, gate verdict logic unchanged. `attractor lint` on
+  redgate ledger row, gate verdict logic unchanged. `dot-runner lint` on
   the re-synced `.dot`: OK, no findings (rc=0).
 
 - **2026-08-10 (heldout-v5 structural fixes: launch contract, typed diagnose
@@ -1002,7 +1002,7 @@ against the DENY list) is exercised directly by `leak_gate` in
   conditional-BLOCKED prose shape in `diagnosis.md` with verdict file
   `CONTINUE` -> `continue` (prose ignored); two-line and missing verdict
   files -> `malformed` with the malformation named in `.ai/gate.log`;
-  whitespace-padded `CONTINUE` -> `continue`. `attractor lint` on the
+  whitespace-padded `CONTINUE` -> `continue`. `dot-runner lint` on the
   re-synced `.dot`: OK, no findings (rc=0);
   `check-upstream-leaks.sh --self-test`: PASS (RED x4, GREEN x2).
   Node/edge parity, same comment-stripped count method on vendored and
@@ -1088,7 +1088,7 @@ against the DENY list) is exercised directly by `leak_gate` in
   FAIL: THE GATE IS NOT SELF-CONTAINED. ..." ... } > .ai/gate.log; echo
   nonvacuity > .ai/last-stage-fail; exit 1;; esac` -- `unprobed_rc*`
   only; `unprobed_worktree`/`unprobed_apply` fall through to `printf
-  proven` with the finding recorded. `attractor lint` on the re-synced
+  proven` with the finding recorded. `dot-runner lint` on the re-synced
   `.dot`: OK, no findings (rc=0); `check-upstream-leaks.sh --self-test`:
   PASS (RED x4, GREEN x2). Node/edge parity, same comment-stripped count
   method on vendored and source: 35 node declarations / 62 edges on BOTH
@@ -1129,7 +1129,7 @@ against the DENY list) is exercised directly by `leak_gate` in
     without access to the source repository. The prior pin's body sha256 was
     `62b50b53b87e8fdd0b457145be646f5cc54ab414081b1f321c721b7c45f0d53e`.
   - **Topology, same comment-stripped count method on both sides:** 23 -> 24
-    node declarations, 36 -> 37 edges. `attractor lint` on the re-synced
+    node declarations, 36 -> 37 edges. `dot-runner lint` on the re-synced
     `.dot`: 0 ERRORs, 1 warning -- the pre-existing `CMD-001` on `ship_check`,
     byte-identical to the warning at the prior pin.
   - **Source-side rig:** 30/30 green, including a new control
@@ -1211,7 +1211,7 @@ against the DENY list) is exercised directly by `leak_gate` in
     the blind spot -- a prior round's dodge alive against the revised
     gate with no archive, no re-run, no fact; GREEN half proves archive,
     alive-fact + verbatim republication, closure under a positive
-    round-trip gate, dedupe, reset-proof). `attractor lint`: OK on both
+    round-trip gate, dedupe, reset-proof). `dot-runner lint`: OK on both
     source and the re-synced vendored copy.
 
 - **2026-08-17 (post-review: HONEST SCOPE for the ratchet)** -- `capsule.dot`
@@ -1285,5 +1285,5 @@ against the DENY list) is exercised directly by `leak_gate` in
     `void_archive_prior: 1` beside `void_archive: 0`, findings rewritten)
     and `no_apply`-vs-`clean` (RED: `void_ratchet: clean` + the false
     closure claim; GREEN: `void_ratchet: no_apply`, `void_noapply: 1`,
-    closure suppressed). `attractor lint`: OK on both source and the
+    closure suppressed). `dot-runner lint`: OK on both source and the
     re-synced vendored copy.

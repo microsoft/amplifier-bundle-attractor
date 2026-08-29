@@ -301,7 +301,7 @@ omits it silently validates the draft against the top-ranked unit's numbers —
 which is why `$UNIT` is pinned once above and passed to both. Mismatch it and
 the count check fails on numbers the delegate never wrote.
 
-`assemble` runs the verification ladder (`attractor lint` if it is on PATH; the
+`assemble` runs the verification ladder (`dot-runner lint` if it is on PATH; the
 bundled doctrine checker always), validates every number in the **six teaching-
 prose slots** against the re-verified ranking — **an invented count there is
 FATAL, same as step 5** — and copies the `.dot` + companion beside the HTML

@@ -77,26 +77,22 @@ The agent can generate pipelines on-the-fly or use any of the included examples.
 
 **4. Or run an example directly from the CLI:**
 
-**Two CLIs exist, and they are not the same thing.** `attractor` is this
-bundle's opinionated wrapper -- it auto-loads the attractor pipeline bundle
-(`loop-agent` default worker, the three-provider profile map, capsule-lane
-integration) so `attractor run`/`attractor lint`/`attractor resume` keep
-working exactly as documented below. It ships today from
-[`amplifier-bundle-dot-runner`](https://github.com/microsoft/amplifier-bundle-dot-runner)'s
-`pipeline-runner` module as a **deprecation-window** entry point (prints a
-one-line stderr notice) -- the engine-native default it will eventually fall
-back to is deliberately NOT this bundle. The engine's OWN command,
-`dot-runner`, has zero reach into this repo: engine-native defaults
-(`direct` worker, provider bootstrap from env keys), no attractor bundle,
-no capsule lanes. Use `attractor` for the opinionated coding-agent
-experience this README describes; use `dot-runner` if you want the bare
-engine with no pattern-layer opinions. This bundle does not ship its own
-`attractor` console script (that would collide with the one above during
-the deprecation window) -- only bundle-level wiring (the explicit `worker:
-"spawn"` + `profiles` declarations described under
-[Backend Selection / Worker Selection](#backend-selection--worker-selection)).
+The engine ships **one command, `dot-runner`** -- `run`/`resume`/`doctor`/`trace`/`lint`
+subcommands, plus a `--worker` flag to pick the execution worker. It ships from
+[`amplifier-bundle-dot-runner`](https://github.com/microsoft/amplifier-bundle-dot-runner)
+(the old two-CLI `attractor` wrapper is retired). Install the root form (no
+`#subdirectory`):
 
-The `attractor run` CLI executes a `.dot` with no config file. The
+```bash
+uv tool install git+https://github.com/microsoft/amplifier-bundle-dot-runner@main
+```
+
+The root form needs the engine repo's root `pyproject.toml`; until that merges,
+the subdirectory form installs the identical `dot-runner` command (it has
+shipped from that subdirectory since the two-CLI release):
+`uv tool install "git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/pipeline-runner"`.
+
+The `dot-runner run` CLI executes a `.dot` with no config file. The
 `bug-fix` / `refactor` / `test-gen` [practical examples](examples/pipelines/practical/)
 ship a runnable sample target, so they work walk-up. From a clone of this repo:
 
@@ -104,7 +100,7 @@ ship a runnable sample target, so they work walk-up. From a clone of this repo:
 DOT="$PWD/examples/pipelines/practical/bug-fix.dot"
 cp -r examples/pipelines/practical/sample /tmp/attractor-demo
 cd /tmp/attractor-demo
-attractor run "$DOT" \
+dot-runner run "$DOT" \
     --param goal="Fix the TypeError in get_display_name when a user's avatar is None" \
     --cwd .
 ```
@@ -122,10 +118,10 @@ run directory it left behind — completed nodes are not re-executed and the
 restored context carries forward:
 
 ```bash
-attractor resume /path/to/run-dir --cwd .
+dot-runner resume /path/to/run-dir --cwd .
 ```
 
-Resume is explicit and opt-in: `attractor run` never reads a checkpoint back,
+Resume is explicit and opt-in: `dot-runner run` never reads a checkpoint back,
 so a leftover `checkpoint.json` can never change what a fresh run does. Use the
 same `--cwd` the interrupted run used. A missing, corrupted, already-completed
 or foreign checkpoint fails loud and exits non-zero — it never silently
@@ -180,7 +176,7 @@ The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 s
 | Pipeline | What it does |
 |----------|--------------|
 | [Objective Runner](examples/objective/README.md) | You state an **objective**; it diagnoses, then **selects** a shipped lane, **composes** a purpose-built child pipeline, or **redirects** with an honest written no |
-| [Authoring Attractor](examples/authoring/README.md) | You state a design **brief**; it diagnoses, **authors** a new reusable pipeline, converges it under `attractor lint` + a structural contract + an independent critique, and publishes it with provenance — or **redirects** with an honest written no |
+| [Authoring Attractor](examples/authoring/README.md) | You state a design **brief**; it diagnoses, **authors** a new reusable pipeline, converges it under `dot-runner lint` + a structural contract + an independent critique, and publishes it with provenance — or **redirects** with an honest written no |
 
 ### Canonical attractor exemplars — teach the shape
 
@@ -236,7 +232,7 @@ it is usually the one a user cannot make. `examples/objective/objective-runner.d
 takes that decision as its input: you pass an **objective**, and the runner
 diagnoses it with the three-question test, then **selects** one of the shipped
 practical pipelines, **composes** a purpose-built child graph (which must clear
-`attractor lint` and a structural contract check before it is allowed to run), or
+`dot-runner lint` and a structural contract check before it is allowed to run), or
 **redirects** — exiting green with a written diagnosis when the honest answer is
 that the work wants a recipe, a conversation, or a one-shot.
 

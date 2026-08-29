@@ -73,7 +73,7 @@ asserts the normative sources are present in the cwd and refuses otherwise.
 RD="$PWD/examples/drift-review"      # absolute; the gates run from here
 cd <the repository under review>     # usually the same checkout
 
-attractor run "$RD/drift-review.dot" \
+dot-runner run "$RD/drift-review.dot" \
     --param goal="Layer-3 holistic drift review of this repository" \
     --param runner_dir="$RD" \
     --cwd .

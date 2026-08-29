@@ -13,7 +13,7 @@ below **from the attractor repo root** and it works walk-up, no setup:
 DOT="$PWD/examples/pipelines/practical/test-gen.dot"
 cp -r examples/pipelines/practical/sample /tmp/attractor-testgen-demo
 cd /tmp/attractor-testgen-demo
-attractor run "$DOT" \
+dot-runner run "$DOT" \
     --param goal="Expand test coverage for user_service.py. The existing suite only covers the happy path -- add tests for the untested paths: get_display_name() with a None avatar, get_user() for an unknown username, and the validate_user() rules (short/empty/non-alphanumeric username, missing/malformed email)." \
     --cwd .
 ```

@@ -71,7 +71,7 @@ may ask for more, never less.
 | Class | Examples | Required evidence before merge |
 |---|---|---|
 | **Engine / handler code** | `engine.py`, `handlers/*`, dispatch, routing, retry, checkpoint | Full module suites green **and** a live pipeline run exercising the changed path (paste the `events.jsonl` slice) **and** independent adversarial review **and** a ledger entry if the change is spec-relevant (last row) |
-| **Exemplar / example graphs** | `examples/pipelines/*.dot`, `examples/patterns/*.dot`, `examples/objective/*` | `attractor lint` with **zero ERROR** diagnostics -- warnings are informational, which is exactly the line `modules/loop-pipeline/tests/test_examples_lint_clean.py` enforces -- **and** at least one live convergence run **and** the graph's own gates demonstrated **RED and GREEN**: a negative control proving the gate can fail, a positive control proving it can pass. A gate only ever seen green is an unproven gate |
+| **Exemplar / example graphs** | `examples/pipelines/*.dot`, `examples/patterns/*.dot`, `examples/objective/*` | `dot-runner lint` with **zero ERROR** diagnostics -- warnings are informational, which is exactly the line `modules/loop-pipeline/tests/test_examples_lint_clean.py` enforces -- **and** at least one live convergence run **and** the graph's own gates demonstrated **RED and GREEN**: a negative control proving the gate can fail, a positive control proving it can pass. A gate only ever seen green is an unproven gate |
 | **Guidance surfaces** | `agents/`, `skills/`, `context/`, teaching content in `README.md` and `docs/` | **Guidance-eval evidence** from [`evals/guidance/`](../evals/guidance/README.md) -- the instrument shipped, and its 2026-08-15 baseline is the run every later run is read against. Run the scenarios whose `surfaces_under_test:` name the file you touched and paste the results table plus the decisive transcript quotes; a broad change -- a bundle recomposition, a doctrine amendment, a new guidance surface -- warrants the full six. Where the eval genuinely cannot reach the changed surface, say so in the PR in those words and fall back to a **fresh-session walk-through**: a session with no prior context follows only the changed text and arrives at the intended behavior |
 | **Docs making factual claims** | any doc asserting a number, default, vocabulary, or behavior | A guard test pinning each load-bearing claim to **its source of truth in code**, following the existing guards (section 5, Layer 1). A page-only assertion ("the page says 500") is tautological: it passes forever and fails only when someone edits the page, which is the one case needing no guard. The assertion must read the value from the code and fail when the **code** moves |
 | **New public content class** | a new top-level directory; a new artifact type that reaches users (run artifacts, published pages, generated reports); docs carrying real-run evidence; a new fixture corpus | The deterministic leak guards green **and** a **leak-lens review** (section 7): a fresh-context reviewer reads the diff under the outsider brief and reports what it identifies. Both, not either -- a passing grep is not the semantic read, which is precisely how the 2026-08-19 incident got through |
@@ -547,7 +547,7 @@ where the transferable design lives; the patterns inside Layer 1 are local.
 pattern into `amplifier-foundation`'s per-repo-conventions guidance, so other repos inherit the shape
 instead of re-deriving it. That is a separate change in a separate repo; this PR does not make it.
 
-**This-repo-specific.** `attractor lint` and its rule IDs; the particular ledgers
+**This-repo-specific.** `dot-runner lint` and its rule IDs; the particular ledgers
 (`SPEC_CONFORMANCE.md`, `specs/EXTENSIONS.md`) and their entry formats; the six named guard files;
 the pinned upstream SHA; the issue-pipeline lanes. Every one of those is the local answer to a
 general question -- *what is your normative source, what pins your claims to it, what is the record
@@ -654,7 +654,7 @@ Amendments to this protocol, newest first. Each entry names the evidence that ju
   commitment, inverted, on the surface that exists to teach it. The objective layer proved
   unreachable by conversation: `/attractorify`, the objective runner and `attractor-expert` were
   never named. A gateless twelve-node chain was authored on request with no pushback, on a file
-  whose own `attractor lint` run says "consider whether this pipeline should be a recipe instead".
+  whose own `dot-runner lint` run says "consider whether this pipeline should be a recipe instead".
   A fourth finding was visible only *across* scenarios, which is precisely what a per-PR
   walk-through cannot see: both authoring surfaces emit a DOT dialect the shipped engine does not
   use. Each is tracked in the issues filed from that baseline.

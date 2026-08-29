@@ -5,7 +5,7 @@ Parse a spec, break into subtasks, implement in parallel, integration test, huma
 ## Usage
 
 ```bash
-attractor run examples/pipelines/practical/feature-build.dot \
+dot-runner run examples/pipelines/practical/feature-build.dot \
     --param goal="<describe the feature to build, e.g. avatar upload with thumbnails>" \
     --cwd . \
     --on-human-gate auto-approve
@@ -13,7 +13,7 @@ attractor run examples/pipelines/practical/feature-build.dot \
 
 **About `--on-human-gate auto-approve`:** this pipeline has a human-review gate (hexagon) that blocks a non-interactive run. `auto-approve` unblocks it by always taking the gate's **first** option — which here is **Ship** — so it *never* exercises the Rework path. It lets the demo run to completion, but the review checkpoint becomes a no-op that ships every time. Drop the flag and run interactively if you actually want the gate to mean something.
 
-**Pointing at your own repo:** the `.dot` path is resolved relative to your *current* directory, while `--cwd` is where the pipeline reads and writes code. Give the pipeline file an absolute (or attractor-repo-relative) path and point `--cwd` at your repo — e.g. `attractor run /path/to/attractor/examples/pipelines/practical/feature-build.dot --cwd /path/to/your/repo`. This example doesn't ship a target codebase. See `modules/pipeline-runner/KNOWN_ISSUES.md` for the box-node cwd caveat.
+**Pointing at your own repo:** the `.dot` path is resolved relative to your *current* directory, while `--cwd` is where the pipeline reads and writes code. Give the pipeline file an absolute (or attractor-repo-relative) path and point `--cwd` at your repo — e.g. `dot-runner run /path/to/attractor/examples/pipelines/practical/feature-build.dot --cwd /path/to/your/repo`. This example doesn't ship a target codebase. See `modules/pipeline-runner/KNOWN_ISSUES.md` for the box-node cwd caveat.
 
 ## What It Does
 

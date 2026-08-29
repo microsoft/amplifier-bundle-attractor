@@ -10,7 +10,7 @@
 
 - **Graph-level resume**: Making a pipeline resumable from the graph itself, with no engine
   resume involved. The engine always runs from Start; resume happens at the graph level via
-  file-state self-skip. (Engine-level `attractor resume` is a separate, complementary
+  file-state self-skip. (Engine-level `dot-runner resume` is a separate, complementary
   mechanism -- see the closing section for when to reach for which.)
 - **`shape=parallelogram` guard nodes**: Each check_* node runs a shell command that tests
   for an artifact file and prints a routing token (`done` or `todo`).
@@ -147,13 +147,13 @@ re-execute their work nodes as well.
 #  so the .ai/ artifacts and --cwd . line up.)
 
 # Re-run only the plan stage and everything after it:
-rm .ai/refactor-plan.md && attractor run "$DOT" --param goal="..." --cwd .
+rm .ai/refactor-plan.md && dot-runner run "$DOT" --param goal="..." --cwd .
 
 # Re-run the implement+test loop and diff review only:
-rm .ai/STATE.json && attractor run "$DOT" --param goal="..." --cwd .
+rm .ai/STATE.json && dot-runner run "$DOT" --param goal="..." --cwd .
 
 # Start completely fresh:
-rm -rf .ai/ && attractor run "$DOT" --param goal="..." --cwd .
+rm -rf .ai/ && dot-runner run "$DOT" --param goal="..." --cwd .
 ```
 
 ## How to Run
@@ -167,14 +167,14 @@ steps:
       goal: "Refactor src/legacy.py to eliminate god-class anti-patterns"
 ```
 
-Or with the `attractor run` CLI directly. This example refactors a real module
+Or with the `dot-runner run` CLI directly. This example refactors a real module
 (`src/legacy.py`) in **your own repo**, so point it there -- capture the pipeline's
 absolute path, `cd` into your repo, and keep `--cwd .`:
 
 ```bash
 DOT="/path/to/attractor/examples/pipelines/12-graph-resume.dot"
 cd /path/to/your/repo        # must contain src/legacy.py and a test suite
-attractor run "$DOT" \
+dot-runner run "$DOT" \
     --param goal="Refactor src/legacy.py to eliminate god-class anti-patterns" \
     --cwd .
 ```
@@ -201,7 +201,7 @@ The resume artifacts (`.ai/`) are written under `--cwd`.
 
 ## Key Insight: This and Engine-Level Resume Answer Different Questions
 
-Graph-level resume is not a substitute for `attractor resume`, and `attractor resume` did
+Graph-level resume is not a substitute for `dot-runner resume`, and `dot-runner resume` did
 not retire this pattern. They coexist by design -- that is the ratified ruling, not a
 compromise (`docs/designs/2026-08-14-engine-checkpoint-resume.md` §0: *"Engine resume must
 be built per §5.3 and must **coexist** with the graph-owned file-guard idempotency
@@ -226,7 +226,7 @@ What this pattern buys you, and the engine cannot:
 What engine resume buys you, and this pattern cannot: the accumulated in-memory state of a
 run that died. A file guard can tell you `implement_refactor` finished; it cannot tell you
 how many retries `run_tests` had already spent, or restore the context the earlier nodes
-accumulated. Resume is explicit opt-in -- a plain `attractor run` never reads a checkpoint
+accumulated. Resume is explicit opt-in -- a plain `dot-runner run` never reads a checkpoint
 -- so adding it changes nothing about how this graph behaves.
 
 For the mechanism and its guarantees see the design record above and

@@ -177,7 +177,7 @@ jobs:
 
           if [ "$failed" -ne 0 ]; then
             echo ""
-            echo "Run 'attractor lint <file>' on each -- RENDER-001 (unescaped"
+            echo "Run 'dot-runner lint <file>' on each -- RENDER-001 (unescaped"
             echo "inner quote) and RENDER-002 (dotted bare key) name the cause"
             echo "and the exact fix. See docs/DOT-AUTHORING-GUIDE.md."
             exit 1

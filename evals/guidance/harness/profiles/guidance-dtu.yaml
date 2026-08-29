@@ -19,7 +19,7 @@ name: attractor-guidance-eval
 description: >
   Real-user-simulation environment for the attractor guidance eval: ubuntu 24.04 + uv, amplifier
   installed the way a user installs it, the attractor bundle installed from the (mirror-redirected)
-  public git URL, and the attractor CLI on PATH for the exemplar scenarios.
+  public git URL, and the dot-runner CLI on PATH for the exemplar scenarios.
 
 base:
   image: ubuntu:24.04

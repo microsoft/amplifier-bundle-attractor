@@ -34,7 +34,7 @@ From the **attractor repo root**:
 ```bash
 DOT="$PWD/examples/pipelines/04-retry-with-fallback.dot"
 mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
-attractor run "$DOT" --cwd .
+dot-runner run "$DOT" --cwd .
 ```
 
 See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).
@@ -51,7 +51,7 @@ budget (count 3 → 4 > budget 3) and the `budget_exhausted` edge fires:
 DOT="$PWD/examples/pipelines/04-retry-with-fallback.dot"
 mkdir -p /tmp/attractor-demo-renegotiate && cd /tmp/attractor-demo-renegotiate
 echo 3 > validate_count.txt
-attractor run "$DOT" --cwd .
+dot-runner run "$DOT" --cwd .
 ```
 
 Watch for: `validate_gate -> renegotiate` in the routing, `renegotiation.md`

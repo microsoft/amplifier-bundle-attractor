@@ -525,7 +525,7 @@ jobs:
           # churn cannot reach them. --cwd, target_dir and the .dot path below
           # deliberately still point at the WORKSPACE: the subject tree is
           # supposed to be the live one.
-          uv run --project "$RUNNER_TEMP/engine-src/modules/pipeline-runner" attractor run \
+          uv run --project "$RUNNER_TEMP/engine-src/modules/pipeline-runner" dot-runner run \
             .github/capsule-pipeline/task-runner.dot \
             --cwd "$GITHUB_WORKSPACE" \
             --logs-root "$RUNNER_TEMP/capsule-implement/logs" \

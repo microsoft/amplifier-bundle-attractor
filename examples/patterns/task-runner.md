@@ -26,7 +26,7 @@ DOT="$PWD/examples/patterns/task-runner.dot"
 cp -r examples/patterns/task-runner-fixture /tmp/task-runner-demo
 cd /tmp/task-runner-demo
 git init -q && git add -A && git commit -qm "fixture baseline"
-attractor run "$DOT" \
+dot-runner run "$DOT" \
     --param task_file="$PWD/sample-task.md" \
     --param target_dir="$PWD" \
     --param max_iterations=6 \
@@ -55,7 +55,7 @@ and `target_dir` with your repo root. Keep `$DOT` absolute before `cd`, keep
 ```bash
 cd <target_repo>
 DOT=/abs/path/to/task-runner.dot
-attractor run "$DOT" \
+dot-runner run "$DOT" \
     --param task_file=/abs/path/to/task.md \
     --param target_dir=$PWD \
     --param max_iterations=6 \
@@ -87,8 +87,8 @@ scratch directory, as the quick start does).
 `.verify.sh`). Keep the task file and its DoD script as siblings with matching
 basenames.
 
-**Where models come from (the DOT declares none):** the `attractor` CLI path
-never requires a per-node `llm_model`. `attractor run` builds the
+**Where models come from (the DOT declares none):** the `dot-runner` CLI path
+never requires a per-node `llm_model`. `dot-runner run` builds the
 `bundles/attractor-pipeline.yaml` bundle and registers a `session.spawn`
 capability (`run_pipeline` in
 `modules/pipeline-runner/amplifier_module_pipeline_runner/runner.py`), so

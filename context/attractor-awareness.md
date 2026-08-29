@@ -57,7 +57,7 @@ the independent path: `@attractor:examples/authoring/`, or a fresh reviewer.
   not `circle`/`doublecircle`; there is no `agent=`.** An invented attribute is
   not an error -- it is **silently dropped**, and the graph runs with no prompt.
   Vocabulary: `@attractor:context/dot-reference.md`.
-- **The file is not delivered until `attractor lint <file>` has run and its
+- **The file is not delivered until `dot-runner lint <file>` has run and its
   verdict is in your reply.** Lint not relayed is lint not run: you hand over
   an unverified file. Relay the **findings**, not the exit code -- lint exits 0
   on warnings, and `VOCAB-001` ("will run with no prompt") is a warning. The

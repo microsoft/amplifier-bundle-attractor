@@ -32,7 +32,7 @@ From the **attractor repo root**:
 ```bash
 DOT="$PWD/examples/pipelines/02-plan-implement-test.dot"
 mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
-attractor run "$DOT" --cwd .
+dot-runner run "$DOT" --cwd .
 ```
 
 See [README.md](README.md) in this folder for the run pattern and why the

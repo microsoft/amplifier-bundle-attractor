@@ -183,14 +183,14 @@ def deck_demos_fixture() -> dict:
                 "verification": {
                     "level": "doctrine-only",
                     "lint_verdict": None,
-                    "lint_not_run_reason": "attractor lint: NOT RUN - the CLI is not installed here.",
+                    "lint_not_run_reason": "dot-runner lint: NOT RUN - the CLI is not installed here.",
                     "doctrine_verdict": "doctrine_ok",
                     "doctrine_report": "AUTHORED-PIPELINE DOCTRINE REPORT\nverdict:   doctrine_ok\n",
                 },
                 "invocation": {
-                    "run_cmd": f"attractor run attractor-scout-demos/{DECK_SLUG}.dot --cwd .",
-                    "author_cmd": "attractor run examples/authoring/pipeline-author.dot --cwd .",
-                    "install_cmd": "uv tool install attractor",
+                    "run_cmd": f"dot-runner run attractor-scout-demos/{DECK_SLUG}.dot --cwd .",
+                    "author_cmd": "dot-runner run examples/authoring/pipeline-author.dot --cwd .",
+                    "install_cmd": "uv tool install git+https://github.com/microsoft/amplifier-bundle-dot-runner@main",
                 },
                 "generated_at": "2026-08-19T00:00:00+00:00",
             }

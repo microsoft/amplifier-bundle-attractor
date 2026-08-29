@@ -3,7 +3,7 @@
 // structured review, and converges until the review passes a completeness check.
 //
 // Invocation:
-//   attractor run session-b-generated.dot \
+//   dot-runner run session-b-generated.dot \
 //       --param pr_diff=/abs/path/to/pr.diff \
 //       --param target_dir=$PWD \
 //       --cwd .

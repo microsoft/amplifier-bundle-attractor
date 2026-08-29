@@ -6,7 +6,7 @@ scenario. None is a live Amplifier session transcript — there are no session
 IDs, no timestamps, and no external verifiability.
 
 What IS real here: `session-b-generated.dot` is a real artifact that passes
-`attractor lint` clean (independently re-verified), and its gate command has
+`dot-runner lint` clean (independently re-verified), and its gate command has
 been tested against fixture files.
 
 Live-session evidence is being collected separately and will replace or

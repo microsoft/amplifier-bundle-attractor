@@ -123,7 +123,7 @@ keys. Do not mark "live" until exercised against real providers (e.g. in a DTU w
 | ID | Area | Spec | Impl | Status | Disposition |
 |----|------|------|------|--------|-------------|
 | ATX-1 | Node `timeout` unit mismatch (ms stored, consumed as seconds) | `timeout_seconds` | `engine.py:485`, `handlers/tool.py:105` | **DONE** | ALIGN |
-| ATX-2 | Checkpoint-based RESUME (restore context/completed/retry, continue after `current_node`; `full`→`summary:high` degrade) | `§5.3`, DoD `:1857` | `checkpoint.py:load_checkpoint_for_resume` (validation ladder) + `engine.py:PipelineEngine.resume` + `runner.py:resume_pipeline` + `attractor resume <run_dir>`; checkpoint schema v2 is a superset keeping the six §5.3 fields at the §5.6 path. A fresh `run()` still never reads a checkpoint — no call path exists (`tests/test_no_implicit_resume.py`) | **DONE — PROVEN ON A REALLY-KILLED RUN** (`modules/pipeline-runner/tests/test_resume_e2e.py`: SIGKILLed subprocess, separate `attractor resume` invocation, equivalence vs a control run executed at gate runtime) | ALIGN |
+| ATX-2 | Checkpoint-based RESUME (restore context/completed/retry, continue after `current_node`; `full`→`summary:high` degrade) | `§5.3`, DoD `:1857` | `checkpoint.py:load_checkpoint_for_resume` (validation ladder) + `engine.py:PipelineEngine.resume` + `runner.py:resume_pipeline` + `dot-runner resume <run_dir>`; checkpoint schema v2 is a superset keeping the six §5.3 fields at the §5.6 path. A fresh `run()` still never reads a checkpoint — no call path exists (`tests/test_no_implicit_resume.py`) | **DONE — PROVEN ON A REALLY-KILLED RUN** (`modules/pipeline-runner/tests/test_resume_e2e.py`: SIGKILLed subprocess, separate `dot-runner resume` invocation, equivalence vs a control run executed at gate runtime) | ALIGN |
 | ATX-3 | Tool-call hooks `tool_hooks.pre`/`.post` (shell around each LLM tool call) | `§9.7` `:1650` | grep `tool_hooks`=0 | OPEN | **DECIDE** (ALIGN vs DIVERGE) |
 | ATX-4 | HTTP server mode (REST + SSE) | `§9.5` (optional) | not present; programmatic tools + CLI instead. The absence is now asserted rather than merely described: matrix row `ATX-M-004n` (`specs/conformance/attractor-matrix.yaml`) fails if an HTTP surface appears | **WONTFIX — DECIDED (NOT-IMPLEMENTED)** | DIVERGE (spec-optional) |
 | ATX-5 | `outcome=` condition resolves to `preferred_label` first | `§10.4 :1693` | `conditions.py:75` returns `preferred_label or status`; both halves asserted by matrix row `ATX-M-022` (`specs/conformance/attractor-matrix.yaml`) | **DONE — DECIDED** | DIVERGE (decided; ledgered — `specs/EXTENSIONS.md` §22) |
@@ -203,7 +203,7 @@ are the current state; these are the reasoning behind it.
   "don't redo finished work" remains the right tool for expensive idempotent steps; engine resume
   covers the different problem of restoring accumulated *context* after a crash mid-pipeline.
 - **Status: SHIPPED** (issue #224). Engine resume landed per §5.3 and the ATX-2 row above is
-  **DONE — PROVEN ON A REALLY-KILLED RUN**: `attractor resume <run_dir>` /
+  **DONE — PROVEN ON A REALLY-KILLED RUN**: `dot-runner resume <run_dir>` /
   `resume_pipeline()` / `PipelineEngine.resume()`, opt-in only — a fresh `run()` has no code
   path to a checkpoint loader (`modules/loop-pipeline/tests/test_no_implicit_resume.py`).
   The coexistence condition held: the graph-owned pattern still parses, lints and executes its
@@ -323,14 +323,14 @@ are the current state; these are the reasoning behind it.
 
 ### 2026-08-14 — ATX-2 DONE: engine-level checkpoint resume shipped (issue #224)
 - **ATX-2 DECIDED/IN-PROGRESS → DONE — ALIGN.** Spec §5.3 "Resume behavior" rules 1–6 and DoD
-  `:1857` are implemented behind an explicit, opt-in entry point: `attractor resume <run_dir>` /
+  `:1857` are implemented behind an explicit, opt-in entry point: `dot-runner resume <run_dir>` /
   `resume_pipeline()` / `PipelineEngine.resume()`. Checkpoint schema v2 is a strict superset —
   the six §5.3 fields keep their exact names and shapes at the §5.6
   `{logs_root}/checkpoint.json` location, plus `schema_version`, `run_state`, `node_outcomes`,
   `engine_state` and `graph` (fingerprint + embedded DOT source). `node_retries` is now actually
   populated (it was always written as `{}`).
   - **Bar met:** proven on a really-killed run, not a simulated interrupt — a subprocess SIGKILLed
-    mid-graph after a checkpoint write, resumed by a genuinely separate `attractor resume`
+    mid-graph after a checkpoint write, resumed by a genuinely separate `dot-runner resume`
     invocation, asserted equivalent to an uninterrupted control run executed at gate runtime
     (`modules/pipeline-runner/tests/test_resume_e2e.py`).
   - **The two PR #66 crash classes are designed out, not guarded against.** (1) Fresh runs cannot

@@ -13,7 +13,7 @@ From the **attractor repo root**:
 ```bash
 DOT="$PWD/examples/pipelines/06-model-stylesheet.dot"
 mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
-attractor run "$DOT" --cwd .
+dot-runner run "$DOT" --cwd .
 ```
 
 See [README.md](README.md) in this folder for the run pattern and why the `$DOT` capture + `cd` + `--cwd .` are needed (box-node process-cwd alignment + dot-path resolution).

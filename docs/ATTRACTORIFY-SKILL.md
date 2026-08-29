@@ -16,7 +16,7 @@ When invoked, the skill:
 2. **Designs conversationally** when a pipeline IS warranted — extracts goal (as
    end-state), machine-checkable DoD, budgets, and evidence gates from the session
    context; consults the `attractor:attractor-expert` agent by delegation at design
-   start and final review; produces a `.dot` file; lints it with `attractor lint`;
+   start and final review; produces a `.dot` file; lints it with `dot-runner lint`;
    and hands back the runnable artifact plus the exact invocation.
 
 3. **Asks before designing** when context is thin — if the session under-determines
@@ -31,7 +31,7 @@ This skill lives in `amplifier-bundle-attractor` (the domain home) rather than
 
 - The skill teaches from and links to `agents/attractor-expert.md`,
   `docs/DOT-AUTHORING-GUIDE.md`, `docs/PIPELINE_DESIGN_PRINCIPLES.md`, and the
-  `attractor lint` CLI — all of which live here. Co-location keeps the decision
+  `dot-runner lint` CLI — all of which live here. Co-location keeps the decision
   logic beside the doctrine it applies.
 - The skill is domain-specific (attractor pipeline design), not a general-purpose
   session utility. The skills collection is the right home for cross-domain skills;
@@ -57,7 +57,7 @@ skills family is the precedent: council (fork, external target) vs council-here
 - `agents/attractor-expert.md` — source prompt of the `attractor:attractor-expert`
   agent the skill delegates to for design and review
 - `docs/PIPELINE_DESIGN_PRINCIPLES.md` §0 — the three-question test and one-sentence rule
-- `docs/DOT-AUTHORING-GUIDE.md` — node contract, lint rules, `attractor lint` CLI
+- `docs/DOT-AUTHORING-GUIDE.md` — node contract, lint rules, `dot-runner lint` CLI
 - `skills/attractorify/evidence/` — **design simulations** (authored illustrations
   of the three acceptance scenarios: clarifying-question exchange, lint-clean
   design run, diagnosis-honesty case — NOT session records; see the README in

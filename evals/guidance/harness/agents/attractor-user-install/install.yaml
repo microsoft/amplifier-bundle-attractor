@@ -49,14 +49,14 @@ setup_cmds:
     export PATH="/root/.local/bin:$PATH"
     amplifier bundle use attractor
 
-  # 5. The attractor CLI, installed the way GETTING-STARTED tells a user to. Needed by the
+  # 5. The dot-runner CLI, installed the way GETTING-STARTED tells a user to. Needed by the
   #    exemplar scenarios and by the readiness gate that lints the shipped objective runner.
   - |
     set -e
     export PATH="/root/.local/bin:$PATH"
     . /opt/eval/vars.env
     retry3() { for i in 1 2 3; do "$@" && return 0; echo "attempt $i failed; retrying" >&2; sleep 10; done; return 1; }
-    retry3 uv tool install "git+https://github.com/microsoft/${BUNDLE_REPO}@${BUNDLE_BRANCH}#subdirectory=modules/pipeline-runner"
+    retry3 uv tool install "git+https://github.com/microsoft/amplifier-bundle-dot-runner@main"
 
   # 6. A checkout of the bundle at the ref under test, at a known path. examples/objective/
   #    README tells a user to run the runner from a checkout, and the exemplar scenarios need
@@ -81,4 +81,4 @@ setup_cmds:
     amplifier bundle current | tee -a /tmp/bundle-evidence.txt
     grep -q "Active bundle: attractor" /tmp/bundle-evidence.txt \
       || { echo "INSTALL-FAIL: active bundle is not 'attractor' (see /tmp/bundle-evidence.txt)" >&2; exit 1; }
-  - export PATH="/root/.local/bin:$PATH"; attractor lint --help >/dev/null && echo LINT-HELP-OK
+  - export PATH="/root/.local/bin:$PATH"; dot-runner lint --help >/dev/null && echo LINT-HELP-OK

@@ -9,7 +9,7 @@ Two gates outside your context check your output before it is allowed to run:
 
 | Gate | What it is | What it owns |
 |---|---|---|
-| `lint_gate` | `attractor lint` — the engine's own linter | executability: parse errors, dead conditional edges (TOPO-001), stale-label collisions (TOPO-002), failure routed into the success exit (TOPO-006), pipe-masked gate exit codes (CMD-001/002). **ERRORs block.** Warnings are recorded, not fatal. |
+| `lint_gate` | `dot-runner lint` — the engine's own linter | executability: parse errors, dead conditional edges (TOPO-001), stale-label collisions (TOPO-002), failure routed into the success exit (TOPO-006), pipe-masked gate exit codes (CMD-001/002). **ERRORs block.** Warnings are recorded, not fatal. |
 | `contract_gate` | `check_child_contract.py` | design shape: the nine checks below — and C9 *executes* your `dod.sh` once, before your child ever runs. Any FAIL sends you back here with the report. |
 
 Neither gate can be argued with, and neither one is you. That is deliberate: in a

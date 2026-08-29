@@ -2,7 +2,7 @@
 
 Task-oriented pipelines for everyday development work -- bug fixing, refactoring,
 test generation, PR review, feature building, and multi-lens code review. Each
-one is a real, runnable `attractor run` workflow, not a toy.
+one is a real, runnable `dot-runner run` workflow, not a toy.
 
 Each pipeline is a pair: a `.dot` (the graph) and a `.md` (the **walk-up guide** --
 start there). The links below point at the guides.
@@ -35,7 +35,7 @@ tests -- so they work with no setup. From the **repo root**:
 DOT="$PWD/examples/pipelines/practical/bug-fix.dot"
 cp -r examples/pipelines/practical/sample /tmp/attractor-demo
 cd /tmp/attractor-demo
-attractor run "$DOT" \
+dot-runner run "$DOT" \
     --param goal="Fix the TypeError in get_display_name when a user's avatar is None" \
     --cwd .
 ```
@@ -53,7 +53,7 @@ absolute, keep `--cwd .`, and swap in your own `goal`. Each guide has the detail
 
 - **Ships a sample** (`bug-fix`, `refactor`, `test-gen`) -- runs walk-up against [`sample/`](sample/).
 - **Bring-your-own** (`pr-review`, `feature-build`) -- point at a real repo/branch; the guide states the requirements.
-- **Self-contained** (`multi-lens-review`) -- reviews an embedded snippet; needs all three provider keys set (`attractor doctor`).
+- **Self-contained** (`multi-lens-review`) -- reviews an embedded snippet; needs all three provider keys set (`dot-runner doctor`).
 
 ## Models
 

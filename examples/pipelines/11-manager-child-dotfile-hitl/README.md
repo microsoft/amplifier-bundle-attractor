@@ -7,7 +7,7 @@ interviewer driving a gate is wired all the way through -- from the top-level ru
 through the manager, into the child pipeline's gate.
 
 > **Known issue -- does not run walk-up today.** Driven via standalone
-> `attractor run ... --on-human-gate auto-approve`, this pipeline **fails**: the
+> `dot-runner run ... --on-human-gate auto-approve`, this pipeline **fails**: the
 > child pipeline's `HumanGateHandler` does not receive an interviewer through the
 > manager, so the child fails immediately (`Manager exhausted 1 cycle(s)`, last
 > child status: fail). That is the exact failure mode this fixture exists to catch.
@@ -46,7 +46,7 @@ repo root**:
 ```bash
 DOT="$PWD/examples/pipelines/11-manager-child-dotfile-hitl/parent.dot"
 mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
-attractor run "$DOT" --cwd . --on-human-gate auto-approve
+dot-runner run "$DOT" --cwd . --on-human-gate auto-approve
 ```
 
 **Today this exits `status=fail`** -- the manager's child pipeline fails instantly

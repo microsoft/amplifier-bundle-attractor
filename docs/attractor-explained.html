@@ -618,7 +618,7 @@ footer .fine{font-size:12.5px;line-height:1.6;color:var(--faint);max-width:600px
   <figure>
     <svg class="dg" viewBox="0 0 960 196" role="img" aria-labelledby="d6t d6d" xmlns="http://www.w3.org/2000/svg">
       <title id="d6t">The six-phase run lifecycle</title>
-      <desc id="d6d">Parse, transform, validate, initialize, execute, finalize. The execute phase loops per node, writes a checkpoint after every node that attractor resume can pick up after, and checks the goal gate when the run arrives at a terminal node.</desc>
+      <desc id="d6d">Parse, transform, validate, initialize, execute, finalize. The execute phase loops per node, writes a checkpoint after every node that dot-runner resume can pick up after, and checks the goal gate when the run arrives at a terminal node.</desc>
       <path class="e-m" d="M 666 44 C 686 24 770 24 790 44" marker-end="url(#ar-m)"/>
       <text class="cap" x="728" y="18" text-anchor="middle">per node</text>
       <rect class="n" x="10"  y="48" width="140" height="54" rx="2"/>
@@ -646,10 +646,10 @@ footer .fine{font-size:12.5px;line-height:1.6;color:var(--faint);max-width:600px
       <line class="e" x1="792" y1="75" x2="806" y2="75" marker-end="url(#ar)"/>
       <line class="e-m" x1="720" y1="104" x2="720" y2="124"/>
       <text class="el" x="720" y="140" text-anchor="middle">a checkpoint is written after every node</text>
-      <text class="el" x="720" y="158" text-anchor="middle">and attractor resume picks up after the last one</text>
+      <text class="el" x="720" y="158" text-anchor="middle">and dot-runner resume picks up after the last one</text>
       <text class="el-a" x="720" y="176" text-anchor="middle">the goal gate is checked on arrival at a terminal node</text>
     </svg>
-    <figcaption>Diagram 6 — the lifecycle. TRANSFORM resolves the stylesheet and expands variables before VALIDATE sees the graph, so lint reads the expanded form rather than the template. <b>The checkpoint written after every node is both a record of what happened and a place to restart from</b> — an interrupted run is continued with <code>attractor resume &lt;run_dir&gt;</code>, the nlspec's §5.3 resume behaviour, implemented. It restores the recorded state and picks up <em>after</em> the last completed node: finished work is not re-executed, and the node that was interrupted runs again because it never completed. Resume is explicitly opt-in — a fresh run never reads a checkpoint back, so a stale one left on disk is inert — and a corrupt, foreign or already-finished checkpoint fails loud rather than quietly restarting from the top. Graph-owned durability still ships alongside it: a file-state guard node checks whether its stage's artifact already exists and routes straight past the work if it does (the repository's <code>12-graph-resume</code> pattern; delete an artifact to rewind to that stage).</figcaption>
+    <figcaption>Diagram 6 — the lifecycle. TRANSFORM resolves the stylesheet and expands variables before VALIDATE sees the graph, so lint reads the expanded form rather than the template. <b>The checkpoint written after every node is both a record of what happened and a place to restart from</b> — an interrupted run is continued with <code>dot-runner resume &lt;run_dir&gt;</code>, the nlspec's §5.3 resume behaviour, implemented. It restores the recorded state and picks up <em>after</em> the last completed node: finished work is not re-executed, and the node that was interrupted runs again because it never completed. Resume is explicitly opt-in — a fresh run never reads a checkpoint back, so a stale one left on disk is inert — and a corrupt, foreign or already-finished checkpoint fails loud rather than quietly restarting from the top. Graph-owned durability still ships alongside it: a file-state guard node checks whether its stage's artifact already exists and routes straight past the work if it does (the repository's <code>12-graph-resume</code> pattern; delete an artifact to rewind to that stage).</figcaption>
   </figure>
 
   <div class="col">
@@ -1069,12 +1069,12 @@ review -&gt; Test [<span class="at">condition</span>=<span class="st">"outcome!=
       <dt><span class="tag">02</span>As a standalone CLI</dt>
       <dd>
         <p>The <code>attractor</code> binary runs a graph directly and passes parameters in.</p>
-<pre><code>attractor run pipeline.dot --param goal=<span class="st">"Fix the TypeError..."</span>
+<pre><code>dot-runner run pipeline.dot --param goal=<span class="st">"Fix the TypeError..."</span>
 
-attractor resume run-dir/       <span class="cm"># pick up after the last completed node</span>
-attractor lint   pipeline.dot   <span class="cm"># structural checks, CMD-001 and friends</span>
-attractor trace  run-dir/       <span class="cm"># what path did a run actually take</span>
-attractor doctor                <span class="cm"># environment and provider diagnostics</span></code></pre>
+dot-runner resume run-dir/       <span class="cm"># pick up after the last completed node</span>
+dot-runner lint   pipeline.dot   <span class="cm"># structural checks, CMD-001 and friends</span>
+dot-runner trace  run-dir/       <span class="cm"># what path did a run actually take</span>
+dot-runner doctor                <span class="cm"># environment and provider diagnostics</span></code></pre>
       </dd>
       <dt><span class="tag">03</span>Conversationally, with the <code>run_pipeline</code> tool</dt>
       <dd>

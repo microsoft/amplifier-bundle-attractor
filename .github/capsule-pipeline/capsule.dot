@@ -61,7 +61,7 @@
 // attractor-pipeline-dual.yaml exactly as task-runner.dot's critique_b):
 //   cd <target_repo> && \
 //   ATTRACTOR_PIPELINE_BUNDLE=<runner_dir>/attractor-pipeline-dual.yaml \
-//   attractor run <runner_dir>/capsule.dot \
+//   dot-runner run <runner_dir>/capsule.dot \
 //       --param issue_file=/abs/path/to/issue.md \
 //       --param target_dir=$PWD \
 //       --param base_sha=<pinned commit> \

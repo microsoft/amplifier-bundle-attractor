@@ -8,7 +8,7 @@
 // Invocation (per KNOWN_ISSUES: process cwd MUST equal --cwd for box nodes):
 //   cd <target_repo>
 //   DOT=/abs/path/to/task-runner.dot
-//   attractor run "$DOT" \
+//   dot-runner run "$DOT" \
 //       --param task_file=/abs/path/to/task.md \
 //       --param target_dir=$PWD \
 //       --param max_iterations=6 \

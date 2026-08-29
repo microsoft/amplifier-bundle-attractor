@@ -1077,7 +1077,7 @@ def _demo_block(demo: dict) -> str:
             f"  node ids:            {', '.join(sorted(nodes)) or '(none)'}",
             "  edges (multiset):    " + (", ".join(f"{s}->{d}" for s, d in sorted(edges.elements())) or "(none)"),
             f"  verification level:  {verification.get('level')}",
-            f"  attractor lint:      {verification.get('lint_verdict') or verification.get('lint_not_run_reason')}",
+            f"  dot-runner lint:      {verification.get('lint_verdict') or verification.get('lint_not_run_reason')}",
             f"  doctrine verdict:    {verification.get('doctrine_verdict')}",
             (
                 f"  convergence math:    chain {_fmt(maths.get('chain_len'))} steps at "

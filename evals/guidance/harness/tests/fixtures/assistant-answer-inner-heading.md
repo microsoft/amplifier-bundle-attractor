@@ -23,7 +23,7 @@ weight-and-lexical tiebreak every time the reviewer sends the work back.
 
 ## What would fix it
 
-Run `attractor lint` on the graph first. Then AFTER-INNER-HEADING-SENTINEL wire the exit to
+Run `dot-runner lint` on the graph first. Then AFTER-INNER-HEADING-SENTINEL wire the exit to
 `pytest -q` -- not to the reviewer's opinion of its own work.
 
 [tool_use: bash] {"command": "echo TOOLUSE-SENTINEL"}
@@ -32,7 +32,7 @@ Run `attractor lint` on the graph first. Then AFTER-INNER-HEADING-SENTINEL wire 
 
 ## tool
 
-[tool_result] "TOOLRESULT-SENTINEL attractor lint reported 2 errors"
+[tool_result] "TOOLRESULT-SENTINEL dot-runner lint reported 2 errors"
 [/tool_result]
 
 

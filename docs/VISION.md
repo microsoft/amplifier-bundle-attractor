@@ -124,6 +124,29 @@ a ledger row, not a vision. This page does not forge decisions the maintainer ha
   document" rather than an invented channel.
 - **Additive and non-interfering toward community `.dot` files.** A spec-conformant graph must run
   here unmodified; "an extension that breaks a conforming graph is a bug, not an extension."
+- **One command; opinion arrives by composition.** `dot-runner` is the only entry point. A
+  bundle's opinion -- which worker runs a node, which model backs it -- reaches the engine through
+  composition (`--bundle`, config), never through a second command name. A second binary is not a
+  feature; it is the `.dot` file losing its claim to be the complete, self-contained workflow
+  definition (spec 1.2).
+- **The spec's own channels carry the outcome; extensions are retconned, not defended.** Artifact
+  files, tool exit codes, and a node-written `status.json` (spec §4.5 / Appendix C) are the taught
+  and implemented way a worker -- spawned or not -- delivers its verdict; a pure-JSON verdict is
+  the sharpest reading of that same channel, and a legacy report tool survives only as a dated
+  compatibility window, never as a parallel truth. When a deeper read of the nlspec shows a shipped
+  extension was never the right shape, the correct move is to undo it -- demote, back out,
+  deprecate -- ledgered exactly as loudly as the extension itself was ledgered in. Shipping first
+  earns no immunity from being retconned later.
+- **Community `.dot` files are never surprised.** A node property with an obvious spec-given
+  meaning (`llm_provider` and its kind) behaves exactly that way out of the box; this repo's own
+  ecosystem conventions get a vote only after the spec's own meaning is honored. Spec-first, then
+  mapping -- never the other order.
+- **Peer-system internals are off-limits.** What another runtime keeps private stays private; this
+  repo reaches it only through the seam that runtime publishes, or by asking upstream for one. A
+  reach-in that happens to work is still a reach-in, and "it worked" is not the bar.
+- **The amplifier-agent bet.** For a surface this repo did not already have a worker for,
+  amplifier-agent is the default; the fallback when it is unavailable is direct and loud, never a
+  silent substitution.
 
 ---
 
@@ -190,6 +213,36 @@ The vision refines over time, so this page is held to the bar of the protocol th
 ## Changelog
 
 Amendments to this vision, newest first. Each entry names the evidence that justified it.
+
+### 2026-08-29 -- the ruling-batch postures captured as operating principles (entry 4)
+
+- **Changed.** "Operating principles" gains five statements, each a durable posture rather than a
+  status report: one command with opinion arriving only through composition, never a second
+  command name; the spec's own outcome channels (artifact files, exit codes, node-written
+  `status.json`) as the taught and implemented way a worker reports its verdict, with a pure-JSON
+  verdict as the sharpest reading and a legacy report tool surviving only as a dated compatibility
+  window -- and a shipped extension retconned, not defended, once a deeper spec reading shows it
+  was never the right shape; community `.dot` files never surprised by a node property the spec
+  already gives obvious meaning, spec-first before this repo's own ecosystem mapping; peer-system
+  internals off-limits, reached only through a published seam or an upstream ask; and the
+  amplifier-agent bet for a surface this repo did not already have a worker for, with a loud direct
+  fallback.
+- **Evidence that justified it: the maintainer ruled a batch of decisions on 2026-08-29 and
+  directed, in these words, that they be captured "in vision + contracts in the repo to maintain
+  this guidance/focus going forward."** Every posture named here is already shipped reality, not a
+  proposal: the single-command CLI (this repo's own PR #330, alongside `amplifier-bundle-dot-runner`
+  PR #15); the status.json escalation ladder and the RETCON of `report_outcome` to a legacy window
+  (this repo's own commit `552272d`, alongside `amplifier-bundle-dot-runner`'s PRs #16/#18/#332);
+  the undo-audit RETCON posture for extensions generally (`amplifier-bundle-dot-runner` PR #19);
+  `llm_provider` spec-first mapping (`amplifier-bundle-dot-runner` PR #17); the coordinator-mount
+  reach-in's deletion (`amplifier-bundle-dot-runner` PR #18); and the amplifier-agent-default ruling
+  (`amplifier-bundle-dot-runner` PR #20). The gap this closes is exactly the one section 4 exists to
+  prevent: rulings that already shipped as code and ledger rows, with nowhere a contributor reads
+  *before* work states them as the posture going forward.
+- **Scope: documentation only.** No engine, handler, example or ledger *behavior* changed. The
+  decision matrix's articulation -- pinned across both pages by `test_quality_protocol_guard.py`'s
+  Q-307 -- is untouched.
+- **Retirement condition.** Unchanged: none.
 
 ### 2026-08-16 -- the gates bind the assistant too (entry 3)
 

@@ -169,11 +169,11 @@ the caller the exact command.
   nothing -- see the authoring contract above for what you owe on every file.
 - **Pipeline patterns**: linear, conditional routing, retry/fallback, parallel
   fan-out/fan-in, human gates, manager–supervisor, multi-provider.
-- **Programmatic integration**: DirectProviderBackend (a per-node agentic tool
-  loop via `unified_llm` -- whatever tools the host mounts are passed through;
-  node tools are absent only when the host mounts none) vs AmplifierBackend (full
-  sub-sessions with delegation), the prepare / create_session lifecycle, and the
-  spawn capability.
+- **Programmatic integration**: `AmplifierBackend`'s `direct` worker (a
+  per-node agentic tool loop via `unified_llm` -- whatever tools the host
+  mounts are passed through; node tools are absent only when the host mounts
+  none) vs its `spawn` worker (full sub-sessions with delegation), the
+  prepare / create_session lifecycle, and the spawn capability.
 - **Configuration**: bundle entry points, profile selection, orchestrator
   config, and the per-node provider/profile routing.
 - **Debugging**: the edge-selection algorithm, condition evaluation, fidelity

@@ -3,7 +3,7 @@
 
 Two modes of operation:
 
-  Option A: DirectProviderBackend (no Amplifier session)
+  Option A: AmplifierBackend's `direct` worker (no Amplifier session)
     - Just LLM calls via unified_llm. No tools.
     - Good for analysis, reasoning, and writing pipelines.
     - Requirements: pip install amplifier-module-loop-pipeline unified-llm-client
@@ -62,13 +62,15 @@ digraph {
 # OPTION A: Direct LLM calls (no Amplifier session, no tools)
 # ===================================================================
 
+
 async def run_direct(dot_source: str) -> None:
-    """Run a pipeline using DirectProviderBackend.
+    """Run a pipeline using AmplifierBackend's `direct` worker.
 
     This is the simplest integration. No Amplifier session, no tools.
     Each pipeline node makes a direct LLM call via unified_llm.
     """
-    from amplifier_module_loop_pipeline import DirectProviderBackend
+    import unified_llm
+    from amplifier_module_loop_pipeline.backend import AmplifierBackend
     from amplifier_module_loop_pipeline.context import PipelineContext
     from amplifier_module_loop_pipeline.dot_parser import parse_dot
     from amplifier_module_loop_pipeline.engine import PipelineEngine
@@ -82,8 +84,28 @@ async def run_direct(dot_source: str) -> None:
     apply_transforms(graph, context)
     validate_or_raise(graph)
 
-    # provider=None -> auto-creates unified_llm.Client from env vars
-    backend = DirectProviderBackend(provider=None)
+    try:
+        # unified_llm.Client.from_env() reads ANTHROPIC_API_KEY / OPENAI_API_KEY
+        # / GEMINI_API_KEY (GOOGLE_API_KEY accepted as a Gemini alias) and
+        # raises ConfigurationError if none is set.
+        client = unified_llm.Client.from_env()
+    except unified_llm.ConfigurationError:
+        print(
+            "No provider API key set (ANTHROPIC_API_KEY / OPENAI_API_KEY / "
+            "GEMINI_API_KEY) -- skipping the direct-call example."
+        )
+        return
+
+    # No coordinator -> the worker registry's `direct` worker handles every
+    # node (specs/EXTENSIONS.md Sec40 in amplifier-bundle-dot-runner).
+    # `provider=` and `unified_client=` both take the SAME client: `provider`
+    # is only a truthiness flag that enables the `direct` worker's dispatch
+    # branch, `unified_client` is what actually makes the LLM calls (mirrors
+    # amplifier-bundle-dot-runner's pipeline-runner
+    # `_bootstrap_direct_provider()` reference pattern).
+    backend = AmplifierBackend(
+        provider=client, unified_client=client, default_worker="direct"
+    )
     engine = PipelineEngine(
         graph=graph,
         context=context,
@@ -181,10 +203,12 @@ async def run_with_session(dot_source: str) -> None:
     bundle = await load_bundle(ATTRACTOR_BUNDLE)
     overlay = Bundle(
         name="programmatic-run",
-        session={"orchestrator": {
-            "module": "loop-pipeline",
-            "config": {"dot_source": dot_source},
-        }},
+        session={
+            "orchestrator": {
+                "module": "loop-pipeline",
+                "config": {"dot_source": dot_source},
+            }
+        },
     )
     composed = bundle.compose(overlay)
 

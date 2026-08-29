@@ -333,13 +333,14 @@ Best for analysis/reasoning pipelines where nodes only need to generate text
 ```python
 import asyncio
 import tempfile
+import unified_llm
 from amplifier_module_loop_pipeline.dot_parser import parse_dot
 from amplifier_module_loop_pipeline.engine import PipelineEngine
 from amplifier_module_loop_pipeline.context import PipelineContext
 from amplifier_module_loop_pipeline.handlers import HandlerRegistry
 from amplifier_module_loop_pipeline.transforms import apply_transforms
 from amplifier_module_loop_pipeline.validation import validate_or_raise
-from amplifier_module_loop_pipeline import DirectProviderBackend
+from amplifier_module_loop_pipeline.backend import AmplifierBackend
 
 DOT = """
 digraph {
@@ -358,8 +359,15 @@ async def main():
     apply_transforms(graph, context)
     validate_or_raise(graph)
 
-    # provider=None auto-creates unified_llm.Client from env vars
-    backend = DirectProviderBackend(provider=None)
+    # unified_llm.Client.from_env() reads ANTHROPIC_API_KEY / OPENAI_API_KEY /
+    # GEMINI_API_KEY (GOOGLE_API_KEY as a Gemini alias). No coordinator -> the
+    # worker registry's `direct` worker handles every node (EXTENSIONS.md
+    # Sec40 in amplifier-bundle-dot-runner). `provider=` and `unified_client=`
+    # take the SAME client: `provider` is only a truthiness flag that enables
+    # the `direct` dispatch branch, `unified_client` is what actually makes
+    # the calls.
+    client = unified_llm.Client.from_env()
+    backend = AmplifierBackend(provider=client, unified_client=client, default_worker="direct")
     engine = PipelineEngine(
         graph=graph, context=context,
         handler_registry=HandlerRegistry(backend=backend),
@@ -435,14 +443,17 @@ async def main():
 asyncio.run(main())
 ```
 
-The key difference: with `session.spawn` registered, the `AmplifierBackend` kicks
-in and each pipeline node gets a full child session with tools (filesystem, bash,
-search). Without it, you get `DirectProviderBackend`, which runs a per-node agentic
-tool loop and passes through whatever tools the host has mounted -- so a node is
-tool-free only when the host mounts none, which is the case in the bare
-programmatic path above. See [Backend Selection](#backend-selection) for the full
-contract (`DirectProviderBackend` also requires an explicit `llm_model` on every
-node; there is no default).
+The key difference: `AmplifierBackend` is the single adapter class in both cases --
+what changes is which registered **worker** it dispatches to per node (see
+[Backend Selection / Worker Selection](#backend-selection--worker-selection)). With
+`session.spawn` registered, the `spawn` worker kicks in and each pipeline node
+gets a full child session with tools (filesystem, bash, search). Without it (the
+bare programmatic path above), the `direct` worker runs a per-node agentic tool
+loop and passes through whatever tools the host has mounted -- so a node is
+tool-free only when the host mounts none. See
+[Backend Selection / Worker Selection](#backend-selection--worker-selection) for
+the full contract (the `direct` worker also requires an explicit `llm_model` on
+every node; there is no default).
 
 See [`amplifier-foundation/examples/07_full_workflow.py`](https://github.com/microsoft/amplifier-foundation/blob/main/examples/07_full_workflow.py) for the reference
 `register_spawn_capability()` implementation. For a comprehensive guide,

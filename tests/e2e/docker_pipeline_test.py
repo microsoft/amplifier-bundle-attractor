@@ -1,7 +1,7 @@
 """E2E test: run an attractor pipeline with output verified inside a Docker container.
 
 This test creates a real Docker container, runs a 2-node pipeline via
-DirectProviderBackend where the LLM generates a Python script, then
+AmplifierBackend's direct worker where the LLM generates a Python script, then
 verifies the output exists ONLY in the container (not on the host).
 
 Prerequisites:
@@ -95,7 +95,8 @@ def teardown_container() -> None:
 
 async def run_pipeline_in_docker() -> dict:
     """Run the pipeline and capture the LLM output, then write it to the container."""
-    from amplifier_module_loop_pipeline import DirectProviderBackend
+    import unified_llm
+    from amplifier_module_loop_pipeline.backend import AmplifierBackend
     from amplifier_module_loop_pipeline.context import PipelineContext
     from amplifier_module_loop_pipeline.dot_parser import parse_dot
     from amplifier_module_loop_pipeline.engine import PipelineEngine
@@ -109,8 +110,17 @@ async def run_pipeline_in_docker() -> dict:
     apply_transforms(graph, context)
     validate_or_raise(graph)
 
-    # Create backend (auto-creates unified_llm.Client from env)
-    backend = DirectProviderBackend(provider=None, tools={}, hooks=None)
+    # Create backend -- unified_llm.Client.from_env() auto-creates the client
+    # from env; no coordinator means the `direct` worker handles every node
+    # (EXTENSIONS.md Sec40).
+    client = unified_llm.Client.from_env()
+    backend = AmplifierBackend(
+        provider=client,
+        tools={},
+        hooks=None,
+        unified_client=client,
+        default_worker="direct",
+    )
 
     # Create engine
     logs_root = tempfile.mkdtemp(prefix="docker-e2e-")
@@ -128,7 +138,7 @@ async def run_pipeline_in_docker() -> dict:
     elapsed = time.time() - start_time
 
     # Get the implement node's response from status.json
-    # (DirectProviderBackend returns Outcome directly, so response.md is not written;
+    # (AmplifierBackend's direct worker returns Outcome directly, so response.md is not written;
     #  the response text lives in status.json's "notes" field)
     import os
 

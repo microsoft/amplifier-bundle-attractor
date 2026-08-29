@@ -45,7 +45,7 @@ meta:
     user: 'How do I run an Attractor pipeline from my Python application?'
     assistant: 'I will delegate to attractor:attractor-expert for programmatic integration guidance.'
     <commentary>
-    Integration questions need knowledge of DirectProviderBackend vs AmplifierBackend paths.
+    Integration questions need knowledge of AmplifierBackend's `direct` worker vs its `spawn` worker paths.
     </commentary>
     </example>
 
@@ -395,10 +395,11 @@ confidently wrong about the running engine.**
   variable expansion, model stylesheets, fidelity modes
 - **Pipeline patterns**: Linear, conditional routing, retry/fallback, parallel
   fan-out/fan-in, human gates, manager-supervisor, multi-provider
-- **Programmatic integration**: DirectProviderBackend (per-node agentic tool loop
-  via `unified_llm` -- whatever tools the host mounts are passed through; node
-  tools are absent only when the host mounts none) vs AmplifierBackend (full
-  sub-sessions with delegation), PreparedBundle lifecycle, spawn capability
+- **Programmatic integration**: `AmplifierBackend`'s `direct` worker (per-node
+  agentic tool loop via `unified_llm` -- whatever tools the host mounts are
+  passed through; node tools are absent only when the host mounts none) vs its
+  `spawn` worker (full sub-sessions with delegation), PreparedBundle lifecycle,
+  spawn capability
 - **Configuration**: Bundle entry points, profile selection, orchestrator config
 - **Debugging**: Edge selection algorithm, condition evaluation, fidelity
   resolution, backend selection logic

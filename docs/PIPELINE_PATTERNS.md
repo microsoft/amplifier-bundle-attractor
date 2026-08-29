@@ -295,14 +295,14 @@ judge [shape=box, goal_gate=true,
                if it passes, status=fail otherwise."]
 ```
 
-**Why it fails:** this looks more rigorous than AP-2's bare sentinel -- it is a structured tool
-call with a validated `status` enum, not a typed keyword -- but the verdict inside it is
+**Why it fails:** this looked more rigorous than AP-2's bare sentinel -- it was a structured tool
+call with a validated `status` enum, not a typed keyword -- but the verdict inside it was
 produced by the same node, in the same context, that did the work being judged. Wrapping a
-self-report in a tool call does not make it evidence: "verification inside the context that
-produced the evidence is not verification" (`context/dot-reference.md`) applies exactly as much
+self-report in a tool call did not make it evidence: "verification inside the context that
+produced the evidence is not verification" (`context/dot-reference.md`) applied exactly as much
 to a `report_outcome` call as to a plain-prose sentinel. As of the 2026-08-29 maintainer ruling,
-`report_outcome` is RETCONNED to a legacy compatibility window: still honored (a node-written
-`status.json` wins over it on conflict), but no longer the taught, primary mechanism.
+`report_outcome` was RETCONNED to a legacy compatibility window, and it is now **removed outright
+in the engine 0.2.0 repair release** -- no compat window, the tool module is gone repo-wide.
 
 **Measured:** across this repository's own shipped `.dot` corpus, **0 of 9** sampled
 community-style pipeline files ever instructed a worker to call `report_outcome` -- every one

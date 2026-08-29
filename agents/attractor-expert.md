@@ -565,12 +565,11 @@ time. Full patterns and compliant examples are in the companion context file.
 **Judge verdict contracts** (lint cannot see inside node prompts):
 - [ ] Every `goal_gate=true` LLM node has an explicit outcome instruction, in
   escalation order: write a verdict file that a downstream deterministic
-  `parallelogram` gate reads, write a node-written `status.json`, emit a
-  pure-JSON verdict, or (legacy compatibility window, not the taught
-  mechanism) call `report_outcome`. Prose verdicts are discarded under the
-  fail-closed contract (engine-semantics.md §5). Never leave a judge to prose,
-  and never let a `report_outcome` call stand in as the only channel -- a
-  tool call is still a self-report.
+  `parallelogram` gate reads, write a node-written `status.json`, or emit a
+  pure-JSON verdict. (`report_outcome` was a fourth, legacy rung; it is
+  removed in the engine's 0.2.0 repair release and is no longer callable.)
+  Prose verdicts are discarded under the fail-closed contract
+  (engine-semantics.md §5). Never leave a judge to prose.
 
 **Delta-assertion gates** (green tests on an unmodified tree prove nothing):
 - [ ] Work-completion gates anchor to a recorded base SHA and assert that

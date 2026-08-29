@@ -92,14 +92,15 @@ is no longer the taught mechanism):**
    > "Respond with ONLY a JSON object: `{\"status\": \"success\"}` or
    > `{\"status\": \"fail\", \"reason\": \"...\"}`. No surrounding prose."
 
-4. **`report_outcome` tool call** (legacy compatibility window, not the taught
-   mechanism -- still honored, a node-written `status.json` wins over it on
-   conflict). A tool call is still a self-report from inside the same context
-   that produced the work: it is not an exemption from "verification inside
-   the context that produced the evidence is not verification"
-   (`context/dot-reference.md`). Machine evidence (patterns 1-2 above)
-   outranks it. See `docs/PIPELINE_PATTERNS.md` §6's anti-pattern catalog
-   ("`report_outcome`-as-primary", alongside "LLM-Emitted Routing Sentinel").
+4. ~~`report_outcome` tool call~~ -- **removed in the engine's 0.2.0 repair
+   release; no longer callable at all.** It was a legacy compatibility
+   window, never the taught mechanism, and even while it existed a tool call
+   was still a self-report from inside the same context that produced the
+   work: not an exemption from "verification inside the context that
+   produced the evidence is not verification" (`context/dot-reference.md`).
+   Only patterns 1-3 above remain. See `docs/PIPELINE_PATTERNS.md` §6's
+   anti-pattern catalog ("`report_outcome`-as-primary", alongside
+   "LLM-Emitted Routing Sentinel").
 
 **Cross-reference:** engine-semantics.md §5 (verdict-recovery ladder, fail-closed
 goal-gate contract, `is_explicit` field).

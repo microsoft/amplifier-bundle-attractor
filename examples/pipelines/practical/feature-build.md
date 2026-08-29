@@ -6,6 +6,7 @@ Parse a spec, break into subtasks, implement in parallel, integration test, huma
 
 ```bash
 dot-runner run examples/pipelines/practical/feature-build.dot \
+    --worker loop-agent \
     --param goal="<describe the feature to build, e.g. avatar upload with thumbnails>" \
     --cwd . \
     --on-human-gate auto-approve

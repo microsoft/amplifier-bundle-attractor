@@ -16,7 +16,7 @@
 //
 //   DOT="$PWD/examples/pipelines/02-plan-implement-test.dot"
 //   mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
-//   dot-runner run "$DOT" --cwd .
+//   dot-runner run "$DOT" --worker loop-agent --cwd .
 //
 // Goal: write a Python add(a,b) function with a pytest test file.
 // Self-contained -- no --param needed.

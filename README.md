@@ -107,11 +107,11 @@ dot-runner run "$DOT" \
 ```
 
 `--worker loop-agent` runs box nodes as the full coding agent (tools, file edits, the
-works). Omit `--worker` and the CLI falls back to its own default ladder --
-`amplifier-agent` if it is installed, otherwise `direct` (plain LLM text, no tools) with
-a loud notice -- so pin `--worker` explicitly in anything unattended (CI) rather than
-relying on that ladder. Other valid names: `direct`, `amplifier-agent`. See `--worker`
-in `dot-runner run --help`.
+works). `amplifier-agent` is the default worker (it is the CLI's own fallback when
+`--worker` is omitted, falling further back to `direct` (plain LLM text, no tools) with
+a loud notice only on an environment where it isn't present) -- so pin `--worker`
+explicitly in anything unattended (CI) rather than relying on that ladder. Other valid
+names: `direct`, `amplifier-agent`. See `--worker` in `dot-runner run --help`.
 
 Then `pytest -v` in the copy to see the fix + regression test. The sample is
 copied to a temp dir so the committed fixture stays pristine; `$DOT` is captured

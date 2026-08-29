@@ -74,6 +74,7 @@ RD="$PWD/examples/drift-review"      # absolute; the gates run from here
 cd <the repository under review>     # usually the same checkout
 
 dot-runner run "$RD/drift-review.dot" \
+    --worker loop-agent \
     --param goal="Layer-3 holistic drift review of this repository" \
     --param runner_dir="$RD" \
     --cwd .

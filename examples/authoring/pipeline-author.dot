@@ -30,6 +30,7 @@
 //   AUTH="$PWD/examples/authoring"      # capture BEFORE cd
 //   cd <workspace>
 //   dot-runner run "$AUTH/pipeline-author.dot" \
+//       --worker loop-agent \
 //       --param brief="Objective: ... Evidence: ... Budget: ..." \
 //       --param authoring_dir="$AUTH" \
 //       --param target_dir="$PWD" \

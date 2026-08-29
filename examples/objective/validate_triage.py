@@ -8,7 +8,8 @@ validates it against ``triage-schema.json`` and prints exactly ONE routing token
 on stdout.
 
 Why routing runs on a validated artifact rather than on the worker's own
-``report_outcome`` / ``preferred_label``: verification inside the context that
+self-reported ``preferred_label`` (formerly settable via the now-removed
+``report_outcome`` tool, engine 0.2.0): verification inside the context that
 produced the evidence is not verification (docs/PIPELINE_DESIGN_PRINCIPLES.md
 section 0). The worker proposes; this gate admits.
 

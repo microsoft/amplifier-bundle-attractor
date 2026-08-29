@@ -56,12 +56,16 @@
 // one guessed fix shape): context/NOTES-vacuous-green.md. History lives in
 // git, not in this header.
 //
-// Invocation (process cwd MUST equal --cwd; ATTRACTOR_PIPELINE_BUNDLE is
-// REQUIRED -- the critique node pins a second model family, delivered by
-// attractor-pipeline-dual.yaml exactly as task-runner.dot's critique_b):
+// Invocation (process cwd MUST equal --cwd; --worker loop-agent is
+// REQUIRED -- the critique node pins a second model family
+// (llm_provider="openai", exactly as task-runner.dot's critique_b) and the
+// named-worker path resolves each node's declared provider natively as of
+// engine 0.2.0 -- the old ATTRACTOR_PIPELINE_BUNDLE=attractor-pipeline-dual.yaml
+// dual-bundle mount this comment used to teach is retired; --bundle and
+// DOT_RUNNER_BUNDLE are gone from the CLI):
 //   cd <target_repo> && \
-//   ATTRACTOR_PIPELINE_BUNDLE=<runner_dir>/attractor-pipeline-dual.yaml \
 //   dot-runner run <runner_dir>/capsule.dot \
+//       --worker loop-agent \
 //       --param issue_file=/abs/path/to/issue.md \
 //       --param target_dir=$PWD \
 //       --param base_sha=<pinned commit> \

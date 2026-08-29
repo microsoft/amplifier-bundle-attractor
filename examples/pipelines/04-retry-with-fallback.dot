@@ -15,7 +15,7 @@
 //
 //   DOT="$PWD/examples/pipelines/04-retry-with-fallback.dot"
 //   mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
-//   dot-runner run "$DOT" --cwd .
+//   dot-runner run "$DOT" --worker loop-agent --cwd .
 //
 // SHAPE (the doctrine, made visible):
 //   HARD PATH:  plan -> implement -> validate_gate -(gate_pass)-> done

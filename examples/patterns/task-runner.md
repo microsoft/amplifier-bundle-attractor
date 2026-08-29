@@ -27,6 +27,7 @@ cp -r examples/patterns/task-runner-fixture /tmp/task-runner-demo
 cd /tmp/task-runner-demo
 git init -q && git add -A && git commit -qm "fixture baseline"
 dot-runner run "$DOT" \
+    --worker loop-agent \
     --param task_file="$PWD/sample-task.md" \
     --param target_dir="$PWD" \
     --param max_iterations=6 \
@@ -56,6 +57,7 @@ and `target_dir` with your repo root. Keep `$DOT` absolute before `cd`, keep
 cd <target_repo>
 DOT=/abs/path/to/task-runner.dot
 dot-runner run "$DOT" \
+    --worker loop-agent \
     --param task_file=/abs/path/to/task.md \
     --param target_dir=$PWD \
     --param max_iterations=6 \
@@ -311,12 +313,13 @@ explicit `llm_model` — and make `verdict` require consensus: both final
 critique file; independence is what makes agreement meaningful, and
 cross-family disagreement is signal (this repo's own multi-lens doctrine).
 Two deployment cautions, both verified empirically: (1) the second family's
-provider must be **mounted** in the runner's base bundle — the shipped
-`bundles/attractor-pipeline.yaml` mounts `provider-anthropic` only, and an
-`llm_provider="openai"` node then silently runs on Anthropic (point
-`ATTRACTOR_PIPELINE_BUNDLE` at a bundle that mounts both, and pin
-`llm_provider` in the openai agent's own orchestrator config — verify with an
-identity probe). (2) Run the two reviewers in **sequence, not in parallel**:
+provider is resolved from the node's own `llm_provider` declaration — the
+default worker (`amplifier-agent`) and the explicit `--worker loop-agent`
+path both honor per-node `llm_provider` natively as of engine 0.2.0, so an
+`llm_provider="openai"` node routes to the OpenAI-family child agent without
+any base-bundle mount (verify with an identity probe if in doubt — bundle
+vocabulary such as `ATTRACTOR_PIPELINE_BUNDLE`/`--bundle` is retired from the
+CLI). (2) Run the two reviewers in **sequence, not in parallel**:
 parallel component branches route through `run_subgraph`'s permissive fail
 path (see `context/engine-semantics.md`), which would let a crashed reviewer
 branch pass silently.

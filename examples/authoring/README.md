@@ -82,6 +82,7 @@ you can save the round trip by reading
 AUTH="$PWD/examples/authoring"        # capture the absolute path BEFORE cd
 cd /path/to/your/workspace
 dot-runner run "$AUTH/pipeline-author.dot" \
+    --worker loop-agent \
     --param brief="Objective: every factual claim in README.md that names a
                    command must actually run. Evidence: the commands are in
                    fenced bash blocks; a script can extract and execute them.

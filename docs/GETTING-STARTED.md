@@ -63,6 +63,7 @@ cp -r examples/pipelines/practical/sample /tmp/attractor-demo
 cd /tmp/attractor-demo
 dot-runner run "$DOT" \
     --param goal="Fix the TypeError in get_display_name when avatar is None" \
+    --bundle git+https://github.com/microsoft/amplifier-bundle-attractor@main#subdirectory=bundles/attractor-pipeline.yaml \
     --cwd .
 ```
 

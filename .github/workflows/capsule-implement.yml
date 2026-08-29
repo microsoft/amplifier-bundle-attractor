@@ -494,6 +494,15 @@ jobs:
           # (and the 30-90+ minute run it would otherwise start) ever runs.
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ATTRACTOR_PIPELINE_BUNDLE: ${{ format('{0}/.github/capsule-pipeline/attractor-pipeline-dual.yaml', github.workspace) }}
+          # POST-RIP SEAM FIX (review-driven, cli-rename-sweep follow-up):
+          # amplifier-bundle-dot-runner's band-aid rip deleted the engine's
+          # ATTRACTOR_PIPELINE_BUNDLE auto-load entirely -- the var above is
+          # inert against the root-form `dot-runner` this job now installs.
+          # DOT_RUNNER_BUNDLE is the ONE env var the post-rip CLI actually
+          # reads (cli.py's --bundle fallback); same value, so the dual-family
+          # (openai critique) bundle keeps mounting instead of silently
+          # falling back to the engine-native `direct` worker.
+          DOT_RUNNER_BUNDLE: ${{ format('{0}/.github/capsule-pipeline/attractor-pipeline-dual.yaml', github.workspace) }}
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-implement/logs"

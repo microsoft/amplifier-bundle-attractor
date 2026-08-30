@@ -218,6 +218,7 @@ async def materialize_remote_dot(
 
 async def load_remote_or_local_graph(
     source: "Graph | str",
+    params: dict[str, str] | None = None,
 ) -> tuple["Graph", Callable[[], None]]:
     """Return ``(graph, cleanup)`` for a DOT source that may be local or remote.
 
@@ -249,12 +250,12 @@ async def load_remote_or_local_graph(
     if isinstance(source, str) and source.startswith(_GIT_HTTPS_PREFIX):
         entry_path, cleanup = await materialize_remote_dot(source)
         try:
-            graph = parse_dot(entry_path.read_text(encoding="utf-8"))
+            graph = parse_dot(entry_path.read_text(encoding="utf-8"), params=params)
             graph.source_dir = str(entry_path.parent)
             return graph, cleanup
         except BaseException:
             cleanup()
             raise
 
-    graph = parse_dot(source) if isinstance(source, str) else source
+    graph = parse_dot(source, params=params) if isinstance(source, str) else source
     return graph, (lambda: None)

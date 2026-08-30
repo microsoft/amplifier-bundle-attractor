@@ -57,6 +57,20 @@ on:
       issue_number:
         description: "Issue number to run the specify stage against"
         required: true
+      max_duration:
+        description: >-
+          Graph-level wall-clock fuse passed to capsule.dot as
+          --param max_duration=<value> (e.g. "19800s"). Declarative-only --
+          there is no shell default, so this input always carries one
+          (19800s, the graph's historical fuse) and the workflow always
+          forwards it. HONESTY: GitHub-hosted runners hard-cap a job at 6h
+          (360min) -- a fuse set much above 19800s is UNREACHABLE on a
+          hosted runner regardless of this input; raising it meaningfully
+          requires a self-hosted runner. Seeding (giving the pipeline a
+          better starting point) is the real convergence lever, not a
+          bigger fuse.
+        required: false
+        default: "19800s"
 
 permissions:
   contents: write
@@ -76,6 +90,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+      # Always resolved to a real value -- the `issues:labeled` trigger has no
+      # `inputs` context, so this falls back to the graph's historical fuse
+      # (19800s); workflow_dispatch may override it. Never absent: capsule.dot
+      # parses `max_pipeline_duration="$max_duration"` and refuses to parse at
+      # all (loud ValueError) if this param is not supplied.
+      MAX_DURATION: ${{ inputs.max_duration || '19800s' }}
     # Measured capsule.dot runs take ~20-40 minutes; the graph's own
     # max_pipeline_duration=19800s (330min, the void-ratchet fuse -- sized
     # by the TIMEOUT ARITHMETIC rig in the vendored capsule.dot's source:
@@ -494,7 +514,11 @@ jobs:
             --param base_sha="${{ steps.base.outputs.sha }}" \
             --param uplift_dir="$GITHUB_WORKSPACE/.github/capsule-pipeline/vendor" \
             --param capsule_out="$RUNNER_TEMP/capsule-run/out" \
-            --param max_iterations=6
+            --param max_iterations=6 \
+            --param max_duration="$MAX_DURATION" \
+            2>&1 | tee "$RUNNER_TEMP/capsule-run/logs/engine-stdout.log"
+          # pipefail (set above) means $? here is uv run's own exit code, not
+          # tee's -- tee itself does not fail just because the upstream did.
           echo "attractor_exit=$?" >> "$GITHUB_OUTPUT"
 
       - name: "Fence the capsule pair: record sha256 of every capsule_out file"
@@ -635,6 +659,19 @@ jobs:
             # of the recognized artifacts keeps the honest "failure" label;
             # only the zero-nodes-ever-ran case is reclassified here.
             kind="infra_failure"
+          elif grep -q "exceeded max duration" "$RUNNER_TEMP/capsule-run/logs/engine-stdout.log" 2>/dev/null; then
+            # CLASSIFICATION HONESTY (ba9 -- runs 33297320484/33314987898): the
+            # engine's OWN wall-clock fuse (max_pipeline_duration, now
+            # --param max_duration) tripped mid-run -- checkpoint.json exists
+            # (real maker/critic work happened) but the run died on the fuse,
+            # not on a genuine "ran out of iteration budget without
+            # converging" verdict. The fuse-exit path bypasses the engine's
+            # recover/postmortem wall entirely (a known, separate engine gap
+            # -- not fixed here), so NO postmortem can exist for this kind,
+            # ever, structurally -- this is never "did not converge within
+            # its iteration budget" and never claims a missing postmortem as
+            # if one could have been written.
+            kind="duration_ceiling"
           fi
 
           hint="no further detail available"
@@ -648,12 +685,29 @@ jobs:
             fi
           fi
 
+          # DURATION-CEILING DETAIL (ba9): iterations-completed vs budget,
+          # cheaply read from the engine's own checkpoint if it is there --
+          # never a re-derivation, never a guess. max_iterations=6 is this
+          # lane's own static --param above (the BUDGET this run was given;
+          # capsule.dot may bump it dynamically for test-less subjects, so
+          # this is reported as the STARTING budget, named as such).
+          duration_hint="no further detail available"
+          if [ "$kind" = "duration_ceiling" ]; then
+            iters="$(python3 -c \"import json,sys\nd=json.load(open(sys.argv[1])) if __import__('os').path.exists(sys.argv[1]) else {}\nprint((d.get('engine_state') or {}).get('iteration_count',''))\" \"$CHECKPOINT\" 2>/dev/null || true)"
+            if [ -n "$iters" ]; then
+              duration_hint="${iters} iteration(s) completed against a starting budget of 6 (max_iterations=6; capsule.dot may bump this for test-less subjects -- see the ledger in the uploaded evidence for the exact budget this run used) when the wall-clock fuse (--param max_duration=\"${MAX_DURATION:-19800s}\") tripped mid-work."
+            else
+              duration_hint="the wall-clock fuse (--param max_duration=\"${MAX_DURATION:-19800s}\") tripped mid-work; the per-iteration count was not cheaply readable from checkpoint.json for this run, see the uploaded evidence."
+            fi
+          fi
+
           {
             echo "kind=$kind"
             echo "id=$id"
             echo "hint=$hint"
+            echo "duration_hint=$duration_hint"
           } >> "$GITHUB_OUTPUT"
-          echo "Classified as: kind=$kind id=$id hint=$hint"
+          echo "Classified as: kind=$kind id=$id hint=$hint duration_hint=$duration_hint"
 
       - name: "Execute the SHIPPED gate at the pinned base SHA"
         id: gate_exec
@@ -896,6 +950,7 @@ jobs:
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           KIND="${{ steps.classify.outputs.kind }}"
           INFRA_HINT="${{ steps.classify.outputs.hint }}"
+          DURATION_HINT="${{ steps.classify.outputs.duration_hint }}"
 
           # A postmortem/finding section must never be rendered as an empty
           # fence -- a file that exists but is empty/whitespace-only is
@@ -1056,6 +1111,40 @@ jobs:
                 echo "</details>"
               } > "$COMMENT"
               ;;
+            duration_ceiling)
+              # CLASSIFICATION HONESTY (ba9): the engine's own wall-clock fuse
+              # tripped mid-work -- real maker/critic iterations ran
+              # (checkpoint.json exists) but the run was killed by the fuse,
+              # not by a converged "no capsule, no finding" verdict. The
+              # fuse-exit path bypasses the engine's recover/postmortem wall
+              # STRUCTURALLY (a known, separate engine gap, not fixed here),
+              # so a postmortem never exists on this path -- this case never
+              # says "did not converge within its iteration budget" and never
+              # implies a postmortem could have been written.
+              {
+                echo "**Specify stage: hit its wall-clock ceiling mid-work -- no postmortem is possible on this path.**"
+                echo
+                echo "**What happened:** the pipeline was still doing real work (not stalled,"
+                echo "not stuck) when it hit its wall-clock fuse. $DURATION_HINT"
+                echo
+                echo "**Why there is no postmortem here:** the fuse exits the run directly,"
+                echo "before the engine's own recover/postmortem step ever gets a chance to"
+                echo "run -- so \"(no postmortem report was written)\" would be true of every"
+                echo "run that ends this way, not a sign anything else went wrong. This is a"
+                echo "known, separate engine limitation, not something this run did wrong."
+                echo
+                echo "**What this does NOT mean:** it is not a judgment of your report, and it"
+                echo "is not the same thing as \"ran out of iteration budget without"
+                echo "converging\" -- the clock ran out on real, in-progress work."
+                echo
+                echo "**What happens next:** a maintainer will personally review this issue"
+                echo "and follow up. Re-seeding the run (giving it a better starting point)"
+                echo "is the effective lever here, more than a larger fuse -- see the"
+                echo "workflow's \`max_duration\` input for the GitHub-hosted runner ceiling."
+                echo
+                echo "Workflow run: $RUN_URL"
+              } > "$COMMENT"
+              ;;
             *)
               {
                 echo "**Specify stage: the automated pipeline couldn't produce a verified work plan for this yet.**"
@@ -1182,6 +1271,10 @@ jobs:
           # it never got to decide anything.
           if [ "$KIND" = "infra_failure" ]; then
             echo "::error::capsule.dot's engine never started (${{ steps.classify.outputs.hint }}) -- this is an INFRASTRUCTURE FAILURE, not a non-convergence. See the issue comment and uploaded run evidence."
+            exit 1
+          fi
+          if [ "$KIND" = "duration_ceiling" ]; then
+            echo "::error::capsule.dot hit its wall-clock ceiling mid-work (${{ steps.classify.outputs.duration_hint }}) -- this is NOT the same as 'did not converge within its iteration budget', and no postmortem is possible on this path (the fuse exit bypasses the engine's recover wall). See the issue comment and uploaded run evidence."
             exit 1
           fi
           if [ "$KIND" = "failure" ]; then

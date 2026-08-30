@@ -76,18 +76,32 @@ _KNOWN_GRAPH_ATTRS = {
 }
 
 
-def parse_dot(source: str) -> Graph:
+def parse_dot(source: str, params: dict[str, str] | None = None) -> Graph:
     """Parse a DOT digraph string into a Graph model.
 
     Args:
         source: DOT language string (digraph only).
+        params: Optional flat ``--param key=[REDACTED:SECRET]
+            for GRAPH-LEVEL duration attributes (currently
+            ``max_pipeline_duration``) that hold a bare ``"$name"`` token --
+            see ``_resolve_graph_duration_attr``. This is declarative-only
+            substitution at PARSE time: there is no shell-style default, and
+            a graph attribute referencing a param absent from this mapping
+            raises ``ValueError`` immediately (a loud parse failure), never a
+            silent fallback. Node-level ``$param`` expansion (in prompts /
+            ``tool_command``) is unaffected by this argument -- it continues
+            to resolve later, at execution time, from
+            ``context.get("graph.params_values")`` (see
+            ``transforms.expand_variables``).
 
     Returns:
         Parsed Graph with nodes, edges, and attributes.
 
     Raises:
         ValueError: If the source is not a valid digraph or uses
-            unsupported features (undirected graphs, strict modifier).
+            unsupported features (undirected graphs, strict modifier), or if
+            a graph-level duration attribute references a ``$name`` param
+            that ``params`` does not supply.
     """
     # Strip comments
     cleaned = _strip_comments(source)
@@ -131,7 +145,7 @@ def parse_dot(source: str) -> Graph:
         body = m.group(2)
 
     # Parse the body
-    ctx = _ParseContext()
+    ctx = _ParseContext(params=params)
     _parse_body(body, ctx)
 
     # Build Graph
@@ -154,13 +168,17 @@ def parse_dot(source: str) -> Graph:
 class _ParseContext:
     """Accumulates parse results."""
 
-    def __init__(self) -> None:
+    def __init__(self, params: dict[str, str] | None = None) -> None:
         self.nodes: dict[str, Node] = {}
         self.edges: list[Edge] = []
         self.graph_attrs: dict[str, str] = {}
         self.graph_fields: dict[str, Any] = {}
         self.node_defaults: dict[str, Any] = {}
         self.edge_defaults: dict[str, Any] = {}
+        # Flat --param key=[REDACTED:SECRET]
+        # graph-level duration attribute like max_pipeline_duration="$name".
+        # See _resolve_graph_duration_attr.
+        self.params: dict[str, str] = dict(params) if params else {}
 
     def ensure_node(self, node_id: str) -> Node:
         """Get or create a node, applying defaults."""
@@ -444,6 +462,59 @@ def _apply_node(
         )
 
 
+# A bare "$name" token -- the ENTIRE (stripped) attribute value, not a
+# substring/embedded reference -- is the only shape eligible for graph-level
+# param substitution. Deliberately narrow: this is declarative wiring for a
+# handful of promoted graph fields (today: max_pipeline_duration), not a
+# general templating engine for arbitrary DOT text.
+_GRAPH_PARAM_TOKEN_RE = re.compile(r"^\$([A-Za-z_][A-Za-z0-9_]*)$")
+
+
+def _resolve_graph_duration_attr(val: Any, params: dict[str, str], attr_name: str) -> int:
+    """Resolve a graph-level DURATION attribute, honoring a bare ``$name`` token.
+
+    Used for ``max_pipeline_duration`` (EXTENSIONS/L-6). A value that is a
+    literal ``$name`` placeholder is substituted from ``params[name]`` and
+    then parsed exactly as if that value had been written literally (a
+    duration string like ``"19800s"``, or a bare integer). Any other value
+    (already an int, or a plain duration/int string) is parsed unchanged --
+    this function's behavior is a strict superset of the prior
+    ``int(val) if not isinstance(val, int) else val`` coercion.
+
+    PARAMS ARE DECLARATIVE-ONLY -- there is no shell-style default for a
+    missing one. A ``$name`` token whose name is absent from ``params``
+    raises ``ValueError`` immediately: a loud PARSE-TIME failure, never a
+    silent fallback to some built-in constant. This is deliberate -- an
+    absent fuse value must never silently become "no fuse" or some
+    surprising default; the caller must supply it explicitly via
+    ``--param name=<value>``.
+
+    Raises:
+        ValueError: the token's param is missing, or (unchanged prior
+            behavior) the resolved value is not a valid duration/int.
+    """
+    if isinstance(val, str):
+        m = _GRAPH_PARAM_TOKEN_RE.match(val.strip())
+        if m:
+            name = m.group(1)
+            if name not in params:
+                raise ValueError(
+                    f"Graph attribute '{attr_name}' references parameter "
+                    f"'${name}' but no --param {name}=<value> was supplied. "
+                    f"Graph-level parameters are declarative-only -- there is "
+                    f"no shell-style default for a missing one. Pass "
+                    f"--param {name}=<value> (e.g. --param {name}=19800s)."
+                )
+            val = params[name]
+    if isinstance(val, int):
+        return val
+    s = str(val)
+    dur = _try_parse_duration(s)
+    if dur is not None:
+        return dur
+    return int(s)
+
+
 def _set_graph_attr(ctx: _ParseContext, key: str, val: Any) -> None:
     """Set a graph-level attribute, promoting known fields."""
     if key == "goal":
@@ -456,8 +527,8 @@ def _set_graph_attr(ctx: _ParseContext, key: str, val: Any) -> None:
     elif key == "model_stylesheet":
         ctx.graph_fields["model_stylesheet"] = str(val)
     elif key == "max_pipeline_duration":
-        ctx.graph_fields["max_pipeline_duration"] = (
-            int(val) if not isinstance(val, int) else val
+        ctx.graph_fields["max_pipeline_duration"] = _resolve_graph_duration_attr(
+            val, ctx.params, key
         )
     else:
         ctx.graph_attrs[key] = str(val) if not isinstance(val, str) else val

@@ -27,6 +27,7 @@ pattern as ``test_examples_lint_clean.py``).
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -37,6 +38,24 @@ from amplifier_module_loop_pipeline.dot_parser import parse_dot
 from amplifier_module_loop_pipeline.validation import lint
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# This repo's dot_parser is a frozen compat-window copy of the engine (see
+# specs/EXTENSIONS.md) and does not resolve `--param` substitution -- that
+# now lives exclusively in amplifier-bundle-dot-runner, which the lane
+# workflows clone fresh at run time. The shipped lane graphs (ba9,
+# lane-honesty wave) legitimately carry a bare
+# `max_pipeline_duration="$max_duration"` token for that engine's benefit;
+# this frozen copy's own calibration sweep must tolerate the placeholder
+# rather than choke on it.
+_DURATION_PARAM_TOKEN_RE = re.compile(
+    r'(max_pipeline_duration\s*=\s*)"\$[A-Za-z_][A-Za-z0-9_]*"'
+)
+
+
+def _neutralize_duration_param_tokens(text: str) -> str:
+    return _DURATION_PARAM_TOKEN_RE.sub(r'\g<1>"19800s"', text)
+
+
 _AUTHORING_CHECKER = (
     _REPO_ROOT / "examples" / "authoring" / "check_authored_pipeline.py"
 )
@@ -73,7 +92,11 @@ pytestmark = pytest.mark.skipif(
 )
 def test_shipped_graph_is_free_of_inert_evidence_gates(dot_path: Path) -> None:
     """No graph in this repository routes two answers into its own exit."""
-    diags = lint(parse_dot(dot_path.read_text(encoding="utf-8")))
+    diags = lint(
+        parse_dot(
+            _neutralize_duration_param_tokens(dot_path.read_text(encoding="utf-8"))
+        )
+    )
     hits = [d for d in diags if d.rule == "inert_evidence_gate"]
     assert not hits, (
         f"{dot_path.relative_to(_REPO_ROOT)} tripped TOPO-008:\n"
@@ -119,7 +142,7 @@ def test_topo_008_and_a10_agree_on_every_shipped_graph() -> None:
 
     disagreements: list[str] = []
     for dot_path in _DOT_FILES:
-        text = dot_path.read_text(encoding="utf-8")
+        text = _neutralize_duration_param_tokens(dot_path.read_text(encoding="utf-8"))
         topo8 = bool(
             [d for d in lint(parse_dot(text)) if d.rule == "inert_evidence_gate"]
         )

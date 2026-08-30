@@ -136,12 +136,7 @@ def seed_context(
     context.set("context.target_dir", str(cwd))
 
 
-async def _load_graph(
-    graph_or_dot: "Graph | str",
-    *,
-    source_dir: str | None = None,
-    params: "Mapping[str, str] | None" = None,
-):
+async def _load_graph(graph_or_dot: "Graph | str", *, source_dir: str | None = None):
     """Return (graph, cleanup). If graph_or_dot is a git+https:// URL, materialize
     the remote tree (async, before parse) and parse the local entry; otherwise
     behave exactly as before. cleanup() removes any per-run materialized view.
@@ -172,7 +167,7 @@ async def _load_graph(
     """
     from amplifier_module_loop_pipeline.remote_dot import load_remote_or_local_graph
 
-    graph, cleanup = await load_remote_or_local_graph(graph_or_dot, params=params)
+    graph, cleanup = await load_remote_or_local_graph(graph_or_dot)
     # Never clobber: a remote package and an already-parsed Graph carry their
     # own, and theirs is the more specific answer.
     if source_dir and not getattr(graph, "source_dir", ""):
@@ -271,9 +266,7 @@ async def drive_engine(
     from amplifier_module_loop_pipeline.transforms import apply_transforms
     from amplifier_module_loop_pipeline.validation import validate_or_raise
 
-    graph, _source_cleanup = await _load_graph(
-        graph_or_dot, source_dir=source_dir, params=params
-    )
+    graph, _source_cleanup = await _load_graph(graph_or_dot, source_dir=source_dir)
 
     try:
         resolved_cwd = Path(cwd) if cwd is not None else Path.cwd()

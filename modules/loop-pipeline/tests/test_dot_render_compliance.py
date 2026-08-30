@@ -27,6 +27,7 @@ proving the sweep's detector is not vacuously true.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -37,6 +38,24 @@ from amplifier_module_loop_pipeline.dot_parser import parse_dot
 from amplifier_module_loop_pipeline.validation import Diagnostic, lint
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# This repo's dot_parser is a frozen compat-window copy of the engine (see
+# specs/EXTENSIONS.md -- amplifier-bundle-dot-runner is the source of truth
+# now) and does not resolve `--param` substitution; that lives exclusively in
+# dot-runner, which the lane workflows clone fresh at run time. The shipped
+# lane graphs (ba9, lane-honesty wave) legitimately carry a bare
+# `max_pipeline_duration="$max_duration"` token for that engine's benefit.
+# This frozen copy's own corpus sweep must tolerate the placeholder rather
+# than choke on it -- swap in a fixed literal before parsing. 19800s matches
+# the historical fuse documented alongside the token.
+_DURATION_PARAM_TOKEN_RE = re.compile(
+    r'(max_pipeline_duration\s*=\s*)"\$[A-Za-z_][A-Za-z0-9_]*"'
+)
+
+
+def _neutralize_duration_param_tokens(text: str) -> str:
+    return _DURATION_PARAM_TOKEN_RE.sub(r'\g<1>"19800s"', text)
+
 
 # Path prefixes excluded from the render sweep and from the CI gate that mirrors
 # it.  These hold runtime scratch and captured artifacts, not authored corpus.
@@ -482,7 +501,8 @@ def test_render_sweep_detects_a_planted_broken_file(tmp_path: Path) -> None:
 def test_render_findings_across_corpus_are_never_errors() -> None:
     """Whatever the rules find in the shipped corpus, it must stay advisory."""
     for dot_path in _TRACKED_DOT_FILES:
-        for d in lint(parse_dot(dot_path.read_text(encoding="utf-8"))):
+        text = _neutralize_duration_param_tokens(dot_path.read_text(encoding="utf-8"))
+        for d in lint(parse_dot(text)):
             if d.rule.startswith("RENDER-"):
                 assert d.severity == "WARNING", (
                     f"{dot_path.relative_to(_REPO_ROOT)}: {d.rule} is "

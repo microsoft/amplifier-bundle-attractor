@@ -895,7 +895,7 @@ jobs:
 
           duration_hint="no further detail available"
           if [ "$kind" = "duration_ceiling" ]; then
-            iters="$(python3 -c \"import json,sys\nd=json.load(open(sys.argv[1])) if __import__('os').path.exists(sys.argv[1]) else {}\nprint((d.get('engine_state') or {}).get('iteration_count',''))\" \"$CHECKPOINT\" 2>/dev/null || true)"
+            iters="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])) if __import__('os').path.exists(sys.argv[1]) else {}; print((d.get('engine_state') or {}).get('iteration_count',''))" "$CHECKPOINT" 2>/dev/null || true)"
             if [ -n "$iters" ]; then
               duration_hint="${iters} iteration(s) completed against a starting budget of 8 (max_iterations=8) when the wall-clock fuse (--param max_duration=\"${MAX_DURATION:-12000s}\") tripped mid-work."
             else

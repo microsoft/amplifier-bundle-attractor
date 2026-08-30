@@ -677,7 +677,7 @@ jobs:
           if [ "$INFRA_FAILURE" != "true" ] && [ "$CONVERGED" != "true" ] && \
              grep -q "exceeded max duration" "$RUNNER_TEMP/capsule-implement/logs/engine-stdout.log" 2>/dev/null; then
             DURATION_CEILING=true
-            iters="$(python3 -c \"import json,sys\nd=json.load(open(sys.argv[1])) if __import__('os').path.exists(sys.argv[1]) else {}\nprint((d.get('engine_state') or {}).get('iteration_count',''))\" \"$CHECKPOINT\" 2>/dev/null || true)"
+            iters="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])) if __import__('os').path.exists(sys.argv[1]) else {}; print((d.get('engine_state') or {}).get('iteration_count',''))" "$CHECKPOINT" 2>/dev/null || true)"
             if [ -n "$iters" ]; then
               DURATION_HINT="${iters} iteration(s) completed against a starting budget of 6 (max_iterations=6) when the wall-clock fuse (--param max_duration=\"${MAX_DURATION:-14400s}\") tripped mid-work."
             else

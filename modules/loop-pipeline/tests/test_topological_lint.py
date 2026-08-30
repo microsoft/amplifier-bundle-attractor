@@ -10,12 +10,31 @@ directly (no DOT parsing) for speed and isolation.
 
 from __future__ import annotations
 
+import re
+
 from amplifier_module_loop_pipeline.graph import Edge, Graph, Node
 from amplifier_module_loop_pipeline.validation import (
     Diagnostic,
     lint,
     validate,
 )
+
+# This repo's dot_parser is a frozen compat-window copy of the engine (see
+# specs/EXTENSIONS.md) and does not resolve `--param` substitution -- that
+# now lives exclusively in amplifier-bundle-dot-runner, which the lane
+# workflows clone fresh at run time. The shipped lane graphs (ba9,
+# lane-honesty wave) legitimately carry a bare
+# `max_pipeline_duration="$max_duration"` token for that engine's benefit;
+# the repo-wide sweeps below must tolerate the placeholder rather than
+# choke on it.
+_DURATION_PARAM_TOKEN_RE = re.compile(
+    r'(max_pipeline_duration\s*=\s*)"\$[A-Za-z_][A-Za-z0-9_]*"'
+)
+
+
+def _neutralize_duration_param_tokens(text: str) -> str:
+    return _DURATION_PARAM_TOKEN_RE.sub(r'\g<1>"19800s"', text)
+
 
 # ---------------------------------------------------------------------------
 # Helpers — mirrors test_validation.py's pattern
@@ -1738,13 +1757,20 @@ class TestGateRetryBudgetDead:
         from amplifier_module_loop_pipeline.dot_parser import parse_dot as _parse
 
         repo_root = _Path(__file__).resolve().parents[3]
-        sweep_dirs = [repo_root / "examples", repo_root / ".github" / "capsule-pipeline"]
-        dot_files = [p for d in sweep_dirs if d.is_dir() for p in sorted(d.rglob("*.dot"))]
+        sweep_dirs = [
+            repo_root / "examples",
+            repo_root / ".github" / "capsule-pipeline",
+        ]
+        dot_files = [
+            p for d in sweep_dirs if d.is_dir() for p in sorted(d.rglob("*.dot"))
+        ]
         if not dot_files:
             _pytest.skip("shipped corpus not present (installed-package run)")
         fired: list[str] = []
         for dot_path in dot_files:
-            graph = _parse(dot_path.read_text(encoding="utf-8"))
+            graph = _parse(
+                _neutralize_duration_param_tokens(dot_path.read_text(encoding="utf-8"))
+            )
             for d in _diag(lint(graph), "gate_retry_budget_dead"):
                 fired.append(f"{dot_path.relative_to(repo_root)}: {d.message}")
         assert not fired, (
@@ -2320,7 +2346,9 @@ class TestOutcomeLabelShadowingCalibration:
 
         fired = []
         for path in dots:
-            graph = parse_dot(path.read_text(encoding="utf-8"))
+            graph = parse_dot(
+                _neutralize_duration_param_tokens(path.read_text(encoding="utf-8"))
+            )
             for d in _diag(lint(graph), "outcome_label_shadowing"):
                 fired.append(f"{path}: {d.message}")
 
@@ -2363,7 +2391,9 @@ class TestOutcomeLabelShadowingCalibration:
         condition_only = 0
         plus_any_status_label = 0
         for path in dots:
-            graph = parse_dot(path.read_text(encoding="utf-8"))
+            graph = parse_dot(
+                _neutralize_duration_param_tokens(path.read_text(encoding="utf-8"))
+            )
             has_cond = any(
                 key == "outcome"
                 and op in ("=", "!=")

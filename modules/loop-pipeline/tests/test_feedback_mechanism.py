@@ -877,25 +877,17 @@ def test_multi_target_isolation_no_leakage(tmp_path):
         )
 
 
-def test_convergence_factory_exemplar_prompt_expands_scoped_key(tmp_path):
-    """Case 16: convergence-factory.dot generate node uses $prior_critiques_generate.
+def test_convergence_factory_exemplar_uses_file_mediated_feedback(tmp_path):
+    """Case 16: convergence-factory.dot uses the file-mediated feedback pattern.
 
-    Regression guard for an implementation-documentation mismatch found in
-    review: the exemplar prompt must reference the per-target key
-    $prior_critiques_generate (not the old $prior_critiques), so that after
-    collect_and_inject_feedback the expanded prompt contains the injected critique.
-
-    This test:
-    1. Parses the shipped convergence-factory.dot exemplar.
-    2. Simulates a loop_restart: calls collect_and_inject_feedback with a mock
-       'feedback' node critique.
-    3. Expands the 'generate' node's prompt via _expand_variables.
-    4. Asserts the expanded prompt contains the injected critique text.
-    5. Asserts the old $prior_critiques variable is NOT what delivers the critique
-       (i.e., the exemplar correctly uses the scoped key).
+    engine 0.3.0 migration (EXTENSIONS.md sec 29 `feedback_from=` REMOVED; see
+    amplifier-bundle-dot-runner's MIGRATION.md #3): this replaces the prior
+    regression guard for the (now-removed) engine feedback_from= channel with
+    a guard for its replacement -- 'feedback' writes one critique file per
+    iteration to .ai/feedback/critique-$iteration.md, and 'generate' reads
+    every .ai/feedback/*.md file itself, most recent first, before
+    attempting. No engine-injected variable, no feedback_from= declaration.
     """
-    from amplifier_module_loop_pipeline.handlers.codergen import _expand_variables
-
     # Locate the shipped exemplar
     repo_root = os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -905,7 +897,7 @@ def test_convergence_factory_exemplar_prompt_expands_scoped_key(tmp_path):
     )
     assert os.path.exists(exemplar_path), (
         f"convergence-factory.dot not found at {exemplar_path}. "
-        "This test guards the shipped exemplar's prompt variable name."
+        "This test guards the shipped exemplar's feedback delivery mechanism."
     )
 
     with open(exemplar_path, encoding="utf-8") as f:
@@ -913,54 +905,30 @@ def test_convergence_factory_exemplar_prompt_expands_scoped_key(tmp_path):
 
     graph = parse_dot(dot_source)
 
-    # Verify the exemplar declares feedback_from= on the generate node
+    # The removed engine channel must be gone from both nodes
     generate_node = graph.nodes.get("generate")
     assert generate_node is not None, "convergence-factory.dot must have a 'generate' node"
-    feedback_from = (generate_node.attrs or {}).get("feedback_from")
-    assert feedback_from == "feedback", (
-        f"generate node must declare feedback_from=\"feedback\"; got {feedback_from!r}"
+    assert (generate_node.attrs or {}).get("feedback_from") is None, (
+        "generate node must NOT declare feedback_from= (removed in engine 0.3.0; "
+        "see amplifier-bundle-dot-runner MIGRATION.md #3)"
     )
 
-    # Simulate a loop_restart: collect the feedback node's critique
-    context = PipelineContext()
-    critique_text = "THE-INJECTED-CRITIQUE-SENTINEL"
-    collect_and_inject_feedback(
-        graph=graph,
-        node_outcomes={
-            "feedback": _make_outcome_with_notes(critique_text),
-        },
-        context=context,
-        iteration_count=1,
-        logs_root=str(tmp_path),
+    feedback_node = graph.nodes.get("feedback")
+    assert feedback_node is not None, "convergence-factory.dot must have a 'feedback' node"
+    assert (feedback_node.attrs or {}).get("feedback_from") is None, (
+        "feedback node must NOT declare feedback_from="
     )
 
-    # The per-target key for node "generate" must be set
-    per_target_key = PRIOR_CRITIQUES_KEY_PREFIX + "generate"  # "prior_critiques_generate"
-    assert context.get(per_target_key) is not None, (
-        f"collect_and_inject_feedback must set '{per_target_key}' in context; "
-        "check that the 'generate' node's feedback_from= is correctly parsed."
-    )
-
-    # Expand the generate node's prompt with the context
+    # generate's prompt must read the file-mediated channel before attempting
     generate_prompt = generate_node.prompt or ""
-    assert generate_prompt, "generate node must have a non-empty prompt"
-
-    expanded = _expand_variables(generate_prompt, graph, context)
-
-    # The expanded prompt must contain the injected critique
-    assert critique_text in expanded, (
-        f"The expanded generate prompt must contain the injected critique "
-        f"'{critique_text}'. This means the prompt must reference "
-        f"$prior_critiques_generate (the per-target scoped key), not $prior_critiques "
-        f"(the old unscoped key).\n\nExpanded prompt:\n{expanded}"
+    assert ".ai/feedback/" in generate_prompt and "most recent" in generate_prompt, (
+        "generate node's prompt must instruct reading .ai/feedback/*.md files, "
+        f"most recent first, before attempting.\n\nPrompt:\n{generate_prompt}"
     )
 
-    # Confirm the old unscoped key is NOT what delivered the critique
-    # (if it were, the old $prior_critiques would expand to the critique text,
-    # which would mean the engine is writing the legacy key — a regression)
-    old_key_value = context.get(PRIOR_CRITIQUES_KEY)  # "prior_critiques"
-    assert old_key_value is None, (
-        f"The engine must NOT write the legacy 'prior_critiques' key; "
-        f"found: {old_key_value!r}. Per-target scoping requires only "
-        f"'{per_target_key}' to be set."
+    # feedback's prompt must write one file per iteration to the channel
+    feedback_prompt = feedback_node.prompt or ""
+    assert ".ai/feedback/critique-$iteration.md" in feedback_prompt, (
+        "feedback node's prompt must write to .ai/feedback/critique-$iteration.md "
+        f"(one file per iteration, never overwritten).\n\nPrompt:\n{feedback_prompt}"
     )

@@ -306,6 +306,7 @@ jobs:
             "modules/loop-pipeline/pyproject.toml" \
             "modules/unified-llm-client/pyproject.toml" \
             "modules/remote-source/pyproject.toml" \
+            "modules/loop-agent/pyproject.toml" \
             "bundles/attractor-pipeline.yaml"; do
             if [ ! -f "$ENGINE_SRC/$required" ]; then
               echo "::error::Engine snapshot at $ENGINE_SRC is missing $required -- the detached engine would be unusable and the run step would fail later with a confusing uv error. Refusing to start." >&2
@@ -659,7 +660,19 @@ jobs:
           # churn cannot reach them. --cwd, target_dir and the .dot path below
           # deliberately still point at the WORKSPACE: the subject tree is
           # supposed to be the live one.
-          uv run --project "$RUNNER_TEMP/engine-src/modules/pipeline-runner" dot-runner run \
+          # WORKER MODULE: `--worker loop-agent` names a worker whose
+          # module is NOT a dependency of modules/pipeline-runner (nor of the
+          # dot-runner root distribution, which embeds `amplifier-agent`
+          # instead). `--project` alone therefore builds an environment in which
+          # the requested worker cannot exist, and the engine refuses in <2s with
+          # "--worker 'loop-agent' was requested but is not installed" -- before a
+          # single model call. `--with` layers the snapshot's own loop-agent module
+          # into that same environment, from the SAME detached $RUNNER_TEMP tree as
+          # the engine (so the "workspace churn cannot reach it" property holds for
+          # the worker too, not just the engine).
+          uv run --project "$RUNNER_TEMP/engine-src/modules/pipeline-runner" \
+            --with "$RUNNER_TEMP/engine-src/modules/loop-agent" \
+            dot-runner run \
             .github/capsule-pipeline/feature-capsule.dot \
             --worker loop-agent \
             --cwd "$GITHUB_WORKSPACE" \

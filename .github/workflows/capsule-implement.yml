@@ -590,6 +590,8 @@ jobs:
         if: always() && steps.locate.outputs.skip != 'true'
         env:
           ATTRACTOR_EXIT: ${{ steps.run.outputs.attractor_exit }}
+          PREFLIGHT_OUTCOME: ${{ steps.preflight.outcome }}
+          RUN_OUTCOME: ${{ steps.run.outcome }}
         run: |
           set -euo pipefail
           CHECKPOINT="$RUNNER_TEMP/capsule-implement/logs/checkpoint.json"
@@ -613,11 +615,41 @@ jobs:
             echo "::warning::ENGINE MISREPORT (exit code vs the pipeline's own recorded outcome): the run reported exit 0 while its checkpoint.json recorded outcome='fail' ($CHECKPOINT). The exit code is NOT trusted here -- this run is classified NON-CONVERGED and routed to the work-in-progress path, so none of the converged template's gate/critique claims are made for it. Incident record for this lane's non-convergence handling: #220 (run 31789137305)."
           fi
 
+          # CLASSIFICATION HONESTY (shakedown finding): runs where the engine
+          # NEVER STARTED -- a 2-18s hard failure before a single node ran,
+          # e.g. the preflight OpenAI-key check, the engine-snapshot preflight,
+          # or the `--worker`/`--with` resolution itself -- were reaching the
+          # comment step below with CONVERGED=false and no PR, and that path's
+          # template said "did not converge on a shipped fix within its
+          # iteration budget". That is false: a budget was never spent and no
+          # maker/critic node ever ran. checkpoint.json is written after EVERY
+          # node, so its total absence -- not merely an absent/failing
+          # outcome, but the FILE ITSELF never existing -- is the honest
+          # signal that the engine died before doing any pipeline work at all.
+          # This is deliberately narrower than "not converged": a run that
+          # reached at least one node (checkpoint.json exists, RECORDED may be
+          # 'fail' or 'absent') is a genuine non-convergence and keeps that
+          # label; only the zero-nodes-ever-ran case is reclassified.
+          INFRA_FAILURE=false
+          INFRA_HINT="no further detail available"
+          if [ ! -f "$CHECKPOINT" ] && [ "$EXIT" != "0" ]; then
+            INFRA_FAILURE=true
+            if [ "${PREFLIGHT_OUTCOME:-}" = "failure" ]; then
+              INFRA_HINT="the OpenAI-key preflight check failed before the engine could run (see the 'Preflight: dual-family critique is unserviceable without an OpenAI key' step's log)"
+            elif [ -n "${EXIT:-}" ]; then
+              INFRA_HINT="the engine exited $EXIT before writing any checkpoint (see the 'Run task-runner.dot (implement stage)' step's log for the failure)"
+            elif [ "${RUN_OUTCOME:-}" = "skipped" ] || [ -z "${RUN_OUTCOME:-}" ]; then
+              INFRA_HINT="the engine run step never executed -- an earlier required step failed (see the workflow run's step list, e.g. the engine-snapshot preflight)"
+            fi
+          fi
+
           {
             echo "recorded_outcome=$RECORDED"
             echo "converged=$CONVERGED"
+            echo "infra_failure=$INFRA_FAILURE"
+            echo "infra_hint=$INFRA_HINT"
           } >> "$GITHUB_OUTPUT"
-          echo "classification: attractor_exit='$EXIT' recorded_outcome='$RECORDED' converged=$CONVERGED"
+          echo "classification: attractor_exit='$EXIT' recorded_outcome='$RECORDED' converged=$CONVERGED infra_failure=$INFRA_FAILURE"
 
       - name: Scrub secrets from run evidence
         # SECURITY (incident, 2026-08): a worker agent dumped its
@@ -947,14 +979,56 @@ jobs:
           # the run" step). Reading it here too keeps the issue comment and
           # the PR body from ever telling two different stories.
           CONVERGED="${{ steps.classify.outputs.converged }}"
+          INFRA_FAILURE="${{ steps.classify.outputs.infra_failure }}"
+          INFRA_HINT="${{ steps.classify.outputs.infra_hint }}"
           PR_URL="${{ steps.pr.outputs.url }}"
 
+          # A postmortem section must never be rendered as an empty fence --
+          # a file that exists but is empty/whitespace-only is exactly as
+          # uninformative as a missing one, and the shakedown found the old
+          # `cat ... || echo "(no postmortem...)"` idiom rendering the former
+          # as a bare empty ``` block instead of saying so honestly.
+          render_postmortem() {
+            local f="$1"
+            if [ -s "$f" ] && [ -n "$(tr -d '[:space:]' < "$f" 2>/dev/null)" ]; then
+              cat "$f"
+            else
+              echo "(no postmortem report was written)"
+            fi
+          }
+
+          # CLASSIFICATION HONESTY (shakedown finding): a run whose engine
+          # never started -- no checkpoint.json ever written -- is an
+          # INFRASTRUCTURE FAILURE, not a non-convergence. It never spent its
+          # iteration budget and never rendered a verdict, so it must never
+          # be told to the filer as "did not converge", and it can never have
+          # a real postmortem (the postmortem node never ran) -- so this
+          # branch does not even try to render one. Checked first, ahead of
+          # the CONVERGED/PR_URL branches below, since infra failures also
+          # have no PR_URL and would otherwise fall into the generic "FAILED"
+          # template and its false non-convergence claim.
+          if [ "$INFRA_FAILURE" = "true" ]; then
+            {
+              echo "**Implement stage FAILED -- the pipeline could not start.**"
+              echo
+              echo "This is an INFRASTRUCTURE FAILURE, not a non-convergence: the engine"
+              echo "never wrote a single checkpoint, so no maker/critic work ever ran and"
+              echo "no iteration budget was spent. task-runner.dot did not decide anything"
+              echo "here -- it never got the chance to."
+              echo
+              echo "What failed: $INFRA_HINT"
+              echo
+              echo "This is a real failure, not a transient CI hiccup -- see the workflow"
+              echo "run for full logs and uploaded artifacts."
+              echo
+              echo "Workflow run: $RUN_URL"
+            } > "$COMMENT"
           # Three real outcomes, three honest messages. Run 31335891096
           # posted "no fix PR opened" while the SAME run's previous step had
           # just pushed a branch and opened PR #178 (non-convergence salvage
           # path) -- the old two-way template asserted a PR's absence it
           # never checked. Claim "no fix PR opened" only when none was.
-          if [ "$CONVERGED" = "true" ] && [ -n "$PR_URL" ]; then
+          elif [ "$CONVERGED" = "true" ] && [ -n "$PR_URL" ]; then
             {
               echo "**Implement stage: fix PR opened.**"
               echo
@@ -972,7 +1046,7 @@ jobs:
               echo "Postmortem (if written):"
               echo
               echo '```'
-              cat "$GITHUB_WORKSPACE/.ai/postmortem/report.md" 2>/dev/null || echo "(no postmortem report was written)"
+              render_postmortem "$GITHUB_WORKSPACE/.ai/postmortem/report.md"
               echo '```'
               echo
               echo "Workflow run: $RUN_URL"
@@ -986,7 +1060,7 @@ jobs:
               echo "(if written):"
               echo
               echo '```'
-              cat "$GITHUB_WORKSPACE/.ai/postmortem/report.md" 2>/dev/null || echo "(no postmortem report was written)"
+              render_postmortem "$GITHUB_WORKSPACE/.ai/postmortem/report.md"
               echo '```'
               echo
               echo "This is a real failure, not a transient CI hiccup -- see the workflow"
@@ -1085,6 +1159,14 @@ jobs:
           # of what was actually measured.
           EXIT="${{ steps.run.outputs.attractor_exit }}"
           RECORDED_OUTCOME="${{ steps.classify.outputs.recorded_outcome }}"
+          # CLASSIFICATION HONESTY: an infra failure (engine never wrote a
+          # checkpoint) is not a non-convergence -- checked first so its own
+          # job annotation never claims task-runner.dot "did not converge"
+          # when it never got to decide anything.
+          if [ "${{ steps.classify.outputs.infra_failure }}" = "true" ]; then
+            echo "::error::task-runner.dot's engine never started (${{ steps.classify.outputs.infra_hint }}) -- this is an INFRASTRUCTURE FAILURE, not a non-convergence. See the issue comment and uploaded run evidence." >&2
+            exit 1
+          fi
           if [ "${{ steps.classify.outputs.converged }}" != "true" ]; then
             echo "::error::task-runner.dot did not converge (engine exit='${EXIT:-<absent>}', pipeline's own recorded outcome='${RECORDED_OUTCOME}') -- see the postmortem comment posted on the issue and the uploaded run evidence." >&2
             exit 1

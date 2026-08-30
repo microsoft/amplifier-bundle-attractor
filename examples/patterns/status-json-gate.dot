@@ -1,0 +1,46 @@
+// status-json-gate.dot -- minimal report_outcome migration exemplar (rung 2:
+// node-written status.json envelope).
+//
+// `report_outcome` was removed outright in the engine 0.2.0 repair release
+// (docs/DOT-AUTHORING-GUIDE.md "Spec-Intended Pipeline Design" / "Migrating
+// from report_outcome"). This graph is the look-here target for the rung
+// that replaces it when a worker is spawned or otherwise out-of-band and
+// cannot return a Python `Outcome` in-process: the engine auto-injects the
+// absolute status.json path plus the outcome / preferred_label /
+// suggested_next_ids / context_updates / notes envelope (canonical spec
+// Sec4.5 / Appendix C: Status File Contract) into that worker's own
+// instructions, and this is the ONLY reachable verdict channel for it.
+//
+// `judge` writes that envelope explicitly -- never a prose verdict -- and
+// the two outgoing edges route on the engine-populated `outcome` context
+// key the status.json write produced, exactly as any other node's outcome
+// would be routed. One exit node (lint's terminal_node rule): the fail leg
+// still exits non-zero, never masked as success (see
+// examples/patterns/convergence-factory.dot's budget_check for the same
+// single-exit-node shape).
+
+digraph status_json_gate {
+    graph [goal="Demonstrate a worker writing the status.json envelope directly (report_outcome migration rung 2)."]
+
+    start [shape=Mdiamond, label="Start"]
+    done  [shape=Msquare, label="Done"]
+
+    // judge: a spawned/out-of-band worker with no other channel back to the
+    // graph. The engine auto-injects the absolute status.json path into its
+    // instructions before this prompt runs; the prompt tells it to use that
+    // path as the ONLY verdict channel.
+    judge [
+        shape=box, goal_gate=true,
+        prompt="Evaluate whether artifact.txt exists and is non-empty in the working directory.\n\nWrite your verdict to the status.json contract path given in your instructions: outcome=\"success\" and preferred_label=\"pass\" when the artifact is present and non-empty; otherwise outcome=\"fail\" and preferred_label=\"blocked\", with a one-line reason in notes. The status.json file IS the verdict channel -- nothing said in this response is read as a verdict, and plain prose (even \"looks good\") is not a substitute for the file."
+    ]
+
+    start -> judge
+
+    // Single exit node, both legs: success reaches 'done' with outcome=success;
+    // the fail leg reaches the SAME node but with outcome=fail preserved, so a
+    // caller composing over this graph can tell them apart (outcome=success vs
+    // outcome!=success), exactly as docs/DOT-AUTHORING-GUIDE.md's Sub-Pipeline
+    // Composition pattern expects.
+    judge -> done [condition="outcome=success", label="status.json outcome=success"]
+    judge -> done [condition="outcome=fail",    label="status.json outcome=fail -- exits non-zero, never masked as success"]
+}

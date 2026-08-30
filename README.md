@@ -102,16 +102,16 @@ cp -r examples/pipelines/practical/sample /tmp/attractor-demo
 cd /tmp/attractor-demo
 dot-runner run "$DOT" \
     --param goal="Fix the TypeError in get_display_name when a user's avatar is None" \
-    --worker loop-agent \
+    --worker coding-agent \
     --cwd .
 ```
 
-`--worker loop-agent` runs box nodes as the full coding agent (tools, file edits, the
+`--worker coding-agent` runs box nodes as the full coding agent (tools, file edits, the
 works). `amplifier-agent` is the default worker (it is the CLI's own fallback when
-`--worker` is omitted, falling further back to `direct` (plain LLM text, no tools) with
+`--worker` is omitted, falling further back to `llm-direct` (plain LLM text, no tools) with
 a loud notice only on an environment where it isn't present) -- so pin `--worker`
 explicitly in anything unattended (CI) rather than relying on that ladder. Other valid
-names: `direct`, `amplifier-agent`. See `--worker` in `dot-runner run --help`.
+names: `llm-direct`, `amplifier-agent`. See `--worker` in `dot-runner run --help`.
 
 Then `pytest -v` in the copy to see the fix + regression test. The sample is
 copied to a temp dir so the committed fixture stays pristine; `$DOT` is captured
@@ -365,13 +365,13 @@ async def main():
 
     # unified_llm.Client.from_env() reads ANTHROPIC_API_KEY / OPENAI_API_KEY /
     # GEMINI_API_KEY (GOOGLE_API_KEY as a Gemini alias). No coordinator -> the
-    # worker registry's `direct` worker handles every node (EXTENSIONS.md
+    # worker registry's `llm-direct` worker handles every node (EXTENSIONS.md
     # Sec40 in amplifier-bundle-dot-runner). `provider=` and `unified_client=`
     # take the SAME client: `provider` is only a truthiness flag that enables
-    # the `direct` dispatch branch, `unified_client` is what actually makes
+    # the `llm-direct` dispatch branch, `unified_client` is what actually makes
     # the calls.
     client = unified_llm.Client.from_env()
-    backend = AmplifierBackend(provider=client, unified_client=client, default_worker="direct")
+    backend = AmplifierBackend(provider=client, unified_client=client, default_worker="llm-direct")
     engine = PipelineEngine(
         graph=graph, context=context,
         handler_registry=HandlerRegistry(backend=backend),
@@ -452,11 +452,11 @@ what changes is which registered **worker** it dispatches to per node (see
 [Backend Selection / Worker Selection](#backend-selection--worker-selection)). With
 `session.spawn` registered, the `spawn` worker kicks in and each pipeline node
 gets a full child session with tools (filesystem, bash, search). Without it (the
-bare programmatic path above), the `direct` worker runs a per-node agentic tool
+bare programmatic path above), the `llm-direct` worker runs a per-node agentic tool
 loop and passes through whatever tools the host has mounted -- so a node is
 tool-free only when the host mounts none. See
 [Backend Selection / Worker Selection](#backend-selection--worker-selection) for
-the full contract (the `direct` worker also requires an explicit `llm_model` on
+the full contract (the `llm-direct` worker also requires an explicit `llm_model` on
 every node; there is no default).
 
 See [`amplifier-foundation/examples/07_full_workflow.py`](https://github.com/microsoft/amplifier-foundation/blob/main/examples/07_full_workflow.py) for the reference

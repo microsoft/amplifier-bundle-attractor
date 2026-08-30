@@ -36,7 +36,7 @@ DOT="$PWD/examples/pipelines/practical/bug-fix.dot"
 cp -r examples/pipelines/practical/sample /tmp/attractor-demo
 cd /tmp/attractor-demo
 dot-runner run "$DOT" \
-    --worker loop-agent \
+    --worker coding-agent \
     --param goal="Fix the TypeError in get_display_name when a user's avatar is None" \
     --cwd .
 ```

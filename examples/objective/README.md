@@ -23,7 +23,7 @@ exit — never through the success door.
 OBJ="$PWD/examples/objective"          # capture the absolute path BEFORE cd
 cd /path/to/your/workspace
 dot-runner run "$OBJ/objective-runner.dot" \
-    --worker loop-agent \
+    --worker coding-agent \
     --param goal="get_display_name() raises TypeError when a user has no avatar. Fix it and add a regression test." \
     --param runner_dir="$OBJ" \
     --param target_dir="$PWD" \

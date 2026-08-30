@@ -19,7 +19,7 @@ DOT="$PWD/examples/pipelines/practical/bug-fix.dot"
 cp -r examples/pipelines/practical/sample /tmp/attractor-bugfix-demo
 cd /tmp/attractor-bugfix-demo
 dot-runner run "$DOT" \
-    --worker loop-agent \
+    --worker coding-agent \
     --param goal="Fix the bug in user_service.py: get_display_name() raises TypeError when a user's avatar is None. Reproduce it first, apply the minimal fix, and add a regression test that covers the None-avatar case." \
     --cwd .
 ```
@@ -207,7 +207,7 @@ DOT="$PWD/examples/pipelines/practical/bug-fix.dot"
 cp -r examples/pipelines/practical/sample /tmp/attractor-bugfix-demo
 cd /tmp/attractor-bugfix-demo
 dot-runner run "$DOT" \
-    --worker loop-agent \
+    --worker coding-agent \
     --param goal="Fix the bug in user_service.py: get_display_name() raises TypeError when a user's avatar is None. Reproduce it first, apply the minimal fix, and add a regression test that covers the None-avatar case." \
     --cwd .
 ```

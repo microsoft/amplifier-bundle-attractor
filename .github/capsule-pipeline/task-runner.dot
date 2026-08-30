@@ -111,7 +111,7 @@
 // at the nodes and edges it shaped — not in this header.
 //
 // Invocation (process cwd MUST equal --cwd — primer §6.7/§6.13).
-// --worker loop-agent is REQUIRED for the dual-family critique: as of
+// --worker coding-agent is REQUIRED for the dual-family critique: as of
 // engine 0.2.0 the named-worker path resolves each node's declared
 // llm_provider natively, so critique_b's llm_provider="openai" is honored
 // directly -- no base-bundle mount needed. (Formerly the CLI's default base
@@ -121,7 +121,7 @@
 // at it are retired along with --bundle.)
 //   cd <target_repo> && \
 //   dot-runner run <runner_dir>/task-runner.dot \
-//       --worker loop-agent \
+//       --worker coding-agent \
 //       --param task_file=/abs/path/to/backlog/tasks/<ID>-<slug>.md \
 //       --param target_dir=$PWD \
 //       --param max_iterations=6 \

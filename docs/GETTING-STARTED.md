@@ -63,15 +63,15 @@ cp -r examples/pipelines/practical/sample /tmp/attractor-demo
 cd /tmp/attractor-demo
 dot-runner run "$DOT" \
     --param goal="Fix the TypeError in get_display_name when avatar is None" \
-    --worker loop-agent \
+    --worker coding-agent \
     --cwd .
 ```
 
-`--worker loop-agent` is the full coding agent (tools, file edits). Worker NAMES are
-the whole user surface now -- `direct`, `loop-agent`, `amplifier-agent` -- and there is
+`--worker coding-agent` is the full coding agent (tools, file edits). Worker NAMES are
+the whole user surface now -- `llm-direct`, `coding-agent`, `amplifier-agent` -- and there is
 no `--bundle`/`DOT_RUNNER_BUNDLE` any more (bundles are internal-only). `amplifier-agent`
 is the default worker -- the CLI falls back to it when `--worker` is omitted, dropping
-further to `direct` with a loud notice only if it isn't present; pin `--worker` explicitly
+further to `llm-direct` with a loud notice only if it isn't present; pin `--worker` explicitly
 for anything unattended. The goal defaults to the graph's `goal=` attribute; override it with
 `--param goal="..."`. Run from a scratch dir whose path equals `--cwd` (box-node
 pipelines root their writes at the process cwd). See

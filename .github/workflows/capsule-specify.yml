@@ -425,7 +425,7 @@ jobs:
         # `critique`, and it HARD-DECLARES llm_provider="openai" (a second
         # model family, deliberately -- the judge must not share the
         # maker's family). WORKER-SURFACE FLIP (engine 0.2.0): with
-        # `--worker loop-agent`, that attribute now flows straight through
+        # `--worker coding-agent`, that attribute now flows straight through
         # the named-worker path and is honored directly -- no dual-provider
         # bundle mount required any more. So: check the one precondition
         # that makes that attribute serviceable BEFORE spending any of the
@@ -454,7 +454,7 @@ jobs:
           # DUAL-FAMILY JUDGE, WORKER-SURFACE FLIP (engine 0.2.0, mirror of
           # capsule-implement.yml, issue #155): the vendored capsule.dot's
           # critique node declares llm_provider="openai" -- a design
-          # requirement, not optional. `--worker loop-agent` below (the
+          # requirement, not optional. `--worker coding-agent` below (the
           # named-worker path) now honors that attribute directly -- the
           # old ATTRACTOR_PIPELINE_BUNDLE/DOT_RUNNER_BUNDLE dual-bundle
           # mount is retired from this job entirely; --bundle and
@@ -472,7 +472,7 @@ jobs:
           # churn cannot reach them. --cwd, target_dir and the .dot path below
           # deliberately still point at the WORKSPACE: the subject tree is
           # supposed to be the live one.
-          # WORKER MODULE: `--worker loop-agent` names a worker whose
+          # WORKER MODULE: `--worker coding-agent` names a worker whose
           # module is NOT a dependency of modules/pipeline-runner (nor of the
           # dot-runner root distribution, which embeds `amplifier-agent`
           # instead). `--project` alone therefore builds an environment in which
@@ -486,7 +486,7 @@ jobs:
             --with "$RUNNER_TEMP/engine-src/modules/loop-agent" \
             dot-runner run \
             .github/capsule-pipeline/capsule.dot \
-            --worker loop-agent \
+            --worker coding-agent \
             --cwd "$GITHUB_WORKSPACE" \
             --logs-root "$RUNNER_TEMP/capsule-run/logs" \
             --param issue_file="${{ steps.issue.outputs.file }}" \

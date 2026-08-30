@@ -27,7 +27,7 @@ cp -r examples/patterns/task-runner-fixture /tmp/task-runner-demo
 cd /tmp/task-runner-demo
 git init -q && git add -A && git commit -qm "fixture baseline"
 dot-runner run "$DOT" \
-    --worker loop-agent \
+    --worker coding-agent \
     --param task_file="$PWD/sample-task.md" \
     --param target_dir="$PWD" \
     --param max_iterations=6 \
@@ -57,7 +57,7 @@ and `target_dir` with your repo root. Keep `$DOT` absolute before `cd`, keep
 cd <target_repo>
 DOT=/abs/path/to/task-runner.dot
 dot-runner run "$DOT" \
-    --worker loop-agent \
+    --worker coding-agent \
     --param task_file=/abs/path/to/task.md \
     --param target_dir=$PWD \
     --param max_iterations=6 \
@@ -314,7 +314,7 @@ critique file; independence is what makes agreement meaningful, and
 cross-family disagreement is signal (this repo's own multi-lens doctrine).
 Two deployment cautions, both verified empirically: (1) the second family's
 provider is resolved from the node's own `llm_provider` declaration — the
-default worker (`amplifier-agent`) and the explicit `--worker loop-agent`
+default worker (`amplifier-agent`) and the explicit `--worker coding-agent`
 path both honor per-node `llm_provider` natively as of engine 0.2.0, so an
 `llm_provider="openai"` node routes to the OpenAI-family child agent without
 any base-bundle mount (verify with an identity probe if in doubt — bundle

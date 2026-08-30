@@ -96,13 +96,25 @@
 // goes RED there instead of live.
 // ============================================================================
 
+// FUSE PARAMETERIZED (ba9, lane-honesty wave): max_pipeline_duration is now
+// "$max_duration" -- a bare $-token, declarative-only (see dot_parser's
+// _resolve_graph_duration_attr). There is NO shell-style default here: every
+// invoker MUST pass --param max_duration=<value> or the engine refuses to
+// parse this graph at all (a loud parse-time ValueError naming the missing
+// param), never a silent fallback to the historical 19800s. This repo's own
+// workflow always passes one (workflow_dispatch input default "19800s" for the
+// specify lane; this graph's own historical default was 19800s -- see the
+// invoking workflow's own comment for its chosen default and the GitHub-hosted
+// 6h job-cap honesty note). Edited directly in this repo for ba9 (not sourced
+// from the private working repo this file is otherwise vendored from -- see
+// README.md's provenance section).
 digraph CapsulePipeline {
     graph [
         goal="Given an issue-shaped report and a pinned base SHA in target_dir, produce a work capsule (DEFINITION.md + DEFINITION.verify.sh) that is machine-proven RED-for-the-right-reason at that SHA and non-vacuous, judged behavior-bound by one critic, and authored in upstream-legal vocabulary -- a definition of done a human can approve in minutes.",
-        params="issue_file, target_dir, base_sha, later_commit, uplift_dir, capsule_out, max_iterations",
+        params="issue_file, target_dir, base_sha, later_commit, uplift_dir, capsule_out, max_iterations, max_duration",
         default_max_retries=2,
         default_fidelity="compact",
-        max_pipeline_duration="19800s",
+        max_pipeline_duration="$max_duration",
         retry_target="author"
     ]
 

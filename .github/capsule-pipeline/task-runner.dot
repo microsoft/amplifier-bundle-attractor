@@ -160,13 +160,25 @@
 //     parallel, deliberately: parallel branches route through run_subgraph's
 //     permissive fail path (engine-semantics.md).
 // ============================================================================
+// FUSE PARAMETERIZED (ba9, lane-honesty wave): max_pipeline_duration is now
+// "$max_duration" -- a bare $-token, declarative-only (see dot_parser's
+// _resolve_graph_duration_attr). There is NO shell-style default here: every
+// invoker MUST pass --param max_duration=<value> or the engine refuses to
+// parse this graph at all (a loud parse-time ValueError naming the missing
+// param), never a silent fallback to the historical 14400s. This repo's own
+// workflow always passes one (workflow_dispatch input default "19800s" for the
+// specify lane; this graph's own historical default was 14400s -- see the
+// invoking workflow's own comment for its chosen default and the GitHub-hosted
+// 6h job-cap honesty note). Edited directly in this repo for ba9 (not sourced
+// from the private working repo this file is otherwise vendored from -- see
+// README.md's provenance section).
 digraph BacklogTaskRunner {
     graph [
         goal="Complete the backlog task described by the task_file parameter to its full definition of done: the task's DoD script passes, and the work survives a strict doctrine critique against the task's judgment criteria.",
-        params="task_file, target_dir, max_iterations",
+        params="task_file, target_dir, max_iterations, max_duration",
         default_max_retries=2,
         default_fidelity="compact",
-        max_pipeline_duration="14400s",
+        max_pipeline_duration="$max_duration",
         retry_target="attempt"
     ]
 

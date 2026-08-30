@@ -126,6 +126,36 @@ Pointers: `docs/PIPELINE_PATTERNS.md` (the layering discipline this section summ
 `context/dot-reference.md` (the self-report doctrine at the authoring-review layer),
 `context/engine-semantics.md` §5 (the full verdict-recovery ladder and fail-closed contract).
 
+### Migrating from `report_outcome`
+
+If your pipeline (or a tutorial you learned from) still prompts a node to "call
+`report_outcome`", it predates the engine 0.2.0 repair release -- the call is not
+available any more, with no compatibility shim. Retarget to whichever rung of the
+escalation ladder above actually fits, using these in-repo, lint-clean exemplars as
+your look-here targets:
+
+- **Rung 1 -- artifact file + tool-node exit code.** `examples/patterns/task-runner.dot`'s
+  `verify` node is the canonical shape: a `parallelogram` tool node runs the task's own
+  `.verify.sh` against the artifact it wrote, and the shell exit code (not any node prose)
+  becomes the routing token (`green` / `red`) via `context.tool.last_line`. The same shape
+  repeats at `verify`/`redgate`/`nonvacuity_gate` in `.github/capsule-pipeline/capsule.dot`
+  and `.github/capsule-pipeline/feature-capsule.dot` -- reach for this rung first.
+- **Rung 2 -- node-written `status.json` envelope.** The engine's injected contract
+  (canonical spec §4.5 / **Appendix C: Status File Contract**,
+  `specs/canonical/attractor-spec-canonical.md`) auto-injects the absolute status-file path
+  plus the `outcome` / `preferred_label` / `suggested_next_ids` / `context_updates` / `notes`
+  envelope into every spawned worker's instructions -- this is the reachable channel for a
+  worker that cannot return a Python `Outcome` in-process. `examples/patterns/status-json-gate.dot`
+  is a minimal, lint-clean pipeline built specifically to be this rung's look-here target:
+  its `judge` node explicitly writes the envelope to the path the engine gave it, and its
+  `route` gate reads the file back and routes on `outcome`/`preferred_label` -- no prose
+  verdict anywhere in the loop.
+- **Cross-repo migration record.** `amplifier-bundle-dot-runner`'s `MIGRATION.md`
+  (https://github.com/microsoft/amplifier-bundle-dot-runner/blob/main/MIGRATION.md) is the
+  companion before/after catalog for this whole engine 0.3.0 release -- `runs_on=` /
+  `continue_on_fail=` (Sec16), `requires=` / `outputs=` (Sec17), and `feedback_from=` (Sec29)
+  each get a concrete before/after pattern there, `report_outcome` migration among them.
+
 ## Pipeline Patterns
 
 ### Convergence Loop (canonical attractor shape)
@@ -1091,7 +1121,7 @@ A **worker** is the mechanism that actually executes an LLM (codergen) node --
 distinct from `llm_provider`, which only picks the model family. Selection
 precedence (highest to lowest), per dot-runner `specs/EXTENSIONS.md` §40:
 
-1. The node's own `worker=` attribute, if set (e.g. `worker="direct"`).
+1. The node's own `worker=` attribute, if set (e.g. `worker="llm-direct"`).
 2. The run-level default, set via the pipeline orchestrator's
    `config.worker` key (e.g. `worker: "spawn"`).
 3. Capability fallback (unchanged): `"spawn"` if `session.spawn` resolved
@@ -1105,7 +1135,7 @@ to pin a mechanism without touching individual nodes.
 
 **What the two names mean:**
 
-- **`direct`** -- the one worker the engine registers by name today: a single
+- **`llm-direct`** -- the one worker the engine registers by name today: a single
   in-process tool-loop against a provider, no hosted session, no spawn.
   Cheapest, no sub-agent identity, no Amplifier-specific capabilities.
 - **`"spawn"`** -- a reserved sentinel, not a registry entry. It tells the

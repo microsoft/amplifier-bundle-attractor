@@ -16,7 +16,7 @@
 //   OBJ=/abs/path/to/examples/objective
 //   cd <workspace>
 //   dot-runner run "$OBJ/objective-runner.dot" \
-//       --worker loop-agent \
+//       --worker coding-agent \
 //       --param goal="users report a crash when saving a file whose name has unicode" \
 //       --param runner_dir="$OBJ" \
 //       --param target_dir="$PWD" \

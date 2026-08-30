@@ -29,16 +29,14 @@
 //   budget, continue to feedback; at or over budget, exit via 'abandoned'.
 //   feedback -> generate edge has loop_restart=true to reset iteration state
 //
-// Feedback contract (EXTENSIONS.md §29):
-//   generate declares feedback_from="feedback" — the engine collects the
-//   'feedback' node's output on every loop_restart and injects the accumulated
-//   critique history as $prior_critiques_generate into generate's prompt.
-//   The injection key is scoped to the target node (prior_critiques_<node_id>)
-//   to prevent leakage when multiple generators declare different critics.
-//   The engine guarantees delivery; the generator no longer needs to "remember
-//   to read .ai/feedback/".  The .ai/feedback/ file convention is preserved
-//   for backward compatibility (file-based feedback still works alongside the
-//   engine channel).
+// Feedback contract (file-mediated; EXTENSIONS.md §29 — `feedback_from=` is
+// REMOVED as of engine 0.3.0, see dot-runner MIGRATION.md #3):
+//   'feedback' writes its refinement guidance to .ai/feedback/critique-$iteration.md
+//   every loop_restart (one file per iteration, never overwritten), and 'generate'
+//   reads every .ai/feedback/*.md file, most recent iteration first, before
+//   attempting. There is no engine-injected variable and no accumulation
+//   channel to configure — the .ai/feedback/ directory IS the critique
+//   history, and the generator is responsible for reading it.
 
 digraph convergence_factory {
     graph [goal="Generate, validate, and refine an artifact until it converges"]
@@ -47,16 +45,14 @@ digraph convergence_factory {
     start [shape=Mdiamond, label="Factory Start"]
 
     // generate: produces or refines the artifact.
-    // feedback_from="feedback" is the engine contract (EXTENSIONS.md §29):
-    // the engine collects the 'feedback' node's output each iteration and
-    // injects the accumulated critique history as $prior_critiques_generate here.
-    // The injection key is scoped to this node: prior_critiques_<node_id>.
-    // The generator no longer needs to "remember to read .ai/feedback/" —
-    // the engine guarantees the critique reaches the next iteration.
+    // FILE-MEDIATED FEEDBACK (0.3.0 migration -- feedback_from= REMOVED,
+    // see dot-runner MIGRATION.md #3): 'feedback' writes one file per
+    // iteration to .ai/feedback/critique-$iteration.md; this prompt reads
+    // every .ai/feedback/*.md file itself, most recent first, before
+    // attempting -- there is no engine-injected variable.
     generate [
         label="Generate Artifact",
-        feedback_from="feedback",
-        prompt="You are generating or refining an artifact.\n\nThis is attempt $iteration.\n\nArtifact goal: $artifact_goal\n\nArtifact path: $artifact_path\n\nPrior critique history (engine-accumulated, most recent last — use this to descend, not re-flip):\n$prior_critiques_generate\n\nGenerate or update the artifact now, writing it to $artifact_path."
+        prompt="You are generating or refining an artifact.\n\nThis is attempt $iteration.\n\nArtifact goal: $artifact_goal\n\nArtifact path: $artifact_path\n\nBefore attempting, read all .ai/feedback/*.md files if any exist (most recent iteration first, by filename suffix) -- each is one earlier round's refinement guidance, written by the feedback step. Use this history to descend, not re-flip.\n\nGenerate or update the artifact now, writing it to $artifact_path."
     ]
 
     // validate: runs mechanical validation (syntax check, parse check, tests).
@@ -108,16 +104,17 @@ digraph convergence_factory {
     ]
 
     // feedback: reached when the refine cycle is still under budget.
-    // Writes targeted refinement guidance — the engine collects this output
-    // (via generate's feedback_from="feedback") and injects it as
-    // $prior_critiques_generate into the next iteration's generate prompt.
-    // Write one highest-leverage observation per iteration (Pyramid Summary
-    // pattern) — the engine's curation window (MAX_CRITIQUES=5) keeps the
-    // channel bounded; write concisely so each entry stays within
-    // MAX_CRITIQUE_CHARS=500 chars.
+    // Writes targeted refinement guidance directly to
+    // .ai/feedback/critique-$iteration.md -- one file per iteration, never
+    // overwritten -- the FILE-MEDIATED replacement for the removed
+    // feedback_from= engine channel (0.3.0 migration; see dot-runner
+    // MIGRATION.md #3). Write one highest-leverage observation per
+    // iteration (Pyramid Summary pattern); write concisely (target <400
+    // chars per file) since generate reads every file in the directory.
     feedback [
         label="Write Feedback",
-        prompt="You are writing targeted refinement guidance for the next iteration.\n\nThis is refinement iteration $iteration.\n\nArtifact goal: $artifact_goal\n\nValidation criteria: $validation_criteria\n\nRead the current assessment from .ai/assessment.md if it exists. If it does not exist, mechanical validation itself failed before assess ran -- read .ai/validation_output.txt instead.\nWrite ONE highest-leverage observation using the Pyramid Summary pattern:\n  1. Key finding (1 sentence) — what is the single most important issue\n  2. What to change (2-3 bullet points) — specific, actionable improvements\n  3. Why it matters (1 sentence) — how this moves toward the goal\n\nBe precise and concise (target <400 chars). The engine will accumulate your\noutput across iterations and inject it as $prior_critiques_generate into the\ngenerator's prompt. Focus on the delta needed to converge — not a summary of\neverything seen so far."
+        prompt="You are writing targeted refinement guidance for the next iteration.\n\nThis is refinement iteration $iteration.\n\nArtifact goal: $artifact_goal\n\nValidation criteria: $validation_criteria\n\nRead the current assessment from .ai/assessment.md if it exists. If it does not exist, mechanical validation itself failed before assess ran -- read .ai/validation_output.txt instead.\nWrite ONE highest-leverage observation using the Pyramid Summary pattern:\n  1. Key finding (1 sentence) — what is the single most important issue\n  2. What to change (2-3 bullet points) — specific, actionable improvements\n  3. Why it matters (1 sentence) — how this moves toward the goal\n\nBe precise and concise (target <400 chars). Write this observation to .ai/feedback/critique-$iteration.md, creating the .ai/feedback/ directory if needed -- do not overwrite any other iteration's file. Focus on the delta needed to converge — not a summary of everything seen so far.",
+        tool_command_pre="mkdir -p .ai/feedback"
     ]
 
     // Exit point — the pipeline's single exit node (lint's terminal_node rule
@@ -155,7 +152,9 @@ digraph convergence_factory {
     budget_check -> done     [label="budget exhausted -- abandon", condition="outcome=fail"]
 
     // Loop back: loop_restart resets iteration state and re-runs from generate.
-    // The engine collects feedback's output here (Extension §29) before clearing
-    // node_outcomes, so the critique is guaranteed to reach the next iteration.
+    // feedback has already written .ai/feedback/critique-$iteration.md (its
+    // own prompt contract, above) before this restart -- the file-mediated
+    // replacement for the removed feedback_from= engine channel. generate's
+    // prompt reads every .ai/feedback/*.md file, most recent first.
     feedback -> generate [loop_restart="true"]
 }

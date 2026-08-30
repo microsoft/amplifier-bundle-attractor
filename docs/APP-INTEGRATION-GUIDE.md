@@ -8,7 +8,7 @@ There are two execution paths for running Attractor pipelines programmatically:
 
 | Path | Backend / Worker | Tools? | Best For |
 |------|---------|--------|----------|
-| **A: Direct LLM** | `AmplifierBackend` (`direct` worker) | Whatever you mount -- none in this guide's example | Analysis, reasoning, planning; also tool work, if you mount the tools yourself |
+| **A: Direct LLM** | `AmplifierBackend` (`llm-direct` worker) | Whatever you mount -- none in this guide's example | Analysis, reasoning, planning; also tool work, if you mount the tools yourself |
 | **B: Amplifier Session** | `AmplifierBackend` (`spawn` worker via `session.spawn`) | Yes -- the bundle's toolset | Coding pipelines -- file edits, shell commands, full agent loop |
 
 Both paths use the same DOT graph format and pipeline engine. The difference is
@@ -19,12 +19,12 @@ backend; Path B spawns a full Amplifier child session with the bundle's tools.
 See [examples/programmatic_usage.py](../examples/programmatic_usage.py) for a
 complete, runnable example covering both paths.
 
-## Path A: AmplifierBackend's `direct` worker (No Session)
+## Path A: AmplifierBackend's `llm-direct` worker (No Session)
 
 Best for analysis and reasoning pipelines where nodes only generate text. No
 Amplifier session. The example below mounts *no tools*, so its nodes do no file
 operations -- but that is a property of the example, not of the backend:
-`AmplifierBackend`'s `direct` worker accepts a `tools` mapping and hands every
+`AmplifierBackend`'s `llm-direct` worker accepts a `tools` mapping and hands every
 tool in it to the provider (see [Limitations](#limitations) below).
 
 ### Complete Working Example
@@ -69,14 +69,14 @@ async def main():
     # 4. Create backend -- unified_llm.Client.from_env() reads ANTHROPIC_API_KEY /
     #    OPENAI_API_KEY / GEMINI_API_KEY (GOOGLE_API_KEY as a Gemini alias) and
     #    raises unified_llm.ConfigurationError if none is set. No coordinator ->
-    #    the worker registry's `direct` worker handles every node
+    #    the worker registry's `llm-direct` worker handles every node
     #    (EXTENSIONS.md Sec40). `provider=` and `unified_client=` both take the
     #    SAME client: `provider` is only a truthiness flag that enables the
-    #    `direct` worker's dispatch branch; `unified_client` is what actually
+    #    `llm-direct` worker's dispatch branch; `unified_client` is what actually
     #    makes the calls (see amplifier-bundle-dot-runner's pipeline-runner
     #    `_bootstrap_direct_provider()` for the reference pattern this mirrors).
     client = unified_llm.Client.from_env()
-    backend = AmplifierBackend(provider=client, unified_client=client, default_worker="direct")
+    backend = AmplifierBackend(provider=client, unified_client=client, default_worker="llm-direct")
 
     # 5. Build and run the engine
     engine = PipelineEngine(
@@ -122,8 +122,8 @@ Plus at least one API key: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API
   mapping, so these nodes cannot read/write files or run shell commands. This
   is a property of the call, not of the backend: pass
   `AmplifierBackend(provider=client, unified_client=client, tools={...},
-  default_worker="direct")` and every tool in that mapping is handed to the
-  `direct` worker, which drives the call -> tool -> call rounds internally
+  default_worker="llm-direct")` and every tool in that mapping is handed to the
+  `llm-direct` worker, which drives the call -> tool -> call rounds internally
   (capped by the node's `max_agent_turns`).
 - No Amplifier child session -- no bundle toolset mounted for you, no agent
   profile, no per-node session state. Path B remains the answer for coding
@@ -311,14 +311,14 @@ varies is which registered **worker** it dispatches to per node
 
 1. If `session.spawn` capability is registered --> the **`spawn`** worker (full
    child sessions per node with tools)
-2. Else if a provider is available --> the **`direct`** worker (a per-node
+2. Else if a provider is available --> the **`llm-direct`** worker (a per-node
    agentic tool loop via `unified-llm-client`; whatever tools are mounted are
    passed through, so nodes are toolless only when the host mounts none -- as
    in the bare programmatic path above)
 3. Otherwise --> simulation mode (for testing)
 
 This means: if you forget to call `register_spawn_capability()`, the pipeline
-silently falls back to the `direct` worker. Nodes still run, and still use
+silently falls back to the `llm-direct` worker. Nodes still run, and still use
 whatever tools are mounted, but each node is a direct provider call rather than
 a full Amplifier child session -- no agent profile, no per-node session state.
 
@@ -506,7 +506,7 @@ When composing bundles for isolated execution, follow these rules:
 | Limitation | Impact | Workaround |
 |-----------|--------|------------|
 | `last_response` truncated to 200 chars | Nodes lose full prior output under `compact`/`truncate` fidelity | Use `fidelity="full"` for nodes needing complete prior context |
-| The `direct` worker's nodes only get the tools the host mounts | With none mounted (the bare Path A example) nodes cannot read/write files or run commands | Pass a `tools` mapping to the backend, or use Path B (AmplifierSession) for full coding pipelines |
+| The `llm-direct` worker's nodes only get the tools the host mounts | With none mounted (the bare Path A example) nodes cannot read/write files or run commands | Pass a `tools` mapping to the backend, or use Path B (AmplifierSession) for full coding pipelines |
 | Provider model in global settings overrides bundle | Unexpected model selection | Use project-level `.amplifier/settings.yaml` |
 | `PreparedBundle.spawn()` returns string | Requires JSON-in-string parsing for structured results | The engine handles this internally |
 | Box node whose final assistant message is only tool-calls returns empty | The engine sees an empty result and treats it as a silent failure / fallback | Nudge the node prompt so the final message is non-empty text (e.g. "After running tools, end with a one-line summary -- the final message must not be empty") |

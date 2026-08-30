@@ -15,7 +15,7 @@ From the **attractor repo root**:
 ```bash
 DOT="$PWD/examples/pipelines/10-full-attractor.dot"
 mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
-dot-runner run "$DOT" --worker loop-agent --cwd . --on-human-gate auto-approve
+dot-runner run "$DOT" --worker coding-agent --cwd . --on-human-gate auto-approve
 ```
 
 `--on-human-gate auto-approve` always takes the gate's first option so the run completes non-interactively; drop it and run interactively if you want the gate to actually branch.

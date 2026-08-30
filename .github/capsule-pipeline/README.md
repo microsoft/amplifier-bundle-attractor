@@ -129,7 +129,7 @@ mirrored by `capsule-specify.yml` for `capsule.dot`'s `critique` node) --
 both hard-declare `llm_provider="openai"` (a second model family,
 deliberately). As of the engine 0.2.0 currency sweep, the gap is closed by
 the engine itself: per-node `llm_provider` now resolves natively, so
-`--worker loop-agent` honors each node's declared provider directly and
+`--worker coding-agent` honors each node's declared provider directly and
 `attractor-pipeline-dual.yaml` was removed as dead weight. Both workflows'
 `OPENAI_API_KEY` preflight (issue #155 -- both `ANTHROPIC_API_KEY` and
 `OPENAI_API_KEY` exist as proven repo secrets) is unchanged: the dual-family

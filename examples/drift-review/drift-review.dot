@@ -22,7 +22,7 @@
 //   RD=/abs/path/to/examples/drift-review
 //   cd <the repository under review>
 //   dot-runner run "$RD/drift-review.dot" \
-//       --worker loop-agent \
+//       --worker coding-agent \
 //       --param goal="Layer-3 holistic drift review of this repository" \
 //       --param runner_dir="$RD" \
 //       --cwd .

@@ -3,7 +3,7 @@
 
 Two modes of operation:
 
-  Option A: AmplifierBackend's `direct` worker (no Amplifier session)
+  Option A: AmplifierBackend's `llm-direct` worker (no Amplifier session)
     - Just LLM calls via unified_llm. No tools.
     - Good for analysis, reasoning, and writing pipelines.
     - Requirements: pip install amplifier-module-loop-pipeline unified-llm-client
@@ -64,7 +64,7 @@ digraph {
 
 
 async def run_direct(dot_source: str) -> None:
-    """Run a pipeline using AmplifierBackend's `direct` worker.
+    """Run a pipeline using AmplifierBackend's `llm-direct` worker.
 
     This is the simplest integration. No Amplifier session, no tools.
     Each pipeline node makes a direct LLM call via unified_llm.
@@ -96,15 +96,15 @@ async def run_direct(dot_source: str) -> None:
         )
         return
 
-    # No coordinator -> the worker registry's `direct` worker handles every
+    # No coordinator -> the worker registry's `llm-direct` worker handles every
     # node (specs/EXTENSIONS.md Sec40 in amplifier-bundle-dot-runner).
     # `provider=` and `unified_client=` both take the SAME client: `provider`
-    # is only a truthiness flag that enables the `direct` worker's dispatch
+    # is only a truthiness flag that enables the `llm-direct` worker's dispatch
     # branch, `unified_client` is what actually makes the LLM calls (mirrors
     # amplifier-bundle-dot-runner's pipeline-runner
     # `_bootstrap_direct_provider()` reference pattern).
     backend = AmplifierBackend(
-        provider=client, unified_client=client, default_worker="direct"
+        provider=client, unified_client=client, default_worker="llm-direct"
     )
     engine = PipelineEngine(
         graph=graph,

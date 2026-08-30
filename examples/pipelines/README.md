@@ -79,7 +79,7 @@ attractor repo root**:
 ```bash
 DOT="$PWD/examples/pipelines/00-convergence-loop.dot"
 mkdir -p /tmp/attractor-demo && cd /tmp/attractor-demo
-dot-runner run "$DOT" --worker loop-agent --cwd .
+dot-runner run "$DOT" --worker coding-agent --cwd .
 ```
 
 The tutorials are self-contained (the goal is baked into the `.dot`), so no

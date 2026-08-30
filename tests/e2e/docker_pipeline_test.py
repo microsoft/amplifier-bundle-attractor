@@ -1,7 +1,7 @@
 """E2E test: run an attractor pipeline with output verified inside a Docker container.
 
 This test creates a real Docker container, runs a 2-node pipeline via
-AmplifierBackend's direct worker where the LLM generates a Python script, then
+AmplifierBackend's llm-direct worker where the LLM generates a Python script, then
 verifies the output exists ONLY in the container (not on the host).
 
 Prerequisites:
@@ -111,7 +111,7 @@ async def run_pipeline_in_docker() -> dict:
     validate_or_raise(graph)
 
     # Create backend -- unified_llm.Client.from_env() auto-creates the client
-    # from env; no coordinator means the `direct` worker handles every node
+    # from env; no coordinator means the `llm-direct` worker handles every node
     # (EXTENSIONS.md Sec40).
     client = unified_llm.Client.from_env()
     backend = AmplifierBackend(
@@ -119,7 +119,7 @@ async def run_pipeline_in_docker() -> dict:
         tools={},
         hooks=None,
         unified_client=client,
-        default_worker="direct",
+        default_worker="llm-direct",
     )
 
     # Create engine
@@ -138,7 +138,7 @@ async def run_pipeline_in_docker() -> dict:
     elapsed = time.time() - start_time
 
     # Get the implement node's response from status.json
-    # (AmplifierBackend's direct worker returns Outcome directly, so response.md is not written;
+    # (AmplifierBackend's llm-direct worker returns Outcome directly, so response.md is not written;
     #  the response text lives in status.json's "notes" field)
     import os
 

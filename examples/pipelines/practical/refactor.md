@@ -15,7 +15,7 @@ DOT="$PWD/examples/pipelines/practical/refactor.dot"
 cp -r examples/pipelines/practical/sample /tmp/attractor-refactor-demo
 cd /tmp/attractor-refactor-demo
 dot-runner run "$DOT" \
-    --worker loop-agent \
+    --worker coding-agent \
     --param goal="Refactor validate_user() in user_service.py: remove the deep nesting and the duplicated username/email validation blocks by extracting a helper. Preserve behavior exactly -- the existing tests must still pass." \
     --cwd .
 ```

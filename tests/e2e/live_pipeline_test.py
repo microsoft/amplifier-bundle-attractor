@@ -86,7 +86,7 @@ async def run_pipeline(name, dot_source):
     print(f"✓ Parsed {len(graph.nodes)} nodes, {len(graph.edges)} edges")
 
     # 2. Create backend -- unified_llm.Client.from_env() auto-creates the client
-    #    from env vars; no coordinator means the `direct` worker handles every
+    #    from env vars; no coordinator means the `llm-direct` worker handles every
     #    node (EXTENSIONS.md Sec40).
     client = unified_llm.Client.from_env()
     backend = AmplifierBackend(
@@ -94,7 +94,7 @@ async def run_pipeline(name, dot_source):
         tools={},
         hooks=None,
         unified_client=client,
-        default_worker="direct",
+        default_worker="llm-direct",
     )
 
     # 3. Build engine

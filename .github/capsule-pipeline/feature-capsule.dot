@@ -69,19 +69,7 @@
 // DEVIATION FROM VERBATIM -- READ BEFORE RE-SYNCING (this file differs from
 // its siblings, which are byte-identical below their headers):
 // the GRAPH BODY is byte-identical to the source -- sha256 of this file from
-// its `// FUSE PARAMETERIZED (ba9, lane-honesty wave): max_pipeline_duration is now
-// "$max_duration" -- a bare $-token, declarative-only (see dot_parser's
-// _resolve_graph_duration_attr). There is NO shell-style default here: every
-// invoker MUST pass --param max_duration=<value> or the engine refuses to
-// parse this graph at all (a loud parse-time ValueError naming the missing
-// param), never a silent fallback to the historical 12000s. This repo's own
-// workflow always passes one (workflow_dispatch input default "19800s" for the
-// specify lane; this graph's own historical default was 12000s -- see the
-// invoking workflow's own comment for its chosen default and the GitHub-hosted
-// 6h job-cap honesty note). Edited directly in this repo for ba9 (not sourced
-// from the private working repo this file is otherwise vendored from -- see
-// README.md's provenance section).
-digraph FeatureCapsulePipeline {` line to EOF ==
+// its `digraph FeatureCapsulePipeline {` line to EOF ==
 // 149f5a1cb910975f302c862ad4accbb6de4f6c9be7edb3a5bc8ad4a04b906fde == the
 // same range of runner/feature-capsule.dot at 7d0d6cd -- but THREE comment
 // lines in the source's OWN header (below this box, above `digraph`) were

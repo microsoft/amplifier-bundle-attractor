@@ -1,4 +1,4 @@
-"""Drift guard for docs/QUALITY_PROTOCOL.md and docs/VISION.md -- Q-300..Q-312.
+"""Drift guard for docs/OPERATIONS.md and docs/VISION.md -- Q-300..Q-312.
 
 # --- Relocated from modules/loop-pipeline/tests/test_quality_protocol_guard.py as part of the repo
 # split's Track A (root guard harness, DESIGN-repo-split.md §1.4/§5#2). This
@@ -7,13 +7,21 @@
 # from the repo-root `tests/` suite in CI instead of riding along inside the
 # loop-pipeline module's own test tree. ---
 
-Guards the quality protocol itself against its own external references going
-stale.  The doc is binding on contributors and on AI coding agents working
-here, and section 2's "Docs making factual claims" row demands a guard for
-exactly this class of page.  Until now it had none: section 5 named that gap
-out loud and set an adoption condition -- *"the first time one of those
-references is found stale, or the Layer-2 matrix lands (whichever comes
-first)"*.  The matrix landing is this guard's trigger.
+# --- RE-AIMED 2026-09-02 (converge alignment).  `docs/QUALITY_PROTOCOL.md`
+# was retired and redistributed: the protocol half was a local restatement of
+# the ratified converge PROTOCOL v2, and the repo-specific operating practice
+# moved to `docs/OPERATIONS.md`.  This module was NOT deleted -- every claim it
+# held still needs holding, and the claims resolve against the repo rather than
+# against any one page.  What changed: the page it reads is OPERATIONS.md;
+# Q-303 retired with a reason (see below); Q-307 was re-aimed from "two copies
+# agree" to "one home, matching a recorded constant"; Q-312 was re-aimed from a
+# Changelog entry to the incidents that Changelog entry recorded.  The module
+# filename is kept so the rename does not obscure the re-aim in `git log`. ---
+
+Guards this repo's operating practice against its own external references
+going stale.  The page is binding on contributors and on AI coding agents
+working here, and its section 2 "Docs making factual claims" row demands a
+guard for exactly this class of page.
 
 **What makes these assertions non-tautological.**  Every check reads a claim
 *from the doc* and resolves it against *the repository*.  A page-only
@@ -34,17 +42,22 @@ Claims guarded, and what each is resolved against:
          -> ``specs/canonical/attractor-spec-canonical.md`` exists, and the
             sha the doc records appears in ``SPEC_CONFORMANCE.md`` at the
             ``SYNC-1`` row the doc names as the pin's home
-  Q-303  the Changelog section the meta-protocol (section 8) requires
-         -> the section exists and carries at least one dated entry
-  Q-304  the captured vision the protocol now reads against
+  Q-303  RETIRED 2026-09-02.  It asserted that this page carried a dated
+         ``## Changelog``, enforcing the retired section 8's own amendment
+         rule.  Amendment recording is converge PROTOCOL v2's rule now, not
+         this page's, and the surviving page deliberately carries no second
+         amendment history.  The claim is not silently dropped: the vision's
+         Changelog -- the one this repo still keeps -- is pinned by Q-304b.
+  Q-304  the captured vision the practice reads against
          -> ``docs/VISION.md`` exists and carries its own dated Changelog
   Q-305  VISION.md states the decision matrix, and the repo-relative files
          it cites resolve -> every relative markdown link lands on a real file
-  Q-306  the protocol carries the decision-matrix section and names the
+  Q-306  the page carries the decision-matrix TOLLS section and names the
          ``vision-observation`` label the observation convention depends on
          -> both are present in the page
-  Q-307  the decision matrix's canonical articulation lives on two pages
-         -> the two copies are byte-identical once whitespace-normalized
+  Q-307  the decision matrix's canonical articulation has exactly ONE home
+         -> it appears in ``docs/VISION.md``, matches a constant recorded
+            here, and appears in no other markdown file in the repo
   Q-308  the pre-publication leak-defense section and its three layers
          -> the section heading is present and each layer's run-in heading
             is on the page, named
@@ -55,8 +68,8 @@ Claims guarded, and what each is resolved against:
          embodiment of its layers -> both files exist on disk
   Q-311  the PR checklist line that turns the leak-lens duty into a
          per-PR prompt -> ``.github/PULL_REQUEST_TEMPLATE.md`` carries it
-  Q-312  the meta-protocol's own rule applied to this amendment
-         -> a dated Changelog entry records the leak-defense section
+  Q-312  the two measured incidents the leak-defense section exists on
+         -> both dates are named on the page as its evidence
 
 Honest limits:
   - Q-300 extracts filenames by regex over backticked prose.  A guard file
@@ -67,17 +80,19 @@ Honest limits:
     records.  It does not re-fetch upstream or re-verify the vendored bytes;
     the matrix's SYNC row owns the byte-level sha256 pin.  This check owns
     the narrower claim that the doc and the ledger name the same commit.
-  - Q-303 asserts a dated entry exists, not that the newest entry describes
-    the newest amendment.  No mechanical check can know that; section 8's
-    review owns it.
+  - Q-304b asserts a dated entry exists, not that the newest entry describes
+    the newest amendment.  No mechanical check can know that; the converge
+    amendment protocol's own review owns it.
   - Q-304..Q-307 deliberately do **not** guard the vision's prose.  A vision
     is judgment, not a set of fact claims about code; a guard over its
     wording would pin taste rather than truth, and would fail exactly when
     someone improved it.  What they guard is its *structure* (it exists, it
     has an amendment history, it states its governing rule, its citations
     resolve) and the one thing that can silently rot -- the decision
-    matrix's articulation duplicated across two pages, where editing one
-    copy leaves the other stating a different rule under the same name.
+    matrix's articulation.  That risk changed shape on 2026-09-02 rather
+    than disappearing: with the second copy retired, the failure mode is no
+    longer "two copies disagree" but "the one copy was quietly edited" or
+    "a second home crept back in".  Q-307 now covers both.
   - The ``vision-observation`` label itself is repo-external state (GitHub),
     which these suites cannot and should not reach.  Q-306 asserts the doc
     *states the label name*, which is the part that can drift in-tree.
@@ -95,21 +110,25 @@ Honest limits:
     of the failure actually needs.  ``scrub_secrets.py`` is not a test
     file and is reachable only through Q-310.
   - Q-312 resolves against the page itself rather than against the repo,
-    which makes it the one structural check in this module in Q-303's
-    class rather than Q-300's.  It is worth keeping anyway: it enforces
-    section 8's own rule -- an amendment ships with its dated Changelog
-    entry -- on the amendment most likely to be copied into another repo
-    without its history.
+    which makes it a structural check rather than a code-movement one.  It
+    is kept because the leak-defense section is argued entirely from two
+    measured incidents: strip the dates and the section reads as policy
+    someone preferred, which is the exact argument its own retirement
+    condition forbids.  It previously pinned the Changelog entry that
+    recorded those incidents; with the Changelog retired it pins the
+    incidents themselves, which is the load-bearing half of what it held.
   - No identity value appears anywhere in this module, and none may be
     added.  The doctrine these checks guard is that a deny-list of
     identity terms publishes the terms it forbids; a guard over that
     doctrine that hardcoded one would be the same mistake, one level up.
-  - This module skips wholesale when ``docs/QUALITY_PROTOCOL.md`` is absent,
-    so the loop-pipeline suite still runs in a module-only/partial checkout.
+  - This module skips wholesale when ``docs/OPERATIONS.md`` is absent, so a
+    module-only/partial checkout still runs the rest of its suite.
 
-Reference: ``docs/QUALITY_PROTOCOL.md`` section 5 (Layers 0-2), section 8
-(the meta-protocol, which is where this guard's own adoption condition is
-recorded), and sections 3-4 (the decision matrix and the observation duty).
+Reference: ``docs/OPERATIONS.md`` section 5 (Layers 0-3), section 8
+(machinery hygiene, which is where this guard is named), and sections 3-4
+(the decision matrix's tolls and the observation duty).  The retired
+``docs/QUALITY_PROTOCOL.md`` carries the tombstone mapping every former
+section to its new home.
 """
 
 import re
@@ -136,7 +155,7 @@ def _find_bundle_root() -> Path | None:
 
 
 BUNDLE_ROOT = _find_bundle_root()
-DOC_REL = "docs/QUALITY_PROTOCOL.md"
+DOC_REL = "docs/OPERATIONS.md"
 VISION_REL = "docs/VISION.md"
 DOC_PATH = (BUNDLE_ROOT / DOC_REL) if BUNDLE_ROOT is not None else None
 TESTS_DIR_REL = "modules/loop-pipeline/tests"
@@ -144,9 +163,10 @@ TESTS_DIR_REL = "modules/loop-pipeline/tests"
 pytestmark = pytest.mark.skipif(
     DOC_PATH is None or not DOC_PATH.is_file(),
     reason=(
-        f"{DOC_REL} not present in this checkout -- the quality protocol ships "
-        "in the bundle repo, not in the loop-pipeline module distribution. "
-        "Nothing to guard here; the rest of the module suite is unaffected."
+        f"{DOC_REL} not present in this checkout -- the operating practice "
+        "ships in the bundle repo, not in the loop-pipeline module "
+        "distribution. Nothing to guard here; the rest of the module suite is "
+        "unaffected."
     ),
 )
 
@@ -349,31 +369,28 @@ def test_q302b_recorded_sha_matches_the_ledger_pin():
 
 
 # ---------------------------------------------------------------------------
-# Q-303: the Changelog the meta-protocol requires
+# Q-303: RETIRED 2026-09-02 -- the page's own Changelog
 # ---------------------------------------------------------------------------
+#
+# Q-303 asserted that this page carried a `## Changelog` with at least one
+# dated entry.  It was enforcing the retired `docs/QUALITY_PROTOCOL.md`
+# section 8's own rule on itself: "amendments are recorded in the Changelog,
+# dated, with the evidence named".
+#
+# That rule is now converge PROTOCOL v2's, not this page's.  The surviving
+# `docs/OPERATIONS.md` deliberately carries no Changelog: a second amendment
+# history is precisely the "one claim, N homes" duplication this whole
+# redistribution retired.  Re-aiming Q-303 at a section that is meant not to
+# exist would be the guard asserting something the page does not say -- the
+# failure mode this module's own docstring names as the thing to avoid.
+#
+# The claim is not silently dropped.  The amendment history this repo does
+# keep is the vision's, and it is still pinned: see Q-304b below.  The
+# retired page's own history (entries 1-8, 2026-08-15..2026-08-19) is in git.
+#
+# `_CHANGELOG_ENTRY_RE` is retained -- Q-304b uses it.
 
 _CHANGELOG_ENTRY_RE = re.compile(r"^###\s+(\d{4}-\d{2}-\d{2})\b", re.MULTILINE)
-
-
-def test_q303_changelog_exists_with_at_least_one_dated_entry():
-    """Section 8 requires amendments be recorded, dated, in a Changelog."""
-    doc = _doc()
-    assert re.search(r"^##\s+Changelog\s*$", doc, re.MULTILINE), (
-        f"{DOC_REL}: the `## Changelog` section is gone. Section 8 makes it "
-        "load-bearing -- 'Amendments are recorded in the Changelog at the bottom "
-        "of this file, dated, with the evidence named. The Changelog is the "
-        "amendment history; the sections above are only ever the current state.' "
-        "Without it the doc has no amendment history and the meta-protocol "
-        "cannot be satisfied."
-    )
-    changelog = doc.split("## Changelog", 1)[1]
-    entries = _CHANGELOG_ENTRY_RE.findall(changelog)
-    assert entries, (
-        f"{DOC_REL}: the Changelog section carries no dated `### YYYY-MM-DD` "
-        "entry. Section 8 requires every amendment to be recorded and dated; an "
-        "empty changelog means either the history was dropped or entries stopped "
-        "using the dated heading form this guard (and every reader) relies on."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -474,15 +491,26 @@ OBSERVATION_LABEL = "vision-observation"
 
 
 def test_q306_protocol_carries_the_decision_matrix_section():
-    """Section 3's heading, anchored on the title rather than its number."""
-    assert re.search(r"^##\s+\d+\.\s+The decision matrix\s*$", _doc(), re.MULTILINE), (
-        f"{DOC_REL}: no '## <n>. The decision matrix' section heading.\n"
+    """Section 3's heading, anchored on the title rather than its number.
+
+    Re-anchored 2026-09-02 on "The decision matrix's tolls".  The rename is
+    the point of the redistribution, not incidental to it: the *rule* now has
+    one home (``docs/VISION.md``) and this page prices it.  A section here
+    still titled "The decision matrix" would be the second home reasserting
+    itself under the old name.
+    """
+    assert re.search(
+        r"^##\s+\d+\.\s+The decision matrix's tolls\s*$", _doc(), re.MULTILINE
+    ), (
+        f"{DOC_REL}: no \"## <n>. The decision matrix's tolls\" section heading.\n"
         "  That section is where each matrix tier's toll is defined -- section 1's "
-        "review duties, section 2's evidence table and `docs/VISION.md` all defer "
-        "to it.\n"
+        "review duties and section 2's evidence table both defer to it, and "
+        "`docs/VISION.md` states the rule it prices.\n"
         "  The heading is matched by title, not by number, so renumbering the page "
-        "is fine; removing or renaming the section is not, and needs the "
-        "maintainer's word plus a Changelog entry."
+        "is fine; removing or renaming the section is not.\n"
+        "  If it was renamed back to plain 'The decision matrix', check first "
+        "that the rule's articulation has not come back with it -- Q-307 owns "
+        "that, and one home is the invariant."
     )
 
 
@@ -521,17 +549,68 @@ def test_q306c_vision_points_at_the_observation_convention():
 
 
 # ---------------------------------------------------------------------------
-# Q-307: the decision matrix reads identically on both pages
+# Q-307: the decision matrix has exactly ONE home, and it is unchanged
 # ---------------------------------------------------------------------------
+#
+# RE-AIMED 2026-09-02.  This check used to assert that the articulation read
+# byte-identically on `docs/QUALITY_PROTOCOL.md` and `docs/VISION.md` -- a
+# guard whose entire existence was owed to the text having two homes.  The
+# protocol page retired and the second copy went with it; `docs/VISION.md` is
+# now the single home.
+#
+# Deleting the guard with the duplication would have been wrong.  Removing a
+# copy removes the "two copies disagree" failure but leaves two others, and
+# they are the ones that actually rot a governing rule:
+#
+#   1. The one remaining copy is quietly edited.  Nothing else in the repo
+#      states the rule, so nothing else can contradict the edit -- the exact
+#      condition under which a silent change is invisible.  Pinning the text
+#      against a constant recorded HERE (not read from the page) is what
+#      keeps that loud.  This is deliberately the one place in this module
+#      where an assertion is anchored on authored prose rather than resolved
+#      against code: the rule IS prose, and it is a maintainer ruling, so
+#      "someone edited it without the owner" is a real and detectable event.
+#   2. A second home creeps back in.  A future page restates the paragraph
+#      "for convenience" and the original duplication is recreated under a
+#      new name.  The corpus scan below fails that on arrival rather than
+#      years later when the two have drifted.
+#
+# Changing the rule is still entirely allowed -- it is an amendment: the
+# owner's explicit word, the vision's Changelog, and this constant updated in
+# the same PR.  What the guard forbids is doing it silently.
 
-# The canonical articulation of the maintainer's 2026-08-15 decision-matrix
-# ruling.  It is authored prose, not a quotation -- the maintainer ruled the
-# same day that his raw words be replaced with an accurate representation of
-# what he was communicating (QUALITY_PROTOCOL.md Changelog entry 5,
-# VISION.md Changelog entry 2).  One paragraph, two homes; these anchors are
-# its first and last sentences.
+#: The canonical articulation of the maintainer's 2026-08-15 decision-matrix
+#: ruling, recorded verbatim (whitespace-normalized).  Authored prose, not a
+#: quotation -- the maintainer ruled the same day that his raw words be
+#: replaced with an accurate representation of what he was communicating
+#: (VISION.md Changelog entry 2).
+_MATRIX_TEXT = (
+    "Every change here is weighed against the `strongdm/attractor` nlspec -- "
+    "not code alone, but behavior, philosophy, decision-making, "
+    "design-thinking, process and documentation alike. Movement that brings "
+    "this project **more aligned** with the spec is the easy path: supported "
+    "by default, carrying the presumption of yes. Movement that would "
+    "**drift** us away from the spec is made genuinely hard and is readily "
+    "pushed back on -- permitted only on measured evidence, and only as a "
+    "loud, ledgered divergence. Movement into territory the spec **does not "
+    "address** meets real resistance, though less of it: the silence has to "
+    "be argued rather than assumed, and what ships there stays additive and "
+    "non-interfering. That gradient is the steering rule of this project."
+)
+
 _MATRIX_START = "Every change here is weighed against the `strongdm/attractor` nlspec"
 _MATRIX_END = "That gradient is the steering rule of this project."
+
+#: Where the single home is required to be.
+MATRIX_HOME_REL = VISION_REL
+
+#: Markdown trees excluded from the "exactly one home" scan, with reasons.
+#: `.github/capsule-pipeline/vendor/` is vendored third-party fixture
+#: material, not authored repo doctrine; `docs/QUALITY_PROTOCOL.md` is the
+#: tombstone of the retired second home and is allowed to *describe* the
+#: retirement without restating the rule (if it ever restates it, that IS a
+#: second home and this scan should fail).
+_MATRIX_SCAN_SKIP_PREFIXES = (".github/capsule-pipeline/vendor/",)
 
 
 def _flatten_quote(text: str) -> str:
@@ -552,10 +631,11 @@ def _extract_articulation(text: str, rel: str) -> str:
         f"{rel}: the decision matrix's canonical articulation (maintainer "
         f"ruling, 2026-08-15) is not stated here -- could not find "
         f"{_MATRIX_START!r}.\n"
-        "  Both pages carry the identical paragraph on purpose: the vision "
-        "states it as the governing rule, the protocol prices each tier of it. "
-        "A second, differently-worded statement of the same rule is exactly "
-        "the drift this check exists to catch."
+        "  This page is the rule's single home: it states the governing rule, "
+        "and `docs/OPERATIONS.md` section 3 prices each tier of it without "
+        "restating it. If the paragraph moved, move this guard's home with it "
+        "in the same PR -- do not let the rule become homeless, and do not "
+        "answer a move by adding a second copy."
     )
     end = flat.find(_MATRIX_END, start)
     assert end != -1, (
@@ -569,21 +649,58 @@ def _extract_articulation(text: str, rel: str) -> str:
     return flat[start : end + len(_MATRIX_END)]
 
 
-def test_q307_decision_matrix_reads_identically_on_both_pages():
-    """One rule, two homes -- they must not drift apart."""
-    from_protocol = _extract_articulation(_doc(), DOC_REL)
-    from_vision = _extract_articulation(_vision(), VISION_REL)
-    assert from_protocol == from_vision, (
-        "DECISION-MATRIX DRIFT: the decision matrix reads differently on the "
-        "two pages that state it.\n"
-        f"  {DOC_REL}:\n    {from_protocol}\n"
-        f"  {VISION_REL}:\n    {from_vision}\n"
-        "  This is the cost of stating one rule in two places, and the reason\n"
-        "  this check exists: editing one copy leaves the other stating a\n"
-        "  different rule under the same name.\n"
-        "  Fix the copy that drifted -- do not 'meet in the middle'. If the\n"
-        "  rule itself changed, that is an amendment: the maintainer's\n"
-        "  explicit word, both pages updated, both Changelogs entered."
+def test_q307_decision_matrix_is_unchanged_at_its_single_home():
+    """The one home states the rule, and states it as recorded."""
+    found = _extract_articulation(_vision(), MATRIX_HOME_REL)
+    assert found == _MATRIX_TEXT, (
+        "DECISION-MATRIX DRIFT: the canonical articulation in "
+        f"{MATRIX_HOME_REL} no longer matches the text recorded in this "
+        "guard.\n"
+        f"  on the page:\n    {found}\n"
+        f"  recorded here:\n    {_MATRIX_TEXT}\n"
+        "  This paragraph is a maintainer ruling (2026-08-15) and the governing\n"
+        "  rule of the project. It has exactly one home, which means nothing\n"
+        "  else in the repo can contradict an edit to it -- this constant is\n"
+        "  what makes a silent edit loud.\n"
+        "  Changing the rule is allowed, and is an amendment: the owner's\n"
+        "  explicit word, a dated entry in the vision's Changelog, and this\n"
+        "  constant updated in the same PR. Editing the page alone is not.\n"
+        "  (Whitespace and blockquote markers are normalized before comparing,\n"
+        "  so re-wrapping the paragraph is free; changing the words is not.)"
+    )
+
+
+def test_q307b_decision_matrix_has_no_second_home():
+    """No other markdown file in the repo restates the rule.
+
+    The retired duplication is not allowed to reappear under a new name.  A
+    second copy is not redundancy -- it is a rule that can drift from itself
+    while both copies keep the same title.
+    """
+    root = _root()
+    others = []
+    for path in sorted(root.rglob("*.md")):
+        rel = path.relative_to(root).as_posix()
+        if rel == MATRIX_HOME_REL or rel.startswith(_MATRIX_SCAN_SKIP_PREFIXES):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):  # pragma: no cover - unreadable file
+            continue
+        if _MATRIX_START in _flatten_quote(text):
+            others.append(rel)
+
+    assert not others, (
+        "DECISION-MATRIX SECOND HOME: the canonical articulation appears "
+        f"outside {MATRIX_HOME_REL}:\n"
+        + "".join(f"  - {o}\n" for o in others)
+        + "  One rule, one home. This exact duplication is what the retired\n"
+        "  `docs/QUALITY_PROTOCOL.md` section 3 cost: a guard existed whose\n"
+        "  only job was detecting drift that the second copy created.\n"
+        f"  Point the new page at {MATRIX_HOME_REL} rather than restating the\n"
+        "  rule. If a second home is genuinely wanted, that is a decision to\n"
+        "  make explicitly -- and this guard has to be redesigned with it,\n"
+        "  not quietly widened."
     )
 
 
@@ -641,7 +758,14 @@ PR_TEMPLATE_MARKERS = (
     "outsider brief",
 )
 
-LEAK_CHANGELOG_DATE = "2026-08-19"
+#: The two measured incidents the leak defense is argued from.  RE-AIMED
+#: 2026-09-02: this used to be a single Changelog date, pinning the entry that
+#: recorded them.  With the page's Changelog retired (see Q-303), the entry is
+#: gone but the incidents are not -- and the incidents were always the
+#: load-bearing half.  Section 7's own retirement condition turns on them:
+#: "the duty exists precisely because two defenses passed a real leak".
+#: Strip the dates and the section reads as a preference someone held.
+LEAK_INCIDENT_DATES = ("2026-08-11", "2026-08-19")
 
 
 def _flat_doc() -> str:
@@ -748,33 +872,33 @@ def test_q311_pr_template_carries_the_leak_review_line(marker: str):
     )
 
 
-def test_q312_leak_defense_amendment_is_recorded_in_the_changelog():
-    """Section 8's own rule, applied to the amendment that added section 7."""
+@pytest.mark.parametrize("date", LEAK_INCIDENT_DATES)
+def test_q312_leak_defense_names_the_incidents_it_is_argued_from(date: str):
+    """The evidence stays on the page, or the rule becomes a preference."""
     doc = _doc()
-    changelog = doc.split("## Changelog", 1)[1]
-    dated = [
-        line
-        for line in changelog.splitlines()
-        if line.startswith(f"### {LEAK_CHANGELOG_DATE}")
-    ]
-    assert dated, (
-        f"{DOC_REL}: the page carries the '{LEAK_SECTION_TITLE}' section but the\n"
-        f"  Changelog has no `### {LEAK_CHANGELOG_DATE}` entry recording it.\n"
-        "  Section 8 is explicit: amendments are recorded in the Changelog, dated,\n"
-        "  with the evidence named -- 'the Changelog is the amendment history; the\n"
-        "  sections above are only ever the current state'. A section with no entry\n"
-        "  is a rule whose justification cannot be audited, and this is the section\n"
-        "  most likely to be lifted into another repo without its history (section\n"
-        "  10 names it as portable).\n"
-        "  This check resolves against the page rather than the repo -- it is in\n"
-        "  Q-303's class, not Q-300's -- and it is kept because it enforces the\n"
-        "  meta-protocol's coupling, not because it can detect code movement."
+    assert re.search(
+        rf"^##\s+\d+\.\s+{re.escape(LEAK_SECTION_TITLE)}\s*$", doc, re.MULTILINE
+    ), (
+        f"{DOC_REL}: the '{LEAK_SECTION_TITLE}' section is missing entirely -- "
+        "see Q-308, which owns that claim."
     )
-    assert any("leak" in line.lower() for line in dated), (
-        f"{DOC_REL}: the `### {LEAK_CHANGELOG_DATE}` Changelog entry does not name\n"
-        "  the leak defense in its heading:\n"
-        + "".join(f"    {line}\n" for line in dated)
-        + "  The date alone does not tie the entry to the section it justifies. If\n"
-        "  a later amendment reused this date, add a heading that names the leak\n"
-        "  defense rather than re-pointing this guard at a different one."
+    assert date in doc, (
+        f"{DOC_REL}: the '{LEAK_SECTION_TITLE}' section no longer names the\n"
+        f"  {date} incident.\n"
+        "  This section is argued ENTIRELY from two measured leaks: a live\n"
+        "  provider key through public run artifacts (2026-08-11), and\n"
+        "  maintainer host-name literals through a new skill's shipped files\n"
+        "  (2026-08-19). The second is the one that shapes the design -- both a\n"
+        "  static deny-list guard and a grep-armed adversarial reviewer passed\n"
+        "  it, which is why Layer 2 derives identity instead of listing it, and\n"
+        "  why the leak-lens duty exists at all.\n"
+        "  The section's own retirement condition turns on those incidents in\n"
+        "  those words. Strip the dates and every rule below reads as a\n"
+        "  preference someone held rather than a cost someone paid -- and a\n"
+        "  preference is exactly what the retirement review is supposed to\n"
+        "  delete.\n"
+        "  This check resolves against the page rather than the repo. It is\n"
+        "  kept because here the evidence IS the argument.\n"
+        "  (Re-aimed 2026-09-02 from the Changelog entry that recorded these\n"
+        "  incidents, which retired with the page's Changelog -- see Q-303.)"
     )

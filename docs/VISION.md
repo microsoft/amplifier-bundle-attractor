@@ -73,6 +73,32 @@ direction" (`QUALITY_PROTOCOL.md`, Layer 2). What each tier owes before it merge
 
 ---
 
+## Governing contracts
+
+This page states the intent. What *binds* it -- the contracts a change is measured against, and the
+ledger that records where reality stands against them -- lives in two places, and neither of them is
+a second copy of the other.
+
+**The engine seam's contracts and ledger live in the engine repo.** `amplifier-bundle-dot-runner`
+owns the engine, its specs machinery, and its conformance ledger: the frozen per-seam contracts under
+its `contracts/external/`, and its clause-granular `ledger/rows.yaml`. This repo is the *opinionated
+layer* on top of that seam -- graphs, examples, guidance surfaces, skills, agents. It owns no engine
+seam, so it authors no engine contract. Where a claim here depends on engine behavior, the engine
+repo's contract is the normative source; this repo cites it rather than restating it.
+
+**This repo's quality machinery is the converge protocol itself, referenced and not duplicated.**
+Vision-first, contract-driven change; the DRAFT -> FROZEN lifecycle and its Freeze Bar; the CANDIDATE
+amendment protocol; the conformance ledger and its standing reconcile; the owner attention budget --
+those are the ratified converge PROTOCOL v2, and this repo is governed by it as written. What stays
+local is only what converge does not decide: this repo's own operating practice, which lives in
+[`OPERATIONS.md`](OPERATIONS.md).
+
+The rule that keeps this honest is the one that shaped this section: **one claim, one home.** A rule
+restated locally is a rule that can drift from the protocol it claims to be, silently, under the same
+name.
+
+---
+
 ## The layers we converge on
 
 A ladder, in the order the rungs rest on each other. Each is stated as the outcome it produces, not
@@ -215,6 +241,36 @@ The vision refines over time, so this page is held to the bar of the protocol th
 ## Changelog
 
 Amendments to this vision, newest first. Each entry names the evidence that justified it.
+
+### 2026-09-02 -- governing contracts named, and this page becomes the matrix's single home (entry 5)
+
+- **Added.** A **"Governing contracts"** section: the engine seam's contracts and ledger live in
+  `amplifier-bundle-dot-runner` (`contracts/external/`, `ledger/rows.yaml`), because this repo is the
+  opinionated layer and owns no engine seam; and this repo's quality machinery *is* the ratified
+  converge PROTOCOL v2, referenced rather than restated, with only local operating practice staying
+  local (`docs/OPERATIONS.md`).
+- **Changed.** This page is now the **single home** of the decision matrix's canonical articulation.
+  It previously lived here *and* in `docs/QUALITY_PROTOCOL.md` section 3, pinned byte-identical
+  across the two by `test_quality_protocol_guard.py`'s Q-307. The protocol page retired; the
+  articulation did not move and is not edited -- what changed is that there is no second copy for it
+  to drift from. Q-307 is re-aimed accordingly: it now pins this page's copy against a recorded
+  constant **and** asserts the text exists exactly once across the docs corpus, so a silent edit here
+  and a re-introduced second home both still fail loud.
+- **Evidence that justified it: a measured cost this repo was paying.** The two-home articulation is
+  the "one claim, N homes" failure the converge protocol names, and it had already cost a guard
+  (Q-307) whose entire job was to detect the drift the duplication made possible -- machinery that
+  exists only because the duplication exists. The governing-contracts gap is the same class,
+  measured differently: contributors read this page before work, and it did not say where the binding
+  contracts live, so a change touching engine behavior had no stated normative source to check
+  against and the repo's own quality rules read as locally-invented rather than as the ratified
+  protocol they are.
+- **Scope: documentation only.** No engine, handler, example or ledger *behavior* changed. The
+  decision matrix's articulation is byte-unchanged; the north star, the layers, the operating
+  principles, the human's role and what we resist are untouched. Pointers into the retired protocol
+  page were re-aimed at its surviving homes in the same PR.
+- **Retirement condition.** The governing-contracts section retires if this repo ever owns an engine
+  seam of its own -- at which point it would author contracts rather than cite them, and the section
+  would be describing a division that no longer holds.
 
 ### 2026-08-29 -- the ruling-batch postures captured as operating principles (entry 4)
 

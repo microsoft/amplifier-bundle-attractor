@@ -13,7 +13,7 @@ the evidence is not verification* (`docs/PIPELINE_DESIGN_PRINCIPLES.md` section
 
 ## What you are looking for
 
-`docs/QUALITY_PROTOCOL.md` section 5 defines five drift layers. Layers 0-2 are
+`docs/OPERATIONS.md` section 5 defines five drift layers. Layers 0-2 are
 **local**: a vendored spec pinned byte-for-byte, six guard tests pinning
 documented numbers to the code they came from, and an executable conformance
 matrix asserting every decided divergence. They are already running in CI, and

@@ -267,7 +267,7 @@ are the current state; these are the reasoning behind it.
 
 - **ATX-13 NEW — DECIDED — DIVERGE** — unknown node shape hard-fails at dispatch
   (`handlers/__init__.py:116-121`) where canonical §4.2's resolve() falls through to the default
-  codergen handler. First ruling made under the decision matrix (`docs/QUALITY_PROTOCOL.md` §3):
+  codergen handler. First ruling made under the decision matrix (`docs/VISION.md`, "Our relationship to the nlspec"; tolls in `docs/OPERATIONS.md` §3):
   drift tier, full toll paid — named safety property (no silent execution-class substitution),
   measured evidence (PR #19 / `aa44fca`: the spec-literal fallback silently ran `shape=diamond`
   conditional nodes as full LLM sessions when the shape was missing from the table; plus the

@@ -14,7 +14,7 @@ surfaces_under_test:
   - examples/drift-review/README.md
   - examples/drift-review/drift-review.dot
   - examples/drift-review/finding-contract.md
-  - docs/QUALITY_PROTOCOL.md
+  - docs/OPERATIONS.md
   - context/attractor-awareness.md
   - agents/attractor-expert.md
 

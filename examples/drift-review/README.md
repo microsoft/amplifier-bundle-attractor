@@ -1,7 +1,7 @@
 # Drift Review -- the Layer-3 executor
 
 The periodic holistic semantic review from
-[`docs/QUALITY_PROTOCOL.md` section 5](../../docs/QUALITY_PROTOCOL.md), built as
+[`docs/OPERATIONS.md` section 5](../../docs/OPERATIONS.md), built as
 an attractor. The repo reviews itself with its own engine.
 
 | | |
@@ -15,7 +15,7 @@ an attractor. The repo reviews itself with its own engine.
 
 ## What Layer 3 is
 
-`QUALITY_PROTOCOL.md` names five drift layers. Four of them are already
+`OPERATIONS.md` names five drift layers. Four of them are already
 mechanical, and all four are **local** -- each checks one claim, one file, one
 section:
 
@@ -198,7 +198,7 @@ is the design, not an omission:
   `docs/VISION.md` records attention as the budgeted resource. A machine that
   can spend it without a person in the loop will.
 
-Per `QUALITY_PROTOCOL.md` section 4, a verified finding that bears on the vision
+Per `OPERATIONS.md` section 4, a verified finding that bears on the vision
 becomes a **`vision-observation` issue** citing the passage it bears on -- one
 observation per issue. A declined finding gets a **recorded decline with the
 reason**: "a declined observation that says why is a smaller version of the same
@@ -256,9 +256,9 @@ Named rather than left for a reader to find:
 
 | Topic | Where to look |
 |---|---|
-| The five drift layers, and what each owns | [`docs/QUALITY_PROTOCOL.md` section 5](../../docs/QUALITY_PROTOCOL.md) |
-| When Layer 3 fires | [`docs/QUALITY_PROTOCOL.md` section 6](../../docs/QUALITY_PROTOCOL.md) |
-| The observation duty and its resolution paths | [`docs/QUALITY_PROTOCOL.md` section 4](../../docs/QUALITY_PROTOCOL.md) |
+| The five drift layers, and what each owns | [`docs/OPERATIONS.md` section 5](../../docs/OPERATIONS.md) |
+| When Layer 3 fires | [`docs/OPERATIONS.md` section 6](../../docs/OPERATIONS.md) |
+| The observation duty and its resolution paths | [`docs/OPERATIONS.md` section 4](../../docs/OPERATIONS.md) |
 | Gates outside workers, the three-question test | [`docs/PIPELINE_DESIGN_PRINCIPLES.md` section 0](../../docs/PIPELINE_DESIGN_PRINCIPLES.md) |
 | Gate idioms, the stale-label rule | [`examples/gates/README.md`](../gates/README.md) |
 | The same shape one layer up (objective -> lane -> evidence) | [`examples/objective/README.md`](../objective/README.md) |

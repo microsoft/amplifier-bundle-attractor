@@ -28,7 +28,7 @@ It also has the repo's own measured evidence behind it. `/attractorify` learned
 the hard way that prompt text alone does not deliver authoring discipline: its
 diagnosis rules only became reliable once they were backed by an **executed**
 form gate and an independent verifier. The same lesson is the whole subject of
-`docs/QUALITY_PROTOCOL.md` §1 — *"the test passes" is not "it works"* — and of
+`docs/OPERATIONS.md` §1 — *"the test passes" is not "it works"* — and of
 `examples/objective/check_child_contract.py`'s C9, where a rule that lived only
 in a composer's prompt was being ignored until something ran it.
 

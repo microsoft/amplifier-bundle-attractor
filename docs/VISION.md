@@ -3,8 +3,8 @@
 What this repo is for, captured once so any change can be checked against it. Short by design: this
 page is meant to be read before work, not archived after it.
 
-It carries the *intent*. The mechanics live next door -- [`QUALITY_PROTOCOL.md`](QUALITY_PROTOCOL.md)
-holds what each change owes, the decision matrix's per-tier tolls, and the observation convention;
+It carries the *intent*. The mechanics live next door -- [`OPERATIONS.md`](OPERATIONS.md) holds what
+each change owes, the decision matrix's per-tier tolls, and the observation convention;
 [`SPEC_CONFORMANCE.md`](../SPEC_CONFORMANCE.md) holds the ledger of every deliberate deviation.
 
 ---
@@ -68,8 +68,8 @@ safety, backed by measured evidence, and always loud.
 Its mechanical enforcement is the executable conformance matrix
 (`specs/conformance/attractor-matrix.yaml` and its runner), which asserts decided *divergences* as
 well as conformances -- because "drift is any movement not recorded in the ledger, in either
-direction" (`QUALITY_PROTOCOL.md`, Layer 2). What each tier owes before it merges is
-[`QUALITY_PROTOCOL.md` section 3](QUALITY_PROTOCOL.md).
+direction" (`OPERATIONS.md`, Layer 2). What each tier owes before it merges is
+[`OPERATIONS.md` section 3](OPERATIONS.md).
 
 ---
 
@@ -222,7 +222,7 @@ The vision refines over time, so this page is held to the bar of the protocol th
   converges toward, written as though already true. What exists today, what is in flight, and what
   comes next are status and sequencing: they live in the ledgers
   ([`SPEC_CONFORMANCE.md`](../SPEC_CONFORMANCE.md), [`specs/EXTENSIONS.md`](../specs/EXTENSIONS.md)),
-  in [`QUALITY_PROTOCOL.md`](QUALITY_PROTOCOL.md), and in the issue queue. A page that has to be
+  in [`OPERATIONS.md`](OPERATIONS.md), and in the issue queue. A page that has to be
   edited when a layer ships is a status report wearing a vision's name.
 - **Amendments require the maintainer's explicit word.** This is his vision, captured -- not a
   consensus document, and not an agent's inference.
@@ -233,7 +233,7 @@ The vision refines over time, so this page is held to the bar of the protocol th
 - **Observations against this vision are captured, not swallowed.** Anyone -- human or agent --
   who notices the repo drifting from this page, or this page drifting from what we actually believe,
   files it per the *"if you see something, do something"* convention in
-  [`QUALITY_PROTOCOL.md` section 4](QUALITY_PROTOCOL.md), without derailing the work that surfaced
+  [`OPERATIONS.md` section 4](OPERATIONS.md), without derailing the work that surfaced
   it.
 
 ---

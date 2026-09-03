@@ -12,15 +12,17 @@ Before designing changes, read [`PRINCIPLES.md`](PRINCIPLES.md) — upstream-spe
 
 ## Quality protocol
 
-[`docs/QUALITY_PROTOCOL.md`](docs/QUALITY_PROTOCOL.md) is binding for contributors and for agents working here. The arc every non-trivial change follows: **design** (with empirical probes where the engine's behavior is load-bearing) → **build** → **live proof** (real runs, real environments — "the test passes" is not "it works") → **independent adversarial review** (a fresh session that re-executes the evidence and tries to break it) → **the maintainer's explicit word**.
+The **protocol** governing change here is the ratified **converge PROTOCOL v2** — vision first, contracts frozen before work is derived from them, the amendment protocol, the conformance ledger, the owner attention budget. This repo follows it as written and does not restate it. Where the binding contracts live is stated once, in [`docs/VISION.md`](docs/VISION.md) under "Governing contracts".
+
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md) carries this repo's own **operating practice**, and is binding for contributors and for agents working here. The arc every non-trivial change follows: **design** (with empirical probes where the engine's behavior is load-bearing) → **build** → **live proof** (real runs, real environments — "the test passes" is not "it works") → **independent adversarial review** (a fresh session that re-executes the evidence and tries to break it) → **the maintainer's explicit word**.
 
 **No merge without the maintainer's explicit word.** The gate mechanics are unchanged — see "Merge discipline" below.
 
-That document also carries the per-change-class evidence table, the five-layer drift defense against the upstream nlspec, and the meta-protocol governing how those rules are themselves amended and retired.
+That document also carries the per-change-class evidence table, the four-layer drift defense against the upstream nlspec, the pre-publication leak defense, and the local machinery-hygiene rules — the retirement review, and the guards' own retirement conditions.
 
-**The decision matrix governs every change here** -- code, docs, examples, philosophy, design-thinking, process. Moving *toward* the strongdm/attractor nlspec is supported; moving *away* from it is really hard and readily pushed back on; going into territory the nlspec is silent about is relatively resisted. Each tier owes a different toll before merge: [`docs/QUALITY_PROTOCOL.md`](docs/QUALITY_PROTOCOL.md) section 3. State your change's tier in the PR -- an unstated tier defaults in practice to the cheapest one.
+**The decision matrix governs every change here** -- code, docs, examples, philosophy, design-thinking, process. Moving *toward* the strongdm/attractor nlspec is supported; moving *away* from it is really hard and readily pushed back on; going into territory the nlspec is silent about is relatively resisted. The rule is stated once, in [`docs/VISION.md`](docs/VISION.md) under "Our relationship to the nlspec"; each tier owes a different toll before merge, priced in [`docs/OPERATIONS.md`](docs/OPERATIONS.md) section 3. State your change's tier in the PR -- an unstated tier defaults in practice to the cheapest one.
 
-**If you see something, do something.** During *any* work here, including work unrelated to the task at hand, watch for observations against the captured vision in [`docs/VISION.md`](docs/VISION.md) and capture them without derailing what you are doing: a GitHub issue labeled `vision-observation` citing the passage it bears on, plus an `## Observations` heading in the PR body if one arises mid-PR. Observations are non-blocking; "none arose" is an honest answer. Convention: [`docs/QUALITY_PROTOCOL.md`](docs/QUALITY_PROTOCOL.md) section 4.
+**If you see something, do something.** During *any* work here, including work unrelated to the task at hand, watch for observations against the captured vision in [`docs/VISION.md`](docs/VISION.md) and capture them without derailing what you are doing: a GitHub issue labeled `vision-observation` citing the passage it bears on, plus an `## Observations` heading in the PR body if one arises mid-PR. Observations are non-blocking; "none arose" is an honest answer. Convention: [`docs/OPERATIONS.md`](docs/OPERATIONS.md) section 4.
 
 ## Key directories
 

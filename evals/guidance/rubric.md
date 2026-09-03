@@ -5,7 +5,7 @@ never saw the session it is grading.
 
 **Every criterion cites its anchor.** The anchor is a section of the vendored canonical nlspec
 (`specs/canonical/attractor-spec-canonical.md`) or a passage of [`docs/VISION.md`](../../docs/VISION.md) —
-the two normative sources this repo measures itself against (`docs/QUALITY_PROTOCOL.md` Layer 0, and
+the two normative sources this repo measures itself against (`docs/OPERATIONS.md` Layer 0, and
 section 5, Layer 3, whose scope reads "against the canonical spec **and** against the repo's stated
 vision"). A criterion with no anchor is this rubric asserting its author's taste, which is exactly
 what a guidance eval must not do: it would measure whether the bundle agrees with whoever last
@@ -300,7 +300,7 @@ rule, and it mirrors the engine's: ambiguity resolves against passing.
   summary budgets). Those are pinned by the Layer-1 guard tests
   (`modules/loop-pipeline/tests/test_explainer_doc_guard.py`, `test_doc_consistency.py`), which read
   the values from the code. Re-asserting them here would be a page-only check — the tautology
-  `docs/QUALITY_PROTOCOL.md` section 2 names in its "Docs making factual claims" row.
+  `docs/OPERATIONS.md` section 2 names in its "Docs making factual claims" row.
 
 This instrument measures **steering**: where the guidance surfaces send a user who arrives with a
 question or a want.

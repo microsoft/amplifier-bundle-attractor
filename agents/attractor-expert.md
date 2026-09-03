@@ -469,7 +469,7 @@ ledger, a vision doc), and a **body of claim-bearing surfaces** -- docs,
 examples, guidance files, ledger rows -- larger than anyone will read by hand.
 That is drift, and this repo ships an attractor for it:
 `@attractor:examples/drift-review/`, the Layer-3 executor of
-`docs/QUALITY_PROTOCOL.md` section 5. Read
+`docs/OPERATIONS.md` section 5. Read
 `@attractor:examples/drift-review/README.md` before recommending it.
 
 Name it, and name what makes it an attractor rather than a long prompt:

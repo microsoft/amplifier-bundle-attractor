@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Admit or reject the drift-review workers' findings -- the Layer-3 shape gate.
 
-``drift-review.dot`` is the executor for ``docs/QUALITY_PROTOCOL.md`` section 5,
+``drift-review.dot`` is the executor for ``docs/OPERATIONS.md`` section 5,
 Layer 3: the periodic holistic semantic review that reads the whole repo against
 the canonical spec and the stated vision. Layers 0-2 pin numbers and ledgered
 behavior; Layer 3 catches what only judgment sees -- a paragraph teaching retired
@@ -150,7 +150,7 @@ def resolve_in_tree(repo_root: Path, rel: str) -> tuple[Path | None, str | None,
     Every rule downstream that reasons about *which file* a citation names has
     to judge the file, and the raw citation string is not the file:
 
-      * ``specs/canonical/../../docs/QUALITY_PROTOCOL.md`` satisfies a
+      * ``specs/canonical/../../docs/OPERATIONS.md`` satisfies a
         ``startswith("specs/canonical/")`` test on its raw form while pointing
         clean out of the closed normative set.
       * ``specs/canonical/../../README.md`` is a different *string* from

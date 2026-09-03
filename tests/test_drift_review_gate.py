@@ -1,4 +1,4 @@
-"""Guards for the drift-review exemplar -- the QUALITY_PROTOCOL Layer-3 executor.
+"""Guards for the drift-review exemplar -- the OPERATIONS.md Layer-3 executor.
 
 `examples/drift-review/drift-review.dot` runs four LLM reviewers whose entire
 output is *judgement*, and then decides -- outside every one of their contexts --

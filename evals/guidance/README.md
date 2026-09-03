@@ -9,7 +9,7 @@ Eight scenarios drive real sessions against the bundle's guidance surfaces — i
 container the way a user installs it — and a grader that never saw those sessions scores them
 against criteria anchored in the canonical nlspec and [`docs/VISION.md`](../../docs/VISION.md).
 
-This is the instrument `docs/QUALITY_PROTOCOL.md` section 2 names in its **Guidance surfaces** row.
+This is the instrument `docs/OPERATIONS.md` section 2 names in its **Guidance surfaces** row.
 
 ---
 
@@ -78,7 +78,7 @@ doctrine says must be refused.
 
 ## When the protocol requires running it
 
-Per `docs/QUALITY_PROTOCOL.md` section 2, **Guidance surfaces** row — any change to:
+Per `docs/OPERATIONS.md` section 2, **Guidance surfaces** row — any change to:
 
 - `agents/` — including `agents/attractor-expert.md` and its context files
 - `skills/` — including `skills/attractorify/SKILL.md`
@@ -165,7 +165,7 @@ judged, not matched — carry the real weight.
 
 **4. Refresh on a schedule, and hold one back.** When the instrument has run several times
 without finding anything, that is a finding about the instrument, not a clean bill of health
-(`docs/QUALITY_PROTOCOL.md` section 8's retirement review: *"What has it caught since the last
+(`docs/OPERATIONS.md` section 8's retirement review: *"What has it caught since the last
 review? Nothing is a finding, not a pass."*). At that point **rewrite one scenario's prose from
 scratch** — same property, same criteria, entirely new persona, phrasing, and surface details —
 and re-run. A bundle that passes the old wording and fails the new one was fitted to the wording.
@@ -177,7 +177,7 @@ list is the stable thing here; the words are not, and must not be.
 
 ### The 2026-08-15 baseline (a)–(f)
 
-Stated plainly rather than implied, per `docs/QUALITY_PROTOCOL.md`'s scope note.
+Stated plainly rather than implied, per `docs/OPERATIONS.md`'s scope note.
 
 **All six scenarios have been exercised live.** On 2026-08-15, against `main` @ `ed5bdef`, every
 scenario ran the whole path for real — pinned mirror push, DTU launch, `bundle add` install from

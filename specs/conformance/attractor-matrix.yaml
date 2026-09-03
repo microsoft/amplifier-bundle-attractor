@@ -1,6 +1,6 @@
 # Spec Conformance Matrix -- attractor
 #
-# Layer 2 of the drift defense described in `docs/QUALITY_PROTOCOL.md` section 5.
+# Layer 2 of the drift defense described in `docs/OPERATIONS.md` section 5.
 #
 # This file is a DOCUMENT first and a data file second. Read it next to
 # `specs/EXTENSIONS.md` and `SPEC_CONFORMANCE.md`: it is the executable join
@@ -445,7 +445,7 @@ rows:
   # canonical spec with no ledger entry licensing them, pinned to actual
   # behavior so the decision would be deliberate rather than accidental.
   # The decision landed (issue #234, 2026-08-16): both are decided
-  # divergences under the QUALITY_PROTOCOL.md section 3 drift tier, ledgered
+  # divergences under the OPERATIONS.md section 3 drift tier, ledgered
   # as SPEC_CONFORMANCE.md ATX-13/ATX-14 + EXTENSIONS.md sections 38/39.
   # IDs stay stable per the schema note above; only dispositions moved.
   # ==========================================================================

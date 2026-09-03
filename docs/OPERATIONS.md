@@ -126,7 +126,9 @@ restated here word-for-word, and the cost of that duplication was a guard whose 
 detect the drift the second copy made possible; the copy retired, the guard was re-aimed to pin the
 single home.
 
-This section prices it: what each tier owes before it merges.
+The gradient reaches past the conformance-bearing code the ledger tracks: examples, guidance surfaces
+and process changes are classified by it too. This section prices it: what each tier owes before it
+merges.
 
 | Tier | Direction relative to the nlspec | Posture | Toll |
 |---|---|---|---|

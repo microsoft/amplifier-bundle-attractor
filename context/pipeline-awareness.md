@@ -79,7 +79,7 @@ ledger, a vision doc; and (2) a **body of claim-bearing surfaces** -- docs,
 examples, guidance files, ledger rows -- that may or may not still match it,
 across more of them than anyone will read by hand. That is drift, and this
 bundle ships an attractor for it: **`@attractor:examples/drift-review/`** (the
-Layer-3 executor from `docs/QUALITY_PROTOCOL.md` section 5).
+Layer-3 executor from `docs/OPERATIONS.md` section 5).
 
 Name it, and name what makes it an attractor rather than a long prompt:
 

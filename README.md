@@ -35,7 +35,7 @@ cited as prior-art inspiration where useful.
 | [App Integration Guide](docs/APP-INTEGRATION-GUIDE.md) | Using pipelines from Python applications (DirectProvider vs AmplifierSession) |
 | [Pipeline Design Principles](docs/PIPELINE_DESIGN_PRINCIPLES.md) | Eight framework-agnostic design principles, opening with **the control-plane vs recipe-plane line** -- the three-question test for whether the work wants a pipeline at all -- then tier discipline, validation patterns, loop convergence, LLM output protocols, parameterization, verdict-bearing nodes, and delta-assertion / shared-checkout discipline |
 | [Issue Pipeline](docs/ISSUE_PIPELINE.md) | What happens after a maintainer labels an issue `ready:spec` (defects) or `ready:feature-spec` (features) -- the autonomous specify/implement pipelines, their human review gates, what makes a good defect report, and how a maintainer supplies binding acceptance criteria for a feature |
-| [Quality Protocol](docs/QUALITY_PROTOCOL.md) | How work gets proven here -- the design -> build -> live-proof -> adversarial-review -> maintainer's-word arc, the evidence each class of change owes before merge, the five-layer drift defense against the upstream nlspec, and the meta-protocol for amending and retiring all of it |
+| [Operating Practice](docs/OPERATIONS.md) | How work gets proven here -- the design -> build -> live-proof -> adversarial-review arc, the evidence each class of change owes before merge, the four-layer drift defense against the upstream nlspec, and the pre-publication leak defense. The *protocol* above it is the ratified converge PROTOCOL v2, referenced rather than restated; [`docs/QUALITY_PROTOCOL.md`](docs/QUALITY_PROTOCOL.md) is the tombstone of the page this replaced |
 | [Guidance Eval](evals/guidance/README.md) | The standing instrument behind the Quality Protocol's **Guidance surfaces** row -- six scenarios that install this bundle the way a user does, drive real sessions against `agents/`, `skills/`, `context/` and the teaching docs, and grade them blind against criteria anchored in the canonical spec and the vision |
 
 ## Quick Start
@@ -221,7 +221,7 @@ The goal lives in the DOT itself: `graph [goal="Add user avatar upload with S3 s
 | [Feature Build](examples/pipelines/practical/feature-build.md) | Parallel implementation + human gate |
 | [Refactoring](examples/pipelines/practical/refactor.md) | Snapshot-safe code improvement |
 | [Multi-Lens Review](examples/pipelines/practical/multi-lens-review.md) | 3 providers × 3 lenses |
-| [Drift Review](examples/drift-review/README.md) | `QUALITY_PROTOCOL.md` Layer 3: holistic semantic review of this repo against the canonical spec and `docs/VISION.md` |
+| [Drift Review](examples/drift-review/README.md) | `OPERATIONS.md` Layer 3: holistic semantic review of this repo against the canonical spec and `docs/VISION.md` |
 
 `Bug Fix`, `Test Generation`, and `Refactoring` ship a runnable sample, so they work with no setup. See [examples/pipelines/practical/](examples/pipelines/practical/) for the full set.
 

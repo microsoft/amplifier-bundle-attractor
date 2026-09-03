@@ -2417,7 +2417,7 @@ tiers, edge selection, the verdict contract, budgets. It is silent on how a host
 guidance into an interactive session, because that is not the artifact it governs; a
 spec-conformant engine is equally conformant whether its bundle serves 0 tokens of always-on
 guidance or 800. The silence is a scope boundary, not a prohibition, and this repo's
-`docs/QUALITY_PROTOCOL.md` §3 reaches this far on purpose: *"examples, guidance surfaces and
+`docs/OPERATIONS.md` §3 reaches this far on purpose: *"examples, guidance surfaces and
 process changes are classified by it too."* Hence this entry, filed under the Uncharted /
 extension tier.
 

@@ -60,7 +60,12 @@ tools:
   - module: tool-search
     source: git+https://github.com/microsoft/amplifier-module-tool-search@main
   - module: tool-pipeline-run
-    source: ../modules/tool-pipeline-run
+    # EXTERNAL module since attractor-24e stage 3: the copy that used to sit at
+    # ../modules/tool-pipeline-run was deleted with the rest of the compat
+    # window, and dot-runner is its sole home. The no-self-pin rule in
+    # behaviors/attractor-core.yaml governs SAME-repo modules only; a
+    # `git+...@main` source is correct for an external one.
+    source: git+https://github.com/microsoft/amplifier-bundle-dot-runner@main#subdirectory=modules/tool-pipeline-run
     config:
       # This bundle names ITSELF here. The module's own defaults are
       # namespace-neutral by design (attractor-24e stage 1) -- it knows

@@ -22,50 +22,31 @@ jobs:
     # `uv sync` sufficient standalone). Modules are NOT run in one shared
     # pytest process: doing so produces `--import-mode` collisions and
     # cross-module state pollution, and bypasses each module's own
-    # `addopts` (e.g. unified-llm-client's `-m 'not integration'` marker
-    # filter, which is what keeps API-key-requiring tests out of CI).
+    # `addopts`.
+    #
+    # THE MATRIX IS DOWN TO ONE CELL, and that is the point of the P4 slim
+    # (attractor-28x): twelve compat-window module copies were deleted and
+    # their sole home is now `amplifier-bundle-dot-runner`, whose own CI
+    # matrix runs their suites. `tool-report-outcome` is the one module this
+    # repo still owns — dot-runner deliberately does not carry a
+    # report_outcome tool (its bundle.md records the WAVE 5 repair), and
+    # `behaviors/attractor-core.yaml` mounts this one by relative source.
+    # Keep the matrix shape rather than collapsing it to a plain job: the
+    # shape is what makes re-adding or removing a module a one-line change
+    # that never touches branch protection (see `ci-gate` below).
     name: Unit Tests (${{ matrix.module.name }}, py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
-      # A red matrix cell must never mask the other cells — one module
-      # breaking should never hide a failure in the other twelve.
+      # A red matrix cell must never mask the other cells.
       fail-fast: false
       matrix:
         # Floor (3.11, the repo-wide `requires-python` minimum) and
         # ceiling (3.13, latest stable) only. 3.12 is bracketed by both
-        # and is skipped deliberately — 13 modules x 3 Python versions is
-        # not worth the extra runner time for the marginal coverage it
-        # would add; this is a considered trade-off, not an oversight.
+        # and is skipped deliberately — this is a considered trade-off,
+        # not an oversight.
         python-version: ["3.11", "3.13"]
         module:
-          - name: hooks-pipeline-observability
-            extra_args: ""
-          - name: hooks-pipeline-progress
-            extra_args: ""
-          - name: hooks-tool-truncation
-            extra_args: ""
-          - name: loop-agent
-            extra_args: ""
-          - name: loop-pipeline
-            # tests/test_remote_dot.py imports amplifier_module_remote_source,
-            # which is only wired in as the optional `remote` extra. Without
-            # it, pytest collection fails before any test runs.
-            extra_args: "--extra remote"
-          - name: pipeline-runner
-            extra_args: ""
-          - name: remote-source
-            extra_args: ""
-          - name: tool-apply-patch
-            extra_args: ""
-          - name: tool-dashboard-query
-            extra_args: ""
-          - name: tool-pipeline-run
-            extra_args: ""
-          - name: tool-pipeline-status
-            extra_args: ""
           - name: tool-report-outcome
-            extra_args: ""
-          - name: unified-llm-client
             extra_args: ""
     steps:
       - uses: actions/checkout@v4
@@ -84,36 +65,6 @@ jobs:
       - name: Run tests
         working-directory: modules/${{ matrix.module.name }}
         run: uv run pytest -q
-
-  live-graph-gate:
-    # Separate, distinctly-named job so a failure here reads as "the
-    # live-graph gate broke" rather than a generic unit-test failure. See
-    # AGENTS.md's "Verification gradient" — this job is the automated
-    # baseline instance of the live pipeline run that section requires for
-    # any engine.py / handler change. It runs
-    # modules/loop-pipeline/tests/test_live_graph_gate.py specifically
-    # (in addition to that file also running as part of the loop-pipeline
-    # cell of the unit-tests matrix above — belt and suspenders, not
-    # duplication of intent).
-    name: Live-Graph Gate (loop-pipeline engine + handler dispatch)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Install loop-pipeline
-        working-directory: modules/loop-pipeline
-        run: uv sync
-
-      - name: Run live-graph smoke test
-        working-directory: modules/loop-pipeline
-        run: uv run pytest tests/test_live_graph_gate.py -v
 
   dot-render-gate:
     # Tier 3 of docs/designs/2026-08-23-dot-render-compliance.md: every
@@ -134,11 +85,17 @@ jobs:
     # touches a community author.
     #
     # This job installs graphviz, so the render check ALWAYS actually runs
-    # here. The in-repo pytest twin
-    # (modules/loop-pipeline/tests/test_dot_render_compliance.py::
-    # test_shipped_dot_renders) skips with an explicit reason when `dot` is
-    # absent -- that skip is a local-developer affordance and is NOT the CI
-    # behaviour. A missing `dot` in this job is a hard failure, not a skip.
+    # here, and a missing `dot` is a hard failure, not a skip.
+    #
+    # It used to have an in-repo pytest twin
+    # (`modules/loop-pipeline/tests/test_dot_render_compliance.py::
+    # test_shipped_dot_renders`), which skipped with an explicit reason when
+    # `dot` was absent -- a local-developer affordance, never the CI
+    # behaviour. That twin left with loop-pipeline in the P4 slim
+    # (attractor-28x), so THIS JOB IS NOW THE ONLY RENDER CHECK on this
+    # repo's corpus. The exclusion list below is therefore self-contained;
+    # it no longer has to stay in sync with a `_SWEEP_EXCLUDED_PREFIXES`
+    # constant somewhere else.
     name: DOT Render Gate (every tracked .dot renders)
     runs-on: ubuntu-latest
     steps:
@@ -154,10 +111,9 @@ jobs:
         run: |
           set -uo pipefail
 
-          # Exclusions must stay identical to _SWEEP_EXCLUDED_PREFIXES in
-          # modules/loop-pipeline/tests/test_dot_render_compliance.py.
           # These hold runtime scratch and captured artifacts, not authored
-          # corpus.
+          # corpus. This list is authoritative -- see the note above about
+          # the retired pytest twin it used to mirror.
           failed=0
           checked=0
           while IFS= read -r f; do
@@ -200,8 +156,13 @@ jobs:
     # split), those guards would leave with it and silently stop running,
     # with CI staying green. This job is what makes the guards survive that
     # move: they were relocated to repo-root `tests/` (Track A of the split)
-    # BEFORE anything is extracted, and run here independently of every
+    # BEFORE anything was extracted, and run here independently of every
     # module.
+    #
+    # THE MOVE HAS NOW HAPPENED (the P4 slim, attractor-28x), and Track A
+    # did its job: loop-pipeline is gone from this repo and this job still
+    # runs the same guard corpus, green, having installed nothing but
+    # pytest. That is the design working, not a coincidence.
     #
     # Deliberately independent of every module/, by construction: every
     # moved guard was refactored (where needed) to assert FILE CONTENT --
@@ -210,7 +171,8 @@ jobs:
     # A handful of guards that genuinely could not be decoupled from the
     # live engine parser/linter (e.g. the examples/ lint-clean sweep, the
     # shipped-graph structural contract checks) deliberately stayed behind
-    # in modules/loop-pipeline/tests/ -- see each split file's docstring.
+    # in modules/loop-pipeline/tests/ -- see each split file's docstring --
+    # and therefore now run in `amplifier-bundle-dot-runner`'s CI, not here.
     name: Opinionated Guards (repo root)
     runs-on: ubuntu-latest
     steps:
@@ -233,57 +195,21 @@ jobs:
         # an oversight.
         run: python -m pytest tests/ -q --ignore=tests/e2e
 
-  type-check:
-    # Static type checking. This replaces a former pytest case
-    # (tests/unit/test_pyright_clean.py) that shelled out to pyright with a
-    # hardcoded absolute path to an unrelated checkout on one developer's
-    # machine, and that was gated on `skipif(shutil.which("pyright") is None)`
-    # — so on any machine without pyright installed (every CI runner) it
-    # silently skipped. It looked like coverage and was not.
-    #
-    # As a job, a missing tool is a hard failure rather than a silent skip,
-    # which is the whole point of moving it here.
-    #
-    # SCOPE — deliberately narrow, and this is a considered decision:
-    # only `unified-llm-client` is checked, because that is the only module
-    # the deleted test ever claimed to cover, and it is verified clean
-    # (0 errors, 0 warnings). Three other modules currently have pre-existing
-    # findings (loop-agent 10, loop-pipeline 9, hooks-pipeline-observability 1)
-    # and would land this job red on arrival. Widening the scope is real work
-    # tracked separately — do NOT add modules here until their findings are
-    # actually cleared, or this gate becomes a red check people learn to ignore.
-    name: Type Check (unified-llm-client)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Install unified-llm-client
-        working-directory: modules/unified-llm-client
-        run: uv sync
-
-      - name: Run pyright
-        working-directory: modules/unified-llm-client
-        run: uv run --with pyright pyright unified_llm/
-
   ci-gate:
-    # Aggregate "all-green" summary gate. Today CI produces 28 individual
-    # check contexts (13 modules x 2 python versions for unit-tests, plus
-    # live-graph-gate, plus type-check) -- and every one of those is purely
-    # advisory: branch protection has zero required status checks, so a
-    # fully red CI does not block a merge.
+    # Aggregate "all-green" summary gate. CI produces one check context per
+    # job (and per unit-tests matrix cell) -- and every one of those is
+    # purely advisory: branch protection has zero required status checks,
+    # so a fully red CI does not block a merge.
     #
-    # The fix is NOT to require all 28 contexts by name in branch
-    # protection. That list is brittle: it changes shape every time a
-    # module is added, renamed, or dropped from the unit-tests matrix, and
-    # a renamed/removed context either silently stops being enforced or
-    # hangs every future PR waiting on a check that will never report.
+    # The fix is NOT to require every context by name in branch protection.
+    # That list is brittle: it changes shape every time a module is added,
+    # renamed, or dropped from the unit-tests matrix, and a renamed/removed
+    # context either silently stops being enforced or hangs every future PR
+    # waiting on a check that will never report. The P4 slim
+    # (attractor-28x) is the proof: it took the matrix from 13 modules to 1
+    # and retired two whole jobs (live-graph-gate, type-check, both of
+    # which tested modules that left for `amplifier-bundle-dot-runner`),
+    # and required no branch-protection change at all.
     #
     # Instead this job is the ONE stable check to require. It depends on
     # every other job in this workflow and fails if any of them failed,
@@ -292,8 +218,7 @@ jobs:
     # without the matrix's brittleness. Adding, renaming, or removing a
     # module in `unit-tests.strategy.matrix.module` never requires a
     # branch-protection change: this job's `needs:` list only ever
-    # references the three top-level job IDs (unit-tests, live-graph-gate,
-    # type-check), not individual matrix cells.
+    # references top-level job IDs, not individual matrix cells.
     #
     # `needs:` alone is not sufficient to get fail-closed semantics. By
     # default, if a job listed in `needs:` fails, GitHub Actions SKIPS any
@@ -309,7 +234,7 @@ jobs:
     # red, cancelled, or skipped:
     #   - unit-tests result is "failure"   -> any matrix cell failing fails
     #     the whole job group, which flips this to failure.
-    #   - live-graph-gate or type-check result is "failure" -> same.
+    #   - dot-render-gate or opinionated-guards result is "failure" -> same.
     #   - any of the three is "cancelled" (workflow run cancelled
     #     mid-flight) -> not "success" -> this job fails.
     #   - any of the three is "skipped" (e.g. a future workflow edit adds
@@ -320,10 +245,8 @@ jobs:
     if: always()
     needs:
       - unit-tests
-      - live-graph-gate
       - dot-render-gate
       - opinionated-guards
-      - type-check
     runs-on: ubuntu-latest
     steps:
       - name: Require every upstream job to have succeeded
@@ -332,10 +255,8 @@ jobs:
 
           declare -A results=(
             [unit-tests]="${{ needs.unit-tests.result }}"
-            [live-graph-gate]="${{ needs.live-graph-gate.result }}"
             [dot-render-gate]="${{ needs.dot-render-gate.result }}"
             [opinionated-guards]="${{ needs.opinionated-guards.result }}"
-            [type-check]="${{ needs.type-check.result }}"
           )
 
           overall_ok=true

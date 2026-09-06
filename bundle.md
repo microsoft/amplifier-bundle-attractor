@@ -177,18 +177,11 @@ attractor/
 │   └── attractor-profile-gemini.yaml
 ├── behaviors/
 │   └── attractor-core.yaml     # Core tools + hooks (provider-agnostic)
-├── modules/                    # Custom Amplifier modules
-│   ├── loop-pipeline/          # DOT graph-driven pipeline orchestrator
-│   ├── loop-agent/             # Agent loop orchestrator
-│   ├── tool-pipeline-run/      # Runtime pipeline invocation tool
-│   ├── tool-report-outcome/    # Pipeline outcome reporting tool
-│   ├── tool-apply-patch/       # Patch-based file editing (OpenAI)
-│   ├── hooks-tool-truncation/  # Tool output truncation hook
-│   ├── hooks-pipeline-progress/ # Pipeline progress reporting hook
-│   ├── hooks-pipeline-observability/ # Pipeline observability hooks
-│   ├── tool-dashboard-query/   # Pipeline status queries via HTTP API
-│   ├── tool-pipeline-status/   # Returns pipeline execution state
-│   └── unified-llm-client/     # Multi-provider LLM client library
+├── modules/                    # The ONE module this repo still owns
+│   └── tool-report-outcome/    # Pipeline outcome reporting tool
+│                               # (every other module now lives in
+│                               #  amplifier-bundle-dot-runner -- see
+│                               #  HISTORY-MAP.md)
 ├── context/                    # System prompts per provider
 │   ├── system-anthropic.md
 │   ├── system-openai.md

@@ -65,10 +65,13 @@ disposition in that ledger: honor the nlspec design where possible; 100% support
 `.dot` files built against the nlspec; extensions additive and non-interfering; divergences only for
 safety, backed by measured evidence, and always loud.
 
-Its mechanical enforcement is the executable conformance matrix
-(`specs/conformance/attractor-matrix.yaml` and its runner), which asserts decided *divergences* as
-well as conformances -- because "drift is any movement not recorded in the ledger, in either
-direction" (`OPERATIONS.md`, Layer 2). What each tier owes before it merges is
+Its mechanical enforcement is the executable conformance matrix, which asserts decided *divergences*
+as well as conformances -- because "drift is any movement not recorded in the ledger, in either
+direction" (`OPERATIONS.md`, Layer 2). Since the P4 slim that matrix EXECUTES in
+`amplifier-bundle-dot-runner` (`ledger/rows.yaml` + `ledger/checks/`, carrying the same `ATX-M-*`
+row ids); the reviewed matrix *document* this repo shipped as tranche 1 is frozen at
+`specs/conformance/attractor-matrix.yaml` and still cited by `SPEC_CONFORMANCE.md`
+(`specs/README-DISPOSITION.md` records why it stays). What each tier owes before it merges is
 [`OPERATIONS.md` section 3](OPERATIONS.md).
 
 ---
@@ -241,6 +244,28 @@ The vision refines over time, so this page is held to the bar of the protocol th
 ## Changelog
 
 Amendments to this vision, newest first. Each entry names the evidence that justified it.
+
+### 2026-09-06 -- the compat window closed; attractor is the pattern layer (entry 6)
+
+- **Changed.** The twelve compat-window module copies under `modules/` were deleted (`attractor-28x`,
+  the P4 slim of `DESIGN-worker-registry-core-split.md`; plus `attractor-24e` stage 3 for
+  `tool-pipeline-run`). `amplifier-bundle-dot-runner` is the sole home of the engine and worker
+  modules; this bundle composes them by `git+` source. `HISTORY-MAP.md` indexes every deleted
+  directory. **Evidence:** the pre-flight gate re-read all four named external consumers' `main`
+  from fresh shallow clones and found zero live install references left -- the two remaining
+  `uv.lock` mentions are stale transitive entries that contradict their own repo's `pyproject.toml`
+  at the same commit, and `uv lock --check` in `amplifier-resolver-dot-graph` reports the lockfile
+  out of date, which is the mechanism that discards them.
+- **Changed.** The one module this repo still owns is `modules/tool-report-outcome`. dot-runner
+  deleted its own copy on purpose (`4a3a4da`, *"remove report_outcome tool, full stop"*), so there is
+  no home to point at, and `behaviors/attractor-core.yaml` plus two e2e profiles mount it live.
+- **Changed.** Layer 1 of the drift defense is four resident guards; the two that could not be
+  decoupled from the live parser/linter went with the engine and run in dot-runner's CI. Layer 2's
+  runner went with it too. `OPERATIONS.md` section 5 names both, and new guards (Q-300c/Q-300d,
+  Q-301d) make "it moved" impossible to confuse with "it was quietly dropped". **Evidence:** the root
+  guard suite went from 200 collected to 206, with zero vacuous passes -- and the slim caught a real
+  one on the way, `test_orchestrator_source_pin_guard.py` silently skipping all eight of its checks
+  because its repo-root marker was the deleted `modules/loop-pipeline/`.
 
 ### 2026-09-02 -- governing contracts named, and this page becomes the matrix's single home (entry 5)
 

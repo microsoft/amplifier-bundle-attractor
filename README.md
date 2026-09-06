@@ -118,7 +118,7 @@ copied to a temp dir so the committed fixture stays pristine; `$DOT` is captured
 absolute before `cd` because the `.dot` path resolves from your current directory
 while `--cwd` is where the pipeline reads and writes (the two must match for
 agent pipelines -- see
-[modules/pipeline-runner/KNOWN_ISSUES.md](modules/pipeline-runner/KNOWN_ISSUES.md)).
+[`amplifier-bundle-dot-runner`'s `modules/pipeline-runner/KNOWN_ISSUES.md`](https://github.com/microsoft/amplifier-bundle-dot-runner/blob/main/modules/pipeline-runner/KNOWN_ISSUES.md)).
 See the [practical examples guide](examples/pipelines/practical/) for the full set.
 
 If a run is interrupted (a crash, a kill, a lost machine), resume it from the
@@ -506,7 +506,7 @@ the types are handled. See [`specs/EXTENSIONS.md`](specs/EXTENSIONS.md) §34.
 
 - **attractor-core** (behavior): Provider-agnostic tools and hooks shared by all profiles. Includes `tool-report-outcome`, `hooks-tool-truncation`, `hooks-pipeline-progress`, and `hooks-pipeline-observability`.
 - **Profiles**: Each profile includes `attractor-core` and adds a provider, orchestrator (`loop-agent`), provider-specific tools, and a system prompt.
-- **Modules**: Self-contained Amplifier modules in `modules/`, each independently testable with its own `pyproject.toml`.
+- **Modules**: This repo owns exactly ONE module now -- `modules/tool-report-outcome/`. The engine and worker modules (`loop-pipeline`, `loop-agent`, `pipeline-runner`, `unified-llm-client`, `remote-source`, `tool-apply-patch`, `tool-pipeline-run`, `tool-pipeline-status`, `tool-dashboard-query`, and the three `hooks-pipeline-*`/`hooks-tool-*` hooks) live in [`amplifier-bundle-dot-runner`](https://github.com/microsoft/amplifier-bundle-dot-runner); this bundle composes them by `git+` source. See [HISTORY-MAP.md](HISTORY-MAP.md) for where each one went.
 
 ### Repository Structure
 
@@ -525,31 +525,35 @@ amplifier-bundle-attractor/
 ├── examples/
 │   ├── pipelines/               # 10 example + 5 practical DOT pipelines
 │   └── programmatic_usage.py    # Using the engine from Python code
-├── modules/                     # Amplifier modules
-│   ├── loop-agent/              # Agent loop orchestrator
-│   ├── loop-pipeline/           # DOT graph-driven pipeline orchestrator
-│   ├── tool-apply-patch/        # v4a unified diff tool (OpenAI only)
-│   ├── unified-llm-client/      # Multi-provider LLM client library
-│   ├── tool-report-outcome/     # Structured outcome reporting tool
-│   ├── tool-pipeline-run/       # Runtime pipeline invocation tool
-│   ├── hooks-tool-truncation/   # Tool output truncation hook
-│   ├── hooks-pipeline-progress/ # Pipeline progress reporting hook
-│   ├── hooks-pipeline-observability/ # Pipeline observability hooks (state aggregator, status bar, event persistence)
-│   ├── tool-dashboard-query/    # Pipeline status queries and management via HTTP API
-│   └── tool-pipeline-status/   # Returns pipeline execution state
+├── modules/                     # The one module this repo still owns
+│   └── tool-report-outcome/     # Structured outcome reporting tool
+│                                #   (everything else moved to
+│                                #    amplifier-bundle-dot-runner -- see
+│                                #    HISTORY-MAP.md)
 └── docs/
     └── DOT-SYNTAX.md            # DOT syntax reference
 ```
 
 ### Module Responsibilities
 
+Owned here:
+
+| Module | Type | Description |
+|--------|------|-------------|
+| `tool-report-outcome` | tool | Structured result reporting for pipeline integration |
+
+Composed from [`amplifier-bundle-dot-runner`](https://github.com/microsoft/amplifier-bundle-dot-runner)
+by `git+` source (this repo no longer carries a copy of any of them — see
+[HISTORY-MAP.md](HISTORY-MAP.md)):
+
 | Module | Type | Description |
 |--------|------|-------------|
 | `loop-agent` | orchestrator | Single-turn coding agent loop with steering, loop detection, and context management |
 | `loop-pipeline` | orchestrator | Multi-stage DOT graph-driven pipeline with checkpointing, retry, and fidelity control |
-| `tool-apply-patch` | tool | v4a unified diff patch application (OpenAI/codex-rs style) |
+| `pipeline-runner` | CLI/library | Drives the engine over a graph node-by-node; ships the `dot-runner` CLI |
 | `unified-llm-client` | library | Multi-provider LLM client with adapters for Anthropic, OpenAI, Gemini |
-| `tool-report-outcome` | tool | Structured result reporting for pipeline integration |
+| `remote-source` | library | Remote `.dot` source resolution (the `remote` extra of `loop-pipeline`) |
+| `tool-apply-patch` | tool | v4a unified diff patch application (OpenAI/codex-rs style) |
 | `tool-pipeline-run` | tool | Runtime pipeline invocation via session.spawn |
 | `hooks-tool-truncation` | hook | Truncates large tool outputs to manage context window |
 | `hooks-pipeline-progress` | hook | Reports pipeline stage progress |
@@ -585,29 +589,28 @@ for the full picture, including `llm_provider` (model family) vs `worker`
 
 ## Development
 
-Each module is independently testable:
+This repo's own suites are the root guard harness and its one module:
 
 ```bash
-cd modules/loop-agent && uv run pytest tests/ -q
-cd modules/loop-pipeline && uv run pytest tests/ -q
-cd modules/tool-apply-patch && uv run pytest tests/ -q
-cd modules/unified-llm-client && uv run pytest tests/ -q
-cd modules/tool-report-outcome && uv run pytest tests/ -q
-cd modules/tool-pipeline-run && uv run pytest tests/ -q
-cd modules/hooks-tool-truncation && uv run pytest tests/ -q
-cd modules/hooks-pipeline-progress && uv run pytest tests/ -q
-cd modules/hooks-pipeline-observability && uv run pytest tests/ -q
-cd modules/tool-dashboard-query && uv run pytest tests/ -q
-cd modules/tool-pipeline-status && uv run pytest tests/ -q
+# The opinionated-layer guards (docs, examples, skills, agents, context,
+# bundles, behaviors). Installs nothing but pytest -- by construction.
+python -m pytest tests/ -q --ignore=tests/e2e
+
+# The one module this repo owns.
+cd modules/tool-report-outcome && uv sync && uv run pytest -q
 ```
 
-Run all modules:
+Run every module (there is one, and the loop still works if that changes):
 
 ```bash
 for mod in modules/*/; do
     echo "=== $mod ===" && (cd "$mod" && uv run pytest tests/ -q)
 done
 ```
+
+The engine and worker module suites run in
+[`amplifier-bundle-dot-runner`](https://github.com/microsoft/amplifier-bundle-dot-runner)'s
+CI, against the code they test. Run them there, not here.
 
 ### Dependencies
 
@@ -616,7 +619,7 @@ done
   [tool.uv.sources]
   amplifier-core = { path = "../../../amplifier-core", editable = true }
   ```
-- `loop-pipeline` and `loop-agent` additionally depend on `unified-llm-client` (bundled at `modules/unified-llm-client/`, resolved via `[tool.uv.sources]` relative paths).
+- `loop-pipeline` and `loop-agent` additionally depend on `unified-llm-client`. All three live in `amplifier-bundle-dot-runner` now, and resolve against each other there; nothing in this repo declares them.
 - For programmatic usage with full sessions: `pip install amplifier-foundation`.
 
 ### E2E Tests

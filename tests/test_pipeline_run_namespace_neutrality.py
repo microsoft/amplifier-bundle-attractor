@@ -119,6 +119,21 @@ def test_prn_001_module_source_names_no_bundle():
     )
 
 
+def _required_config_value(key: str) -> str:
+    """Fetch a name-bearing config value, failing (not erroring) when absent.
+
+    PRN-003/PRN-004 read what PRN-002 asserts is present. When the key is
+    missing they should report that plainly and point at PRN-002, rather
+    than surfacing a KeyError that names nothing.
+    """
+    config = _pipeline_run_mount_config()
+    assert key in config, (
+        f"'{key}' is absent from {CONSUMER_BUNDLE.name}'s tool-pipeline-run "
+        "mount -- see PRN-002, which is the check that owns this."
+    )
+    return config[key]
+
+
 @pytest.mark.parametrize("key", ["runner_agent", "mention_example"])
 def test_prn_002_consumer_supplies_both_name_bearing_keys(key):
     """PRN-002: this bundle passes its own names instead of inheriting a default."""
@@ -134,7 +149,7 @@ def test_prn_002_consumer_supplies_both_name_bearing_keys(key):
 
 def test_prn_003_advertised_mention_example_is_ours_and_exists():
     """PRN-003: the advertised @mention names this bundle and points at a real file."""
-    mention = _pipeline_run_mount_config()["mention_example"]
+    mention = _required_config_value("mention_example")
     bundle_name = _bundle_name()
 
     assert mention.startswith("@"), f"mention_example {mention!r} is not an @mention"
@@ -154,7 +169,7 @@ def test_prn_003_advertised_mention_example_is_ours_and_exists():
 
 def test_prn_004_configured_runner_agent_is_registered_here():
     """PRN-004: the runner_agent spawned is an agent this repo actually declares."""
-    runner_agent = _pipeline_run_mount_config()["runner_agent"]
+    runner_agent = _required_config_value("runner_agent")
 
     assert AGENTS_DIR.is_dir(), f"{AGENTS_DIR} not found. {RE_AIM}"
     declared = set()

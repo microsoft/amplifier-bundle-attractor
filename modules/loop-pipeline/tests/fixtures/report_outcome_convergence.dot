@@ -1,9 +1,0 @@
-digraph ReportOutcomeConvergence {
-    start  [shape=Mdiamond, label="Start"]
-    assess [label="Assess", prompt="Assess the integration and report your verdict", llm_provider="test", llm_model="test-model"]
-    done   [shape=Msquare, label="Done"]
-
-    start  -> assess
-    assess -> done   [condition="outcome=converged"]
-    assess -> assess [condition="outcome=refine", label="Retry"]
-}

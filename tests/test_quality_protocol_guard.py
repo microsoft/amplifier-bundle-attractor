@@ -34,10 +34,21 @@ upstream sha -- which is the case that actually produces a lying protocol.
 Claims guarded, and what each is resolved against:
 
   Q-300  every ``test_*.py`` the doc names by name
-         -> the file exists under ``modules/loop-pipeline/tests/``
-  Q-301  the Layer-2 files (``specs/conformance/attractor-matrix.yaml`` and
-         the matrix runner module), which the doc states as **shipped**
-         -> both files exist on disk
+         -> the file exists (bare names resolve under ``tests/``), EXCEPT the
+            ones listed in ``ENGINE_RESIDENT_GUARDS``, which moved to
+            ``amplifier-bundle-dot-runner`` in the P4 slim
+  Q-300c the moved guards are still named on the page, alongside the repo they
+         moved to -- so "it moved" never becomes indistinguishable from
+         "it was quietly dropped"
+  Q-300d none of the moved guards has quietly returned to this repo while
+         still sitting inside Q-300's exemption list
+  Q-301  the Layer-2 matrix document
+         (``specs/conformance/attractor-matrix.yaml``), which the doc states as
+         **shipped** -> the file exists on disk, the status names
+         ``amplifier-bundle-dot-runner`` as where it now executes (Q-301), and
+         the page names that runner by path (Q-301d).  RE-AIMED 2026-09-06 in
+         the P4 slim: the runner left with the engine, so demanding it locally
+         would be demanding a file this repo deliberately no longer has
   Q-302  the vendored canonical spec and its recorded upstream sha
          -> ``specs/canonical/attractor-spec-canonical.md`` exists, and the
             sha the doc records appears in ``SPEC_CONFORMANCE.md`` at the
@@ -158,7 +169,25 @@ BUNDLE_ROOT = _find_bundle_root()
 DOC_REL = "docs/OPERATIONS.md"
 VISION_REL = "docs/VISION.md"
 DOC_PATH = (BUNDLE_ROOT / DOC_REL) if BUNDLE_ROOT is not None else None
-TESTS_DIR_REL = "modules/loop-pipeline/tests"
+# RE-AIMED 2026-09-06 (the P4 slim, attractor-28x).  Bare `test_*.py` names in
+# the doc used to resolve under `modules/loop-pipeline/tests/`, because that is
+# where Layer 1 lived.  That module left this repo; Layer 1's surviving guards
+# are the repo-root ones, so a bare name now resolves under `tests/`.
+TESTS_DIR_REL = "tests"
+
+#: Guard files the doc names that live in `amplifier-bundle-dot-runner`, not
+#: here.  Two Layer-1 guards went with the engine in the P4 slim because they
+#: could not be decoupled from the live parser/linter, and Layer 2's runner
+#: went with it too.  Q-300 must not demand these exist locally; Q-300c holds
+#: the other half of the claim -- that the doc keeps saying where they went,
+#: and that none of them has quietly reappeared here without being taken off
+#: this list deliberately.
+ENGINE_RESIDENT_GUARDS: tuple[str, ...] = (
+    "test_extensions_ledger_integrity.py",
+    "test_examples_lint_clean.py",
+    "ledger/checks/test_spec_conformance_matrix.py",
+)
+ENGINE_HOME = "amplifier-bundle-dot-runner"
 
 pytestmark = pytest.mark.skipif(
     DOC_PATH is None or not DOC_PATH.is_file(),
@@ -196,8 +225,15 @@ def _named_test_files() -> list[str]:
 
 
 def _resolve_named_test_file(name: str) -> Path:
-    """A bare filename means the loop-pipeline tests dir; a path means itself."""
+    """A bare filename means the root tests dir; a path means itself."""
     return _root() / (name if "/" in name else f"{TESTS_DIR_REL}/{name}")
+
+
+def _is_engine_resident(name: str) -> bool:
+    """True for a guard the doc names as living in the engine repo."""
+    return name in ENGINE_RESIDENT_GUARDS or name.rsplit("/", 1)[-1] in {
+        n.rsplit("/", 1)[-1] for n in ENGINE_RESIDENT_GUARDS
+    }
 
 
 def test_q300_named_guard_test_files_all_exist():
@@ -212,7 +248,8 @@ def test_q300_named_guard_test_files_all_exist():
     missing = [
         f"{name} (looked for {_resolve_named_test_file(name).relative_to(_root())})"
         for name in named
-        if not _resolve_named_test_file(name).is_file()
+        if not _is_engine_resident(name)
+        and not _resolve_named_test_file(name).is_file()
     ]
     assert not missing, (
         f"{DOC_REL} names guard-test files that do not exist:\n"
@@ -221,23 +258,27 @@ def test_q300_named_guard_test_files_all_exist():
         "  A named-but-absent guard is the protocol claiming an enforcement it\n"
         "  does not have. Either the file was renamed/deleted -- in which case\n"
         "  update the doc in the same PR -- or the doc names it wrongly.\n"
-        f"  (Bare filenames are resolved against {TESTS_DIR_REL}/.)"
+        f"  (Bare filenames are resolved against {TESTS_DIR_REL}/. Guards that\n"
+        f"  genuinely live in {ENGINE_HOME} belong in ENGINE_RESIDENT_GUARDS in\n"
+        "  this file, and are then held by Q-300c instead.)"
     )
 
 
 def test_q300b_the_five_layer1_guards_are_among_them():
-    """The Layer-1 table's five guards specifically, named as a floor.
+    """The Layer-1 table's four resident guards specifically, named as a floor.
 
     Q-300 is generic over whatever the doc names; this pins the five the
     Layer-1 table is *about*, so silently dropping a row from that table
     fails here rather than shrinking the guarded set unnoticed.
     """
+    # RE-AIMED 2026-09-06 (the P4 slim): the table is four rows now.
+    # test_extensions_ledger_integrity.py and test_examples_lint_clean.py moved
+    # to the engine repo and are pinned by Q-300c, not here.
     expected = {
-        "test_extensions_ledger_integrity.py",
         "test_doc_consistency.py",
         "test_engine_semantics_doc_guard.py",
         "test_explainer_doc_guard.py",
-        "test_examples_lint_clean.py",
+        "test_quality_protocol_guard.py",
     }
     named = set(_named_test_files())
     # Path-qualified mentions count as naming the file too.
@@ -245,7 +286,7 @@ def test_q300b_the_five_layer1_guards_are_among_them():
     missing = sorted(expected - named)
     assert not missing, (
         f"{DOC_REL}: the Layer-1 table no longer names {missing}.\n"
-        "  Layer 1 IS its five deterministic guards; dropping one from the\n"
+        "  Layer 1 IS its deterministic guards; dropping one from the\n"
         "  table without retiring the guard (section 5's retirement protocol)\n"
         "  leaves the doc describing a defense narrower than the one that runs.\n"
         "  If a guard was genuinely retired, update this expected set in the\n"
@@ -254,13 +295,65 @@ def test_q300b_the_five_layer1_guards_are_among_them():
 
 
 # ---------------------------------------------------------------------------
+# Q-300c: the guards that LEFT are still accounted for
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ENGINE_RESIDENT_GUARDS)
+def test_q300c_moved_guards_are_still_named_with_their_new_home(name: str):
+    """A guard that moved must still be named here, next to where it went.
+
+    Q-300 stops demanding these exist locally. That exemption is only honest
+    if the page keeps saying they exist SOMEWHERE -- otherwise "it moved" is
+    indistinguishable from "it was quietly dropped", which is exactly the
+    silent-guard-loss failure the P4 slim was designed to avoid.
+    """
+    doc = _doc()
+    bare = name.rsplit("/", 1)[-1]
+    assert bare in doc, (
+        f"{DOC_REL} no longer names `{bare}` at all. It is listed in this "
+        f"guard's ENGINE_RESIDENT_GUARDS as having moved to {ENGINE_HOME}. "
+        "Either the page dropped the row -- restore it, a moved guard is still "
+        "a guard this repo's defense depends on -- or the guard was genuinely "
+        "retired, in which case remove it from ENGINE_RESIDENT_GUARDS in the "
+        "same PR and say so in the Changelog."
+    )
+    assert ENGINE_HOME in doc, (
+        f"{DOC_REL} names `{bare}` but never names {ENGINE_HOME}. A reader is "
+        "then told a guard exists with no way to find it. Name the repo the "
+        "guard moved to."
+    )
+
+
+@pytest.mark.parametrize("name", ENGINE_RESIDENT_GUARDS)
+def test_q300d_moved_guards_have_not_quietly_returned(name: str):
+    """None of the moved guards exists locally under a stale exemption.
+
+    If one comes back to this repo, it must come back into Q-300's real
+    file-existence check -- not sit forever inside an exemption list that
+    stopped describing reality.
+    """
+    local = _resolve_named_test_file(name)
+    assert not local.is_file(), (
+        f"{local.relative_to(_root())} exists in this repo, but "
+        f"`{name}` is still listed in ENGINE_RESIDENT_GUARDS as living in "
+        f"{ENGINE_HOME}. Remove it from that list so Q-300 guards it for real "
+        "again, and update the Layer-1 table in the same PR."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Q-301: the Layer-2 files the doc declares shipped must exist
 # ---------------------------------------------------------------------------
 
-LAYER2_FILES = (
-    "specs/conformance/attractor-matrix.yaml",
-    f"{TESTS_DIR_REL}/test_spec_conformance_matrix.py",
-)
+# RE-AIMED 2026-09-06 (the P4 slim, attractor-28x).  Layer 2 shipped as a
+# matrix DOCUMENT plus a RUNNER.  The runner went with the engine; the document
+# is frozen here and still cited by SPEC_CONFORMANCE.md and docs/VISION.md.  So
+# this is the one file Layer 2 still claims to have on disk; the runner is held
+# by Q-300c/Q-300d as an engine-resident guard, and Q-301d below pins that the
+# page names where it executes.
+LAYER2_FILES = ("specs/conformance/attractor-matrix.yaml",)
+LAYER2_RUNNER_REL = "ledger/checks/test_spec_conformance_matrix.py"
 
 
 def test_q301_layer2_is_declared_shipped():
@@ -277,19 +370,39 @@ def test_q301_layer2_is_declared_shipped():
     status = match.group(1).strip().lower()
     assert "shipped" in status, (
         f"{DOC_REL}: Layer 2's status reads {match.group(1).strip()!r}, not "
-        "'shipped'. The files below are on disk, so a non-shipped status is the "
-        "doc understating what runs in CI. Update the status or retire the files."
+        "'shipped'. The matrix document is on disk and its runner runs in "
+        f"{ENGINE_HOME}'s CI, so a non-shipped status is the doc understating "
+        "what runs. Update the status or retire the files."
+    )
+    assert ENGINE_HOME.lower() in status, (
+        f"{DOC_REL}: Layer 2's status reads {match.group(1).strip()!r}, which "
+        f"does not name {ENGINE_HOME}. Since the P4 slim, nothing in THIS repo "
+        "executes the matrix -- a status that says 'shipped' without saying "
+        "where it ships is the aspirational-contract failure this layer exists "
+        "to prevent."
+    )
+
+
+def test_q301d_layer2_names_its_executing_runner():
+    """Layer 2 names the runner and the repo that actually executes it."""
+    doc = _doc()
+    assert f"`{LAYER2_RUNNER_REL}`" in doc, (
+        f"{DOC_REL}: Layer 2 no longer names `{LAYER2_RUNNER_REL}`, the runner "
+        f"that executes the matrix in {ENGINE_HOME}. Layer 2's whole claim is "
+        "that the matrix is EXECUTED; naming the document without naming the "
+        "runner turns that into an unfalsifiable claim."
     )
 
 
 @pytest.mark.parametrize("rel", LAYER2_FILES)
 def test_q301b_layer2_files_exist(rel: str):
-    """Both files Layer 2 names as the shipped matrix must be present."""
+    """Every file Layer 2 names as present in THIS repo must be present."""
     assert (_root() / rel).is_file(), (
         f"{DOC_REL} declares Layer 2 shipped and names `{rel}`, but that file "
         "does not exist.\n"
-        "  Layer 2 is a status claim about CI: the doc asserts these two files "
-        "run on every PR.\n"
+        "  Layer 2 is a status claim: the doc asserts this matrix document is "
+        "on disk here and\n"
+        f"  is executed by {ENGINE_HOME}'s runner.\n"
         "  A missing one means the protocol advertises a conformance defense "
         "that is not there."
     )

@@ -96,10 +96,20 @@ def _find_bundle_root() -> Path | None:
     Walks rather than hardcoding a parent count, so the guard survives the
     module being vendored or re-nested, and returns None (-> module skip)
     rather than pointing at a plausible-but-wrong directory.
+
+    RE-AIMED 2026-09-06 (the P4 slim, attractor-28x).  The marker used to be
+    ``bundle.md`` AND ``modules/loop-pipeline/``.  When loop-pipeline was
+    deleted -- the compat window closed, dot-runner owns the engine -- that
+    marker stopped matching and this whole module went to SKIP: eight checks,
+    green, guarding nothing, in the exact PR that most needed them (this guard
+    is what proves no orchestrator source went relative during the re-wire).
+    The marker is now ``bundle.md`` AND ``behaviors/``, which are two of the
+    composition surfaces this guard actually scans -- so the skip condition
+    and the skip *reason* finally describe the same thing.
     """
     for candidate in Path(__file__).resolve().parents:
         if (candidate / "bundle.md").is_file() and (
-            candidate / "modules" / "loop-pipeline"
+            candidate / "behaviors"
         ).is_dir():
             return candidate
     return None

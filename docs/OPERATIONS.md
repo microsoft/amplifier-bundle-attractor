@@ -53,7 +53,8 @@ environment: a real pipeline run through the real parser, engine and handler dis
 provider where the claim is about a provider; a really-killed process where the claim is about crash
 recovery. This repo has the scar tissue -- bugs have shipped with green unit tests and failed on
 first real-graph run (`AGENTS.md`, "Verification gradient"), which is why
-`modules/loop-pipeline/tests/test_live_graph_gate.py` now runs in CI as the permanent hermetic floor.
+the live-graph gate now runs in CI as the permanent hermetic floor -- in
+`amplifier-bundle-dot-runner`'s CI since the P4 slim, next to the engine it drives.
 A floor, not a ceiling: if the changed path is not one of the behaviors that file covers, do the live
 run yourself and paste the evidence.
 
@@ -88,7 +89,8 @@ instruments are this repo's instruments.
 | Class | Examples | Required evidence before merge |
 |---|---|---|
 | **Engine / handler code** | `engine.py`, `handlers/*`, dispatch, routing, retry, checkpoint | Full module suites green **and** a live pipeline run exercising the changed path (paste the `events.jsonl` slice) **and** independent adversarial review **and** a ledger entry if the change is spec-relevant (last row) |
-| **Exemplar / example graphs** | `examples/pipelines/*.dot`, `examples/patterns/*.dot`, `examples/objective/*` | `dot-runner lint` with **zero ERROR** diagnostics -- warnings are informational, which is exactly the line `modules/loop-pipeline/tests/test_examples_lint_clean.py` enforces -- **and** at least one live convergence run **and** the graph's own gates demonstrated **RED and GREEN**: a negative control proving the gate can fail, a positive control proving it can pass. A gate only ever seen green is an unproven gate |
+| **Exemplar / example graphs** | `examples/pipelines/*.dot`, `examples/patterns/*.dot`, `examples/objective/*` | `dot-runner lint` with **zero ERROR** diagnostics -- warnings are informational, which is exactly the line the examples lint-clean sweep enforces
+(it runs in `amplifier-bundle-dot-runner`'s CI since the P4 slim -- it needs the live linter) -- **and** at least one live convergence run **and** the graph's own gates demonstrated **RED and GREEN**: a negative control proving the gate can fail, a positive control proving it can pass. A gate only ever seen green is an unproven gate |
 | **Guidance surfaces** | `agents/`, `skills/`, `context/`, teaching content in `README.md` and `docs/` | **Guidance-eval evidence** from [`evals/guidance/`](../evals/guidance/README.md) -- the instrument shipped, and its 2026-08-15 baseline is the run every later run is read against. Run the scenarios whose `surfaces_under_test:` name the file you touched and paste the results table plus the decisive transcript quotes; a broad change -- a bundle recomposition, a doctrine amendment, a new guidance surface -- warrants the full six. Where the eval genuinely cannot reach the changed surface, say so in the PR in those words and fall back to a **fresh-session walk-through**: a session with no prior context follows only the changed text and arrives at the intended behavior |
 | **Docs making factual claims** | any doc asserting a number, default, vocabulary, or behavior | A guard test pinning each load-bearing claim to **its source of truth in code**, following the existing guards (section 5, Layer 1). A page-only assertion ("the page says 500") is tautological: it passes forever and fails only when someone edits the page, which is the one case needing no guard. The assertion must read the value from the code and fail when the **code** moves |
 | **New public content class** | a new top-level directory; a new artifact type that reaches users (run artifacts, published pages, generated reports); docs carrying real-run evidence; a new fixture corpus | The deterministic leak guards green **and** a **leak-lens review** (section 7): a fresh-context reviewer reads the diff under the outsider brief and reports what it identifies. Both, not either -- a passing grep is not the semantic read, which is precisely how the 2026-08-19 incident got through |
@@ -219,20 +221,31 @@ property of the repo.
 
 ### Layer 1 -- deterministic guards
 
-Six test files, run in CI on every PR. Each pins a documented claim to something that fails when the
-*code* moves:
+**Four** test files, run in this repo's CI on every PR (the `opinionated-guards` job). Each pins a
+documented claim to something that fails when the *code* moves:
 
 | Guard file | What it pins |
 |---|---|
-| `test_extensions_ledger_integrity.py` | `specs/EXTENSIONS.md` numbered headings form a contiguous `1..max` sequence -- no gaps, no duplicates -- and every `upstream action:` value is one of the legal forms, with `deferred` carrying a real `review-by` date. Written after a `git rebase -Xtheirs` silently discarded three already-merged ledger entries and left plausible-looking numbering behind |
 | `tests/test_doc_consistency.py` | The retry-ceiling default, read from the canonical spec snapshot and cross-checked against the authoring guide; and the `house` shape's LLM classification agreeing across `DOT-AUTHORING-GUIDE.md` and `DOT-SYNTAX.md` |
 | `tests/test_engine_semantics_doc_guard.py` | `context/engine-semantics.md`, the bundle's declared source of truth for shipped-engine behavior -- the text-anchored claims (the no-matching-edge and stale-label rules); the behavior-anchored half (a real engine run asserting the main loop hard-fails on no matching edge) rides with the engine module's own tests |
-| `tests/test_explainer_doc_guard.py` | The published explainer page, `docs/attractor-explained.html`: feedback-critique caps, the parallel-branch default, `last_response` truncation, the summary budgets, the fidelity vocabulary and its default, the lifecycle phases, and the shape-to-execution-tier vocabulary -- each read from its source module, never from the page |
-| `test_examples_lint_clean.py` | Every `.dot` under `examples/` lints with zero ERROR diagnostics. Written because the dead-corrective-edge class shipped in eight examples for months, because nothing could see topology |
-| `tests/test_quality_protocol_guard.py` | This page's own external references: every guard-test filename it names exists; the two Layer-2 files exist and Layer 2 still reads *shipped*; the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records. Also the vision wiring (Q-304..Q-307): `docs/VISION.md` exists with its own dated Changelog and names the decision matrix; this page carries the decision-matrix tolls section and the literal `vision-observation` label; and the decision matrix's canonical articulation exists **exactly once** across the docs corpus, in `docs/VISION.md`, matching a recorded constant. Also the leak-defense wiring (Q-308..Q-312): the pre-publication section exists naming all three layers, the outsider brief appears verbatim, the two reference implementations it names exist on disk, `.github/PULL_REQUEST_TEMPLATE.md` carries the leak-review line, and the page names both incidents that justify the duty |
+| `tests/test_explainer_doc_guard.py` | The published explainer page, `docs/attractor-explained.html`: feedback-critique caps, the parallel-branch default, `last_response` truncation, the summary budgets, the fidelity vocabulary and its default, the lifecycle phases, and the shape-to-execution-tier vocabulary -- each read from a source outside the page itself: from this repo's own files where it still can, and, for the numbers that now live in `amplifier-bundle-dot-runner`'s engine, from a recorded constant that names the file, line, and commit it was read at (`ENGINE_TRUTH`, re-aimed in the P4 slim) |
+| `tests/test_quality_protocol_guard.py` | This page's own external references: every guard-test filename it names exists **here**, and every one it names as having moved is still named alongside `amplifier-bundle-dot-runner` (Q-300c); the Layer-2 matrix document exists and Layer 2's status still reads *shipped* and still names its executing home (Q-301); the vendored canonical spec exists and the upstream SHA recorded here is the one `SPEC_CONFORMANCE.md`'s `SYNC-1` row records. Also the vision wiring (Q-304..Q-307): `docs/VISION.md` exists with its own dated Changelog and names the decision matrix; this page carries the decision-matrix tolls section and the literal `vision-observation` label; and the decision matrix's canonical articulation exists **exactly once** across the docs corpus, in `docs/VISION.md`, matching a recorded constant. Also the leak-defense wiring (Q-308..Q-312): the pre-publication section exists naming all three layers, the outsider brief appears verbatim, the two reference implementations it names exist on disk, `.github/PULL_REQUEST_TEMPLATE.md` carries the leak-review line, and the page names both incidents that justify the duty |
 
-Bare filenames above resolve under `modules/loop-pipeline/tests/`; path-qualified ones resolve as
-written.
+Every filename above is path-qualified and resolves as written, inside this repo.
+
+**Two guards left this layer in the P4 slim (attractor-28x), and did not stop running.** They could
+not be decoupled from the live engine parser/linter, so they went with it to
+`amplifier-bundle-dot-runner`, where its CI runs them against the code they read:
+
+| Guard file (now in `amplifier-bundle-dot-runner`) | What it pins |
+|---|---|
+| test_extensions_ledger_integrity.py | `specs/EXTENSIONS.md` numbered headings form a contiguous `1..max` sequence -- no gaps, no duplicates -- and every `upstream action:` value is one of the legal forms, with `deferred` carrying a real `review-by` date. Written after a `git rebase -Xtheirs` silently discarded three already-merged ledger entries and left plausible-looking numbering behind |
+| test_examples_lint_clean.py | Every `.dot` under `examples/` lints with zero ERROR diagnostics. Written because the dead-corrective-edge class shipped in eight examples for months, because nothing could see topology |
+
+Those two are deliberately written without backticks: `tests/test_quality_protocol_guard.py` treats
+every backticked `test_*.py` in this page as a claim that the file exists **here**, and these do not.
+Q-300c holds the other half -- that this page keeps naming them and keeps naming
+`amplifier-bundle-dot-runner` as where they went.
 
 **The rule this layer imposes: a new claim-bearing doc ships with its guard.** The explainer guard
 states the reason plainly -- a page nobody re-reads rots silently and keeps being shared, which is
@@ -240,13 +253,16 @@ strictly worse than an internal doc going stale.
 
 ### Layer 2 -- executable conformance matrix
 
-**Status: shipped (tranche 1).** Two files, run in CI on every PR inside the existing loop-pipeline
-job:
+**Status: shipped, and superseded in place by `amplifier-bundle-dot-runner`.** It shipped here as
+tranche 1 -- a reviewed matrix document plus a runner that ran in CI on every PR inside the
+loop-pipeline job. The P4 slim (attractor-28x) deleted that job's module, and the executable half
+went with it: the runner is `ledger/checks/test_spec_conformance_matrix.py` in
+`amplifier-bundle-dot-runner`, reading `ledger/rows.yaml` there -- the successor format, carrying
+the same `ATX-M-*` row ids. **That is the sole executing home.**
 
-| File | What it is |
-|---|---|
-| `specs/conformance/attractor-matrix.yaml` | The matrix itself -- a reviewed *document*, one row per normative statement cluster, carrying the verbatim spec quote, the disposition, the ledger cite, and the assertion |
-| `modules/loop-pipeline/tests/test_spec_conformance_matrix.py` | The runner -- per-row structural integrity, in-process behavioral probes, the upstream-sync sha pin, and the coverage tripwire |
+| File | What it is | Where it executes |
+|---|---|---|
+| `specs/conformance/attractor-matrix.yaml` | The matrix itself -- a reviewed *document*, one row per normative statement cluster, carrying the verbatim spec quote, the disposition, the ledger cite, and the assertion | **Frozen here.** Nothing in this repo executes it any more. It stays because it is still *read*: `SPEC_CONFORMANCE.md` cites four of its rows by id (`ATX-M-004n`, `ATX-M-022`, `ATX-M-F01`, `ATX-M-016`), `docs/VISION.md` names it, and the Layer-3 ledgers reviewer sweeps it |
 
 Tranche 1 covers every decided divergence, every OPEN ledger item, the load-bearing conformances, and
 the SYNC row. Later tranches extend it section by section; ULM/CAL matrices are named as tranche 3.

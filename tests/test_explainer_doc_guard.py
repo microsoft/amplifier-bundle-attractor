@@ -178,34 +178,123 @@ def _table_segment(caption: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _pkg_dir() -> Path:
-    """Directory of the loop-pipeline package source, by path -- not import.
+# --- RE-AIMED 2026-09-06 (the P4 slim, attractor-28x). --------------------
+#
+# D-211, D-212, D-213 and D-215b used to read engine source directly out of
+# `modules/loop-pipeline/amplifier_module_loop_pipeline/` and compare it with
+# the page. That package is GONE from this repo -- the compat window closed
+# and `amplifier-bundle-dot-runner` is the engine's sole home -- while
+# `docs/attractor-explained.html` still ships here. A guard cannot read a
+# file in another repository from CI, so the two-sided form is no longer
+# available to this repo at all.
+#
+# The re-aim follows the precedent this repo already set for Q-307 in
+# tests/test_quality_protocol_guard.py: where a second copy stopped being
+# readable, the claim was pinned to a RECORDED CONSTANT that names its
+# provenance. Each engine number below was READ OUT OF the engine at a named
+# dot-runner commit, and is recorded here with the file and line it came from.
+#
+# What this still catches: the page drifting on its own -- someone editing a
+# number in the prose, or in the closing "Where a number is quoted" ledger,
+# without the other, or without touching the engine at all. That is the
+# in-repo failure mode, and it is the only one this repo can still see.
+#
+# What this NO LONGER catches, stated plainly: the ENGINE moving underneath
+# the page. That half now belongs in dot-runner, next to the code. It is
+# filed as a dot-runner follow-up, not silently dropped -- see the PR body.
+#
+# RETIREMENT / RE-AIM CONDITION: when the engine-number claims on
+# `docs/attractor-explained.html` move to dot-runner (or the page does),
+# delete these constants and the checks that read them, in the same PR.
+#
+# Anti-rot: test_d210_recorded_engine_constants_name_their_provenance below
+# fails if any row here stops naming a dot-runner path, a line, and a sha --
+# so the table cannot decay into unsourced magic numbers.
 
-    Relocated to the repo-root harness (Track A of the repo split): resolving
-    by path instead of `import amplifier_module_loop_pipeline` keeps this
-    guard reading FILE CONTENT only, with no engine-package dependency for
-    root CI. Both readings are the same tree as long as this checkout is
-    editable-installed (the normal dev setup), which is what the sibling
-    parser-agreement tests already assert.
+#: The dot-runner commit every constant below was read from.
+ENGINE_TRUTH_SHA = "1dfc78bc10d79e4e0ee26e9ac278d95aceaf54b4"
+ENGINE_TRUTH_REPO = "microsoft/amplifier-bundle-dot-runner"
+_ENGINE_PKG = "modules/loop-pipeline/amplifier_module_loop_pipeline"
+
+#: check id -> (value, dot-runner path, line, the source expression observed)
+ENGINE_TRUTH: dict[str, tuple[int, str, int, str]] = {
+    "max_parallel_default": (
+        4,
+        f"{_ENGINE_PKG}/handlers/parallel.py",
+        96,
+        'int(node.attrs.get("max_parallel", 4))',
+    ),
+    "last_response_truncation": (
+        200,
+        f"{_ENGINE_PKG}/handlers/codergen.py",
+        224,
+        '"last_response": response_text[:200]',
+    ),
+    "summary_budget_low": (
+        600,
+        f"{_ENGINE_PKG}/fidelity.py",
+        273,
+        "# ~600 tokens: brief summary with minimal event counts",
+    ),
+    "summary_budget_medium": (
+        1500,
+        f"{_ENGINE_PKG}/fidelity.py",
+        285,
+        "# ~1500 tokens: recent stage outcomes and active context",
+    ),
+    "summary_budget_high": (
+        3000,
+        f"{_ENGINE_PKG}/fidelity.py",
+        312,
+        "# ~3000 tokens: comprehensive detail including failures",
+    ),
+}
+
+
+def _engine_truth(key: str) -> int:
+    value, _path, _line, _expr = ENGINE_TRUTH[key]
+    return value
+
+
+def _provenance(key: str) -> str:
+    _value, path, line, expr = ENGINE_TRUTH[key]
+    return f"{ENGINE_TRUTH_REPO}@{ENGINE_TRUTH_SHA[:7]} {path}:{line} -- `{expr}`"
+
+
+def test_d210_recorded_engine_constants_name_their_provenance():
+    """Every recorded engine constant names where it was read from.
+
+    Without this, the table above rots into unsourced magic numbers the
+    moment someone "fixes" a failing check by editing the constant. A
+    constant that cannot say which dot-runner file and line it came from is
+    not a recorded observation, it is a guess.
     """
-    assert BUNDLE_ROOT is not None
-    return BUNDLE_ROOT / "modules" / "loop-pipeline" / "amplifier_module_loop_pipeline"
-
-
-def _pkg_src(rel: str) -> str:
-    return (_pkg_dir() / rel).read_text(encoding="utf-8")
-
-
-def _source_literal(rel: str, pattern: str, what: str) -> int:
-    """Extract a single integer literal from package source, or fail loudly."""
-    match = re.search(pattern, _pkg_src(rel))
-    assert match is not None, (
-        f"{rel}: could not read the {what} literal (pattern: {pattern!r}). "
-        f"It is the source of truth for a claim on {PAGE_REL}; if the value moved "
-        f"to a named constant or a different call site, re-anchor this guard on "
-        f"the new location so the page keeps being checked against real code."
+    assert ENGINE_TRUTH, (
+        "ENGINE_TRUTH is empty -- D-211..D-213 would pass vacuously. If the "
+        "page's engine numbers genuinely moved to dot-runner, delete those "
+        "checks deliberately rather than emptying their source of truth."
     )
-    return int(match.group(1))
+    assert re.fullmatch(r"[0-9a-f]{40}", ENGINE_TRUTH_SHA), (
+        f"ENGINE_TRUTH_SHA is {ENGINE_TRUTH_SHA!r}, not a full 40-char commit "
+        "sha. The whole point of the recorded form is that a reader can go and "
+        "check the value at an exact commit."
+    )
+    bad = [
+        key
+        for key, (value, path, line, expr) in ENGINE_TRUTH.items()
+        if not (
+            isinstance(value, int)
+            and path.startswith(_ENGINE_PKG)
+            and isinstance(line, int)
+            and line > 0
+            and expr.strip()
+        )
+    ]
+    assert not bad, (
+        f"ENGINE_TRUTH rows {bad} do not name a dot-runner path, a line, and "
+        "the source expression they were read from. Re-read the value at a "
+        f"named {ENGINE_TRUTH_REPO} commit and record all four fields."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -219,11 +308,7 @@ def test_d211_max_parallel_default_matches_parallel_handler():
     Page claim: "``max_parallel`` defaulting to 4."  Source of truth: the
     fallback in ``handlers/parallel.py``'s ``node.attrs.get("max_parallel", N)``.
     """
-    code_default = _source_literal(
-        "handlers/parallel.py",
-        r"max_parallel[\"']\s*,\s*(\d+)\s*\)",
-        "max_parallel default",
-    )
+    code_default = _engine_truth("max_parallel_default")
     match = _claim(
         r"max_parallel\s*defaulting to\s*(\d+)",
         "max_parallel default",
@@ -231,10 +316,13 @@ def test_d211_max_parallel_default_matches_parallel_handler():
     page_default = _int(match.group(1))
 
     assert page_default == code_default, (
-        f"{PAGE_REL} says max_parallel defaults to {page_default}, but "
-        f"handlers/parallel.py defaults it to {code_default}. Update the "
-        f"'Variables and parallelism' paragraph in {PAGE_REL} (and its closing "
-        f"'Where a number is quoted' ledger) to match handlers/parallel.py. (D-211)"
+        f"{PAGE_REL} says max_parallel defaults to {page_default}, but the "
+        f"engine defaults it to {code_default}: "
+        f"{_provenance('max_parallel_default')}. Update the 'Variables and "
+        f"parallelism' paragraph in {PAGE_REL} (and its closing 'Where a number "
+        f"is quoted' ledger) to match -- or, if the ENGINE moved, re-read the "
+        f"value at a current dot-runner commit and update ENGINE_TRUTH and the "
+        f"page together in the same PR. (D-211)"
     )
 
 
@@ -251,11 +339,7 @@ def test_d212_last_response_truncation_matches_codergen_handler():
     ``response_text[:N]`` slice in ``handlers/codergen.py``, which is where the
     key is written into ``context_updates``.
     """
-    code_limit = _source_literal(
-        "handlers/codergen.py",
-        r"response_text\[:(\d+)\]",
-        "last_response truncation",
-    )
+    code_limit = _engine_truth("last_response_truncation")
     match = _claim(
         r"last_response\s*is truncated to\s*([\d,]+) characters",
         "last_response truncation",
@@ -264,10 +348,12 @@ def test_d212_last_response_truncation_matches_codergen_handler():
 
     assert page_limit == code_limit, (
         f"{PAGE_REL} says last_response is truncated to {page_limit} characters, "
-        f"but handlers/codergen.py truncates it to {code_limit} "
-        f"(response_text[:{code_limit}]). Update the 'Gotcha' note in {PAGE_REL} "
-        f"(and its closing 'Where a number is quoted' ledger) to match "
-        f"handlers/codergen.py. (D-212)"
+        f"but the engine truncates it to {code_limit}: "
+        f"{_provenance('last_response_truncation')}. Update the 'Gotcha' note in "
+        f"{PAGE_REL} (and its closing 'Where a number is quoted' ledger) to "
+        f"match -- or, if the ENGINE moved, re-read the value at a current "
+        f"dot-runner commit and update ENGINE_TRUTH and the page together in "
+        f"the same PR. (D-212)"
     )
 
 
@@ -283,22 +369,12 @@ def test_d213_summary_budgets_match_fidelity_module():
     "Summary at roughly 600 / 1,500 / 3,000 tokens".  Source of truth: the
     per-level budget comments inside ``fidelity.py`` ``_build_summary_preamble``
     (``# ~600 tokens:`` and friends) -- these budgets are documented intent, not
-    an enforced constant, so the comment IS the anchor.
+    an enforced constant, so the comment IS the anchor.  Since the P4 slim those
+    comments live in dot-runner and are RECORDED in ``ENGINE_TRUTH`` above,
+    with the file, line, and sha they were read from.
     """
-    src = _pkg_src("fidelity.py")
     for level in ("low", "medium", "high"):
-        code_match = re.search(
-            rf"level\s*==\s*[\"']{level}[\"'].*?#\s*~([\d,]+)\s*tokens",
-            src,
-            re.DOTALL,
-        )
-        assert code_match is not None, (
-            f"fidelity.py: could not read the '~N tokens' budget comment for "
-            f"summary:{level} inside _build_summary_preamble. It is the source of "
-            f"truth for the context-fidelity table in {PAGE_REL}; re-anchor this "
-            f"guard if the budgets moved to named constants. (D-213)"
-        )
-        code_budget = _int(code_match.group(1))
+        code_budget = _engine_truth(f"summary_budget_{level}")
 
         page_match = _claim(
             rf"summary:{level}\s*Summary at roughly\s*([\d,]+)\s*tokens",
@@ -308,9 +384,12 @@ def test_d213_summary_budgets_match_fidelity_module():
 
         assert page_budget == code_budget, (
             f"{PAGE_REL} says summary:{level} is roughly {page_budget:,} tokens, "
-            f"but fidelity.py budgets it at ~{code_budget:,} tokens. Update the "
-            f"'context fidelity modes' table in {PAGE_REL} (and its closing 'Where "
-            f"a number is quoted' ledger) to match fidelity.py. (D-213)"
+            f"but the engine budgets it at ~{code_budget:,}: "
+            f"{_provenance(f'summary_budget_{level}')}. Update the 'context "
+            f"fidelity modes' table in {PAGE_REL} (and its closing 'Where a number "
+            f"is quoted' ledger) to match -- or, if the ENGINE moved, re-read the "
+            f"budgets at a current dot-runner commit and update ENGINE_TRUTH and "
+            f"the page together in the same PR. (D-213)"
         )
 
 
@@ -366,27 +445,45 @@ def test_d215b_transform_runs_before_validate_in_source():
     The page's caption claims TRANSFORM "resolves the stylesheet and expands
     variables before VALIDATE sees the graph".  That ordering is the whole point
     of the phase, so ground the claim in the orchestrator's call order rather
-    than in spec prose alone.
+    than in spec prose alone.  Since the P4 slim that orchestrator lives in
+    dot-runner, so the call order is a RECORDED observation (see ENGINE_TRUTH)
+    and the page half -- the diagram's own ordering -- is checked live.
     """
-    src = _pkg_src("__init__.py")
-    transform_pos = src.find("apply_transforms(")
-    validate_pos = src.find("validate_or_raise(")
+    # The orchestrator's call order, READ from the engine and recorded here
+    # with its provenance (see the ENGINE_TRUTH note above for why this is a
+    # recorded observation rather than a live read).
+    call_order = (
+        ("apply_transforms(", 388),
+        ("validate_or_raise(", 391),
+    )
+    src_rel = f"{_ENGINE_PKG}/__init__.py"
+    transform_call, transform_line = call_order[0]
+    validate_call, validate_line = call_order[1]
 
-    assert transform_pos != -1, (
-        "__init__.py does not call apply_transforms(). The TRANSFORM phase in "
-        f"{PAGE_REL}'s lifecycle diagram is now unsupported by the shipped "
-        "orchestrator. (D-215b)"
-    )
-    assert validate_pos != -1, (
-        "__init__.py does not call validate_or_raise(). The VALIDATE phase in "
-        f"{PAGE_REL}'s lifecycle diagram is now unsupported by the shipped "
-        "orchestrator. (D-215b)"
-    )
-    assert transform_pos < validate_pos, (
-        f"__init__.py calls validate_or_raise() BEFORE apply_transforms(). "
+    assert transform_line < validate_line, (
+        f"the recorded orchestrator call order has {validate_call} at line "
+        f"{validate_line} BEFORE {transform_call} at line {transform_line} "
+        f"({ENGINE_TRUTH_REPO}@{ENGINE_TRUTH_SHA[:7]} {src_rel}). "
         f"{PAGE_REL} tells readers TRANSFORM runs before VALIDATE 'so lint reads "
         f"the expanded graph'. Either the ordering regressed or the page is now "
         f"wrong -- fix whichever is actually stale. (D-215b)"
+    )
+
+    # The page half: both phase names must actually be in the diagram, in that
+    # order. This is the half this repo owns and can still check for real.
+    html = _page_html()
+    page_transform = html.find("TRANSFORM")
+    page_validate = html.find("VALIDATE")
+    assert page_transform != -1 and page_validate != -1, (
+        f"{PAGE_REL} no longer names both TRANSFORM and VALIDATE in its "
+        f"lifecycle diagram (TRANSFORM at {page_transform}, VALIDATE at "
+        f"{page_validate}). (D-215b)"
+    )
+    assert page_transform < page_validate, (
+        f"{PAGE_REL} shows VALIDATE before TRANSFORM in its lifecycle diagram, "
+        f"but the orchestrator calls {transform_call} (line {transform_line}) "
+        f"before {validate_call} (line {validate_line}) at "
+        f"{ENGINE_TRUTH_REPO}@{ENGINE_TRUTH_SHA[:7]} {src_rel}. (D-215b)"
     )
 
 

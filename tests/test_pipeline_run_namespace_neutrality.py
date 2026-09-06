@@ -22,8 +22,17 @@ read the composition surfaces and the files they point at.
 
 Checks:
 
-  PRN-001  `modules/tool-pipeline-run`'s module source
-           -> contains no occurrence of this bundle's name, in any case
+  PRN-001  RETIRED 2026-09-06 (the P4 slim, attractor-24e stage 3).  It read
+           `modules/tool-pipeline-run`'s own source and asserted the module
+           named no bundle.  That module left this repo in the same commit
+           that retired this check: `amplifier-bundle-dot-runner` is its sole
+           home now, and the module-source half of this contract belongs
+           there, next to the source it reads.  The check is not silently
+           dropped -- it is the half this repo can no longer see, and the
+           docstring above says so.  The half this repo DOES own is the
+           mount, and PRN-002..004 below still hold it.
+           Re-aim condition: if tool-pipeline-run ever comes back here,
+           restore this check with it.
   PRN-002  the `tool-pipeline-run` mount in `bundles/attractor-interactive.yaml`
            -> supplies BOTH name-bearing keys (`runner_agent`,
               `mention_example`) rather than inheriting a default
@@ -42,10 +51,12 @@ Honest limits:
     execute foundation's mention resolver, which is the module's own
     concern and is tested there
     (`test_configured_namespace_resolves_end_to_end`).
-  * Every check asserts its target exists first. If `modules/tool-pipeline-run`
-    later leaves this repo (the stage-2 move), these fail loudly rather than
-    passing vacuously -- re-aim or retire this guard deliberately at that
-    point, which is the whole reason it fails instead of skipping.
+  * Every check asserts its target exists first, and fails loudly rather than
+    skipping when it is absent. That is what happened here: tool-pipeline-run
+    left, PRN-001 went red rather than green-and-vacuous, and it was retired
+    deliberately (above) in the PR that moved it. The remaining checks read
+    only surfaces this repo still owns -- `bundles/attractor-interactive.yaml`,
+    `bundle.md`, `agents/` -- so the same failure mode cannot recur silently.
 """
 
 from pathlib import Path
@@ -55,19 +66,15 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-MODULE_SOURCE = (
-    REPO_ROOT
-    / "modules"
-    / "tool-pipeline-run"
-    / "amplifier_module_tool_pipeline_run"
-    / "__init__.py"
-)
+# PRN-001's MODULE_SOURCE constant was removed with the check -- see the
+# module docstring. The module it pointed at lives in
+# amplifier-bundle-dot-runner now.
 CONSUMER_BUNDLE = REPO_ROOT / "bundles" / "attractor-interactive.yaml"
 ROOT_BUNDLE_DOC = REPO_ROOT / "bundle.md"
 AGENTS_DIR = REPO_ROOT / "agents"
 
 RE_AIM = (
-    "If tool-pipeline-run has moved out of this repo, re-aim or retire this "
+    "This surface ships in THIS repo; if it moved, re-aim or retire this "
     "guard deliberately (tests/test_pipeline_run_namespace_neutrality.py) -- "
     "do not let it pass vacuously."
 )
@@ -97,26 +104,6 @@ def _pipeline_run_mount_config() -> dict:
         f"found {len(mounts)}. {RE_AIM}"
     )
     return mounts[0].get("config") or {}
-
-
-def test_prn_001_module_source_names_no_bundle():
-    """PRN-001: the module carries no reference to this bundle's name."""
-    assert MODULE_SOURCE.exists(), f"{MODULE_SOURCE} not found. {RE_AIM}"
-
-    bundle_name = _bundle_name()
-    source = MODULE_SOURCE.read_text(encoding="utf-8")
-
-    offenders = [
-        f"{lineno}: {line.strip()}"
-        for lineno, line in enumerate(source.splitlines(), start=1)
-        if bundle_name.lower() in line.lower()
-    ]
-    assert not offenders, (
-        f"{MODULE_SOURCE.relative_to(REPO_ROOT)} names the '{bundle_name}' bundle. "
-        "Its defaults must name no bundle -- the mounting bundle supplies its own "
-        "runner_agent / mention_example (see the module README). Offending lines:\n"
-        + "\n".join(offenders)
-    )
 
 
 def _required_config_value(key: str) -> str:

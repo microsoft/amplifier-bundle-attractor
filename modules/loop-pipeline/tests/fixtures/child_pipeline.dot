@@ -1,9 +1,0 @@
-digraph child_pipeline {
-    graph [goal="Execute child work"]
-
-    start      [shape=Mdiamond]
-    child_work [shape=box, prompt="Do the child work"]
-    done       [shape=Msquare]
-
-    start -> child_work -> done
-}

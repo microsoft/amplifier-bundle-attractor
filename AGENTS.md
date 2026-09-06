@@ -4,7 +4,11 @@ Conventions for AI coding agents (Amplifier, Claude Code, Cursor, etc.) and huma
 
 ## What this repo is
 
-DOT-graph pipeline engine and handler bundle. Implements the **attractor nlspec** — graph-as-program execution where DOT nodes are computation, edges are dispatch, and clusters are subgraphs. The canonical spec reference lives at `github.com/strongdm/attractor`; this repo extends it but does not contradict it.
+**The pattern layer for DOT-graph pipelines** — doctrine, spec extensions, authoring guidance, exemplar graphs, skills, agent profiles, capsule lanes, evals, and the composing bundles/profiles. It documents and extends the **attractor nlspec** (graph-as-program execution where DOT nodes are computation, edges are dispatch, and clusters are subgraphs). The canonical spec reference lives at `github.com/strongdm/attractor`; this repo extends it but does not contradict it.
+
+**It is NOT the runtime.** The executable engine — `loop-pipeline`, `loop-agent`, `pipeline-runner`, `unified-llm-client`, and the worker/hook modules — lives in [`amplifier-bundle-dot-runner`](https://github.com/microsoft/amplifier-bundle-dot-runner), and this bundle composes it by `git+` source. The compat-window copies that used to sit under `modules/` here were deleted in the P4 slim (attractor-28x); [`HISTORY-MAP.md`](HISTORY-MAP.md) says where each one went. The one module still owned here is `modules/tool-report-outcome/`.
+
+**Practical consequence for you:** if the change you are about to make is to engine behavior, dispatch semantics, handler code, or the CLI — it does not belong in this repo. Open it against `amplifier-bundle-dot-runner`. If it is to doctrine, guidance, an exemplar, a skill, an agent profile, or a composing bundle, you are in the right place.
 
 ## Phase-specific files
 
@@ -26,8 +30,8 @@ That document also carries the per-change-class evidence table, the four-layer d
 
 ## Key directories
 
-- `modules/loop-pipeline/amplifier_module_loop_pipeline/` — engine and handlers. `engine.py` is the dispatch core; handlers/ contains node-type implementations.
-- `modules/loop-pipeline/tests/` — unit tests (1049+ passing as of recent `main`).
+- `modules/tool-report-outcome/` — the one module this repo owns.
+- `tests/` — the root guard harness (the `opinionated-guards` CI job). Asserts on repo-root docs/, examples/, skills/, agents/, context/, bundles/, behaviors/ content, and installs nothing but pytest by construction.
 - `examples/pipelines/` — canonical pipeline patterns. Useful as live test fixtures when verifying engine changes.
 - `specs/` — our spec extensions and the canonical attractor reference.
 - `docs/CONTRACTS.md` — engine-level contracts: M5 substitution, fail-fast policy, structural concurrency, and cross-consumer guidance.
@@ -35,21 +39,24 @@ That document also carries the per-change-class evidence table, the four-layer d
 
 ## Test commands
 
-Run these before opening a PR. The reviewer expects evidence in the PR body, not just "tests pass." CI (`.github/workflows/ci.yml`) runs all 13 modules per-directory (each has its own `uv`-managed environment — do not try to run them in one shared pytest process; that produces `--import-mode` collisions, cross-module state pollution, and bypasses each module's own `addopts`) plus a dedicated live-graph gate job (see below); this is the automated baseline, not a replacement for the manual verification below when it applies.
+Run these before opening a PR. The reviewer expects evidence in the PR body, not just "tests pass." CI (`.github/workflows/ci.yml`) runs the root guard harness (`opinionated-guards`), the DOT render gate, and a per-directory `unit-tests` matrix — which is one cell now, because one module is left. Each module still gets its own `uv`-managed environment; do not run modules in one shared pytest process (that produces `--import-mode` collisions, cross-module state pollution, and bypasses each module's own `addopts`).
 
-- **Unit tests**: `pytest modules/loop-pipeline/` (full suite).
-- **Targeted unit tests**: `pytest modules/loop-pipeline/tests/test_<specific>.py -v` while iterating.
-- **Live pipeline run** (required when touching `engine.py` or any handler): a baseline instance of this now runs automatically in CI — see `modules/loop-pipeline/tests/test_live_graph_gate.py`, which drives real DOT text through the real parser, engine, and handler dispatch and is the permanent, hermetic form of this check. It covers four specific, previously-regressed behaviors (parallel fan-out event counts, `attempt_count`/`auto_status` interaction, `attempt_count`+`failed_step`/`continue_on_fail` interaction, manager-loop child-engine event propagation). For changes that touch a code path NOT covered by that file, still construct or pick a graph that exercises the changed path and run it through any attractor-compatible resolver — a representative pipeline from `examples/pipelines/` is acceptable when it covers the path; otherwise build a minimal graph that does. Capture the resulting `events.jsonl` and include the relevant slice in the PR.
+- **Root guards**: `python -m pytest tests/ -q --ignore=tests/e2e` — the suite that actually gates doctrine/exemplar/guidance changes here.
+- **The one module**: `cd modules/tool-report-outcome && uv sync && uv run pytest -q`. Run it with provider keys unset (`env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY`) — see the shared-dev-venv pitfall below.
+- **Engine tests are not here.** The full loop-pipeline suite, the live-graph gate, the examples lint sweep, the extensions-ledger integrity guard, and the conformance-matrix runner all live in `amplifier-bundle-dot-runner` and run in its CI. If your change needs them, it is a change to that repo.
+- **Live pipeline run** (still required when a change here alters what a pipeline DOES — an exemplar graph, a pattern doc's claim, an agent profile): pick or build a graph that exercises the changed path and run it through any attractor-compatible resolver. A representative pipeline from `examples/pipelines/` is acceptable when it covers the path. Capture the resulting `events.jsonl` and include the relevant slice in the PR.
 
 ## Verification gradient
 
 | Change type | Required verification |
 |---|---|
-| `engine.py`, handler code, dispatch logic | Unit tests **and** the automated live-graph gate (`test_live_graph_gate.py`, runs in CI). If the changed path isn't one of the four behaviors that file covers, **also** do a manual live pipeline run exercising it and paste the relevant `events.jsonl` slice or run output — the automated gate is a floor, not a ceiling. |
-| Spec extensions in `specs/` | Unit tests **and** a live pipeline run that demonstrates the new semantics. |
-| Test fixtures, examples, docs | Unit tests sufficient. |
+| Engine behavior, handler code, dispatch logic | **Not this repo.** Open it against `amplifier-bundle-dot-runner`, where its unit tests and the automated live-graph gate run. |
+| Spec extensions in `specs/`, doctrine in `docs/` | Root guards **and** a live pipeline run that demonstrates the semantics being claimed. |
+| Exemplar graphs in `examples/` | Root guards **and** a live convergence run **and** the graph's own gates demonstrated RED and GREEN (see `docs/OPERATIONS.md` section 2). |
+| Guidance surfaces (`agents/`, `skills/`, `context/`, `bundles/`, `behaviors/`) | Root guards. `tests/test_orchestrator_source_pin_guard.py` is the one that catches a composition regression — do not let it skip. |
+| Test fixtures, docs | Root guards sufficient. |
 
-Unit tests alone are insufficient for engine and handler changes. Past bugs have shipped with green unit tests and failed on first real-graph run, specifically at the boundary between the engine's main loop and handler dispatch. The live-run gate exists because of that pattern — it is now enforced by `test_live_graph_gate.py` running in CI on every PR, not solely by human memory.
+Green tests alone have never been sufficient here for anything a pipeline actually executes. Past bugs shipped with green unit tests and failed on first real-graph run, specifically at the boundary between the engine's main loop and handler dispatch. That boundary now lives in `amplifier-bundle-dot-runner`, and so does the live-graph gate that guards it — but the discipline it encodes still applies to every exemplar and every doctrine claim shipped from here.
 
 ## Common pitfalls (from session experience)
 

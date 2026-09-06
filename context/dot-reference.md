@@ -126,7 +126,7 @@ graph that already has a cycle and a real gate is noise.
 | `folder` | pipeline | Nested sub-pipeline -- runs a child DOT via `dot_file=` [EXTENSION] |
 | `house` | stack.manager_loop | Supervisor loop over a child pipeline (experimental) |
 
-Source of truth: `SHAPE_TO_HANDLER` in `modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py`.
+Source of truth: `SHAPE_TO_HANDLER` in `amplifier-bundle-dot-runner`'s `modules/loop-pipeline/amplifier_module_loop_pipeline/validation.py`.
 
 **Routing via edge conditions.** `diamond` exists and is the conventional marker for a branch
 point, but it does **no work** -- its handler is a no-op and the actual routing is performed by

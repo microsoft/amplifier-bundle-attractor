@@ -62,7 +62,16 @@ tools:
   - module: tool-pipeline-run
     source: ../modules/tool-pipeline-run
     config:
+      # This bundle names ITSELF here. The module's own defaults are
+      # namespace-neutral by design (attractor-24e stage 1) -- it knows
+      # nothing about "attractor", so the runner agent and the @mention
+      # example its tool shows the LLM are ours to supply. Dropping either
+      # key does not fall back to these values; it falls back to a neutral
+      # placeholder, and the LLM would be taught a mention that resolves
+      # nowhere. tests/test_pipeline_run_namespace_neutrality.py guards
+      # exactly that.
       runner_agent: attractor-pipeline-runner
+      mention_example: "@attractor:examples/pipelines/01-simple-linear.dot"
       profiles:
         anthropic: attractor-agent-anthropic
         openai: attractor-agent-openai

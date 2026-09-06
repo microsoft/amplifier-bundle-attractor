@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from amplifier_module_tool_pipeline_run import PipelineRunTool
+from amplifier_module_tool_pipeline_run import PipelineRunTool, mount
 
 
 # ---------------------------------------------------------------------------
@@ -741,19 +741,32 @@ async def test_no_params_omits_key_from_orchestrator_config():
 
 
 # ---------------------------------------------------------------------------
-# De-attractorization: "mention_example" config (attractor-24e stage 1)
+# Namespace neutrality: "mention_example" + "runner_agent" config
+# (attractor-24e stage 1)
 #
-# The tool's own `description` and `input_schema["dot_file"]["description"]`
-# used to hard-code the "@attractor:" mention namespace as an illustrative
-# example for the calling LLM. That's real coupling (a non-"attractor"
-# bundle mounting this tool unconfigured would show its LLM an example
-# mention that resolves nowhere), even though it never touched actual
-# @mention *resolution* logic (mention_resolver.resolve() handles any
-# namespace generically -- see test_resolve_at_mention_path above, which is
-# unaffected by any of this). "mention_example" makes the illustrative
-# text configurable; its default preserves today's exact "attractor" text
-# byte-for-byte for existing (attractor) consumers.
+# This module used to name one specific bundle in its own source: the
+# mention namespace shown to the calling LLM (in `description` and
+# `input_schema["dot_file"]["description"]`) and the agent name spawned to
+# execute the pipeline. Both are now parameters whose DEFAULTS name no
+# bundle at all; a mounting bundle supplies its own values.
+#
+# None of this ever touched @mention *resolution* -- mention_resolver
+# .resolve() handles any namespace generically (see
+# test_resolve_at_mention_path above, and
+# test_configured_namespace_resolves_end_to_end below, which proves it with
+# a namespace this module has never heard of). The coupling was in
+# LLM-facing text and in a spawn default, and text that confidently names
+# some other bundle's namespace is exactly how a tool teaches its caller to
+# write a mention that resolves nowhere.
 # ---------------------------------------------------------------------------
+
+# The exact LLM-facing text and runner agent this module produced for its
+# original consumer, back when both were baked into the source. That
+# consumer now passes these same values as config (see the tool-pipeline-run
+# mount in bundles/attractor-interactive.yaml), so this pair is the
+# consumer-compat proof: same values in, byte-identical behavior out.
+PRIOR_CONSUMER_MENTION_EXAMPLE = "@attractor:examples/pipelines/01-simple-linear.dot"
+PRIOR_CONSUMER_RUNNER_AGENT = "attractor-pipeline-runner"
 
 
 def test_custom_mention_example_lands_in_input_schema():
@@ -782,13 +795,67 @@ def test_custom_mention_example_lands_in_tool_description():
     assert "attractor" not in tool.description.lower()
 
 
-def test_default_mention_example_matches_todays_text_byte_identical():
-    """Unconfigured mount reproduces today's exact @attractor: example text.
+def test_default_mention_example_names_no_bundle():
+    """An unconfigured mount advertises a placeholder, never a real namespace.
 
-    Pins both surfaces byte-for-byte so an unconfigured (existing attractor)
-    consumer sees zero behavior change.
+    The de-attractorization pin. An unconfigured mount must read as
+    unconfigured: a default that named a real bundle would point every
+    other bundle's LLM at a namespace it has not registered, and the
+    resulting mention fails at resolution time rather than at read time.
+
+    RED pre-change: the default was
+    "@attractor:examples/pipelines/01-simple-linear.dot", so both the
+    placeholder assertions and the "names no bundle" assertions failed.
     """
     tool = PipelineRunTool(config={})
+    schema_description = tool.input_schema["properties"]["dot_file"]["description"]
+
+    assert "@<bundle>:path/to/pipeline.dot" in schema_description
+    assert "@<bundle>:... mentions" in tool.description
+
+    # Two-sided: no bundle name may creep back into either surface.
+    assert "attractor" not in tool.description.lower()
+    assert "attractor" not in schema_description.lower()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_default_runner_agent_names_no_bundle():
+    """An unconfigured mount spawns the neutral runner name, not a bundle's.
+
+    RED pre-change: the default was "attractor-pipeline-runner".
+    """
+    spawn_kwargs_capture = {}
+
+    async def mock_spawn(**kwargs):
+        spawn_kwargs_capture.update(kwargs)
+        return {
+            "output": '{"status": "success"}',
+            "session_id": "child-default-runner",
+        }
+
+    mock_coordinator = MagicMock()
+    mock_coordinator.get_capability = lambda name: (
+        mock_spawn if name == "session.spawn" else None
+    )
+    mock_coordinator.config = {"agents": {"pipeline-runner": {}}}
+    mock_coordinator.session = MagicMock()
+
+    tool = PipelineRunTool(config={}, coordinator=mock_coordinator)
+    result = await tool.execute({"goal": "test goal", "dot_source": SIMPLE_DOT})
+
+    assert result.success
+    assert spawn_kwargs_capture["agent_name"] == "pipeline-runner"
+    assert "attractor" not in spawn_kwargs_capture["agent_name"]
+
+
+def test_prior_consumer_config_reproduces_its_llm_text_byte_identical():
+    """The original consumer's values reproduce its original text exactly.
+
+    Consumer-compat proof for the LLM-facing half: the bundle that used to
+    get this text from the module's baked-in defaults now passes the same
+    values as config, and gets the same two strings byte-for-byte.
+    """
+    tool = PipelineRunTool(config={"mention_example": PRIOR_CONSUMER_MENTION_EXAMPLE})
     assert tool.description == (
         "Run a DOT graph pipeline. Provide a pipeline definition via "
         "'dot_file' (path to a .dot file, supports @attractor:... mentions) "
@@ -804,12 +871,12 @@ def test_default_mention_example_matches_todays_text_byte_identical():
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_default_runner_agent_matches_todays_value_when_unconfigured():
-    """Unconfigured mount still spawns the pre-existing default runner agent.
+async def test_prior_consumer_config_still_spawns_its_own_runner_agent():
+    """The original consumer's runner_agent value still reaches session.spawn.
 
-    "runner_agent" was already config-driven before this change (only its
-    *default* is attractor-specific); this pins that default explicitly so
-    a future stage-2 move can prove it never silently changed.
+    Consumer-compat proof for the spawn half. That bundle already passed
+    runner_agent explicitly before this change, so this asserts the path it
+    depends on is the one that survived when the default moved.
     """
     spawn_kwargs_capture = {}
 
@@ -817,31 +884,93 @@ async def test_default_runner_agent_matches_todays_value_when_unconfigured():
         spawn_kwargs_capture.update(kwargs)
         return {
             "output": '{"status": "success"}',
-            "session_id": "child-default-runner",
+            "session_id": "child-prior-consumer",
         }
 
     mock_coordinator = MagicMock()
     mock_coordinator.get_capability = lambda name: (
         mock_spawn if name == "session.spawn" else None
     )
-    mock_coordinator.config = {"agents": {"attractor-pipeline-runner": {}}}
+    mock_coordinator.config = {"agents": {PRIOR_CONSUMER_RUNNER_AGENT: {}}}
     mock_coordinator.session = MagicMock()
 
-    tool = PipelineRunTool(config={}, coordinator=mock_coordinator)
-    result = await tool.execute(
-        {
-            "goal": "test goal",
-            "dot_source": SIMPLE_DOT,
-        }
+    tool = PipelineRunTool(
+        config={"runner_agent": PRIOR_CONSUMER_RUNNER_AGENT},
+        coordinator=mock_coordinator,
     )
+    result = await tool.execute({"goal": "test goal", "dot_source": SIMPLE_DOT})
 
     assert result.success
-    assert spawn_kwargs_capture["agent_name"] == "attractor-pipeline-runner"
+    assert spawn_kwargs_capture["agent_name"] == PRIOR_CONSUMER_RUNNER_AGENT
+    assert result.output["runner_agent"] == PRIOR_CONSUMER_RUNNER_AGENT
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_configured_namespace_resolves_end_to_end():
+    """A mount configured for a foreign namespace resolves mentions in it.
+
+    The parameterization proof end-to-end: mount() with a namespace this
+    module has never heard of, hand the mounted tool a dot_file in that
+    namespace, and the file behind it is what reaches the spawned pipeline
+    -- while the tool advertises that same namespace to its own LLM.
+
+    RED pre-change: the advertised-example assertion failed (the mounted
+    tool advertised "@attractor:..." regardless of the namespace in play),
+    which is the whole hazard -- resolution worked while the text told the
+    LLM to write a mention into a bundle that was not there.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".dot", delete=False) as f:
+        f.write(SIMPLE_DOT)
+        f.flush()
+        tmp_path = f.name
+    try:
+        mention = "@neutral-bundle:pipelines/demo.dot"
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve.return_value = Path(tmp_path)
+
+        spawn_kwargs_capture = {}
+
+        async def mock_spawn(**kwargs):
+            spawn_kwargs_capture.update(kwargs)
+            return {
+                "output": '{"status": "success"}',
+                "session_id": "child-neutral-namespace",
+            }
+
+        capabilities = {
+            "mention_resolver": mock_resolver,
+            "session.spawn": mock_spawn,
+        }
+        mock_coordinator = MagicMock()
+        mock_coordinator.get_capability = capabilities.get
+        mock_coordinator.config = {"agents": {"neutral-runner": {}}}
+        mock_coordinator.session = MagicMock()
+        mock_coordinator.mount = AsyncMock()
+
+        await mount(
+            mock_coordinator,
+            {"mention_example": mention, "runner_agent": "neutral-runner"},
+        )
+        tool = mock_coordinator.mount.call_args[0][1]
+
+        # What the mounted tool tells its LLM to write ...
+        assert mention in tool.input_schema["properties"]["dot_file"]["description"]
+
+        # ... is what it then resolves and runs.
+        result = await tool.execute({"goal": "test goal", "dot_file": mention})
+
+        assert result.success
+        mock_resolver.resolve.assert_called_once_with(mention)
+        assert spawn_kwargs_capture["orchestrator_config"]["dot_source"] == SIMPLE_DOT
+        assert spawn_kwargs_capture["agent_name"] == "neutral-runner"
+    finally:
+        os.unlink(tmp_path)
 
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_custom_runner_agent_lands_in_spawn_call():
-    """A configured runner_agent (not the attractor default) is what gets spawned."""
+    """A configured runner_agent overrides the neutral default at spawn."""
     spawn_kwargs_capture = {}
 
     async def mock_spawn(**kwargs):

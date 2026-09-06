@@ -42,12 +42,21 @@ class PipelineRunTool:
     # input_schema (below) -- purely illustrative text for the calling LLM,
     # not resolution logic (mention_resolver.resolve() handles any namespace
     # generically; see _resolve_dot_file_path). Hard-coding a bundle-specific
-    # namespace here is nonetheless real coupling: a non-"attractor" bundle
-    # mounting this tool unconfigured would show its LLM an example mention
-    # that resolves nowhere. Config-worthy -- see "mention_example" in the
-    # module README. Default preserves today's exact text for existing
-    # (attractor) consumers.
-    _DEFAULT_MENTION_EXAMPLE = "@attractor:examples/pipelines/01-simple-linear.dot"
+    # namespace here is real coupling: a bundle of any other name mounting
+    # this tool unconfigured would show its LLM an example mention that
+    # resolves nowhere while *looking* real. The default is therefore an
+    # obvious placeholder -- an unconfigured mount reads as unconfigured
+    # instead of pointing confidently at some other bundle's namespace.
+    # Mounting bundles set "mention_example" to a path under their own
+    # registered namespace; see the module README.
+    _DEFAULT_MENTION_EXAMPLE = "@<bundle>:path/to/pipeline.dot"
+
+    # Default agent name `session.spawn` is called with to execute the
+    # pipeline. Namespace-neutral for the same reason as above: a bundle
+    # names its own runner agent via the "runner_agent" config key, and a
+    # bundle-specific default here would send every unconfigured mount
+    # looking for an agent only one bundle defines.
+    _DEFAULT_RUNNER_AGENT = "pipeline-runner"
 
     def __init__(self, config: dict[str, Any], coordinator: Any = None) -> None:
         self.config = config
@@ -450,7 +459,7 @@ class PipelineRunTool:
             )
 
         # --- Resolve runner agent name ---
-        runner_agent = self.config.get("runner_agent", "attractor-pipeline-runner")
+        runner_agent = self.config.get("runner_agent", self._DEFAULT_RUNNER_AGENT)
 
         # --- Build orchestrator config for the child session ---
         orchestrator_config: dict[str, Any] = {

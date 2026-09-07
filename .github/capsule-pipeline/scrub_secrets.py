@@ -181,6 +181,19 @@ DEFAULT_WATCH_ENV = (
     # too: it is a private endpoint, its literal value carries no debugging
     # value in evidence (it is constant across a run), and redaction is
     # surgical -- only the value is replaced.
+    #
+    # OPENAI_BASE_URL IS OPTIONAL AND IS NOT A SECRET (owner ruling,
+    # 2026-09-07): it is a repository VARIABLE, and when it is unset the run
+    # uses the provider module's default endpoint. Watching it is therefore
+    # belt-and-braces, not a credential requirement -- and an UNSET one must
+    # be a no-op here, never a scrub. `_watched_literals` below is what makes
+    # that true: a value shorter than MIN_LITERAL_LEN is dropped from the
+    # literal map, so the empty string never becomes a search term. An empty
+    # literal matches at every position in every file, so the unguarded shape
+    # would not leak evidence -- it would DESTROY it, on exactly the
+    # configuration this ruling makes normal. Held by
+    # tests/test_provider_base_url_optional.py, with a positive control that
+    # a real value is still redacted.
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "CAPSULE_PR_TOKEN",
@@ -189,7 +202,11 @@ DEFAULT_WATCH_ENV = (
 )
 
 # Values shorter than this are never treated as literal secrets (avoids
-# scrubbing e.g. a watched var someone set to "true" out of every file).
+# scrubbing e.g. a watched var someone set to "true" out of every file). The
+# floor case is load-bearing rather than incidental: an UNSET watched var
+# reads as "", and "" matches at every position in every file, so this is
+# what stops an optional credential's absence (OPENAI_BASE_URL, since
+# 2026-09-07) from turning a scrub into a shredder.
 MIN_LITERAL_LEN = 8
 
 # Layer 1: known token shapes. Character classes stop at backslash and

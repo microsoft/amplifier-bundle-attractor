@@ -16,6 +16,7 @@ Graphs this repo executes in CI, and the workflow that drives each:
 | `.github/capsule-pipeline/capsule.dot` | `capsule-specify.yml:509` | `coding-agent` | 6 (`:517`) | `19800s` (`:98`) |
 | `.github/capsule-pipeline/feature-capsule.dot` | `feature-specify.yml:691` | `coding-agent` | 8 (`:702`) | `12000s` (`:113`) |
 | `.github/capsule-pipeline/task-runner.dot` | `capsule-implement.yml:569` | `coding-agent` | 6 (`:575`) | `14400s` (`:142`) |
+
 `.github/actions-key-smoke/actions-key-smoke.dot` (50 lines) is a credential
 smoke test, not a pipeline. `ci.yml` executes no graph — `dot-render-gate`
 (`ci.yml:69-143`) only proves every tracked `.dot` renders. No `examples/` graph
@@ -176,7 +177,7 @@ computes it, `MODEL_RESOLVED` at `backend.py:1325-1334`).
 | `rival`, `mutate` | anthropic default | unchanged | No evidence either way; do not tune what is not measured |
 
 **Unknown-value trap:** an anthropic `reasoning_effort` outside `{low, medium,
-high}` silently becomes 8000 (`adapters/anthropic.py:495-503`); the engine
+high}` silently becomes 8000 (`adapters/anthropic.py:495-503`) — the engine
 validates nothing (C11, `engine-surface.v1.md:150-152`).
 
 ### 4.4 The runner constraint — stated because it constrains the answer
@@ -189,8 +190,8 @@ Any future recommendation naming `terra`/`luna` must ship its infra change with
 it: a self-hosted runner carrying those settings, or new repo secrets **plus** a
 credential-name entry in `preflight.py`'s map. Shipping the pin alone is not a
 degraded run — the startup preflight (`preflight.py:212-226`) **refuses to start
-the pipeline**, naming every failing node, before node 1. That is why this pin
-cannot be smuggled in "to see if it works".
+the pipeline**, naming every failing node, before node 1. That is why it cannot
+be smuggled in "to see if it works".
 
 ## 5. Owner question 3 — budget honesty
 
@@ -198,10 +199,10 @@ cannot be smuggled in "to see if it works".
 
 Run 2, iteration 0, from `trace.jsonl` (seconds): preamble
 (`start+setup+orient+rival`+resets) = **862**; one round
-(`author+mutate+mutate_b+void+critique`+gates) = **5,594** (93.2 min);
-iteration-0 total 6,456. The fuse is 19,800 s. Solving `862 + N × 5,594 ≤ 19,800` gives **N ≈ 3.4** — optimistic, because a
-round is not constant: `author` went 1,242 s → 3,608 s between rounds as context
-grew 24 K → 228 K input tokens. Measured: **run 1 got 1.9 rounds, run 2 ~1.5.**
+(`author+mutate+mutate_b+void+critique`+gates) = **5,594** (93.2 min); iteration-0
+total 6,456. Fuse = 19,800 s, so `862 + N × 5,594 ≤ 19,800` gives **N ≈ 3.4** —
+optimistic, since a round is not constant: `author` went 1,242 s → 3,608 s as its
+context grew 24 K → 228 K tokens. Measured: **run 1 got 1.9 rounds, run 2 ~1.5.**
 
 The graph declares `max_iterations=6` and `setup` *raises* it to 8 for a test-less
 subject, capped at 15 (`capsule.dot:180`). **The wall clock buys 2.** A 6-to-15
@@ -304,25 +305,24 @@ ids) with `feature-specify.yml:702` `8 → 3`; `task-runner.dot` (`attempt` take
 - **`docs/VISION.md:48-70` (decision matrix).** `reasoning_effort`, `timeout`,
   `allow_partial` are spec-given properties the engine already implements; adding
   them is *more-aligned* movement — presumption of yes, nothing uncharted-tier.
-- **Gates before work / one correction loop.** Both honored, and measurement
-  shows the gate lattice is nearly free: 13 deterministic nodes, **5.8 s of
-  11,305 s (0.05 %)**. `triage` is the single wall.
+- **Gates before work / one correction loop.** Both honored, and the gate lattice
+  is nearly free: 13 deterministic nodes, **5.8 s of 11,305 s (0.05 %)**;
+  `triage` is the single wall.
 - **`fidelity` vocabulary.** The engine's set is exactly six — `full, truncate,
   compact, summary:low, summary:medium, summary:high` (`fidelity.py:44-53`),
   default `compact` (`:55`), precedence edge > node > graph > default (`:86-133`);
   an invalid value **warns and degrades to `compact`** rather than failing
   (`:92-101`). The graphs use `compact` and `full` (`author`/`attempt` only) — a
   correct, conservative subset. **But `thread_id` is read only when fidelity
-  resolves to `full`** (`backend.py:470-474`), so the `rival` / `mutate` /
-  `mutate_b` / `void` `thread_id=` attributes are **inert today**. They document
-  intent, not behavior. v2 says so in a comment, so nobody "fixes" a non-bug.
-- **Authoring layer — the answer to "do the skills teach it?"** Fidelity: yes.
+  resolves to `full`** (`backend.py:470-474`), so `rival` / `mutate` / `mutate_b` /
+  `void`'s `thread_id=` is **inert today** — intent, not behavior. v2 says so in a
+  comment, so nobody "fixes" a non-bug.
+- **Authoring layer — "do the skills teach it?"** Fidelity: yes.
   `docs/DOT-AUTHORING-GUIDE.md:1064-1146` teaches all six values and the correct
   two-name worker vocabulary; `skills/attractorify/SKILL.md:359` requires "one of
   the six real `fidelity=` values". Worker choice: yes as *vocabulary*, no as
   *decision*. **The gap is cost** — neither teaches worker/model/effort as a
-  budget decision, and neither carries a per-node-cost worked example. §2's table
-  is the missing artifact.
+  budget decision or carries a per-node-cost worked example. §2 is that artifact.
 - **`specs/EXTENSIONS.md` here stops at §39** (2,664 lines, 41 sections). The
   shipped graphs rely on dot-runner's §40 (worker registry), §43 (`$name` at
   parse time — exactly `max_pipeline_duration="$max_duration"`), §45 (bounded
@@ -339,12 +339,12 @@ ids) with `feature-specify.yml:702` `8 → 3`; `task-runner.dot` (`attempt` take
 
 1. **`escalate` is dead in Actions.** Run 2 `iteration_1/escalate/status.json`:
    `HumanGateHandler requires an Interviewer but none was provided`. The
-   `[A]/[C]/[K]` gate cannot fire in CI; the run fell straight to `abandon`.
-   Every `-> escalate` edge in all three graphs is a trapdoor, not a gate.
+   `[A]/[C]/[K]` gate cannot fire in CI and the run fell straight to `abandon`;
+   every `-> escalate` edge in all three graphs is a trapdoor, not a gate.
 2. **`mutate` round 2 burned 763 s over three sessions** on `must_write` —
    `mtime 1788737217.642 <= node_start 1788744193.583; planted before or at node
    start`. The artifact existed but predated the visit: either the maker writes
    identical content (no-op) or the reset does not clear `.ai/hypothesis.patch`
    between rounds.
 
-Both are out of scope here; neither is fixed by the §6 diff.
+Both are out of scope here and neither is fixed by §6's diff.

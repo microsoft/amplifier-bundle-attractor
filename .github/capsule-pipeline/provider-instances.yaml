@@ -1,0 +1,52 @@
+# Runner-side provider INSTANCE definitions for the capsule pipelines.
+#
+# WHAT THIS IS. The shipped pipelines' judgment nodes address a provider
+# INSTANCE by id -- `llm_provider="luna"` -- not a provider MODULE name. An
+# instance is a `config.providers[]` entry carrying an explicit `id`, with its
+# own base_url / api_key / default_model; the engine reads them from the
+# operator's merged Amplifier settings (global `<amplifier-home>/settings.yaml`
+# -> project `.amplifier/settings.yaml` -> local `.amplifier/settings.local.yaml`)
+# and mounts one ONLY when the run names it. On a developer host those come
+# from the operator's own settings (`amplifier provider list`). A GitHub-hosted
+# runner has no such settings at all, so this file is the runner's copy, and
+# `install_provider_instances.sh` puts it in place before any node runs.
+#
+# THIS FILE CONTAINS NO SECRETS AND MUST NEVER CONTAIN ONE. Every credential is
+# a `${VAR}` placeholder, expanded by the engine at load time from the process
+# environment (`provider_instances._expand`, environment first, then
+# `<amplifier-home>/keys.env`). The workflow supplies those vars from repo
+# secrets; the file on disk carries the literal `${VAR}` text. An unresolvable
+# placeholder is deliberately left VERBATIM rather than blanked, so a mis-set
+# secret surfaces as the provider's own loud auth failure naming `${LUNA_API_KEY}`,
+# never as a silent empty credential.
+#
+# REQUIRED REPO SECRETS (the installer names these if they are missing):
+#   LUNA_API_KEY   -- the credential for the luna endpoint
+#   LUNA_BASE_URL  -- the OpenAI-compatible endpoint luna is served from
+#
+# WHY THE MODEL ID IS CONCRETE. A glob `llm_model` sends the engine to
+# `unified_llm.resolve_latest_for`, whose SDK adapters cover the
+# anthropic / openai / gemini triad only -- it cannot resolve a catalog for an
+# instance id and fails loud with "no adapter found for provider 'luna'". A
+# concrete id is returned unchanged with no catalog call at all
+# (loop-pipeline `backend.py::_resolve_concrete_model`). So an instance pin and
+# a model glob are mutually exclusive by construction, here and in the graphs.
+#
+# SHAPE. This is a complete, valid Amplifier settings document that happens to
+# define only `config.providers` -- the installer writes it as-is, and refuses
+# rather than merging when the runner already has settings of its own.
+config:
+  providers:
+    # Mirrors the operator's own `luna` instance, minus the two fields that
+    # only mean something on an interactive CLI host: `priority` (orders
+    # auto-selection; a run that NAMES its instance never consults it) and
+    # `source` (a lazy-activation fetch hint; provider-openai is an
+    # unconditional root dependency, so the module resolves by name).
+    - id: luna
+      module: provider-openai
+      config:
+        api_key: ${LUNA_API_KEY}
+        base_url: ${LUNA_BASE_URL}
+        default_model: gpt-5.6-luna
+        enable_long_context: 'false'
+        reasoning_effort: high

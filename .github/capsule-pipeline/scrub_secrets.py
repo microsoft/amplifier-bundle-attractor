@@ -171,6 +171,18 @@ from pathlib import Path
 DEFAULT_WATCH_ENV = (
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    # The judgment node's provider INSTANCE credentials (2026-09-07 model
+    # policy: critique/critique_b address `luna`, not the bare `openai`
+    # module). Added the same day the pins changed, because layer 3 is the
+    # only layer that can catch a leak of a credential whose SHAPE the token
+    # patterns in layer 1 do not know -- and a watch list that lags the
+    # credentials a run actually holds is the 2026-08 incident waiting to
+    # happen again with a different variable name. LUNA_BASE_URL is watched
+    # too: it is a private endpoint, its literal value carries no debugging
+    # value in evidence (it is constant across a run), and redaction is
+    # surgical -- only the value is replaced.
+    "LUNA_API_KEY",
+    "LUNA_BASE_URL",
     "CAPSULE_PR_TOKEN",
     "GITHUB_TOKEN",
     "GH_TOKEN",

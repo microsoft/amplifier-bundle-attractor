@@ -1,0 +1,639 @@
+Spawn a specialized agent to handle a task autonomously. It absorbs the context cost of its own tool calls and returns one summary message (~500 tokens vs ~20,000).
+
+- agent: a name from the catalog below, "namespace:path/to/bundle" to delegate to any bundle directly, or "self" to spawn yourself (maximum token conservation).
+- instruction (required): every invocation is STATELESS - put all needed facts in it; the agent sees nothing else unless you pass context.
+- session_id: resume an agent session; must be the full session_id from a previous delegate call.
+- context_depth: HOW MUCH parent context - "none" (clean slate), "recent" (last context_turns turns, default 5), "all" (full history).
+- context_scope: WHICH content - "conversation" (user/assistant text), "agents" (+ delegate results), "full" (+ all tool results).
+- provider_preferences / model_role: choose the provider or model.
+- Launch independent agents concurrently.
+
+Available agents:
+  - amplifier-tester:setup-digital-twin: Sets up Digital Twin Universe environments for validating Amplifier ecosystem changes.
+Mirrors changed repos to Gitea, generates Amplifier-specific DTU profiles
+(pypi_overrides, url_rewrites), launches the environment, and verifies it works.
+
+Use when a developer wants to test local changes to Amplifier repos (core, modules,
+bundles, foundation, app-cli) in an isolated container environment before merging.
+
+**Authoritative on:** Amplifier-specific DTU profile generation — Gitea mirroring,
+pypi_overrides for amplifier-core, url_rewrites for modules/bundles/foundation,
+multi-repo change coordination, end-to-end DTU launch and verification
+
+<example>
+Context: Developer changed a module and wants to test it
+user: 'I made changes to amplifier-module-provider-anthropic, can you set up a digital twin to test it?'
+assistant: |
+  delegate(
+      agent="amplifier-tester:setup-digital-twin",
+      instruction="Set up a DTU to validate changes to amplifier-module-provider-anthropic at ~/repos/amplifier-module-provider-anthropic",
+      context_depth="recent",
+      context_scope="conversation",
+  )
+</example>
+
+<example>
+Context: Developer changed core and a module together
+user: 'Test my amplifier-core and provider-anthropic changes together in a digital twin'
+assistant: |
+  delegate(
+      agent="amplifier-tester:setup-digital-twin",
+      instruction="Set up a DTU to validate changes across repos: ~/repos/amplifier-core and ~/repos/amplifier-module-provider-anthropic",
+      context_depth="recent",
+      context_scope="conversation",
+  )
+</example>
+
+  - amplifier-tester:validator: Runs post-launch validation checks inside an existing Digital Twin Universe
+environment to verify that Amplifier ecosystem changes work correctly.
+
+Use after setup-digital-twin has launched a DTU environment. Executes checks
+keyed to the change type (core, module, bundle, CLI, foundation) and reports
+pass/fail results.
+
+**Authoritative on:** post-launch DTU validation checks — Amplifier installation
+verification, change-type-keyed smoke tests, module loading, bundle availability,
+CLI smoke testing
+
+<example>
+Context: setup-digital-twin launched a DTU and handed off
+user: 'Validate the DTU environment'
+assistant: |
+  delegate(
+      agent="amplifier-tester:validator",
+      instruction="Validate DTU instance dtu-a1b2c3d4. Change types: module (amplifier-module-provider-anthropic). Verify the module loads with local changes.",
+      context_depth="recent",
+      context_scope="agents",
+  )
+</example>
+
+<example>
+Context: Multi-repo validation after core + module changes
+user: 'Verify everything works'
+assistant: |
+  delegate(
+      agent="amplifier-tester:validator",
+      instruction="Validate DTU instance dtu-x1y2z3. Change types: core (amplifier-core), module (amplifier-module-provider-anthropic). Verify correct core version and module loading.",
+      context_depth="recent",
+      context_scope="agents",
+  )
+</example>
+
+  - amplifier:amplifier-expert: **THE authoritative consultant for ALL Amplifier ecosystem knowledge.** Use PROACTIVELY throughout the entire lifecycle: for initial research to understand what's possible, for guidance on how to build, and for validation of ideas/plans/implementations. This agent is the source of truth for amplifier-core, modules, amplifier-foundation, bundles, patterns, and best practices.
+
+**CRITICAL: Use this agent BEFORE implementation** to get accurate context. Use it DURING work to validate approaches. Use it AFTER to verify alignment with Amplifier philosophy.
+
+Examples:
+
+<example>
+Context: Starting any Amplifier-related work
+user: 'I need to understand how sessions work before implementing'
+assistant: 'I'll consult amplifier:amplifier-expert first to get authoritative information on session lifecycle and patterns.'
+<commentary>
+ALWAYS consult amplifier:amplifier-expert when starting Amplifier-related work for accurate context.
+</commentary>
+</example>
+
+<example>
+Context: Validating an approach
+user: 'Is this the right pattern for adding a custom provider?'
+assistant: 'Let me use amplifier:amplifier-expert to validate this approach against Amplifier's design principles.'
+<commentary>
+Use amplifier:amplifier-expert to validate ideas/plans before implementation.
+</commentary>
+</example>
+
+<example>
+Context: Understanding what's possible
+user: 'What multi-agent patterns does Amplifier support?'
+assistant: 'I'll delegate to amplifier:amplifier-expert to explain available patterns and point to relevant examples.'
+<commentary>
+amplifier:amplifier-expert knows the full ecosystem and can recommend appropriate patterns.
+</commentary>
+</example>
+
+<example>
+Context: Quick reference lookup
+user: 'What module types exist in Amplifier?'
+assistant: 'I'll ask amplifier:amplifier-expert for the authoritative list of module types and their contracts.'
+<commentary>
+Even simple lookups should go through amplifier:amplifier-expert to ensure accuracy.
+</commentary>
+</example>
+  - attractor-pipeline-runner: Pipeline execution agent spawned by run_pipeline tool
+  - attractor-profile-anthropic: Attractor coding agent with Anthropic provider
+  - attractor-profile-gemini: Attractor coding agent with Gemini provider
+  - attractor-profile-openai: Attractor coding agent with OpenAI provider
+  - attractor:attractor-expert: USE WHEN work touches an Attractor pipeline: authoring/editing .dot graphs; debugging failures or unexpected routing (edge selection, conditions, outcomes); picking a pattern (linear, parallel fan-out/fan-in, conditional); fidelity modes, model stylesheets, handlers, bundle config; Python integration (llm-direct vs spawn workers). Owns the SHIPPED engine's runtime semantics (routing, substitution, verdict contract, fail-loud), not just DOT syntax — which generic builders lack: consult BEFORE delegating .dot work, mid-build, and review. DO NOT USE WHEN no pipeline or .dot graph is involved.
+
+  - browser-tester:browser-operator: Interact with a live website: navigate, fill forms, click buttons, test UI
+flows, take screenshots, and extract data from JavaScript-rendered pages.
+General-purpose browser automation: natural-language instructions become
+agent-browser CLI actions.
+
+USE WHEN: the page needs a real browser -- SPA/JS rendering, interaction, or
+UX testing.
+DO NOT USE WHEN: static HTML or a JSON API would answer it (use web_fetch);
+the task is research across many sites (use browser-researcher); the
+deliverable is a screenshot sweep or visual record (use visual-documenter).
+
+  - browser-tester:browser-researcher: Research a topic across multiple websites: compare competitors, look up
+documentation, or extract structured data from the web. Research-focused
+browser agent optimized for multi-page exploration, data extraction, and
+summarization.
+
+USE WHEN: the answer spans several pages, or the sites require JavaScript
+rendering -- preferred over web_fetch in that case.
+DO NOT USE WHEN: the page is static HTML or a JSON API (web_fetch is
+cheaper); the task is interacting with one page rather than reading many
+(use browser-operator); the deliverable is screenshots (use
+visual-documenter).
+
+  - browser-tester:visual-documenter: Capture screenshots and visual documentation: responsive testing across
+viewports, before/after comparisons, and QA evidence. Creates visual records
+of websites, UI states, and workflows for documentation, QA evidence, and
+change tracking.
+
+USE WHEN: the deliverable is images someone needs to SEE -- captured,
+labelled, and organized.
+DO NOT USE WHEN: the goal is interacting with or testing a page rather than
+capturing it (use browser-operator); the goal is gathering information
+across sites (use browser-researcher).
+
+  - context-intelligence:session-navigator: Use only when graph-analyst delegates here because the context-intelligence graph server is unreachable or returned 0 sessions. It navigates session data straight from local JSONL on disk — session discovery, event search, navigation — with bash/jq/grep extraction that never pulls a 100k+ token events.jsonl line into context, and never calls graph_query or blob_read.
+
+USE WHEN: graph-analyst has handed off a workspace-scoped local-file query.
+
+DO NOT USE WHEN: you are an external caller — route to graph-analyst, which picks the path for you.
+
+  - core:core-expert: **Expert consultant for Amplifier kernel internals.** Use when you need deep understanding of kernel contracts, module protocols, the event system, or deciding whether something belongs in kernel vs module.
+
+**When to consult**:
+- Building new modules
+- Understanding kernel contracts
+- Events and hooks system details
+- Session lifecycle questions
+- Kernel vs module placement decisions
+
+Examples:
+
+<example>
+Context: Building a new module
+user: 'I need to implement a custom provider module'
+assistant: 'I'll consult core:core-expert to understand the Provider protocol and kernel contracts.'
+<commentary>
+core:core-expert knows the exact protocol specifications for building modules.
+</commentary>
+</example>
+
+<example>
+Context: Deciding kernel vs module
+user: 'Should retry logic be in the kernel?'
+assistant: 'Let me ask core:core-expert - this is a kernel philosophy question.'
+<commentary>
+core:core-expert can apply the litmus test for kernel vs module decisions.
+</commentary>
+</example>
+
+<example>
+Context: Understanding hooks
+user: 'How do hooks participate in the agent loop?'
+assistant: 'I'll consult core:core-expert for detailed hooks API understanding.'
+<commentary>
+core:core-expert has deep knowledge of the hook system and event flow.
+</commentary>
+</example>
+  - design-intelligence:animation-choreographer: Use this agent when designing motion, animations, and transitions for UI elements.
+Transforms user's motion vision into purposeful animations that communicate system
+state and provide feedback, following Amplified Design's motion timing protocol.
+
+Deploy for:
+- Icon animations and micro-interactions
+- Page transitions and choreography
+- Loading states and progress indicators
+- State change animations
+- Motion timing and easing decisions
+- Accessibility considerations for motion
+
+Remember: Animation is communication, not decoration.
+
+Examples:
+
+<example>
+Context: Designing motion for UI elements
+user: 'Add animations to make the modal feel more polished'
+assistant: 'I'll delegate to design-intelligence:animation-choreographer for motion design.'
+<commentary>
+Animation and transition design requires the choreographer's timing expertise.
+</commentary>
+</example>
+
+<example>
+Context: Page transitions
+user: 'Design the transition between our onboarding screens'
+assistant: 'I'll use design-intelligence:animation-choreographer for the transition choreography.'
+<commentary>
+Page-level transitions need coordinated motion design.
+</commentary>
+</example>
+
+  - design-intelligence:art-director: Use this agent for aesthetic direction, visual strategy, and cohesive visual expression.
+Transforms user's aesthetic vision into systematic design principles that guide all
+visual decisions across the system.
+
+Deploy for:
+- Defining aesthetic direction and visual strategy
+- Creating/maintaining .design/AESTHETIC-GUIDE.md
+- Ensuring visual coherence across the system
+- Translating "vibes" and feelings into design principles
+- Brand expression in design
+
+Owns the Style dimension (Nine Dimensions #1) at the strategic level.
+
+Examples:
+
+<example>
+Context: Establishing visual direction
+user: 'What should be the visual style for our new product?'
+assistant: 'I'll delegate to design-intelligence:art-director for aesthetic direction.'
+<commentary>
+Visual strategy and aesthetic decisions require the art director.
+</commentary>
+</example>
+
+<example>
+Context: Brand expression
+user: 'How do we express our brand personality in the UI?'
+assistant: 'I'll use design-intelligence:art-director to translate brand into design principles.'
+<commentary>
+Art director owns the translation of brand to visual expression.
+</commentary>
+</example>
+
+  - design-intelligence:component-designer: Use this agent when designing or implementing individual UI components. Transforms
+user's component vision into refined UI elements that embody the Nine Dimensions
+and Five Pillars while maintaining the 9.5/10 quality baseline.
+
+Deploy for:
+- Designing new UI components
+- Refining existing components
+- Component-level design decisions
+- Component documentation and examples
+- Variant design and props API
+
+This agent works at the component level, not system architecture.
+
+Examples:
+
+<example>
+Context: Designing a new UI component
+user: 'Design a date picker component for our app'
+assistant: 'I'll delegate to design-intelligence:component-designer to design the date picker.'
+<commentary>
+Individual component design is component-designer's specialty.
+</commentary>
+</example>
+
+<example>
+Context: Refining existing components
+user: 'The button component feels inconsistent, can you improve it?'
+assistant: 'I'll use design-intelligence:component-designer to refine the button design.'
+<commentary>
+Component refinement and variant design is component-designer's domain.
+</commentary>
+</example>
+
+  - design-intelligence:design-system-architect: Use this agent when working on design system architecture, design tokens, or establishing
+design foundations. This agent transforms user's vision into systematic, scalable design
+infrastructure following the Nine Dimensions and Five Pillars philosophy.
+
+Deploy for:
+- Design system architecture and token design
+- Establishing design foundations (color, typography, spacing, motion)
+- Evaluating design decisions against Nine Dimensions
+- Validating Five Pillars alignment
+- Design philosophy application and guidance
+- Cross-cutting design concerns
+
+This agent operates at the system level, not individual components.
+
+Examples:
+
+<example>
+Context: User is setting up a new design system
+user: 'Help me establish design tokens for our product'
+assistant: 'I'll delegate to design-intelligence:design-system-architect for token architecture.'
+<commentary>
+Design system token work is the architect's domain.
+</commentary>
+</example>
+
+<example>
+Context: Evaluating design decisions
+user: 'Does this component follow our design principles?'
+assistant: 'I'll use design-intelligence:design-system-architect to evaluate against the Nine Dimensions.'
+<commentary>
+Systematic evaluation of design decisions requires the architect's framework knowledge.
+</commentary>
+</example>
+
+  - design-intelligence:layout-architect: Use this agent for page-level layout structure, information architecture, and
+spatial composition. Transforms user's structural vision into systematic layout
+patterns that work across content types and scales.
+
+Deploy for:
+- Page/view layout structure (header, sidebar, main, footer)
+- Information architecture and navigation hierarchy
+- Grid systems and spatial composition
+- Content flow and reading patterns
+- Screen-level structure
+
+Owns the Space dimension (Nine Dimensions #4) at the page/view level.
+
+Examples:
+
+<example>
+Context: Page structure design
+user: 'Help me structure the dashboard layout'
+assistant: 'I'll delegate to design-intelligence:layout-architect for page structure.'
+<commentary>
+Page-level layout and information architecture is the layout architect's domain.
+</commentary>
+</example>
+
+<example>
+Context: Navigation hierarchy
+user: 'How should we organize the navigation for this app?'
+assistant: 'I'll use design-intelligence:layout-architect to design the navigation hierarchy.'
+<commentary>
+Information architecture and navigation is layout-architect's specialty.
+</commentary>
+</example>
+
+  - design-intelligence:responsive-strategist: Use this agent for responsive design strategy, breakpoint behavior, and device-specific
+adaptations. Transforms user's multi-device vision into systematic responsive patterns
+that work across all viewport sizes and input methods.
+
+Deploy for:
+- Responsive design strategy and breakpoint definitions
+- Mobile-first vs desktop-first approach
+- Touch vs mouse interaction patterns
+- Device-specific optimizations (phone, tablet, desktop)
+- Fluid typography and spacing
+
+Handles web modalities (desktop, tablet, mobile).
+
+Examples:
+
+<example>
+Context: Multi-device design
+user: 'How should this component adapt from mobile to desktop?'
+assistant: 'I'll delegate to design-intelligence:responsive-strategist for responsive patterns.'
+<commentary>
+Cross-device adaptation is the responsive strategist's domain.
+</commentary>
+</example>
+
+<example>
+Context: Breakpoint decisions
+user: 'What breakpoints should we use for our app?'
+assistant: 'I'll use design-intelligence:responsive-strategist to define the breakpoint strategy.'
+<commentary>
+Responsive strategy and breakpoint definitions need specialist knowledge.
+</commentary>
+</example>
+
+  - design-intelligence:voice-strategist: Use this agent for voice & tone strategy, UX writing, and microcopy. Transforms
+user's messaging vision into systematic content patterns that ensure language is
+clear, helpful, and consistent with brand personality.
+
+Deploy for:
+- Voice & tone strategy and framework
+- UX writing and microcopy (buttons, labels, placeholders)
+- Error message patterns
+- Empty state messaging
+- Content guidelines for developers
+
+Owns the Voice dimension (Nine Dimensions #3).
+
+Examples:
+
+<example>
+Context: UX writing
+user: 'Write the error messages for our form validation'
+assistant: 'I'll delegate to design-intelligence:voice-strategist for error message patterns.'
+<commentary>
+UX writing and microcopy is the voice strategist's domain.
+</commentary>
+</example>
+
+<example>
+Context: Tone guidelines
+user: 'What should be the voice and tone for our product?'
+assistant: 'I'll use design-intelligence:voice-strategist to establish voice guidelines.'
+<commentary>
+Voice & tone strategy requires the voice strategist's expertise.
+</commentary>
+</example>
+
+  - digital-twin-universe:dtu-profile-builder: Builds and launches Digital Twin Universe profiles for any user project. Explores
+the repository, generates a complete DTU profile, launches the environment, and
+hands back access details for realistic isolated testing.
+
+Use when a developer wants to test their project (web app, CLI tool, service with
+external dependencies) in an isolated container — any project, any language, any
+deployment style. Distinct from setup-digital-twin, which handles
+Amplifier-ecosystem-specific DTU setup; this agent is for user projects generally.
+
+**Authoritative on:** generic project-to-DTU profile generation — language and
+framework detection, containerized dependency analysis, port forwarding, API
+passthrough, end-to-end DTU launch for user-built software
+
+<example>
+Context: User built a web app and wants to test it
+user: 'I built a FastAPI app at ~/projects/my-api, can you create a Digital Twin for it?'
+assistant: |
+  delegate(
+      agent="digital-twin-universe:dtu-profile-builder",
+      instruction="Explore ~/projects/my-api, generate a DTU profile, and launch it",
+      context_depth="recent",
+      context_scope="conversation",
+  )
+</example>
+
+<example>
+Context: User wants to see their CLI tool deployed
+user: 'Create a digital twin for the tool I just built in ./my-tool so I can test it as a real user'
+assistant: 'I'll use dtu-profile-builder to analyze your tool, create an isolated environment with all dependencies, and give you exec access.'
+</example>
+
+  - foundation:bug-hunter: Specialized debugging expert focused on finding and fixing bugs systematically. Use PROACTIVELY. It MUST BE USED when user has reported or you are encountering errors, unexpected behavior, or test failures.
+  - foundation:explorer: Deep local-context reconnaissance agent. IMPORTANT: This agent has zero prior context—every invocation must include the full objective, scope hints (directories, file types, keywords), and any constraints the agent should respect. Without that information it will not be aware of such. MUST be used for multi-file exploration. Use this agent whenever the user needs a comprehensive survey of local code, documentation, configuration, or user-provided content (not a precise single-file lookup).
+  - foundation:file-ops: Focused file operations agent for reading, writing, editing, and searching files. ALWAYS use for targeted file operations when you need precise file system operations without the broader exploration scope. This agent handles: reading file contents, writing new files, making targeted edits, finding files by pattern (glob), and searching file contents (grep). Best for: single-file operations, batch file changes, content search, and file discovery tasks.
+  - foundation:foundation-expert: **THE authoritative navigator for the Amplifier Foundation ecosystem.** Knows what exists in foundation and finds the right examples, patterns, behaviors, agents, and docs for any request.
+
+Use PROACTIVELY when: finding working examples or patterns for a use case, understanding what foundation provides and how to compose it, answering philosophy questions (ruthless simplicity, bricks and studs, mechanism not policy), navigating behaviors/agents/modules inventory, or explaining concepts (bundle, behavior, composition, @mention system).
+
+**Authoritative on:** foundation inventory, examples catalog, behaviors, agents, philosophy docs, concepts (CONCEPTS.md), configuration, ecosystem navigation, foundation patterns, @mention system, contribution channels
+
+  - foundation:git-ops: **ALWAYS delegate git and GitHub operations to this agent.** It enforces safety protocols, generates consistent conventional commits with Amplifier co-author attribution, and produces well-structured PR descriptions. Every git and gh command runs through this agent.
+
+Use PROACTIVELY when: creating commits, opening or managing PRs, branch operations, conflict resolution, GitHub Issues/Releases/Actions interactions, repo discovery, or any git/gh CLI task.
+
+**Authoritative on:** commits, conventional commits, co-author attribution, PRs, branches, merge, rebase, conflicts, GitHub Issues, GitHub Releases, GitHub Actions, gh CLI, repo discovery
+
+  - foundation:integration-specialist: Expert at integrating with external services, APIs, and MCP servers while maintaining simplicity. Also analyzes and manages dependencies for security, compatibility, and technical debt. MUST be used when connecting to external services, setting up MCP servers, handling API integrations, or analyzing project dependencies.
+  - foundation:modular-builder: Implementation-only agent that translates complete specifications into working code. REQUIRES a complete spec (file paths, interfaces, pattern reference, success criteria) — if ANY element is missing, use zen-architect first to create the specification.
+
+Use when: you have a clear specification from zen-architect, the task is "implement X from spec" or "build Y per design", and module boundaries and contracts are already established.
+
+**Authoritative on:** module implementation, bricks-and-studs pattern, self-contained modules, test writing, LSP-assisted code navigation, contract-based development, spec-to-code translation
+
+  - foundation:post-task-cleanup: Use this agent when a todo list or major task has been completed and you need to ensure codebase hygiene. MUST be invoked PROACTIVELY after task completion to review git status, identify all touched files, remove temporary artifacts, eliminate unnecessary complexity, and ensure adherence to project philosophy principles.
+  - foundation:security-guardian: **MUST be used for security reviews, vulnerability assessments, and security audits.** REQUIRED checkpoint before production deployments — do not deploy to production without this agent's review.
+
+Use PROACTIVELY when: before any production deployment, after adding features that handle user data, when integrating third-party services or APIs, after refactoring authentication/authorization code, or when handling payment or financial data.
+
+**Authoritative on:** OWASP Top 10, hardcoded secrets detection, input/output validation, cryptographic review, dependency vulnerability scanning, XSS, SQL injection, authentication failures, authorization flaws, CVE analysis
+
+  - foundation:session-analyst: REQUIRED agent for analyzing, debugging, searching, and repairing Amplifier sessions — specializing in transcript surgery to recover broken sessions and safely reading events.jsonl files that would crash other tools.
+
+MUST be used when: session has orphaned tool_calls, ordering violations, or incomplete assistant turns; resume fails with 400/422 provider errors; analyzing events.jsonl (100k+ token lines); searching sessions by ID, project, date, or topic; rewinding a session to a prior checkpoint.
+
+**Authoritative on:** session repair, transcript surgery, rewind/rollback, orphaned tool_calls, ordering violations, events.jsonl analysis, session search, transcript.jsonl, provider rejection errors, session history
+
+  - foundation:test-coverage: Expert at analyzing test coverage, identifying gaps, and suggesting comprehensive test cases. MUST be used when writing new features, after bug fixes, or during test reviews.
+  - foundation:web-research: Web research agent for searching and fetching information from the internet. MUST be used for external documentation lookups and web searches. Use when you need to find external information, documentation, or resources. This agent handles: web searches, fetching URL content, and synthesizing information from multiple sources. Best for: looking up documentation, finding examples, researching libraries, and gathering external context.
+  - foundation:zen-architect: Use this agent PROACTIVELY for code planning, architecture design, and review tasks. It embodies ruthless simplicity and analysis-first development. This agent operates in three modes: ANALYZE mode for breaking down problems and designing solutions, ARCHITECT mode for system design and module specification, and REVIEW mode for code quality assessment. It creates specifications that the modular-builder agent then implements.
+  - lsp:code-navigator: Semantic code navigation expert using Language Server Protocol. For complex multi-step code navigation (tracing call hierarchies, mapping dependencies, understanding type flows across files), delegate to this agent. For simple single-operation lookups (quick hover, single goToDefinition), agents with tool-lsp can use it directly. LSP provides SEMANTIC results (actual code relationships) while grep provides TEXT matches (including comments, strings, false positives). Requires language-specific bundle (like lsp-python) to be configured. Examples: <example>user: 'Refactor the authentication module' assistant: 'I'll first use code-navigator to map the auth module structure, find all usages, and trace the call hierarchy - then pass this context to zen-architect for refactoring design.' <commentary>Complex multi-step navigation benefits from the specialist agent.</commentary></example> <example>user: 'Where is the Session class defined and what uses it?' assistant: 'I'll delegate to code-navigator to find the definition and trace all semantic references.' <commentary>LSP goToDefinition finds the exact location; findReferences returns actual usages, not text matches.</commentary></example> <example>user: 'What functions call handle_request() and what does it call internally?' assistant: 'I'll use code-navigator to trace the call hierarchy in both directions.' <commentary>LSP incomingCalls/outgoingCalls map the complete call graph - something grep cannot do reliably.</commentary></example>
+  - python-dev:code-intel: Python code intelligence specialist using LSP/Pyright for semantic understanding beyond text search. For complex multi-step Python code navigation (tracing inheritance chains, mapping module dependencies, understanding type flows), delegate to this agent. For simple single-operation lookups (quick hover, single goToDefinition), agents with tool-lsp can use it directly. MUST BE USED when: tracing what calls a Python function (or what it calls), finding all usages of a symbol, understanding type hierarchies or inheritance, getting inferred types even without annotations, or debugging type mismatches. Preferred over grep for any 'find usages' or 'where defined' questions in Python. Examples: <example>user: 'Fix the bug in the payment processing module' assistant: 'I'll first use python-dev:code-intel to map the payment module structure, trace call paths, and gather type signatures - then pass this context to bug-hunter for informed debugging.' <commentary>Complex multi-step navigation benefits from the Python specialist.</commentary></example> <example>user: 'What calls the authenticate() method and where is it defined?' assistant: 'I'll delegate to python-dev:code-intel for precise definition and call graph tracing.' <commentary>LSP goToDefinition + incomingCalls gives exact results; grep would match 'authenticate' in comments and strings too.</commentary></example> <example>user: 'What type does get_connection() return? There are no type hints in this codebase.' assistant: 'I'll use python-dev:code-intel to get Pyright's inferred return type.' <commentary>Pyright infers types from implementation even without annotations - impossible with text search.</commentary></example> Validates Pyright availability before proceeding. If the server is not installed or not responding, provides clear installation guidance to the user.
+  - python-dev:python-dev: Expert Python developer with integrated code quality and LSP tooling.
+Use PROACTIVELY when:
+- Checking Python code quality (linting, types, formatting)
+- Understanding Python code structure (imports, calls, types)
+- Debugging Python-specific issues
+- Reviewing Python code for best practices
+
+Examples:
+
+<example>
+user: 'Check this module for code quality issues'
+assistant: 'I'll use python-dev:python-dev to run comprehensive quality checks.'
+<commentary>Code quality reviews are python-dev's domain.</commentary>
+</example>
+
+<example>
+user: 'Why is pyright complaining about this function?'
+assistant: 'I'll delegate to python-dev:python-dev to analyze the type issue.'
+<commentary>Type checking questions trigger python-dev.</commentary>
+</example>
+
+<example>
+user: 'Help me understand how this Python module works'
+assistant: 'I'll delegate to python-dev:code-intel to trace the code structure using LSP, then use python-dev:python-dev for quality review.'
+<commentary>Complex code navigation goes to code-intel; quality review stays with python-dev.</commentary>
+</example>
+
+  - recipes:recipe-author: Conversational recipe expert for ALL Amplifier recipe work - creating, editing, validating, and debugging recipe YAML. The deciding factor: the task produces or changes a recipe file (flat or staged recipes, approval gates, recipe composition, foreach loops, while/convergence loops, conditional execution) - delegate here rather than writing recipe YAML directly, because this agent carries the complete schema, design patterns, and best practices. After it completes any recipe work, run result-validator to verify the recipe meets the user's original intent.
+  - recipes:result-validator: Objective pass/fail validation agent for Amplifier recipes and workflows. The deciding factor: an artifact or outcome exists and needs an evidence-based verdict against stated criteria - a recipe that recipe-author just created or edited (provide the recipe AND the conversation context so intent can be checked), a recipe step's output, a deployment result, code against a quality rubric, or workflow results against compliance requirements. Supports simple binary validation and semantic rubric-based evaluation, always concluding with a clear machine-readable verdict signal.
+  - superpowers:brainstormer: Use after brainstorm-mode conversation to write the validated design as a formal document
+
+Examples:
+<example>
+Context: Design validated through brainstorm-mode conversation
+user: "The design looks good, let's document it"
+assistant: "I'll delegate to superpowers:brainstormer to write the design document."
+<commentary>Brainstormer writes the artifact after design is validated with user.</commentary>
+</example>
+
+<example>
+Context: All design sections approved by user in brainstorm mode
+user: "Save this design"
+assistant: "I'll use superpowers:brainstormer to format and save the design document."
+<commentary>Document creation is the brainstormer agent's sole responsibility.</commentary>
+</example>
+
+  - superpowers:code-quality-reviewer: Use after spec compliance is confirmed to assess code quality
+
+Examples:
+<example>
+Context: After spec-reviewer approves implementation
+user: "Now review the code quality"
+assistant: "I'll delegate to superpowers:code-quality-reviewer for quality assessment."
+<commentary>Quality review happens AFTER spec compliance - this is the right order.</commentary>
+</example>
+
+<example>
+Context: Checking code before merge
+user: "Is this code ready to merge from a quality standpoint?"
+assistant: "I'll use superpowers:code-quality-reviewer to assess code quality."
+<commentary>Pre-merge quality checks are the code-quality-reviewer's domain.</commentary>
+</example>
+
+  - superpowers:code-reviewer: Holistic code reviewer for complete changesets. Use when a branch or feature is ready for review before a PR, or after everything has been built and you want a comprehensive review.
+
+Examples:
+<example>
+Context: Developer has finished a feature branch and wants pre-PR review
+user: "I've finished the authentication feature — can you review the branch before I open a PR?"
+assistant: "I'll delegate to superpowers:code-reviewer to perform a holistic review of the complete changeset across all tasks."
+<commentary>Branch review before PR is code-reviewer's primary use case — it reviews cross-task integration and production readiness, not just individual task compliance.</commentary>
+</example>
+
+<example>
+Context: User wants a comprehensive review of everything built in a session
+user: "We've built the whole API layer — do a full code review of everything"
+assistant: "I'll use superpowers:code-reviewer for a holistic review covering architecture, quality, test coverage, and production readiness across all the work."
+<commentary>Full code review of everything built requires the holistic reviewer, not the pipeline-scoped spec-reviewer or code-quality-reviewer.</commentary>
+</example>
+
+  - superpowers:implementer: Use when executing a single task from an implementation plan
+
+Examples:
+<example>
+Context: Executing a task from an implementation plan
+user: "Implement Task 3: Add email validation to the user registration form"
+assistant: "I'll delegate to superpowers:implementer with the full task specification."
+<commentary>Single task from a plan - perfect for the implementer agent.</commentary>
+</example>
+
+<example>
+Context: Need TDD-compliant implementation
+user: "Add the retry logic following TDD"
+assistant: "I'll use superpowers:implementer to implement this with proper RED-GREEN-REFACTOR."
+<commentary>When TDD compliance is critical, use the implementer agent.</commentary>
+</example>
+
+  - superpowers:plan-writer: Use after write-plan-mode conversation to format the validated plan as a formal document
+
+Examples:
+<example>
+Context: Plan structure discussed and agreed in write-plan mode
+user: "Create the implementation plan"
+assistant: "I'll delegate to superpowers:plan-writer to write the detailed implementation plan."
+<commentary>Plan-writer formats and writes the plan after task breakdown is agreed.</commentary>
+</example>
+
+<example>
+Context: Design exists, plan discussion complete
+user: "Write out the tasks we discussed"
+assistant: "I'll use superpowers:plan-writer to create the TDD implementation plan."
+<commentary>Turning validated discussions into detailed plans is the plan-writer's sole responsibility.</commentary>
+</example>
+
+  - superpowers:spec-reviewer: Use after an implementer completes a task to verify spec compliance
+
+Examples:
+<example>
+Context: After implementer completes a task
+user: "Review the email validation implementation against the spec"
+assistant: "I'll delegate to superpowers:spec-reviewer to verify spec compliance."
+<commentary>Post-implementation spec review is the spec-reviewer's domain.</commentary>
+</example>
+
+<example>
+Context: Checking if implementation matches requirements
+user: "Does this match what we specified?"
+assistant: "I'll use superpowers:spec-reviewer to compare implementation against spec."
+<commentary>Spec compliance checking requires the spec-reviewer agent.</commentary>
+</example>

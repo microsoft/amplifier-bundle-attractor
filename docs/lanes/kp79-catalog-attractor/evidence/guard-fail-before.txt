@@ -1,0 +1,85 @@
+# REDACTED: absolute host paths replaced with <repo> / <amplifier-cache>
+# (docs/OPERATIONS.md section 7, leak-defense layers 1 and 2). Content otherwise verbatim.
+
+.FFF...F..                                                               [100%]
+=================================== FAILURES ===================================
+_____ test_agent_description_is_within_budget[agents/attractor-expert.md] ______
+
+path = PosixPath('<repo>/agents/attractor-expert.md')
+
+    @pytest.mark.parametrize("path", _agent_files(), ids=_rel)
+    def test_agent_description_is_within_budget(path: Path):
+        description = _description(path)
+        assert description is not None, f"{_rel(path)}: no meta.description to render"
+        length = len(description)
+>       assert MIN_CHARS <= length <= AGENT_MAX_CHARS, (
+            f"{_rel(path)}: description is {length} chars; the rendered delegate "
+            f"catalog budget is {MIN_CHARS}-{AGENT_MAX_CHARS}. Tutorials, worked "
+            f"examples and rationale belong in the BODY (pay-per-use); the "
+            f"description is pay-per-turn."
+        )
+E       AssertionError: agents/attractor-expert.md: description is 2093 chars; the rendered delegate catalog budget is 100-600. Tutorials, worked examples and rationale belong in the BODY (pay-per-use); the description is pay-per-turn.
+E       assert 2093 <= 600
+
+tests/test_agent_description_policy.py:150: AssertionError
+_ test_agent_description_carries_both_routing_clauses[agents/attractor-expert.md] _
+
+path = PosixPath('<repo>/agents/attractor-expert.md')
+
+    @pytest.mark.parametrize("path", _agent_files(), ids=_rel)
+    def test_agent_description_carries_both_routing_clauses(path: Path):
+        description = _description(path)
+        assert description is not None, f"{_rel(path)}: no meta.description to render"
+        upper = description.upper()
+>       assert "USE WHEN" in upper, (
+            f"{_rel(path)}: description has no USE WHEN clause. A catalog row that "
+            f"says what an agent IS but not when to reach for it cannot route."
+        )
+E       AssertionError: agents/attractor-expert.md: description has no USE WHEN clause. A catalog row that says what an agent IS but not when to reach for it cannot route.
+E       assert 'USE WHEN' in "ATTRACTOR PIPELINE DESIGN AND AUTHORING EXPERT — THE AUTHORITY ON THE SHIPPED ENGINE'S RUNTIME SEMANTICS (ROUTING, SU...ESTIONS NEED KNOWLEDGE OF AMPLIFIERBACKEND'S `LLM-DIRECT` WORKER VS ITS `SPAWN` WORKER PATHS. </COMMENTARY> </EXAMPLE>"
+
+tests/test_agent_description_policy.py:163: AssertionError
+___ test_skill_description_is_within_budget[skills/attractor-scout/SKILL.md] ___
+
+path = PosixPath('<repo>/skills/attractor-scout/SKILL.md')
+
+    @pytest.mark.parametrize("path", _skill_files(), ids=_rel)
+    def test_skill_description_is_within_budget(path: Path):
+        description = _description(path)
+        assert description is not None, f"{_rel(path)}: no description to render"
+        length = len(description)
+>       assert MIN_CHARS <= length <= SKILL_MAX_CHARS, (
+            f"{_rel(path)}: description is {length} chars; the rendered "
+            f"hooks-skills-visibility budget is {MIN_CHARS}-{SKILL_MAX_CHARS}. The "
+            f"skill BODY is loaded on demand and is where detail belongs."
+        )
+E       AssertionError: skills/attractor-scout/SKILL.md: description is 574 chars; the rendered hooks-skills-visibility budget is 100-400. The skill BODY is loaded on demand and is where detail belongs.
+E       assert 574 <= 400
+
+tests/test_agent_description_policy.py:184: AssertionError
+____ test_description_carries_no_example_markup[agents/attractor-expert.md] ____
+
+path = PosixPath('<repo>/agents/attractor-expert.md')
+
+    @pytest.mark.parametrize("path", _agent_files() + _skill_files(), ids=_rel)
+    def test_description_carries_no_example_markup(path: Path):
+        description = _description(path)
+        if description is None:
+            pytest.skip(f"{_rel(path)} declares no description")
+        found = [tag for tag in BANNED_MARKUP if tag in description]
+>       assert not found, (
+            f"{_rel(path)}: description contains {', '.join(found)}. "
+            f"<example>/<commentary> blocks are worked examples -- they are "
+            f"structural ERRORs under validate-agents and they are billed to every "
+            f"session on every turn. Move them into the body."
+        )
+E       AssertionError: agents/attractor-expert.md: description contains <example>, </example>, <commentary>, </commentary>. <example>/<commentary> blocks are worked examples -- they are structural ERRORs under validate-agents and they are billed to every session on every turn. Move them into the body.
+E       assert not ['<example>', '</example>', '<commentary>', '</commentary>']
+
+tests/test_agent_description_policy.py:213: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_agent_description_policy.py::test_agent_description_is_within_budget[agents/attractor-expert.md]
+FAILED tests/test_agent_description_policy.py::test_agent_description_carries_both_routing_clauses[agents/attractor-expert.md]
+FAILED tests/test_agent_description_policy.py::test_skill_description_is_within_budget[skills/attractor-scout/SKILL.md]
+FAILED tests/test_agent_description_policy.py::test_description_carries_no_example_markup[agents/attractor-expert.md]
+4 failed, 6 passed in 0.04s

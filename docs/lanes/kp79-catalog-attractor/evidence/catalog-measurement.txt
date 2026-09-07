@@ -1,0 +1,23 @@
+WHOLE delegate tool description: 39133 B -> 37632 B  (saved 1501 B, 3.8%)
+agent rows: before 45, after 45
+
+agent                                         before B   after B   saved B
+attractor-pipeline-runner                           85        85         0
+attractor-profile-anthropic                         80        80         0
+attractor-profile-gemini                            74        74         0
+attractor-profile-openai                            74        74         0
+attractor:attractor-expert                        2133       632      1501
+TOTAL (selected rows)                             2446       945      1501
+
+rows NOT matching 'attractor': 35730 B -> 35730 B (delta 0 B; expect 0)
+hunks=1  (expect 1)
+
+WHOLE hooks-skills-visibility block: 20900 B -> 20708 B (saved 192 B, 0.9%)
+skill rows: before 64, after 64
+skill                         before B   after B   saved B
+attractor-scout                    601       418       183
+attractorify                       320       311         9
+TOTAL (attractor skills)           921       729       192
+rows NOT matching 'attractor': 19888 B -> 19888 B (delta 0 B; expect 0)
+
+COMBINED per-turn head: 60033 B -> 58340 B (saved 1693 B)

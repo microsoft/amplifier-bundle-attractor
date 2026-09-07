@@ -1,0 +1,44 @@
+PRE-PUBLICATION LEAK SCAN -- 18 added/modified files vs merge-base c12885d
+==============================================================================
+
+LAYER 1 -- generic shapes (patterns verbatim from the repo's reference guard)
+
+  PASS  real v4-UUID session id            matches=0
+  PASS  internal cluster id gc-NN          matches=0
+  PASS  '-home-<user>' workspace slug      matches=0
+  PASS  e-mail shape                       matches=0
+  PASS  secret-key prefix                  matches=0
+  PASS  substring '/home/'                     matches=0
+  PASS  substring '/Users/'                    matches=0
+  PASS  substring '~/.amplifier/projects/-'    matches=0
+  PASS  substring 'localhost:7687'             matches=0
+  PASS  substring 'bolt://'                    matches=0
+  PASS  substring '.internal'                  matches=0
+
+LAYER 2 -- identity DERIVED from this environment at runtime (values withheld)
+
+  PASS  hostname                 matches=0
+  PASS  hostname (short form)    matches=0
+  PASS  login user               matches=0
+  PASS  home directory           matches=0
+  FLAG  git user.name            matches=175
+  PASS  git user.email           matches=0
+
+  The single FLAG is `git user.name`, which on every machine in this batch is
+  the BOT identity "Amplifier" -- the product name, not a person's. It matches
+  wherever the word appears legitimately (`AmplifierSession`,
+  `amplifier-bundle-attractor`, the co-author trailer). Hostname, login user,
+  home directory and git e-mail all match ZERO times across all files, which is
+  the result Layer 2 exists to establish.
+
+  REPORTED, not absorbed: Layer 2 has a false-positive class when git
+  `user.name` is a product word rather than a personal name. The repo's own
+  reference guard would behave identically here. Worth one clause in that guard
+  (skip a derived term that is also the repo/product name) or one line in
+  docs/OPERATIONS.md section 7.
+
+LAYER 3 -- local deny-list: absent, skipped (the expected state)
+
+LEAK-LENS REVIEW (docs/OPERATIONS.md s7): required -- this PR introduces a new
+public content class (docs/lanes/, and docs carrying real-run evidence).
+See DONE-NOTE.md and the PR body for the fresh-context reviewer's verdict.

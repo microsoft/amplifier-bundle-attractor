@@ -1,0 +1,21 @@
+--- docs/lanes/kp79-catalog-attractor/evidence/before/delegate-catalog.txt	2026-09-07 10:49:56.928295666 -0700
++++ docs/lanes/kp79-catalog-attractor/evidence/after/delegate-catalog.txt	2026-09-07 10:49:55.676926030 -0700
+@@ -124,17 +124,7 @@
+   - attractor-profile-anthropic: Attractor coding agent with Anthropic provider
+   - attractor-profile-gemini: Attractor coding agent with Gemini provider
+   - attractor-profile-openai: Attractor coding agent with OpenAI provider
+-  - attractor:attractor-expert: Attractor pipeline design AND authoring expert — the authority on the SHIPPED engine's runtime semantics (routing, substitution, verdict contract, fail-loud behavior), not just DOT syntax. Use PROACTIVELY when working with Attractor pipelines, DOT graph syntax, pipeline debugging, or programmatic integration.
+-MUST be used when: - Designing OR authoring/editing any .dot pipeline graph — do this BEFORE
+-  handing pipeline implementation to a generic builder (e.g. modular-builder).
+-  Generic builders carry no attractor engine semantics and will re-discover
+-  the foot-guns the hard way.
+-- Debugging pipeline failures or unexpected routing - Integrating Attractor pipelines into Python applications - Choosing between pipeline patterns (linear, parallel, conditional, etc.) - Understanding fidelity modes, model stylesheets, or handler types - Working with the attractor bundle configuration
+-Consult at design START, mid-build, and final review — not once.
+-Examples:
+-<example> Context: User needs to design a pipeline user: 'I need a pipeline that runs tests in parallel then collects results' assistant: 'I will delegate to attractor:attractor-expert for pipeline design guidance on parallel fan-out/fan-in patterns.' <commentary> Pipeline design questions need the expert's knowledge of shapes, handlers, and patterns. </commentary> </example>
+-<example> Context: Pipeline is not routing correctly user: 'My conditional gate always takes the fail path even when tests pass' assistant: 'I will delegate to attractor:attractor-expert to diagnose the edge condition and routing issue.' <commentary> Pipeline debugging requires understanding of edge selection, condition syntax, and outcome values. </commentary> </example>
+-<example> Context: User wants to run pipelines from code user: 'How do I run an Attractor pipeline from my Python application?' assistant: 'I will delegate to attractor:attractor-expert for programmatic integration guidance.' <commentary> Integration questions need knowledge of AmplifierBackend's `llm-direct` worker vs its `spawn` worker paths. </commentary> </example>
++  - attractor:attractor-expert: USE WHEN work touches an Attractor pipeline: authoring/editing .dot graphs; debugging failures or unexpected routing (edge selection, conditions, outcomes); picking a pattern (linear, parallel fan-out/fan-in, conditional); fidelity modes, model stylesheets, handlers, bundle config; Python integration (llm-direct vs spawn workers). Owns the SHIPPED engine's runtime semantics (routing, substitution, verdict contract, fail-loud), not just DOT syntax — which generic builders lack: consult BEFORE delegating .dot work, mid-build, and review. DO NOT USE WHEN no pipeline or .dot graph is involved.
+ 
+   - browser-tester:browser-operator: Interact with a live website: navigate, fill forms, click buttons, test UI
+ flows, take screenshots, and extract data from JavaScript-rendered pages.

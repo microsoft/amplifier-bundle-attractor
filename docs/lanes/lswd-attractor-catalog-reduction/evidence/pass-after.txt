@@ -1,0 +1,8 @@
+$ git diff --stat  # the SKILL.md edits under test
+ skills/attractor-scout/SKILL.md | 11 +++++++++++
+ skills/attractorify/SKILL.md    | 11 +++++++++++
+ 2 files changed, 22 insertions(+)
+
+$ python -m pytest tests/test_skill_catalog_visibility.py -q   # AFTER the SKILL.md edits
+.........                                                                [100%]
+9 passed in 0.03s

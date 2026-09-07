@@ -14,15 +14,31 @@
 # THIS FILE CONTAINS NO SECRETS AND MUST NEVER CONTAIN ONE. Every credential is
 # a `${VAR}` placeholder, expanded by the engine at load time from the process
 # environment (`provider_instances._expand`, environment first, then
-# `<amplifier-home>/keys.env`). The workflow supplies those vars from repo
-# secrets; the file on disk carries the literal `${VAR}` text. An unresolvable
-# placeholder is deliberately left VERBATIM rather than blanked, so a mis-set
-# secret surfaces as the provider's own loud auth failure naming `${OPENAI_API_KEY}`,
-# never as a silent empty credential.
+# `<amplifier-home>/keys.env`). The workflow supplies those vars from the repo's
+# secrets and variables; the file on disk carries the literal `${VAR}` text. An
+# unresolvable placeholder is deliberately left VERBATIM rather than blanked, so
+# a mis-set credential surfaces as the provider's own loud auth failure naming
+# `${OPENAI_API_KEY}`, never as a silent empty credential.
 #
-# REQUIRED REPO SECRETS (the installer names these if they are missing):
-#   OPENAI_API_KEY   -- the credential for the luna endpoint
-#   OPENAI_BASE_URL  -- the OpenAI-compatible endpoint luna is served from
+# REQUIRED -- the installer refuses, naming it, when this is missing:
+#   OPENAI_API_KEY   -- repo SECRET. The credential for the luna endpoint.
+#
+# OPTIONAL -- absent, the key below is OMITTED from the installed file and the
+# provider module's own default endpoint applies (owner ruling, 2026-09-07):
+#   OPENAI_BASE_URL  -- repo VARIABLE, not a secret: it is an endpoint URL, and
+#                       the workflows read `vars` first, `secrets` second, so an
+#                       operator who stored it as a secret before that ruling is
+#                       not broken by the change.
+#
+# The line below is the machine-readable half of that paragraph:
+# `install_provider_instances.sh` reads this directive to know which
+# placeholders it may omit rather than demand, so "optional" cannot drift
+# between the prose and the check. An optional placeholder must sit alone on a
+# plain `key: ${VAR}` line -- that line shape is exactly what the installer
+# deletes, and it refuses loudly if an unset optional var appears in any other
+# shape it cannot surgically remove.
+#
+#   optional-vars: OPENAI_BASE_URL
 #
 # WHY THE MODEL ID IS CONCRETE. A glob `llm_model` sends the engine to
 # `unified_llm.resolve_latest_for`, whose SDK adapters cover the

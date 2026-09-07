@@ -390,9 +390,22 @@ jobs:
         # settings a self-hosted runner already carries, and never weakens
         # the engine's own startup preflight -- which still refuses, naming
         # the node, if the instance is not addressable when the run starts.
+        #
+        # THE TWO NAMES BELOW ARE NOT THE SAME KIND OF THING (owner ruling,
+        # 2026-09-07). OPENAI_API_KEY is a repo SECRET and stays REQUIRED --
+        # the installer refuses, naming it, when it is absent, before the
+        # run's multi-hour budget is spent. OPENAI_BASE_URL is a repo
+        # VARIABLE and is OPTIONAL: it is an endpoint URL, not a credential,
+        # so it is read from `vars` first and from `secrets` only as a
+        # fallback for an operator who stored it as a secret before that
+        # ruling. When neither exists the expression yields the empty string,
+        # the installer OMITS the instance's `base_url` key and says so in
+        # this step's log, and the provider module's own default endpoint
+        # applies. The #155 guarantee is unchanged: a run still never starts
+        # with a judge it cannot reach.
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
         run: |
           set -euo pipefail
           bash .github/capsule-pipeline/install_provider_instances.sh \
@@ -533,7 +546,7 @@ jobs:
           # environment at load time, so they must be present on the step
           # that actually runs the pipeline.
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-implement/logs"
@@ -729,7 +742,7 @@ jobs:
         if: always() && steps.locate.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -1199,7 +1212,7 @@ jobs:
         if: always() && steps.locate.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}

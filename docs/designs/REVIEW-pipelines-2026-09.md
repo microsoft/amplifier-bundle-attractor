@@ -230,6 +230,29 @@ be smuggled in "to see if it works".
 > events now carry `provider`, `provider_module`, `model`, `provider_instance`
 > and `reasoning_effort`, which is what made the run measurable at all.
 
+> **Addendum 2, 2026-09-07 (later the same day) — one of the two names above is
+> neither required nor a secret.** Correction 2 in the addendum above says "New
+> repo secrets required: `OPENAI_API_KEY`, `OPENAI_BASE_URL`". Half of that is
+> now wrong, by owner ruling made after it was written:
+>
+> - **`OPENAI_API_KEY` — repo SECRET, still REQUIRED.** Unchanged: the installer
+>   refuses, naming it, before any budget is spent.
+> - **`OPENAI_BASE_URL` — repo VARIABLE, OPTIONAL.** It is an endpoint URL, not a
+>   credential ("the default should have been fine"). Absent, the installer omits
+>   the instance's `base_url` key and the `provider-openai` module's own default
+>   endpoint applies; the step log names the omission so a default is never
+>   mistaken for a silently vanished endpoint. The workflows read
+>   `${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}` — variable first,
+>   secret kept as a fallback for an operator who stored it as a secret before
+>   the ruling. `amplifier-bundle-dot-runner` carries the identical expression.
+>
+> §4.4's core claim is untouched: a `luna` pin still cannot be smuggled in
+> without its infra. What narrowed is the infra's demand — one secret, not two —
+> and nothing about the refusal path was weakened to achieve it
+> (`tests/test_provider_base_url_optional.py` holds both branches, including
+> that a missing `OPENAI_API_KEY` still refuses and that an instance nothing
+> defines is still refused).
+
 ## 5. Owner question 3 — budget honesty
 
 ### 5.1 The declared budget and the fuse disagree by 3×

@@ -89,8 +89,13 @@
 //        the record of what shipped then; they no longer describe this file.
 //        Independence is unchanged (luna is an instance of provider-openai,
 //        still a different family from the Anthropic maker); what changed is
-//        WHICH openai-family model, and the credential the run needs
-//        (OPENAI_API_KEY / OPENAI_BASE_URL, not OPENAI_API_KEY). The preflight
+//        WHICH openai-family model, and the credential the run needs: one
+//        repo SECRET, OPENAI_API_KEY, for the luna endpoint. (Owner ruling,
+//        2026-09-07: OPENAI_BASE_URL is a repo VARIABLE and is OPTIONAL --
+//        unset, the provider module's default endpoint applies. This line
+//        previously read "OPENAI_API_KEY / OPENAI_BASE_URL, not
+//        OPENAI_API_KEY", which a same-day rename had left naming the same
+//        variable on both sides of a contrast.) The preflight
 //        posture is unchanged and unweakened: the workflow refuses before
 //        the budget is spent when the instance cannot be provisioned, and
 //        the engine's #155 startup preflight refuses when it is not

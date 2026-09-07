@@ -367,14 +367,20 @@ def test_every_instance_the_ci_pipelines_address_is_provisioned() -> None:
             missing = sorted(
                 name
                 for name in placeholders
-                if f"secrets.{name}" not in text or f"{name}:" not in text
+                if f"{name}:" not in text
+                or (f"secrets.{name}" not in text and f"vars.{name}" not in text)
             )
             assert not missing, (
                 f"{wf.name} installs the provider instances but never passes "
-                f"{missing} from repo secrets into the steps that need them. The "
-                "installed settings file holds ${VAR} placeholders verbatim; the "
-                "engine expands them from the PROCESS environment at load time, "
-                "so an absent var means an unresolved placeholder at run time."
+                f"{missing} into the steps that need them. The installed settings "
+                "file holds ${VAR} placeholders verbatim; the engine expands them "
+                "from the PROCESS environment at load time, so an absent var "
+                "means an unresolved placeholder at run time. Either a repo "
+                "secret or an Actions variable satisfies this -- OPENAI_BASE_URL "
+                "is a VARIABLE (owner ruling 2026-09-07, it is an endpoint URL "
+                "rather than a credential) and the workflows read "
+                "`vars.X || secrets.X`; the exact expression is held by "
+                "tests/test_provider_base_url_optional.py."
             )
 
 

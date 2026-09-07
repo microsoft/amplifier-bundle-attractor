@@ -168,7 +168,7 @@ digraph {
     graph [
         goal="$goal",
         model_stylesheet="box { llm_provider: anthropic; llm_model: claude-sonnet-* }
-                          .reasoning { llm_provider: openai; llm_model: gpt-[5-9]*; reasoning_effort: high }"
+                          .reasoning { llm_provider: luna; llm_model: gpt-5.6-luna; reasoning_effort: high }"
     ]
     start [shape=Mdiamond]; done [shape=Msquare]
     plan [class="reasoning", prompt="Create a plan for: $goal"]
@@ -176,6 +176,13 @@ digraph {
     start -> plan -> implement -> done
 }
 ```
+
+`anthropic` is a provider **module**, so its `llm_model` is an evergreen glob.
+`luna` is a configured provider **instance** (`config.providers[].id` in the
+operator's Amplifier settings), so its `llm_model` must be a **concrete id** --
+a glob has no adapter to resolve against for an instance and fails loud. See
+[DOT-AUTHORING-GUIDE.md](DOT-AUTHORING-GUIDE.md) "Provider instances, and why
+they take a concrete id".
 
 ## Quoting and Escaping
 

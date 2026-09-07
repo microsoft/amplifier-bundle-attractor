@@ -23,8 +23,8 @@ digraph FullAttractor {
                 reasoning_effort: medium;
             }
             .planning {
-                llm_model: gpt-[5-9]*;
-                llm_provider: openai;
+                llm_model: gpt-5.6-luna;
+                llm_provider: luna;
                 reasoning_effort: high;
             }
             .code {

@@ -193,6 +193,43 @@ degraded run — the startup preflight (`preflight.py:212-226`) **refuses to sta
 the pipeline**, naming every failing node, before node 1. That is why it cannot
 be smuggled in "to see if it works".
 
+> **Addendum, 2026-09-07 — the pin moved, and the infra shipped with it.** The
+> measurements above stand as recorded; this note says what changed after them,
+> rather than editing a dated review into agreement with the present.
+>
+> `critique` / `critique_b` in all three pipelines now declare
+> `llm_provider="luna", llm_model="gpt-5.6-luna", reasoning_effort="high"`
+> (standing owner policy: gpt-5 is not a live choice). §4.3's
+> `reasoning_effort="high"` recommendation for these nodes is therefore
+> **adopted**; its other rows are untouched and still open.
+>
+> Two corrections to §4.4's framing, both mechanical:
+>
+> 1. **The credential-name entry in `preflight.py`'s map is not needed.** That
+>    map serves provider MODULES. An instance carries its own `api_key` in
+>    settings, and `provider_instances.validate_run_provider` accepts an
+>    instance id without demanding a module credential — deliberately, because
+>    demanding `OPENAI_API_KEY` for `--provider terra` would refuse a run the
+>    host serves perfectly well. What an instance needs is to be **defined**,
+>    which is a settings question, not a preflight-table one.
+> 2. **Neither option in §4.4 was quite the shape taken.** Not a self-hosted
+>    runner, and not secrets alone: `.github/capsule-pipeline/provider-instances.yaml`
+>    is the instance definition (credentials as `${VAR}` placeholders — no
+>    secret in the repo, none on the runner's disk), and
+>    `install_provider_instances.sh` installs it into the runner's global
+>    settings scope, refusing loudly if the secrets are absent or if the runner
+>    already carries settings of its own. New repo secrets required:
+>    `LUNA_API_KEY`, `LUNA_BASE_URL`.
+>
+> §4.4's core claim is unchanged and was verified rather than assumed: with the
+> instance absent, `selected_provider_instances()` mounts nothing and
+> `check_provider_preflight` raises, naming node `critique`. The preflight was
+> not weakened to make CI pass.
+>
+> §4.2's observability blocker is **closed upstream**: dot-runner's provider
+> events now carry `provider`, `provider_module`, `model`, `provider_instance`
+> and `reasoning_effort`, which is what made the run measurable at all.
+
 ## 5. Owner question 3 — budget honesty
 
 ### 5.1 The declared budget and the fuse disagree by 3×

@@ -2,10 +2,10 @@
 name: attractorify
 version: "1.0.0"
 description: >
-  Analyze the current session and decide whether an attractor pipeline is
-  warranted — then design one conversationally if it is. Triggers: "/attractorify",
-  "should this be an attractor?", "design a pipeline for", "attractorify this",
-  "do I need an attractor pipeline?", "turn this into a pipeline".
+  Use when the session might warrant an attractor pipeline: decide whether one is, then
+  design it conversationally if so. Triggers: "/attractorify", "should this be an
+  attractor?", "design a pipeline for", "attractorify this", "do I need an attractor
+  pipeline?", "turn this into a pipeline".
 user-invocable: true
 model_role: reasoning
 allowed-tools:

@@ -1,0 +1,21 @@
+# REDACTED: absolute host paths replaced with <repo> / <amplifier-cache>
+# (docs/OPERATIONS.md section 7, leak-defense layers 1 and 2). Content otherwise verbatim.
+
+validate-agents v"1.7.0" -- DETERMINISTIC phases 0-3, $0 (no LLM)
+recipe: <amplifier-cache>/amplifier-foundation-c909465861f9d6ce/recipes/validate-agents.yaml
+
+===== AFTER (branch lane/kp79-catalog-attractor) =====
+repo: <repo>
+agents discovered: 1
+structural summary: {'total': 1, 'passed': 1, 'errors': 0, 'warnings': 1}
+quality_level: needs_work
+quality summary: {'total': 1, 'good': 0, 'polish': 0, 'needs_work': 1, 'critical': 0}
+  attractor-expert         chars=  597 examples=0 commentary=0 errors=[] warnings=['NO_TOOLS_SECTION']
+
+===== BEFORE (stock, merge-base c12885d) =====
+repo: <repo>
+agents discovered: 1
+structural summary: {'total': 1, 'passed': 0, 'errors': 2, 'warnings': 1}
+quality_level: critical
+quality summary: {'total': 1, 'good': 0, 'polish': 0, 'needs_work': 0, 'critical': 1}
+  attractor-expert         chars= 2094 examples=3 commentary=3 errors=['COMMENTARY_TAG_PRESENT', 'EXAMPLE_BLOCK_PRESENT'] warnings=['NO_TOOLS_SECTION']

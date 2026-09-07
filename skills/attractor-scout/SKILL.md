@@ -2,14 +2,11 @@
 name: attractor-scout
 version: "1.0.0"
 description: >
-  Mine YOUR OWN local context-intelligence session history to find the
-  attractor-shaped opportunities hiding in your real recurring work — the
-  units you do again and again, that cost real effort, and that would survive
-  being handed to a loop. Surfaces them ranked, with honest-NOs as first-class
-  output, and writes a self-contained HTML opportunity map. Own data only;
-  nothing leaves the machine. Triggers: "/attractor-scout", "what should I
-  automate?", "find my attractor opportunities", "scout my sessions", "what do
-  I keep doing by hand?", "mine my own work for pipelines".
+  Use when someone asks what to automate, what they keep doing by hand, or to scout their
+  own sessions for attractor opportunities ("/attractor-scout", "mine my own work for
+  pipelines"). Mines YOUR OWN context-intelligence history for recurring, costly work that
+  would survive a loop; ranks it, honest-NOs first-class, writes a self-contained HTML map.
+  Own data only, nothing leaves the machine.
 user-invocable: true
 model_role: reasoning
 allowed-tools:

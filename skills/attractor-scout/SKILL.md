@@ -8,6 +8,18 @@ description: >
   would survive a loop; ranks it, honest-NOs first-class, writes a self-contained HTML map.
   Own data only, nothing leaves the machine.
 user-invocable: true
+# Hand-run authoring tool: started by a human, never reached for by the model
+# (owner directive 2026-09-07, model_performance-lswd). What this buys is NOT
+# catalog bytes -- measured, the visibility block is 0 bytes smaller, because
+# the skill moves from "Available skills" to "User-invoked skills" and both
+# render one capped line. It buys the tail: the model can no longer decide on
+# its own to load this ~30 KB body (~7.6k tokens) in the middle of an unrelated
+# task. And it costs nothing here -- the flag is read only by the visibility
+# hook, never on the load path -- so `/attractor-scout` and
+# `load_skill(skill_name="attractor-scout")` still load this file in full,
+# inline. Guarded by tests/test_skill_catalog_visibility.py; measured in
+# docs/lanes/lswd-attractor-catalog-reduction/.
+disable-model-invocation: true
 model_role: reasoning
 allowed-tools:
   - bash

@@ -1,0 +1,31 @@
+PRE-EXISTING FAILURE PROOF -- skills/attractor-scout/tests/test_no_real_data_leak.py
+
+This suite is NOT run by CI (.github/workflows/ci.yml runs root tests/,
+modules/tool-report-outcome, and the dot-render gate). It was run anyway because
+this change edits skills/attractor-scout/SKILL.md. It has 7 failures -- and it has
+the SAME 7 failures at HEAD with this lane's changes stashed, proving they are
+not this lane's.
+
+The matched term is 'amplifier', derived at runtime from this machine's git
+identity (user.name = Amplifier). Every hit is the literal string 'amplifier' in
+paths like ~/.amplifier/projects and AMPLIFIER_CONTEXT_INTELLIGENCE_BASE_PATH --
+an artifact of the guard's identity derivation colliding with the product name on
+a machine whose git user IS 'Amplifier', not a real environment leak.
+
+$ git stash push -u -- skills/ tests/ docs/lanes/   # worktree == HEAD c12885d
+$ cd skills/attractor-scout && python -m pytest tests/test_no_real_data_leak.py -q
+
+ skills/attractor-scout/SKILL.md | 11 +++++++++++
+ skills/attractorify/SKILL.md    | 11 +++++++++++
+ 2 files changed, 22 insertions(+)
+
+
+tests/test_no_real_data_leak.py:227: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[SKILL.md]
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[fixtures/deck_fixture.py]
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[tests/test_no_real_data_leak.py]
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[scripts/attractor_scout_cli.py]
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[scripts/attractor_scout/discover.py]
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[scripts/attractor_scout/demo_templates.py]
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[scripts/attractor_scout/deck_templates.py]

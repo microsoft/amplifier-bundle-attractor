@@ -1,0 +1,26 @@
+repo: /home/bkrabach/dev/hw-model-performance/lanes/lswd-attractor-catalog-reduction/amplifier-bundle-attractor
+HEAD: c12885dca636d40cd526c7b887d7fce86ce03794
+
+=== CI job: opinionated-guards ===
+$ python -m pytest tests/ -q --ignore=tests/e2e
+........................................................ss.............. [ 33%]
+........................................................................ [ 66%]
+.......................................................................  [100%]
+213 passed, 2 skipped in 1.64s
+
+=== CI job: unit-tests (module tool-report-outcome) ===
+$ cd modules/tool-report-outcome && uv run pytest -q
+.....................                                                    [100%]
+21 passed in 0.28s
+
+=== CI job: dot-render-gate ===
+$ dot -Tsvg on every git-tracked .dot (excluding .ai/ .amplifier/ evals/)
+Checked 43 git-tracked .dot file(s); 0 failed to render.
+
+=== NOT in CI, run because SKILL.md changed: skills/attractor-scout own suite ===
+$ cd skills/attractor-scout && python -m pytest tests -q
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[tests/test_no_real_data_leak.py]
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[scripts/attractor_scout_cli.py]
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[scripts/attractor_scout/discover.py]
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[scripts/attractor_scout/demo_templates.py]
+FAILED tests/test_no_real_data_leak.py::test_layer2_no_current_environment_identity[scripts/attractor_scout/deck_templates.py]

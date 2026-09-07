@@ -1,0 +1,21 @@
+# Catalog-visibility delta for disable-model-invocation: true
+# repo   : /home/bkrabach/dev/hw-model-performance/lanes/lswd-attractor-catalog-reduction/amplifier-bundle-attractor
+# bundle : /home/bkrabach/.amplifier/cache/amplifier-bundle-skills-5105b7c75992a85a/skills
+
+## MARGINAL (this repo's skills only) (2 skills in catalog)
+  block bytes, flag ABSENT (model-invocable) :    457
+  block bytes, flag TRUE   (user-invoked)    :    463
+  delta                                      :     +6 bytes (+1 tokens at the hook's own 4 chars/token estimate)
+  attractor-scout  before: Available skills   after: User-invoked skills
+  attractorify     before: Available skills   after: User-invoked skills
+
+## AMBIENT (stock skills bundle + this repo) (40 skills in catalog)
+  block bytes, flag ABSENT (model-invocable) :   6623
+  block bytes, flag TRUE   (user-invoked)    :   6623
+  delta                                      :     +0 bytes (+0 tokens at the hook's own 4 chars/token estimate)
+  attractor-scout  before: Available skills   after: User-invoked skills
+  attractorify     before: Available skills   after: User-invoked skills
+
+## Per-skill frontmatter, as the live discovery parses it
+  attractor-scout  disable_model_invocation=True user_invocable=True context=None description_chars=575
+  attractorify     disable_model_invocation=True user_invocable=True context=None description_chars=297

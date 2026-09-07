@@ -90,7 +90,7 @@
 //        Independence is unchanged (luna is an instance of provider-openai,
 //        still a different family from the Anthropic maker); what changed is
 //        WHICH openai-family model, and the credential the run needs
-//        (LUNA_API_KEY / LUNA_BASE_URL, not OPENAI_API_KEY). The preflight
+//        (OPENAI_API_KEY / OPENAI_BASE_URL, not OPENAI_API_KEY). The preflight
 //        posture is unchanged and unweakened: the workflow refuses before
 //        the budget is spent when the instance cannot be provisioned, and
 //        the engine's #155 startup preflight refuses when it is not

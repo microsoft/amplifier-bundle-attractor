@@ -219,7 +219,7 @@ be smuggled in "to see if it works".
 >    `install_provider_instances.sh` installs it into the runner's global
 >    settings scope, refusing loudly if the secrets are absent or if the runner
 >    already carries settings of its own. New repo secrets required:
->    `LUNA_API_KEY`, `LUNA_BASE_URL`.
+>    `OPENAI_API_KEY`, `OPENAI_BASE_URL`.
 >
 > §4.4's core claim is unchanged and was verified rather than assumed: with the
 > instance absent, `selected_provider_instances()` mounts nothing and

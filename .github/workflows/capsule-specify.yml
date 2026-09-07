@@ -458,8 +458,8 @@ jobs:
         # overwritten, and the engine's own startup preflight is untouched --
         # it still refuses, naming the node, if the instance is absent.
         env:
-          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
-          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
         run: |
           set -euo pipefail
           bash .github/capsule-pipeline/install_provider_instances.sh \
@@ -490,8 +490,8 @@ jobs:
           # Re-declared HERE, not only on the preflight step: the installed
           # settings file holds `${VAR}` placeholders verbatim, and the engine
           # expands them from the PROCESS environment at load time.
-          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
-          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-run/out" "$RUNNER_TEMP/capsule-run/logs"
@@ -580,8 +580,7 @@ jobs:
         if: always()
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
-          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -629,8 +628,7 @@ jobs:
         if: always()
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
-          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -1242,8 +1240,7 @@ jobs:
         if: always()
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
-          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}

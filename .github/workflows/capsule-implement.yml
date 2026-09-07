@@ -391,8 +391,8 @@ jobs:
         # the engine's own startup preflight -- which still refuses, naming
         # the node, if the instance is not addressable when the run starts.
         env:
-          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
-          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
         run: |
           set -euo pipefail
           bash .github/capsule-pipeline/install_provider_instances.sh \
@@ -532,8 +532,8 @@ jobs:
           # placeholders verbatim: the engine expands them from the PROCESS
           # environment at load time, so they must be present on the step
           # that actually runs the pipeline.
-          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
-          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-implement/logs"
@@ -729,8 +729,7 @@ jobs:
         if: always() && steps.locate.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
-          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -1200,8 +1199,7 @@ jobs:
         if: always() && steps.locate.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
-          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}

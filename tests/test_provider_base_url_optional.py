@@ -174,10 +174,16 @@ def test_absent_base_url_installs_the_instance_without_the_key(
         + text
     )
 
-    assert "OPENAI_BASE_URL" in result.stdout and "default endpoint" in result.stdout, (
+    assert (
+        "OPENAI_BASE_URL is unset" in result.stdout
+        and "default endpoint" in result.stdout
+    ), (
         "the step log must SAY the endpoint was omitted and the module default "
         "applies. A silently different endpoint is the thing an operator reads "
-        "the preflight log to rule out.\nstdout:\n" + result.stdout
+        "the preflight log to rule out. The phrase is kept identical to "
+        "amplifier-bundle-dot-runner's inline preflight ('<NAME> is unset'), so "
+        "one grep finds the branch in either repo's job log.\nstdout:\n"
+        + result.stdout
     )
 
 

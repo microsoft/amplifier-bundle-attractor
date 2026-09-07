@@ -186,11 +186,16 @@ chmod 600 "$SETTINGS"
 echo "install_provider_instances: wrote $SETTINGS from $(basename "$TEMPLATE")."
 echo "  instances installed : $(echo "$required_ids" | tr '\n' ' ')"
 echo "  credentials present :$present_vars (values not printed; the file on disk holds \${VAR} placeholders, not secrets)"
-if [ -n "$omitted_vars" ]; then
-  echo "  OMITTED (unset, and declared optional):$omitted_vars"
-  for var in $omitted_vars; do
-    echo "    - $var is not set in this step's environment, so its key was left out of the installed instance and the provider module's default endpoint/value for that field applies. This is a supported configuration, not a degraded one: set the repository variable of that name to override it."
-  done
-else
-  echo "  omitted             : (none -- every placeholder the template declares is set)"
-fi
+echo "  keys omitted        :${omitted_vars:- (none -- every placeholder the template declares is set)}"
+
+# One line per OPTIONAL var saying which branch this run took. The wording is
+# kept in step with amplifier-bundle-dot-runner's inline preflight ("<NAME> is
+# set" / "<NAME> is unset"), so one phrase finds the branch in either repo's
+# job log.
+for var in $optional_vars; do
+  if [ -n "${!var:-}" ]; then
+    echo "  $var is set (Actions variable first, secret as fallback) -- the instance pins that endpoint. The value is NOT on disk: the installed file holds the \${$var} placeholder, which the engine expands from this environment at load time."
+  else
+    echo "  $var is unset -- OPTIONAL by owner ruling 2026-09-07, so its key was left out of the installed instance and the provider module's own default endpoint applies. This is a supported configuration, not a degraded one: set the repository VARIABLE of that name to point the instance elsewhere."
+  fi
+done

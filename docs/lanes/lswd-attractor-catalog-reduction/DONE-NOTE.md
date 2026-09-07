@@ -57,6 +57,22 @@ job in `.github/workflows/ci.yml`:
 `tests/e2e` is excluded by CI's own design (live/Docker, needs keys —
 `tests/e2e/MANUAL_E2E.md`), not by this lane.
 
+**And green on the real CI, not just locally.** Run
+[34167331579](https://github.com/microsoft/amplifier-bundle-attractor/actions/runs/34167331579)
+on PR #352 (`gh pr checks 352`):
+
+    CI Gate (all checks passed)                    pass   4s
+    DOT Render Gate (every tracked .dot renders)   pass  17s
+    Opinionated Guards (repo root)                 pass  14s
+    Unit Tests (tool-report-outcome, py3.11)       pass  11s
+    Unit Tests (tool-report-outcome, py3.13)       pass  10s
+    license/cla                                    pass
+
+`CI Gate` is the one stable context branch protection requires, and it is
+fail-closed by construction (`if: always()` plus an explicit `needs.*.result`
+check), so its `pass` means every upstream job genuinely succeeded rather than
+was skipped.
+
 **One pre-existing red, proven not ours.** `skills/attractor-scout/tests/` is not
 in CI (root `pyproject.toml` sets `testpaths = ["tests"]`; the skill has its own
 `pytest.ini`). It was run anyway because this change edits that skill's SKILL.md.

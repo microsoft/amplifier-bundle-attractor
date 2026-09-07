@@ -82,6 +82,21 @@
 //        the 2026-08-09 subtraction-sweep re-sync moved that record here --
 //        the body below is now byte-identical to source, as this header
 //        claims.)
+//      - RE-AIMED (2026-09-07, owner model policy): the second family is no
+//        longer the bare `openai` module but the configured provider
+//        INSTANCE `luna` -- `llm_provider="luna", llm_model="gpt-5.6-luna",
+//        reasoning_effort="high"`. The two bullets above are left verbatim as
+//        the record of what shipped then; they no longer describe this file.
+//        Independence is unchanged (luna is an instance of provider-openai,
+//        still a different family from the Anthropic maker); what changed is
+//        WHICH openai-family model, and the credential the run needs
+//        (LUNA_API_KEY / LUNA_BASE_URL, not OPENAI_API_KEY). The preflight
+//        posture is unchanged and unweakened: the workflow refuses before
+//        the budget is spent when the instance cannot be provisioned, and
+//        the engine's #155 startup preflight refuses when it is not
+//        addressable. Evidence for the choice: node-matrix run
+//        20260907T164521Z-axes -- luna/gpt-5.6-luna/high 4.3 min / $0.08
+//        red_ok vs openai/gpt-5/high 43.6 min / $7.83, same gate outcome.
 //
 // KNOWN, NAMED GAP CARRIED FORWARD (not fixed here, per the design doc's
 // own honesty norm, DESIGN-issue-to-attractor-pipeline.md section 6,
@@ -113,12 +128,17 @@
 // Invocation (process cwd MUST equal --cwd — primer §6.7/§6.13).
 // --worker coding-agent is REQUIRED for the dual-family critique: as of
 // engine 0.2.0 the named-worker path resolves each node's declared
-// llm_provider natively, so critique_b's llm_provider="openai" is honored
+// llm_provider natively, so critique_b's llm_provider="luna" is honored
 // directly -- no base-bundle mount needed. (Formerly the CLI's default base
 // bundle mounted provider-anthropic only, so critique_b would SILENTLY run
 // same-family without a mounted attractor-pipeline-dual.yaml; that bundle
 // and the ATTRACTOR_PIPELINE_BUNDLE/DOT_RUNNER_BUNDLE env vars that pointed
 // at it are retired along with --bundle.)
+// `luna` is a configured provider INSTANCE (settings
+// `config.providers[].id`), addressable only when this run's merged
+// Amplifier settings define it -- `amplifier provider list` on a developer
+// host, .github/capsule-pipeline/install_provider_instances.sh in CI. Absent,
+// the run refuses at startup naming critique_b (issue #155 preflight).
 //   cd <target_repo> && \
 //   dot-runner run <runner_dir>/task-runner.dot \
 //       --worker coding-agent \
@@ -289,13 +309,28 @@ digraph BacklogTaskRunner {
     // Second, INDEPENDENT reviewer from a different model family. Runs
     // sequentially after critique (not in parallel — see FILE CONTRACTS). Must not
     // read .ai/critique.md: independence is what makes agreement
-    // meaningful. llm_provider routes via the CLI profiles map to the
-    // openai child agent; the OpenAI-family model is actually delivered by
-    // attractor-pipeline-dual.yaml (see MODEL RESOLUTION REALITY in the
-    // header — without it this node silently runs on Anthropic). llm_model
-    // uses the repo's documented generation-range glob (resolved live to
-    // the newest served model).
-    critique_b [shape=box, class="gate", llm_provider="openai", llm_model="gpt-[5-9]*", must_write=".ai/critique-b.md",
+    // meaningful.
+    //
+    // MODEL PIN (owner policy, 2026-09-07): the second family is a
+    // configured provider INSTANCE, not the bare `openai` module. `luna` is
+    // an instance of provider-openai (Amplifier settings
+    // `config.providers[].id`, merged global -> project -> local), so it
+    // carries its own base_url, api_key and default_model. Two mechanical
+    // rules travel with the instance form:
+    //   - llm_model MUST be CONCRETE. A glob routes through
+    //     unified_llm.resolve_latest_for, whose SDK adapters cover the
+    //     anthropic/openai/gemini triad ONLY -- it refuses an instance id
+    //     with the same "no adapter found for provider" text this node's
+    //     own #155 timeline records. A concrete id is returned unchanged
+    //     with no catalog call (backend.py `_resolve_concrete_model`).
+    //   - the instance must EXIST in the run's settings, or the #155
+    //     startup preflight refuses the run naming this node. In CI
+    //     .github/capsule-pipeline/install_provider_instances.sh installs
+    //     it from provider-instances.yaml; do not weaken that refusal.
+    // Measured (node-matrix 20260907T164521Z-axes, coding-agent worker):
+    // luna/gpt-5.6-luna/high 4.3 min / $0.08 PASS red_ok, against
+    // openai/gpt-5/high 43.6 min / $7.83 for the same gate outcome.
+    critique_b [shape=box, class="gate", llm_provider="luna", llm_model="gpt-5.6-luna", reasoning_effort="high", must_write=".ai/critique-b.md",
         prompt="You are a second, independent reviewer from a DIFFERENT model family than the first reviewer. Do NOT read .ai/critique.md and do NOT assume any other reviewer's conclusions — your value is independent judgment. The mechanical DoD script passed. Judge the work against the task's FULL definition of done — especially the judgment criteria the script cannot check. Read the task file at $task_file, the brief at .ai/brief.md, and review the ACTUAL changes in $target_dir (git diff, new and changed files; .ai/verify.log for what was verified). Apply the doctrine: evidence over claims — verify that claimed evidence is real; no test-gaming or DoD-script-gaming; docs and paired guides updated; repo conventions honored; non-goals respected; exemplar quality where the task demands it. HARD EVIDENCE RULE: a blocking finding MUST include its reproduction re-run against the CURRENT tree in THIS iteration — quote the exact command and its output. A finding carried over from a previous iteration without fresh re-run evidence is not a finding: re-run it first; if it no longer reproduces, say so explicitly and drop it. Your own prior critique is a hypothesis to re-verify, never evidence. Write .ai/critique-b.md: specific findings with file references, then a final line reading exactly 'VERDICT: SHIP' or 'VERDICT: ITERATE'. Be strict — a wrong-but-plausible result that ships is worse than another iteration."]
 
     // STALL DETECTION (lesson from live run t11-attempt-3): the iteration

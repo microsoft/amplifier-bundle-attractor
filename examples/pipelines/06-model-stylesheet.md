@@ -40,7 +40,7 @@ start -> analyze -> refactor -> lint_check -> critical_review -> quick_fix -> do
 
 | Node | Class | Matching Rules | Winner (by specificity) | Final Model |
 |------|-------|----------------|------------------------|-------------|
-| `analyze` | `planning` | `*`(0), `.planning`(2) | `.planning` | `gpt-[5-9]*` (openai) |
+| `analyze` | `planning` | `*`(0), `.planning`(2) | `.planning` | `gpt-5.6-luna` (on the `luna` INSTANCE, high) |
 | `refactor` | `code` | `*`(0), `.code`(2) | `.code` | `claude-sonnet-*` (anthropic) |
 | `lint_check` | `fast` | `*`(0), `.fast`(2) | `.fast` | `gemini-*-flash` (gemini, low) |
 | `critical_review` | `code` | `*`(0), `.code`(2), `#critical_review`(3) | `#critical_review` | `claude-opus-*` (anthropic, high) |
@@ -49,14 +49,39 @@ start -> analyze -> refactor -> lint_check -> critical_review -> quick_fix -> do
 > `node.attrs["llm_model"]` verbatim, then the engine resolves it against the
 > provider's LIVE model list at run time (newest stable match wins). Evergreen-ness
 > depends on whether the provider keeps a stable TIER NAME across generations:
-> - Anthropic (`claude-sonnet-*`, `claude-opus-*`) and Gemini (`gemini-*-flash`) —
->   the tier persists, so the glob tracks new generations indefinitely.
-> - OpenAI has no persistent tier (the generation *is* the name), so `.planning`
->   uses a generation RANGE `gpt-[5-9]*` — tracks the newest through gpt-9, and needs
->   a one-char bump at gpt-10.
+> Anthropic (`claude-sonnet-*`, `claude-opus-*`) and Gemini (`gemini-*-flash`) keep
+> the tier, so those globs track new generations indefinitely.
 >
 > A bare concrete id (e.g. `claude-sonnet-4-6`) is NOT resolved — it's passed to the
-> provider as-is and 404s once retired. Pin a concrete id only for locked evals.
+> provider as-is and 404s once retired. Pin a concrete id only for locked evals, or
+> for a provider instance (below), where a concrete id is the *required* form.
+
+> **`.planning` is a provider INSTANCE, and that is why it has no glob.**
+> `llm_provider` may name a provider MODULE (`anthropic`, `openai`, `gemini`) or the
+> `id` of a configured provider INSTANCE — a `config.providers[]` entry in the
+> operator's Amplifier settings with its own `base_url`, `api_key` and
+> `default_model` (`amplifier provider list`). `luna` is an instance of
+> `provider-openai`.
+>
+> A glob and an instance id are mutually exclusive: a glob is resolved by
+> `unified_llm.resolve_latest_for`, whose SDK adapters cover the
+> anthropic/openai/gemini triad only, so an instance id fails loud with
+> `no adapter found for provider 'luna'`. A concrete id is passed through with no
+> catalog call. The instance id is the stable address; the model behind it moves
+> when the operator re-points the instance.
+>
+> An instance must also EXIST to be addressed — it is mounted only when a run names
+> it, and a run whose merged settings do not define it refuses at startup naming the
+> node, never falling back to another provider.
+>
+> **Why `luna` and not `openai`:** standing repo policy (owner, 2026-09-07) is that
+> gpt-5 is not a live choice; address a `-terra` or `-luna` instance instead. Note
+> that a bare `llm_provider="openai"` with no `llm_model` is *also* a live gpt-5
+> pin — the engine's per-provider default pattern for `openai` is `gpt-5.*[0-9]` —
+> just an invisible one. Measured on one real workload at identical gate quality
+> (node-matrix `20260907T164521Z-axes`): `luna`/`gpt-5.6-luna`/high 4.3 min / $0.08,
+> `terra`/`gpt-5.6-terra`/high 8.0 min / $7.39, `openai`/`gpt-5`/high
+> 43.6 min / $7.83.
 | `quick_fix` | `code` | `*`(0), `.code`(2) | `.code` BUT node has explicit `llm_model` + `llm_provider` | `gemini-*-flash` on `gemini` (explicit override) |
 
 > **Overriding a model glob on a node?** Override the **provider too**. A glob is
@@ -88,7 +113,7 @@ steps:
 ## What to Look For
 
 - After stylesheet application, inspect node attrs:
-  - `analyze.attrs["llm_model"]` == `"gpt-[5-9]*"`
+  - `analyze.attrs["llm_model"]` == `"gpt-5.6-luna"` and `analyze.attrs["llm_provider"]` == `"luna"` (a concrete id, because the provider is an instance)
   - `critical_review.attrs["llm_model"]` == `"claude-opus-*"` (ID selector wins over .code class; resolved to a concrete opus id at run time)
   - `quick_fix.attrs["llm_model"]` == `"gemini-*-flash"` (explicit attribute wins)
 - Validation passes (stylesheet syntax is valid)

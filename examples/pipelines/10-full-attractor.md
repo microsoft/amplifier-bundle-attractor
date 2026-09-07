@@ -56,7 +56,7 @@ This is a realistic "build a feature" pipeline that exercises **every Attractor 
 start
   |
   v
-plan (.planning, truncate fidelity, gpt-[5-9]* model)
+plan (.planning, truncate fidelity, gpt-5.6-luna on the luna instance)
   |
   v
 parallel_impl (component, wait_all, max_parallel=2)
@@ -101,7 +101,7 @@ done       polish      fix_tests
 
 | Node | Class | Stylesheet Match | Resolved Model |
 |------|-------|-----------------|----------------|
-| `plan` | planning | `.planning` (specificity=2) | gpt-[5-9]* (openai, high) |
+| `plan` | planning | `.planning` (specificity=2) | gpt-5.6-luna (`luna` INSTANCE, high) |
 | `implement_backend` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
 | `implement_frontend` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
 | `integrate` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
@@ -110,14 +110,19 @@ done       polish      fix_tests
 | `final_review` | code | `#final_review` (specificity=3) | claude-opus-* (anthropic, high) |
 | `polish` | code | `.code` (specificity=2) | claude-sonnet-* (anthropic) |
 
-> These are evergreen glob ids resolved against each provider's live model list at
-> run time. See [06-model-stylesheet.md](06-model-stylesheet.md) for how the forms
-> stay current across generations (and why OpenAI uses the `gpt-[5-9]*` range).
+> The anthropic and gemini rows are evergreen glob ids, resolved against each
+> provider's live model list at run time. The `.planning` row is not: `luna` is a
+> configured provider INSTANCE rather than a provider module, and an instance id
+> takes a CONCRETE model id — a glob has no catalog adapter to resolve against for
+> an instance and fails loud. See
+> [06-model-stylesheet.md](06-model-stylesheet.md) for both forms, the mechanism
+> behind the rule, and why this repo addresses `-luna`/`-terra` instances rather
+> than the `openai` module.
 
 ## Expected Behavior
 
 ### Happy Path
-1. `plan` creates the implementation plan (gpt-[5-9]* with high reasoning, truncate fidelity)
+1. `plan` creates the implementation plan (gpt-5.6-luna with high reasoning, truncate fidelity)
 2. `parallel_impl` fans out to 2 branches:
    - `implement_backend` runs with full fidelity on thread "backend-impl"
    - `implement_frontend` runs with full fidelity on thread "frontend-impl"

@@ -6,17 +6,44 @@
 // Tests: stylesheet parsing, selector specificity, property application,
 //        explicit node attribute override, class attribute on nodes.
 //
-// Model selection note: these selectors use GLOB model ids, which the engine
-// resolves against the provider's LIVE model list at run time (newest stable
-// match wins) -- NOT a static/hardcoded list. How evergreen a glob is depends on
-// whether the provider keeps a stable TIER NAME across generations:
+// Model selection note: MOST selectors below use GLOB model ids, which the
+// engine resolves against the provider's LIVE model list at run time (newest
+// stable match wins) -- NOT a static/hardcoded list. How evergreen a glob is
+// depends on whether the provider keeps a stable TIER NAME across generations:
 //   - Anthropic (claude-sonnet-*, claude-opus-*) and Gemini (gemini-*-flash):
 //     the tier name persists, so the glob tracks new generations forever.
-//   - OpenAI has NO persistent tier -- the generation IS the name (gpt-5, gpt-6...),
-//     so the .planning selector below uses a generation RANGE (gpt-[5-9]*) that
-//     tracks the newest through gpt-9 and needs a one-char bump at gpt-10.
 // A bare concrete id (e.g. claude-sonnet-4-6) is NOT resolved -- it is sent to the
-// provider as-is and 404s once retired. Pin a concrete id only for locked evals.
+// provider as-is and 404s once retired. Pin a concrete id only for locked evals,
+// or for a provider INSTANCE (next paragraph), where it is the required form.
+//
+// PROVIDER INSTANCES -- the .planning selector below is one, on purpose.
+// `llm_provider` does not have to name a provider MODULE (anthropic / openai /
+// gemini). It can name the `id` of a configured provider INSTANCE: a
+// `config.providers[]` entry in the operator's Amplifier settings carrying its
+// own base_url, api_key and default_model (`amplifier provider list`). `luna`
+// is an instance of provider-openai.
+//
+// An instance takes a CONCRETE llm_model, never a glob -- this is mechanical,
+// not stylistic. A glob routes through unified_llm.resolve_latest_for, whose
+// SDK adapters cover the anthropic/openai/gemini triad ONLY; it has no adapter
+// for an instance id and fails loud with "no adapter found for provider
+// 'luna'". A concrete id is returned unchanged with no catalog call at all.
+// So the usual "globs are evergreen, concrete ids rot" advice INVERTS here:
+// the instance id is the stable address, and the model behind it moves when
+// the operator re-points the instance.
+//
+// An instance also has to EXIST to be addressed: it is mounted only when the
+// run NAMES it, and a run whose merged settings do not define it refuses at
+// startup naming the node -- it never falls back to another provider. A graph
+// pinning an instance owes its runner a definition (see
+// .github/capsule-pipeline/provider-instances.yaml for the shape).
+//
+// Why luna rather than the openai module: standing repo policy (owner,
+// 2026-09-07) is that gpt-5 is not a live choice; address a `-terra` or
+// `-luna` instance instead. Measured on one real workload at identical gate
+// quality (node-matrix 20260907T164521Z-axes): luna/gpt-5.6-luna/high
+// 4.3 min / $0.08, terra/gpt-5.6-terra/high 8.0 min / $7.39,
+// openai/gpt-5/high 43.6 min / $7.83.
 
 digraph ModelStylesheet {
     graph [
@@ -29,8 +56,8 @@ digraph ModelStylesheet {
                 reasoning_effort: medium;
             }
             .planning {
-                llm_model: gpt-[5-9]*;
-                llm_provider: openai;
+                llm_model: gpt-5.6-luna;
+                llm_provider: luna;
                 reasoning_effort: high;
             }
             .code {
@@ -57,7 +84,8 @@ digraph ModelStylesheet {
     start [shape=Mdiamond, label="Start"]
     done  [shape=Msquare, label="Done"]
 
-    // Planning node -- .planning class -> gets a GPT-5-class model, high reasoning
+    // Planning node -- .planning class -> routed to the `luna` provider INSTANCE
+    // at high reasoning effort (concrete model id: instances take no globs)
     analyze [
         label="Analyze Codebase",
         class="planning",

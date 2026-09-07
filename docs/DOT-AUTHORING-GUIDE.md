@@ -712,8 +712,8 @@ digraph {
                 llm_provider: anthropic;
             }
             .planning {
-                llm_model: gpt-[5-9]*;
-                llm_provider: openai;
+                llm_model: gpt-5.6-luna;
+                llm_provider: luna;
                 reasoning_effort: high;
             }
             .fast {
@@ -784,16 +784,68 @@ generations only if the provider keeps a stable *tier name*:
 |----------|------------------|----------------|
 | Anthropic | yes (`sonnet`/`opus`/`haiku`) | `claude-sonnet-*`, `claude-opus-*` |
 | Gemini | yes (`flash`/`pro`) | `gemini-*-flash`, `gemini-*-pro` |
-| OpenAI | **no** -- the generation *is* the name | `gpt-[5-9]*` (a range) |
+| OpenAI (module) | **no** -- the generation *is* the name | a generation range, e.g. `gpt-[6-9]*` |
+| A provider **instance** (`luna`, `terra`) | n/a -- see below | **no glob at all**; a concrete id |
 
 - Widen to the **whole family**: `claude-sonnet-*` tracks Sonnet 4 -> 5 -> ...
   A version-pinned glob like `claude-sonnet-4-*` is **frozen to gen-4** and misses
   Sonnet 5 -- avoid it unless you deliberately want to pin the major.
 - OpenAI has no tier that survives `gpt-5 -> gpt-6`, and a bare `gpt-*` matches
-  junk (embeddings, audio, realtime). Use the generation **range** `gpt-[5-9]*`:
-  it tracks the newest through gpt-9 and needs a one-character bump at gpt-10.
+  junk (embeddings, audio, realtime), so a generation **range** is the only
+  evergreen glob shape it admits. Note the range is also the reason an OpenAI
+  glob is a *live* model choice: it silently re-points every time the provider
+  ships a generation, which is exactly what the policy below governs.
 - Prefer an explicit family glob over a bare token like `sonnet`: the glob is
   unambiguous about provider and family and resolves reliably.
+
+### Provider instances, and why they take a concrete id
+
+A `llm_provider` value is not always a provider *module* name. It can also be
+the `id` of a configured provider **instance** -- a `config.providers[]` entry
+in the operator's Amplifier settings that carries its own `base_url`,
+`api_key` and `default_model`. `amplifier provider list` shows the ones a host
+has; `luna` and `terra` are two instances of `provider-openai`.
+
+**An instance pin and a model glob are mutually exclusive.** A glob sends the
+engine to `unified_llm.resolve_latest_for`, whose SDK adapters cover the
+`anthropic` / `openai` / `gemini` triad only -- it has no adapter for an
+instance id and fails loud with `no adapter found for provider 'luna'`. A
+concrete id is returned unchanged with **no catalog call at all**. So:
+
+```dot
+// right -- instance id, concrete model
+critique [shape=box, llm_provider="luna", llm_model="gpt-5.6-luna", reasoning_effort="high"]
+
+// wrong -- the glob cannot be resolved for an instance id; the node fails loud
+critique [shape=box, llm_provider="luna", llm_model="gpt-[5-9]*"]
+```
+
+This inverts the "concrete ids are the rot vector" advice above **for instance
+pins only**: the instance is the stable address, and the id behind it moves
+when the operator re-points the instance. Everywhere else, prefer the glob.
+
+**An instance must exist to be addressed.** It is mounted only when the run
+NAMES it (a node's `llm_provider`, or `--provider`), and if the merged
+settings do not define it the run refuses at startup naming the node -- it
+never falls back to another provider. A graph pinning an instance therefore
+owes its runner a definition: see
+`.github/capsule-pipeline/provider-instances.yaml` and
+`install_provider_instances.sh` for the shape this repo's own CI uses.
+
+**Model policy for this repo (owner, 2026-09-07, standing).** `gpt-5` is not a
+live choice. Where an OpenAI-family model is wanted, address the `-terra` or
+`-luna` instance rather than the `openai` module. Measured on the capsule
+`author` workload (node-matrix run `20260907T164521Z-axes`, coding-agent
+worker), at identical gate quality (`red_ok` on all three):
+
+| declared | wall | cost |
+|---|---|---|
+| `luna` / `gpt-5.6-luna` / high | 4.3 min | $0.08 |
+| `terra` / `gpt-5.6-terra` / high | 8.0 min | $7.39 |
+| `openai` / `gpt-5` / high | 43.6 min | $7.83 |
+
+`luna` at `high` is the default pin when there is no evidence pointing
+elsewhere; the effort is the one that was measured, not a guess.
 
 **Overriding a model on a node? Override the provider too.** A glob resolves
 against the node's `llm_provider`, so `llm_model="gemini-*-flash"` needs
@@ -1110,7 +1162,7 @@ Selector { property: value; property: value; }
 graph [model_stylesheet="
     * { llm_model: claude-sonnet-*; llm_provider: anthropic; }
     .code { llm_model: claude-sonnet-*; }
-    .reasoning { llm_model: gpt-[5-9]*; llm_provider: openai; reasoning_effort: high; }
+    .reasoning { llm_model: gpt-5.6-luna; llm_provider: luna; reasoning_effort: high; }
     #final_check { llm_model: claude-opus-*; reasoning_effort: high; }
 "]
 ```

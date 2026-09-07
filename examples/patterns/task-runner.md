@@ -307,8 +307,10 @@ variable the same as a param.
 
 **Composing a stronger critique.** When the stakes justify the spend, swap
 the single `critique` stage for two **independent** reviewers from different
-model families — a second box node with `llm_provider="openai"` and an
-explicit `llm_model` — and make `verdict` require consensus: both final
+model families — a second box node with its own `llm_provider` and an
+explicit `llm_model` (this repo's shipped pipelines use
+`llm_provider="luna", llm_model="gpt-5.6-luna"`, an OpenAI-family provider
+INSTANCE) — and make `verdict` require consensus: both final
 `VERDICT:` lines must say SHIP. The second reviewer must not read the first's
 critique file; independence is what makes agreement meaningful, and
 cross-family disagreement is signal (this repo's own multi-lens doctrine).
@@ -316,10 +318,15 @@ Two deployment cautions, both verified empirically: (1) the second family's
 provider is resolved from the node's own `llm_provider` declaration — the
 default worker (`amplifier-agent`) and the explicit `--worker coding-agent`
 path both honor per-node `llm_provider` natively as of engine 0.2.0, so an
-`llm_provider="openai"` node routes to the OpenAI-family child agent without
+`llm_provider="luna"` node routes to that instance's child agent without
 any base-bundle mount (verify with an identity probe if in doubt — bundle
 vocabulary such as `ATTRACTOR_PIPELINE_BUNDLE`/`--bundle` is retired from the
-CLI). (2) Run the two reviewers in **sequence, not in parallel**:
+CLI). Two rules travel with an INSTANCE id specifically: its `llm_model` must
+be CONCRETE (a glob has no catalog adapter to resolve against for an instance,
+and fails loud), and the instance must be defined in the run's merged Amplifier
+settings or the run refuses at startup naming the node — see
+[DOT-AUTHORING-GUIDE.md](../../docs/DOT-AUTHORING-GUIDE.md) "Provider
+instances, and why they take a concrete id". (2) Run the two reviewers in **sequence, not in parallel**:
 parallel component branches route through `run_subgraph`'s permissive fail
 path (see `context/engine-semantics.md`), which would let a crashed reviewer
 branch pass silently.

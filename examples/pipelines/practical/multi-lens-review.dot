@@ -6,7 +6,9 @@
 // findings into one ranked verdict.
 //
 //   anthropic  -> SECURITY lens        (careful, safety-oriented reasoning)
-//   openai     -> ARCHITECTURE lens     (structured design / systems reasoning)
+//   luna       -> ARCHITECTURE lens     (structured design / systems reasoning)
+//                 -- an OpenAI-family provider INSTANCE, not the bare `openai`
+//                    module; see the node's own comment for why
 //   gemini     -> PERFORMANCE/CORRECTNESS lens (fast, broad pattern matching)
 //
 // The provider<->lens mapping is illustrative and meant to be tuned to taste --
@@ -49,10 +51,27 @@ digraph MultiLensReview {
         prompt="## Lens: SECURITY\nReview the code below ONLY for security issues: injection (SQL/command), auth bypasses, hardcoded secrets/credentials, insecure defaults, sensitive-data exposure. For each finding give a severity (critical/high/medium/low) and the offending line. Ignore style and performance -- another reviewer covers those.\n\nCode under review:\n```python\ndef get_user_orders(db, user_id):\n    query = \"SELECT * FROM orders WHERE user_id = \" + str(user_id)\n    orders = db.execute(query)\n    result = []\n    for o in orders:\n        user = db.execute(\"SELECT * FROM users WHERE id = \" + str(o.user_id))\n        for x in orders:\n            if x.product == o.product:\n                o.dupe = True\n    api_key = \"sk-live-1234567890abcdef\"\n    return result\n```"
     ]
 
-    // --- Lens 2: ARCHITECTURE on openai --------------------------------------
+    // --- Lens 2: ARCHITECTURE on the OpenAI family, via the `luna` instance ---
+    // WHY AN INSTANCE ID AND AN EXPLICIT MODEL. This lens used to declare
+    // `llm_provider="openai"` with no llm_model, which reads as "any OpenAI
+    // model" but is not: with no llm_model the engine falls to its
+    // per-provider default pattern, and for `openai` that pattern is
+    // `gpt-5.*[0-9]` (loop-pipeline backend.py). So the node was an invisible,
+    // LIVE gpt-5 pin -- a model choice no reader of this file could see.
+    // Standing repo policy (owner, 2026-09-07) is that gpt-5 is not a live
+    // choice: address a `-terra` or `-luna` provider INSTANCE instead. `luna`
+    // is an instance of provider-openai, so this lens is still a genuinely
+    // different family from the anthropic and gemini lenses beside it.
+    // The model id is CONCRETE because an instance id has no catalog adapter
+    // to resolve a glob against -- see 06-model-stylesheet.dot's header.
+    // Running this without a `luna` instance in your Amplifier settings? The
+    // run refuses at startup naming this node (it never silently substitutes).
+    // Swap in whatever instance your host does configure -- `amplifier
+    // provider list` -- and set llm_model to that instance's own model id.
     review_architecture [
-        label="Architecture Lens (openai)",
-        llm_provider="openai",
+        label="Architecture Lens (luna)",
+        llm_provider="luna",
+        llm_model="gpt-5.6-luna",
         prompt="## Lens: ARCHITECTURE\nReview the code below ONLY for design/architecture issues: separation of concerns, coupling, single-responsibility, abstraction boundaries, testability, dependency handling. For each finding name the principle violated and the offending line. Ignore security and micro-performance -- other reviewers cover those.\n\nCode under review:\n```python\ndef get_user_orders(db, user_id):\n    query = \"SELECT * FROM orders WHERE user_id = \" + str(user_id)\n    orders = db.execute(query)\n    result = []\n    for o in orders:\n        user = db.execute(\"SELECT * FROM users WHERE id = \" + str(o.user_id))\n        for x in orders:\n            if x.product == o.product:\n                o.dupe = True\n    api_key = \"sk-live-1234567890abcdef\"\n    return result\n```"
     ]
 

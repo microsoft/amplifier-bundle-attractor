@@ -363,33 +363,40 @@ jobs:
           git config --global user.name "Brian Krabach"
           git config --global user.email "brkrabac@microsoft.com"
 
-      - name: "Preflight: dual-family critique is unserviceable without an OpenAI key"
+      - name: "Preflight: provision the dual-family judge's provider instance"
         id: preflight
         if: steps.locate.outputs.skip != 'true'
         # Issue #155: an unserviceable provider on a node used to drain the
         # ENTIRE iteration budget in a crash loop (`resolve_latest_for: no
         # adapter found for provider 'openai'`) before failing -- burning
         # 20+ minutes to say what could be said in one line at startup. The
-        # vendored task-runner.dot's critique_b node HARD-DECLARES
-        # llm_provider="openai" (restored to the pristine upstream shape;
-        # see that file's own header). WORKER-SURFACE FLIP (engine 0.2.0):
-        # with `--worker coding-agent`, that attribute now flows straight
-        # through the named-worker path and is honored directly -- no
-        # dual-provider bundle mount required any more, and no more silent
-        # single-provider fallback at either layer. So: check the one
-        # precondition that makes that attribute serviceable BEFORE
-        # spending any of the run's 30-90+ minute budget, and fail loudly,
-        # naming exactly what's missing and what capability is lost, if it
-        # isn't met.
+        # vendored task-runner.dot's critique_b node HARD-DECLARES a second
+        # model family. WORKER-SURFACE FLIP (engine 0.2.0): with
+        # `--worker coding-agent`, that attribute flows straight through the
+        # named-worker path and is honored directly -- no dual-provider
+        # bundle mount, and no silent single-provider fallback at either
+        # layer. So: make the declared provider serviceable BEFORE spending
+        # any of the run's 30-90+ minute budget, and fail loudly, naming
+        # exactly what's missing, if it cannot be.
+        #
+        # MODEL POLICY (2026-09-07): critique_b now declares
+        # llm_provider="luna" -- a configured provider INSTANCE, not the bare
+        # `openai` module -- so the precondition is no longer "OPENAI_API_KEY
+        # exists" but "the luna instance is addressable in this runner's
+        # Amplifier settings". A GitHub-hosted runner carries no settings, so
+        # the installer writes them from the repo's own template. It NEVER
+        # writes a secret to disk (the template holds ${VAR} placeholders the
+        # engine expands from the env at load time), never overwrites
+        # settings a self-hosted runner already carries, and never weakens
+        # the engine's own startup preflight -- which still refuses, naming
+        # the node, if the instance is not addressable when the run starts.
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
+          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
         run: |
           set -euo pipefail
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "::error::capsule-implement: OPENAI_API_KEY secret is missing. task-runner.dot's critique_b node requires llm_provider=\"openai\" (dual-family critique -- an independent, different-model-family reviewer is the point; see issue #155) and the engine cross-checks every declared provider at startup, refusing to start without a serviceable credential for it. Without OPENAI_API_KEY that check fails fast at startup (fail-loud, no crash-loop, no silent same-family substitution). Refusing to start here too, so the failure is visible before the run's 30-90+ minute budget is spent. Provision OPENAI_API_KEY as a repo secret, then re-run." >&2
-            exit 1
-          fi
-          echo "OPENAI_API_KEY is present -- dual-family critique (Anthropic + OpenAI) can be honored. Proceeding."
+          bash .github/capsule-pipeline/install_provider_instances.sh \
+            .github/capsule-pipeline/task-runner.dot
 
       - name: "Stage the capsule's vendored gate fixtures beside the gate"
         id: fixtures
@@ -511,16 +518,22 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # DUAL-FAMILY CRITIQUE, WORKER-SURFACE FLIP (engine 0.2.0, issue
           # #155): the vendored task-runner.dot's critique_b node declares
-          # llm_provider="openai" -- a design requirement, not optional.
+          # llm_provider="luna" -- a design requirement, not optional.
           # `--worker coding-agent` below (the named-worker path) now honors
           # that attribute directly -- the old ATTRACTOR_PIPELINE_BUNDLE/
           # DOT_RUNNER_BUNDLE dual-bundle mount is retired from this job
           # entirely; --bundle and DOT_RUNNER_BUNDLE are gone from the CLI
-          # as of 0.2.0 anyway. If OPENAI_API_KEY is unset, the "Preflight:
-          # dual-family critique is unserviceable without an OpenAI key"
-          # step below fails the job LOUDLY before this step (and the
-          # 30-90+ minute run it would otherwise start) ever runs.
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # as of 0.2.0 anyway. The preflight step above already refused the
+          # job LOUDLY -- before this step and the 30-90+ minute run it would
+          # otherwise start -- if the luna instance could not be provisioned.
+          #
+          # These two are re-declared HERE, not only on the preflight step,
+          # because the settings file the installer wrote holds `${VAR}`
+          # placeholders verbatim: the engine expands them from the PROCESS
+          # environment at load time, so they must be present on the step
+          # that actually runs the pipeline.
+          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
+          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-implement/logs"
@@ -716,6 +729,8 @@ jobs:
         if: always() && steps.locate.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
+          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -914,10 +929,11 @@ jobs:
 
           # Dual-family critique is unconditional as of issue #155's fix --
           # the preflight step earlier in this job already refused to start
-          # the run at all if OPENAI_API_KEY were missing, so reaching this
-          # point means both critics genuinely ran cross-provider. No
-          # degraded-single-family fallback message exists any more.
-          DUAL_NOTE="Both reviewers ran as independent, cross-provider critics (Anthropic + OpenAI) -- enforced by this workflow's preflight check, not merely hoped for."
+          # the run at all if the `luna` provider instance could not be
+          # provisioned, so reaching this point means both critics genuinely
+          # ran cross-provider. No degraded-single-family fallback message
+          # exists any more.
+          DUAL_NOTE="Both reviewers ran as independent, cross-provider critics (Anthropic, and the OpenAI-family \`luna\` instance) -- enforced by this workflow's preflight check and the engine's own startup preflight, not merely hoped for."
 
           # MEASURE the gate-modification claim instead of asserting it.
           # Run 31335891096 / PR #178: the previous template asserted the
@@ -1184,6 +1200,8 @@ jobs:
         if: always() && steps.locate.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
+          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}

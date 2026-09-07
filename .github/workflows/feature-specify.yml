@@ -607,29 +607,34 @@ jobs:
         if: steps.idem.outputs.skip != 'true'
         uses: astral-sh/setup-uv@v4
 
-      - name: "Preflight: the critique judge is unserviceable without an OpenAI key"
+      - name: "Preflight: provision the critique judge's provider instance"
         id: preflight
         if: steps.idem.outputs.skip != 'true'
         # Mirror of capsule-specify.yml's preflight, itself a mirror of
         # capsule-implement.yml's (issue #155). feature-capsule.dot has
         # exactly ONE judgment node, `critique`, and -- like capsule.dot's --
-        # it HARD-DECLARES llm_provider="openai": the judge must not share the
-        # maker's model family. WORKER-SURFACE FLIP (engine 0.2.0): with
-        # `--worker coding-agent`, that attribute now flows straight through
-        # the named-worker path and is honored directly -- no dual-provider
-        # bundle mount required any more. So: check the one precondition
-        # that makes that attribute serviceable BEFORE spending any of the
-        # run's multi-hour budget, and fail loudly, naming exactly what's
-        # missing and what capability is lost, if it isn't met.
+        # it HARD-DECLARES a second model family: the judge must not share
+        # the maker's. WORKER-SURFACE FLIP (engine 0.2.0): with
+        # `--worker coding-agent`, that attribute flows straight through the
+        # named-worker path and is honored directly -- no dual-provider
+        # bundle mount required any more.
+        #
+        # MODEL POLICY (2026-09-07): `critique` declares
+        # llm_provider="luna" -- a configured provider INSTANCE, not the bare
+        # `openai` module -- so the precondition is that the instance be
+        # addressable in this runner's Amplifier settings. The installer
+        # writes them from the repo's own template: no secret reaches disk
+        # (the template holds ${VAR} placeholders the engine expands from the
+        # env), settings a self-hosted runner already carries are never
+        # overwritten, and the engine's own startup preflight is untouched --
+        # it still refuses, naming the node, if the instance is absent.
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
+          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
         run: |
           set -euo pipefail
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "::error::feature-specify: OPENAI_API_KEY secret is missing. feature-capsule.dot's critique node (this pipeline's ONE judgment node) requires llm_provider=\"openai\" -- a second model family is the point: the judge must be independent of the maker's family (see issue #155 for the proven failure) -- and the engine cross-checks every declared provider at startup, refusing to start without a serviceable credential for it. Without OPENAI_API_KEY that check fails fast at startup (fail-loud, no crash-loop, no silent same-family substitution). Refusing to start here too, so the failure is visible before the run's multi-hour budget is spent. Provision OPENAI_API_KEY as a repo secret, then re-run." >&2
-            exit 1
-          fi
-          echo "OPENAI_API_KEY is present -- the second-family critique judge (OpenAI) can be honored. Proceeding."
+          bash .github/capsule-pipeline/install_provider_instances.sh \
+            .github/capsule-pipeline/feature-capsule.dot
 
       - name: Run feature-capsule.dot (feature specify stage)
         id: run
@@ -645,14 +650,19 @@ jobs:
           # DUAL-FAMILY JUDGE, WORKER-SURFACE FLIP (engine 0.2.0) -- the same
           # reason capsule-specify.yml flipped for capsule.dot's critique
           # node: feature-capsule.dot's critique node likewise declares
-          # llm_provider="openai". `--worker coding-agent` below (the
+          # llm_provider="luna". `--worker coding-agent` below (the
           # named-worker path) now honors that attribute directly -- the old
           # ATTRACTOR_PIPELINE_BUNDLE/DOT_RUNNER_BUNDLE dual-bundle mount is
           # retired from this job entirely; --bundle and DOT_RUNNER_BUNDLE
           # are gone from the CLI as of 0.2.0 anyway. The preflight step
-          # above fails the job LOUDLY before this step ever runs if
-          # OPENAI_API_KEY is unset.
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # above fails the job LOUDLY, before this step ever runs, if the
+          # luna instance cannot be provisioned.
+          #
+          # Re-declared HERE, not only on the preflight step: the installed
+          # settings file holds `${VAR}` placeholders verbatim, and the engine
+          # expands them from the PROCESS environment at load time.
+          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
+          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/capsule-run/out" "$RUNNER_TEMP/capsule-run/logs"
@@ -756,6 +766,8 @@ jobs:
         if: always() && steps.idem.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
+          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -801,6 +813,8 @@ jobs:
         if: always() && steps.idem.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
+          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -1603,6 +1617,8 @@ jobs:
         if: always() && steps.idem.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LUNA_API_KEY: ${{ secrets.LUNA_API_KEY }}
+          LUNA_BASE_URL: ${{ secrets.LUNA_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CAPSULE_PR_TOKEN: ${{ secrets.CAPSULE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}

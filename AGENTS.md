@@ -31,7 +31,7 @@ That document also carries the per-change-class evidence table, the four-layer d
 ## Key directories
 
 - `modules/tool-report-outcome/` — the one module this repo owns.
-- `tests/` — the root guard harness (the `opinionated-guards` CI job). Asserts on repo-root docs/, examples/, skills/, agents/, context/, bundles/, behaviors/ content, and installs nothing but pytest by construction.
+- `tests/` — the root guard harness (the `opinionated-guards` CI job). Asserts on repo-root docs/, examples/, skills/, agents/, context/, bundles/, behaviors/ content, and installs only pytest plus Graphviz for DOT-render proof.
 - `examples/pipelines/` — canonical pipeline patterns. Useful as live test fixtures when verifying engine changes.
 - `specs/` — our spec extensions and the canonical attractor reference.
 - `docs/CONTRACTS.md` — engine-level contracts: M5 substitution, fail-fast policy, structural concurrency, and cross-consumer guidance.

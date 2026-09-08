@@ -861,8 +861,8 @@ digraph CapsulePipeline {
     pm_gate -> escalate
 
     // Abandon FIRST: timeout/auto-approve interviewers fail safe.
-    escalate -> abandon     [label="[A] Abandon -- keep the postmortem"]
-    escalate -> bump_budget [label="[C] Continue -- raise the budget"]
-    escalate -> package     [label="[K] Keep -- accept the capsule as-is, findings and postmortem attached"]
+    escalate -> abandon     [condition="outcome=success && context.human.gate.selected=A", label="[A] Abandon -- keep the postmortem"]
+    escalate -> bump_budget [condition="outcome=success && context.human.gate.selected=C", label="[C] Continue -- raise the budget"]
+    escalate -> package     [condition="outcome=success && context.human.gate.selected=K", label="[K] Keep -- accept the capsule as-is, findings and postmortem attached"]
     bump_budget -> author
 }

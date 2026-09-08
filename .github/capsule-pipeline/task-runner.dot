@@ -626,7 +626,7 @@ digraph BacklogTaskRunner {
     // durable — what a human needs at that door is the forensic picture the
     // gate just refused, not another commit on top of it.
     salvage -> escalate
-    escalate -> abandon     [label="[A] Abandon — keep the postmortem"]
-    escalate -> bump_budget [label="[C] Continue — raise the budget"]
+    escalate -> abandon     [condition="outcome=success && context.human.gate.selected=A", label="[A] Abandon — keep the postmortem"]
+    escalate -> bump_budget [condition="outcome=success && context.human.gate.selected=C", label="[C] Continue — raise the budget"]
     bump_budget -> attempt
 }

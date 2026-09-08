@@ -35,6 +35,7 @@ needs a re-anchored guard.
 """
 
 import re
+import subprocess
 from pathlib import Path
 
 # Root of the bundle repo relative to this test file
@@ -192,6 +193,95 @@ def test_house_llm_classification_is_indirect():
     )
     assert "Indirect" in syntax_val, (
         f"DOT-SYNTAX.md house LLM field should contain 'Indirect', got: '{syntax_val}' (D-137)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-336: manager-child DOT parser guidance must match its adjacent DOT example
+# ---------------------------------------------------------------------------
+
+_MANAGER_CHILD_README_REL = "examples/pipelines/11-manager-child-dotfile-hitl/README.md"
+_MANAGER_CHILD_PARENT_REL = "examples/pipelines/11-manager-child-dotfile-hitl/parent.dot"
+_MANAGER_CHILD_PARSER_NOTE_HEADING = "## DOT parser note"
+_QUOTED_MANAGER_MAX_CYCLES = '"manager.max_cycles"=1'
+_BARE_MANAGER_MAX_CYCLES = "manager.max_cycles=1"
+
+
+def _manager_child_parser_note() -> str:
+    """Return the example's one parser-note section, refusing heading dodges."""
+    readme = _read(_MANAGER_CHILD_README_REL)
+    headings = re.findall(
+        rf"^{re.escape(_MANAGER_CHILD_PARSER_NOTE_HEADING)}$",
+        readme,
+        flags=re.MULTILINE,
+    )
+    assert len(headings) == 1, (
+        f"{_MANAGER_CHILD_README_REL}: expected exactly one "
+        f"'{_MANAGER_CHILD_PARSER_NOTE_HEADING}' heading, found {len(headings)}. "
+        "Keep the parser teaching in its named final section (D-336)."
+    )
+    return readme.split(_MANAGER_CHILD_PARSER_NOTE_HEADING, 1)[1].strip()
+
+
+def test_manager_child_parser_note_teaches_the_quoted_parent_attribute():
+    """The README must teach the Graphviz-valid form its adjacent parent uses (D-336)."""
+    note = _manager_child_parser_note()
+    parent = _read(_MANAGER_CHILD_PARENT_REL)
+
+    parent_attr = re.search(
+        r'^\s*(?P<key>"manager\.max_cycles")=1,$', parent, flags=re.MULTILINE
+    )
+    assert parent_attr is not None, (
+        f"{_MANAGER_CHILD_PARENT_REL}: quoted manager.max_cycles fixture attribute "
+        "not found; the README's parser guidance needs an adjacent executable witness."
+    )
+    assert _QUOTED_MANAGER_MAX_CYCLES in note, (
+        f"{_MANAGER_CHILD_README_REL}: parser note must teach the exact quoted "
+        f"attribute used by parent.dot: `{_QUOTED_MANAGER_MAX_CYCLES}`."
+    )
+    assert _BARE_MANAGER_MAX_CYCLES in note, (
+        f"{_MANAGER_CHILD_README_REL}: parser note must retain the bare-form "
+        f"counterexample `{_BARE_MANAGER_MAX_CYCLES}`."
+    )
+    assert re.search(r"runtime also accepts\s+bare", note), (
+        f"{_MANAGER_CHILD_README_REL}: parser note must distinguish runtime "
+        "acceptance from Graphviz syntax validity."
+    )
+    assert "Graphviz rejects it" in note, (
+        f"{_MANAGER_CHILD_README_REL}: parser note must say the bare dotted key "
+        "is invalid Graphviz, not merely omit it."
+    )
+    assert re.search(r"strips the key\s+delimiters", note), (
+        f"{_MANAGER_CHILD_README_REL}: parser note must explain that quoted key "
+        "delimiters do not enter handler lookup keys."
+    )
+
+
+def test_manager_child_parser_note_rendering_witnesses_match_its_teaching():
+    """Real Graphviz must render the documented positive form and reject the negative."""
+    def render(source: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["dot", "-Tsvg"],
+            input=source,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    quoted = render(f"digraph {{ manager [{_QUOTED_MANAGER_MAX_CYCLES}] }}")
+    assert quoted.returncode == 0, (
+        "Graphviz rejected the quoted dotted-key form the parser note teaches:\n"
+        f"{quoted.stderr}"
+    )
+    assert "<svg" in quoted.stdout, "Graphviz succeeded without emitting SVG output."
+
+    bare = render(f"digraph {{ manager [{_BARE_MANAGER_MAX_CYCLES}] }}")
+    assert bare.returncode != 0, (
+        "Graphviz accepted the bare dotted-key form that the parser note calls invalid."
+    )
+    assert "syntax error" in bare.stderr.lower(), (
+        "The negative Graphviz witness failed for an unexpected reason:\n"
+        f"{bare.stderr}"
     )
 
 

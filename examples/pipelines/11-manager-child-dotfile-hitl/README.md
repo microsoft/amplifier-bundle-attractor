@@ -68,6 +68,7 @@ steps:
 ## DOT parser note
 
 Attribute keys containing dots (`manager.max_cycles`, `stack.child_dotfile`) are
-written **without** surrounding double-quotes -- the attractor DOT parser stores a
-quoted key with its quote characters, which breaks the bare-string lookups the
-handlers use. Correct: `manager.max_cycles=1`. Wrong: `"manager.max_cycles"="1"`.
+quoted Graphviz keys: `"manager.max_cycles"=1` is correct. The runtime also accepts
+bare `manager.max_cycles=1`, but Graphviz rejects it. The parser strips the key
+delimiters before handler lookup, so quoting keeps `manager.max_cycles` as the
+lookup key.

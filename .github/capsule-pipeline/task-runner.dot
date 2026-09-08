@@ -396,12 +396,12 @@ digraph BacklogTaskRunner {
     package [shape=box, class="maker",
         prompt="Both gates passed. Prepare the work for handoff in $target_dir: ensure runner artifacts (.ai/) are excluded from version control via .git/info/exclude (do NOT commit them); create or reuse a branch named task/<task id> (the id is in the task file's frontmatter at $task_file); commit all task changes with a clear conventional commit message stating WHAT changed and WHY (draw on .ai/brief.md and .ai/critique.md; include the standard Amplifier co-authored-by attribution); and write .ai/SHIPPED.md summarizing the goal, what shipped, where the evidence lives (.ai/verify.log, .ai/convergence.jsonl, run events), and anything a reviewer should know."]
 
-    // TRACKED-.ai LEAK CHANNEL (T1-7 council): the porcelain grep excludes
-    // only UNTRACKED .ai entries (^?? .ai); a worker that git-adds/commits
-    // .ai/ mid-run evades that filter and ships runner artifacts. First
-    // assertion: `git ls-files .ai/` must be EMPTY, else dirty -> escalate.
+    // TRACKED-.ai LEAK CHANNEL (T1-7 council): assert first that
+    // `git ls-files -- .ai/` is EMPTY, then use an explicit pathspec to ask
+    // porcelain about every path except `.ai/`; either nonempty result means
+    // dirty -> escalate.
     ship_check [shape=parallelogram, class="gate", max_retries=0,
-        tool_command="[ -z \"$(git ls-files .ai/)\" ] && [ -z \"$(git status --porcelain | grep -v -E '^\\?\\? \\.ai')\" ] && git log --oneline -1 | grep -q . && printf shipped || printf dirty"]
+        tool_command="tracked=$(git ls-files -- .ai/) || { printf dirty; exit 0; }; [ -z \"$tracked\" ] || { printf dirty; exit 0; }; status=$(git status --porcelain -- . ':(exclude).ai/') || { printf dirty; exit 0; }; [ -z \"$status\" ] && git rev-parse --verify -q HEAD^{commit} >/dev/null 2>&1 && printf shipped || printf dirty"]
 
     // ---------- budget exhaustion: a decision point, not a fuse ----------
     // MUST_WRITE + S2 END-STATE (T1-7 council, 4-1; sam's S3 dissent

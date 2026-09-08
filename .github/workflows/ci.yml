@@ -161,13 +161,14 @@ jobs:
     #
     # THE MOVE HAS NOW HAPPENED (the P4 slim, attractor-28x), and Track A
     # did its job: loop-pipeline is gone from this repo and this job still
-    # runs the same guard corpus, green, having installed nothing but
-    # pytest. That is the design working, not a coincidence.
+    # runs the guard corpus without installing engine modules. Its test
+    # dependencies are pytest, PyYAML, and Graphviz for DOT render proof.
     #
     # Deliberately independent of every module/, by construction: every
     # moved guard was refactored (where needed) to assert FILE CONTENT --
     # doc text, YAML/dot files, script logic loaded by path -- rather than
-    # importing engine code, so this job installs nothing but pytest itself.
+    # importing engine code. Graphviz checks the documented DOT syntax
+    # independently; it does not introduce an engine-module dependency.
     # A handful of guards that genuinely could not be decoupled from the
     # live engine parser/linter (e.g. the examples/ lint-clean sweep, the
     # shipped-graph structural contract checks) deliberately stayed behind
@@ -184,6 +185,12 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
+
+      - name: Install graphviz
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz
+          dot -V
 
       - name: Install pytest
         run: uv pip install --system pytest pyyaml

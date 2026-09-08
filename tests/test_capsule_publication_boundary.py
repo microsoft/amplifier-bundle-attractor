@@ -9,14 +9,13 @@ the repository's real scripts.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_ROOT = Path(

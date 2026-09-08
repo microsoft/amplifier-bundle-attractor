@@ -201,7 +201,9 @@ def test_house_llm_classification_is_indirect():
 # ---------------------------------------------------------------------------
 
 _MANAGER_CHILD_README_REL = "examples/pipelines/11-manager-child-dotfile-hitl/README.md"
-_MANAGER_CHILD_PARENT_REL = "examples/pipelines/11-manager-child-dotfile-hitl/parent.dot"
+_MANAGER_CHILD_PARENT_REL = (
+    "examples/pipelines/11-manager-child-dotfile-hitl/parent.dot"
+)
 _MANAGER_CHILD_PARSER_NOTE_HEADING = "## DOT parser note"
 _QUOTED_MANAGER_MAX_CYCLES = '"manager.max_cycles"=1'
 _BARE_MANAGER_MAX_CYCLES = "manager.max_cycles=1"
@@ -259,6 +261,7 @@ def test_manager_child_parser_note_teaches_the_quoted_parent_attribute():
 
 def test_manager_child_parser_note_rendering_witnesses_match_its_teaching():
     """Real Graphviz must render the documented positive form and reject the negative."""
+
     def render(source: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["dot", "-Tsvg"],
@@ -280,8 +283,7 @@ def test_manager_child_parser_note_rendering_witnesses_match_its_teaching():
         "Graphviz accepted the bare dotted-key form that the parser note calls invalid."
     )
     assert "syntax error" in bare.stderr.lower(), (
-        "The negative Graphviz witness failed for an unexpected reason:\n"
-        f"{bare.stderr}"
+        f"The negative Graphviz witness failed for an unexpected reason:\n{bare.stderr}"
     )
 
 

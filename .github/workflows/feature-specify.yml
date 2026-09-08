@@ -1041,6 +1041,11 @@ jobs:
           bash .github/capsule-pipeline/capsule_pair_fence.sh verify \
             "$OUT" "$RUNNER_TEMP/capsule-pair.sha256"
 
+          if ! gh api graphql -f query='query { viewer { login } }' >/dev/null; then
+            echo "::error::Capsule publication credential check failed. This can reflect authentication, network, or permissions; it does not establish that the selected credential is expired or revoked. Refusing publication before creating a branch, copying, committing, pushing, or opening a pull request." >&2
+            exit 1
+          fi
+
           git checkout -b "$BRANCH"
           mkdir -p "$DEST"
           cp "$OUT"/"$ID".md "$OUT"/"$ID".verify.sh "$DEST"/
@@ -1241,32 +1246,24 @@ jobs:
             fi
           }
 
-          # A capsule can be produced and still, correctly, not be
-          # published: the pre-publication checks (secret finding in the
-          # capsule artifacts, the shipped gate failing to run at base, a
-          # broken pair-integrity fence) BLOCK the push. Say so honestly
-          # rather than posting an empty PR link -- the filer is owed the
-          # real state, and a maintainer needs to know a capsule is sitting
-          # in the run evidence waiting on a human.
-          if [ "$KIND" = "capsule" ] && [ -z "${PR_URL:-}" ]; then
+          # A capsule is opened only after the PR step succeeds and returns
+          # its URL. A failed PR creation may follow a successful branch push,
+          # so do not infer which publication side effects occurred.
+          if [ "$KIND" = "capsule" ] && { [ "${PR_STEP:-}" != "success" ] || [ -z "${PR_URL:-}" ]; }; then
             KIND="capsule_blocked"
           fi
 
           case "$KIND" in
             capsule_blocked)
               {
-                echo "**Feature specify stage: a work capsule was produced, but a pre-publication check failed -- no PR was opened.**"
+                echo "**Feature specify stage: work capsule produced; publication did not complete; no capsule PR URL available.**"
                 echo
-                echo "**What happened:** the pipeline converged on a work capsule that"
-                echo "hardens the maintainer's acceptance criteria into an executable gate,"
-                echo "but one of the checks that runs between producing it and publishing it"
-                echo "did not pass, so nothing was pushed."
+                echo "**What happened:** the pipeline produced a work capsule that hardens"
+                echo "the maintainer's acceptance criteria into an executable gate, but the"
+                echo "publication step did not complete with a pull-request URL."
                 echo
                 echo "**What this does NOT mean:** it is not a judgment of this request or"
-                echo "of the criteria. These checks are about the ARTIFACT (does the gate"
-                echo "being shipped actually run and write its census? did anything mutate"
-                echo "it? is it free of secret-shaped material?), never about the quality of"
-                echo "the request."
+                echo "of the criteria."
                 echo
                 echo "**What happens next:** a maintainer will personally review this issue"
                 echo "and follow up. The capsule itself is preserved in this run's evidence."

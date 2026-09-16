@@ -54,9 +54,14 @@ hooks:
 
 agents:
   # ONE expert, ONE definition.  agents/attractor-expert.md carries its own metadata,
-  # its own mount plan (session.orchestrator = loop-agent, Layer-1 =
-  # context/system-attractor-expert.md), AND the knowledge body that used to be a dead
-  # file no composition ever loaded.  Registering it here means every session that
+  # its own mount plan (session.orchestrator = loop-agent, Layer-1 = the INLINE
+  # session.orchestrator.config.system_prompt in that file's frontmatter), AND the
+  # knowledge body that used to be a dead file no composition ever loaded.
+  # The Layer-1 persona was formerly the side-file context/system-attractor-expert.md;
+  # it is retired INTO that frontmatter, because loop-agent anchors a relative
+  # system_prompt_file on its OWN install (the separate dot-runner package), where
+  # this bundle's context/ assets do not exist -- which fail-louded the packaged
+  # expert.  ONE Layer-1 owner, no second copy to drift.  Registering it here means every session that
   # composes attractor-core gets the whole agent -- which is what README's
   # "Sessions that compose attractor-core have access to attractor-expert" always claimed.
   include:

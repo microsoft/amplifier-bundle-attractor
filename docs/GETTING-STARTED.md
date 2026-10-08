@@ -70,9 +70,9 @@ dot-runner run "$DOT" \
 `--worker coding-agent` is the full coding agent (tools, file edits). Worker NAMES are
 the whole user surface now -- `llm-direct`, `coding-agent`, `amplifier-agent` -- and there is
 no `--bundle`/`DOT_RUNNER_BUNDLE` any more (bundles are internal-only). `amplifier-agent`
-is the default worker -- the CLI falls back to it when `--worker` is omitted, dropping
-further to `llm-direct` with a loud notice only if it isn't present; pin `--worker` explicitly
-for anything unattended. The goal defaults to the graph's `goal=` attribute; override it with
+is the default worker when `--worker` is omitted. A missing or broken installation
+fails loudly instead of falling back to `llm-direct`; pin `--worker` explicitly
+for unattended runs. The goal defaults to the graph's `goal=` attribute; override it with
 `--param goal="..."`. Run from a scratch dir whose path equals `--cwd` (box-node
 pipelines root their writes at the process cwd). See
 [examples/pipelines/](../examples/pipelines/) for the full run pattern and every

@@ -107,10 +107,10 @@ dot-runner run "$DOT" \
 ```
 
 `--worker coding-agent` runs box nodes as the full coding agent (tools, file edits, the
-works). `amplifier-agent` is the default worker (it is the CLI's own fallback when
-`--worker` is omitted, falling further back to `llm-direct` (plain LLM text, no tools) with
-a loud notice only on an environment where it isn't present) -- so pin `--worker`
-explicitly in anything unattended (CI) rather than relying on that ladder. Other valid
+works). `amplifier-agent` is the default worker when `--worker` is omitted.
+A missing or broken installation fails loudly; it does not fall back to
+`llm-direct` (plain LLM text, no tools). Pin `--worker` explicitly in unattended
+runs (CI). Other valid
 names: `llm-direct`, `amplifier-agent`. See `--worker` in `dot-runner run --help`.
 
 Then `pytest -v` in the copy to see the fix + regression test. The sample is
